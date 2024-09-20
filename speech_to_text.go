@@ -18,25 +18,26 @@ var (
 // Initialize the speech-to-text clients based on selected providers
 func initSpeechClient() {
 	var err error
-	if strings.ToLower(os.Getenv("SPEECH_VENDOR")) == "google" {
+	speechVendor := strings.ToLower(os.Getenv("SPEECH_VENDOR"))
+
+	switch speechVendor {
+	case "google":
 		speechClient, err = speech.NewClient(context.Background())
 		if err != nil {
 			logrus.Fatalf("Failed to create Google Speech client: %v", err)
 		}
-	}
-	// Initialize Deepgram client
-	if strings.ToLower(os.Getenv("SPEECH_VENDOR")) == "deepgram" {
+	case "deepgram":
 		err = initDeepgramClient()
 		if err != nil {
 			logrus.Fatalf("Failed to initialize Deepgram client: %v", err)
 		}
-	}
-	// Initialize OpenAI client
-	if strings.ToLower(os.Getenv("SPEECH_VENDOR")) == "openai" {
+	case "openai":
 		err = initOpenAIClient()
 		if err != nil {
 			logrus.Fatalf("Failed to initialize OpenAI client: %v", err)
 		}
+	default:
+		logrus.Fatalf("Unsupported speech-to-text vendor: %s", speechVendor)
 	}
 }
 
@@ -74,62 +75,58 @@ func streamToGoogleSpeech(ctx context.Context, audioStream io.Reader, callUUID s
 	go func() {
 		buffer := make([]byte, 1024)
 		for {
-			n, err := audioStream.Read(buffer)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				logrus.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read audio stream")
+			select {
+			case <-ctx.Done():
+				stream.CloseSend()
 				return
-			}
+			default:
+				n, err := audioStream.Read(buffer)
+				if err == io.EOF {
+					stream.CloseSend()
+					return
+				}
+				if err != nil {
+					logrus.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read audio stream")
+					return
+				}
 
-			if err := stream.Send(&speechpb.StreamingRecognizeRequest{
-				StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
-					AudioContent: buffer[:n],
-				},
-			}); err != nil {
-				logrus.WithError(err).WithField("call_uuid", callUUID).Error("Failed to send audio content to Google Speech-to-Text")
-				return
-			}
-		}
-		stream.CloseSend()
-	}()
-
-	go func() {
-		for {
-			resp, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				logrus.WithError(err).WithField("call_uuid", callUUID).Error("Error receiving streaming response")
-				return
-			}
-
-			for _, result := range resp.Results {
-				for _, alt := range result.Alternatives {
-					transcription := alt.Transcript
-					logrus.WithFields(logrus.Fields{"call_uuid": callUUID, "transcription": transcription}).Info("Received transcription")
-
-					// Send transcription to AMQP
-					sendTranscriptionToAMQP(transcription, callUUID)
+				if err := stream.Send(&speechpb.StreamingRecognizeRequest{
+					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
+						AudioContent: buffer[:n],
+					},
+				}); err != nil {
+					logrus.WithError(err).WithField("call_uuid", callUUID).Error("Failed to send audio content to Google Speech-to-Text")
+					return
 				}
 			}
 		}
 	}()
-}
 
-// streamToSpeechVendor routes the audio stream to the appropriate speech-to-text vendor
-func streamToSpeechVendor(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	switch strings.ToLower(os.Getenv("SPEECH_VENDOR")) {
-	case "google":
-		streamToGoogleSpeech(ctx, audioStream, callUUID)
-	case "deepgram":
-		return streamToDeepgram(ctx, audioStream, callUUID)
-	case "openai":
-		return streamToOpenAI(ctx, audioStream, callUUID)
-	default:
-		logrus.Errorf("Unsupported speech-to-text vendor: %s", os.Getenv("SPEECH_VENDOR"))
-	}
-	return nil
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				resp, err := stream.Recv()
+				if err == io.EOF {
+					return
+				}
+				if err != nil {
+					logrus.WithError(err).WithField("call_uuid", callUUID).Error("Error receiving streaming response")
+					return
+				}
+
+				for _, result := range resp.Results {
+					for _, alt := range result.Alternatives {
+						transcription := alt.Transcript
+						logrus.WithFields(logrus.Fields{"call_uuid": callUUID, "transcription": transcription}).Info("Received transcription")
+
+						// Send transcription to AMQP
+						sendTranscriptionToAMQP(transcription, callUUID)
+					}
+				}
+			}
+		}
+	}()
 }

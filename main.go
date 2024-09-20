@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -13,7 +14,7 @@ import (
 )
 
 var (
-	logger = logrus.New() // Renamed to avoid conflict with the standard log package
+	logger = logrus.New() // Using logrus for structured logging
 )
 
 func init() {
@@ -28,13 +29,15 @@ func init() {
 	// Initialize AMQP
 	initAMQP()
 
-	// Initialize the STT provider (Google, Deepgram, OpenAI)
+	// Initialize the speech-to-text client based on the environment configuration
 	selectSTTProvider()
 }
 
-// selectSTTProvider sets up the appropriate STT provider based on config
 func selectSTTProvider() {
-	for _, vendor := range config.SupportedVendors {
+	vendor := os.Getenv("SPEECH_VENDOR")
+	if vendor == "" {
+		logger.Fatal("SPEECH_VENDOR not set in .env file")
+	} else {
 		switch vendor {
 		case "google":
 			initSpeechClient() // Initialize Google STT
@@ -98,7 +101,7 @@ func main() {
 
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, os.Kill)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
 		logger.Println("Received shutdown signal, cleaning up...")

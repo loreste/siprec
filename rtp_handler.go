@@ -38,6 +38,15 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		defer udpConn.Close()
 		forwarder.conn = udpConn
 
+		// Open the file for recording RTP streams
+		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
+		forwarder.recordingFile, err = os.Create(filePath)
+		if err != nil {
+			logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
+			return
+		}
+		defer forwarder.recordingFile.Close()
+
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
 			// Set up SRTP with a shared key
@@ -64,8 +73,11 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		pr, pw := io.Pipe()
 		audioStream := pr
 
+		// Start recording
 		go startRecording(audioStream, callUUID)
-		go streamToGoogleSpeech(ctx, audioStream, callUUID)
+
+		// Start transcription based on the selected provider
+		go StreamToProvider(ctx, config.DefaultVendor, audioStream, callUUID)
 
 		buffer := make([]byte, 1500)
 		for {
@@ -81,6 +93,11 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				if err != nil {
 					logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
 					continue
+				}
+
+				// Write the received RTP packet to the recording file
+				if _, err := forwarder.recordingFile.Write(buffer[:n]); err != nil {
+					logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to recording file")
 				}
 
 				if config.EnableSRTP && srtpSession != nil {

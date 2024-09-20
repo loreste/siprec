@@ -18,6 +18,7 @@ type Config struct {
 	RecordingDir     string
 	SupportedVendors []string
 	SupportedCodecs  []string
+	DefaultVendor    string // Added to use in rtp_handler.go
 }
 
 var (
@@ -35,6 +36,7 @@ func loadConfig() {
 	config.InternalIP = os.Getenv("INTERNAL_IP")
 	config.SupportedCodecs = strings.Split(os.Getenv("SUPPORTED_CODECS"), ",")
 	config.SupportedVendors = strings.Split(os.Getenv("SUPPORTED_VENDORS"), ",")
+	config.DefaultVendor = os.Getenv("DEFAULT_VENDOR") // Load default speech vendor
 
 	// Load SIP ports
 	ports := strings.Split(os.Getenv("PORTS"), ",")
