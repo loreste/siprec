@@ -65,7 +65,7 @@ func streamToDeepgram(ctx context.Context, audioStream io.Reader, callUUID strin
 
 	// Check for non-200 response status
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Deepgram API returned non-200 status code: %d", resp.StatusCode)
+		return fmt.Errorf("deepgram API returned non-200 status code: %d", resp.StatusCode)
 	}
 
 	// Parse the response body
