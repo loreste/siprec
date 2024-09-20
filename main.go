@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"os/signal"
@@ -80,17 +81,40 @@ func startServer(wg *sync.WaitGroup) {
 		handleCancel(req, tx)
 	})
 
-	// Listen on configured ports for SIP traffic
+	// Listen on regular SIP (UDP/TCP) ports
 	for _, port := range config.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		go func(port int) {
+			// Listen for SIP over UDP
 			if err := server.ListenAndServe(context.Background(), "udp", address); err != nil {
-				logger.Fatalf("Failed to start SIP server on port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on UDP port %d: %v", port, err)
 			}
+
+			// Listen for SIP over TCP
 			if err := server.ListenAndServe(context.Background(), "tcp", address); err != nil {
-				logger.Fatalf("Failed to start SIP server on port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on TCP port %d: %v", port, err)
 			}
 		}(port)
+	}
+
+	// If TLS is configured, listen on the TLS port
+	if config.TLSCertFile != "" && config.TLSKeyFile != "" && config.TLSPort != 0 {
+		tlsAddress := fmt.Sprintf("%s:%d", ip, config.TLSPort)
+		go func() {
+			// Create a TLS config
+			cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
+			if err != nil {
+				logger.Fatalf("Failed to load TLS certificate: %v", err)
+			}
+			tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+			// Listen for SIP over TLS
+			if err := server.ListenAndServeTLS(context.Background(), "tls", tlsAddress, tlsConfig); err != nil {
+				logger.Fatalf("Failed to start SIP server on TLS port %d: %v", config.TLSPort, err)
+			}
+		}()
+	} else {
+		logger.Warn("TLS_CERT_FILE, TLS_KEY_FILE, or TLS_PORT not set. SIP over TLS will not be enabled.")
 	}
 }
 
