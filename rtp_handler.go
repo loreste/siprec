@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/pion/srtp/v2"
 )
@@ -19,7 +20,9 @@ type RTPForwarder struct {
 	conn           *net.UDPConn
 	stopChan       chan struct{}
 	transcriptChan chan string
-	recordingFile  *os.File // Used to store the recorded media stream
+	recordingFile  *os.File      // Used to store the recorded media stream
+	lastRTPTime    time.Time     // Tracks the last time an RTP packet was received
+	timeout        time.Duration // Timeout duration for inactive RTP streams
 }
 
 var (
@@ -37,6 +40,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 		defer udpConn.Close()
 		forwarder.conn = udpConn
+		forwarder.lastRTPTime = time.Now() // Initialize last RTP packet time
 
 		// Open the file for recording RTP streams
 		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
@@ -49,7 +53,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
-			// Set up SRTP with a shared key
+			// Set up SRTP key management
 			keyingMaterial := make([]byte, 30) // 16 bytes for master key, 14 bytes for salt
 			if _, err := rand.Read(keyingMaterial); err != nil {
 				logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP keying material")
@@ -79,6 +83,9 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		// Start transcription based on the selected provider
 		go StreamToProvider(ctx, config.DefaultVendor, audioStream, callUUID)
 
+		// Start the timeout monitoring routine
+		go monitorRTPTimeout(forwarder, callUUID)
+
 		buffer := make([]byte, 1500)
 		for {
 			select {
@@ -94,6 +101,9 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
 					continue
 				}
+
+				// Update the time of the last received RTP packet
+				forwarder.lastRTPTime = time.Now()
 
 				// Write the received RTP packet to the recording file
 				if _, err := forwarder.recordingFile.Write(buffer[:n]); err != nil {
@@ -131,12 +141,13 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 	}()
 }
 
+// allocateRTPPort dynamically allocates an RTP port for use.
 func allocateRTPPort() int {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 
 	for {
-		// Use crypto/rand for secure port allocation
+		// Secure port allocation using crypto/rand
 		port, err := rand.Int(rand.Reader, big.NewInt(int64(config.RTPPortMax-config.RTPPortMin)))
 		if err != nil {
 			logger.Fatal("Failed to generate random port")
@@ -149,12 +160,34 @@ func allocateRTPPort() int {
 	}
 }
 
+// releaseRTPPort releases a previously allocated RTP port.
 func releaseRTPPort(port int) {
 	portMutex.Lock()
 	defer portMutex.Unlock()
 	delete(usedRTPPorts, port)
 }
 
+// monitorRTPTimeout periodically checks if RTP packets are received within a given timeout period.
+func monitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
+	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-forwarder.stopChan:
+			return
+		case <-ticker.C:
+			// Check if the last RTP packet was received more than the timeout duration ago
+			if time.Since(forwarder.lastRTPTime) > forwarder.timeout {
+				logger.WithField("call_uuid", callUUID).Warn("RTP timeout reached, terminating session")
+				forwarder.stopChan <- struct{}{}
+				return
+			}
+		}
+	}
+}
+
+// startRecording saves the audio stream to a file.
 func startRecording(audioStream io.Reader, callUUID string) {
 	filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
 	file, err := os.Create(filePath)
