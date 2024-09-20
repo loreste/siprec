@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/emiago/sipgo"
@@ -20,7 +19,7 @@ func handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction, server *sipg
 
 	// Check if the call already exists
 	if _, exists := activeCalls.Load(callUUID); exists {
-		log.WithField("call_uuid", callUUID).Warn("Call already exists, ignoring duplicate INVITE")
+		logger.WithField("call_uuid", callUUID).Warn("Call already exists, ignoring duplicate INVITE")
 		return
 	}
 
@@ -43,7 +42,7 @@ func handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction, server *sipg
 	sdpParsed := &sdp.SessionDescription{}
 	err := sdpParsed.Unmarshal([]byte(sdpBody))
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to parse SDP from SIPREC INVITE")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to parse SDP from SIPREC INVITE")
 		resp := sip.NewResponseFromRequest(req, 400, "Bad Request", nil)
 		tx.Respond(resp)
 		return
@@ -55,7 +54,7 @@ func handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction, server *sipg
 	// Send 200 OK response with the new SDP
 	sdpResponseBytes, err := newSDP.Marshal()
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal SDP for 200 OK")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal SDP for 200 OK")
 		resp := sip.NewResponseFromRequest(req, 500, "Internal Server Error", nil)
 		tx.Respond(resp)
 		return
@@ -67,7 +66,7 @@ func handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction, server *sipg
 	// Start RTP forwarding, recording, and transcription
 	go startRTPForwarding(ctx, forwarder, callUUID)
 
-	log.WithFields(logrus.Fields{
+	logger.WithFields(logrus.Fields{
 		"call_uuid": callUUID,
 		"state":     "In Progress",
 		"rtp_port":  rtpPort,
@@ -76,7 +75,7 @@ func handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction, server *sipg
 	// Wait for ACK to confirm call setup
 	server.OnRequest(sip.ACK, func(req *sip.Request, tx sip.ServerTransaction) {
 		if req.CallID().String() == callUUID {
-			log.WithField("call_uuid", callUUID).Info("Received ACK, call confirmed")
+			logger.WithField("call_uuid", callUUID).Info("Received ACK, call confirmed")
 		}
 	})
 
@@ -95,7 +94,7 @@ func handleBye(req *sip.Request, tx sip.ServerTransaction) {
 	// Retrieve the call state
 	forwarder, exists := activeCalls.Load(callUUID)
 	if !exists {
-		log.WithField("call_uuid", callUUID).Warn("Received BYE for non-existent call")
+		logger.WithField("call_uuid", callUUID).Warn("Received BYE for non-existent call")
 		if tx != nil {
 			resp := sip.NewResponseFromRequest(req, 404, "Not Found", nil)
 			tx.Respond(resp)
@@ -114,23 +113,23 @@ func handleBye(req *sip.Request, tx sip.ServerTransaction) {
 		tx.Respond(resp)
 	}
 
-	log.WithField("call_uuid", callUUID).Info("Call terminated and resources cleaned up")
+	logger.WithField("call_uuid", callUUID).Info("Call terminated and resources cleaned up")
 }
 
 func handleCancel(req *sip.Request, tx sip.ServerTransaction) {
 	callUUID := req.CallID().String()
 	if _, exists := activeCalls.Load(callUUID); exists {
 		handleBye(req, tx) // Treat CANCEL like a BYE for cleanup
-		log.WithField("call_uuid", callUUID).Info("Call cancelled")
+		logger.WithField("call_uuid", callUUID).Info("Call cancelled")
 	} else {
-		log.WithField("call_uuid", callUUID).Warn("Received CANCEL for non-existent call")
+		logger.WithField("call_uuid", callUUID).Warn("Received CANCEL for non-existent call")
 	}
 }
 
 func cleanupActiveCalls() {
 	activeCalls.Range(func(key, value interface{}) bool {
 		callUUID := key.(string)
-		fmt.Println("callUUID: ", callUUID)
+		logger.Println("callUUID: ", callUUID)
 		handleBye(nil, nil) // Clean up all active calls
 		return true
 	})

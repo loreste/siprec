@@ -32,7 +32,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		var err error
 		udpConn, err := net.ListenUDP("udp", &net.UDPAddr{Port: forwarder.localPort})
 		if err != nil {
-			log.WithError(err).WithField("port", forwarder.localPort).Error("Failed to listen on UDP port for RTP forwarding")
+			logger.WithError(err).WithField("port", forwarder.localPort).Error("Failed to listen on UDP port for RTP forwarding")
 			return
 		}
 		defer udpConn.Close()
@@ -43,7 +43,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			// Set up SRTP with a shared key
 			keyingMaterial := make([]byte, 30) // 16 bytes for master key, 14 bytes for salt
 			if _, err := rand.Read(keyingMaterial); err != nil {
-				log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP keying material")
+				logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP keying material")
 				return
 			}
 
@@ -56,7 +56,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 			srtpSession, err = srtp.NewSessionSRTP(udpConn, srtpConfig)
 			if err != nil {
-				log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to set up SRTP session")
+				logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to set up SRTP session")
 				return
 			}
 		}
@@ -79,7 +79,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			default:
 				n, _, err := forwarder.conn.ReadFrom(buffer)
 				if err != nil {
-					log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
+					logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
 					continue
 				}
 
@@ -87,7 +87,7 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					// Create a read stream for SRTP
 					readStream, err := srtpSession.OpenReadStream(0) // Use SSRC 0 for now, adjust if needed
 					if err != nil {
-						log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to open SRTP read stream")
+						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to open SRTP read stream")
 						continue
 					}
 
@@ -95,18 +95,18 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					decryptedRTP := make([]byte, 1500)
 					n, err = readStream.Read(decryptedRTP)
 					if err != nil {
-						log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to decrypt SRTP packet")
+						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to decrypt SRTP packet")
 						continue
 					}
 
 					// Write the decrypted packet to the pipe
 					if _, err := pw.Write(decryptedRTP[:n]); err != nil {
-						log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write decrypted RTP packet to audio stream")
+						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write decrypted RTP packet to audio stream")
 					}
 				} else {
 					// Process RTP packet without decryption
 					if _, err := pw.Write(buffer[:n]); err != nil {
-						log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
 					}
 				}
 			}
@@ -122,7 +122,7 @@ func allocateRTPPort() int {
 		// Use crypto/rand for secure port allocation
 		port, err := rand.Int(rand.Reader, big.NewInt(int64(config.RTPPortMax-config.RTPPortMin)))
 		if err != nil {
-			log.Fatal("Failed to generate random port")
+			logger.Fatal("Failed to generate random port")
 		}
 		rtpPort := int(port.Int64()) + config.RTPPortMin
 		if !usedRTPPorts[rtpPort] {
@@ -142,13 +142,13 @@ func startRecording(audioStream io.Reader, callUUID string) {
 	filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
 	file, err := os.Create(filePath)
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
 		return
 	}
 	defer file.Close()
 
 	_, err = io.Copy(file, audioStream)
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write audio stream to file")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write audio stream to file")
 	}
 }
