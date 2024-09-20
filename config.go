@@ -18,7 +18,10 @@ type Config struct {
 	RecordingDir     string
 	SupportedVendors []string
 	SupportedCodecs  []string
-	DefaultVendor    string // Added to use in rtp_handler.go
+	DefaultVendor    string
+	TLSCertFile      string // Path to the TLS certificate file
+	TLSKeyFile       string // Path to the TLS key file
+	TLSPort          int    // Port for SIP over TLS
 }
 
 var (
@@ -31,6 +34,7 @@ func loadConfig() {
 		logger.Fatalf("Error loading .env file: %v", err)
 	}
 
+	// Load general configuration
 	config.EnableSRTP = os.Getenv("ENABLE_SRTP") == "true"
 	config.ExternalIP = os.Getenv("EXTERNAL_IP")
 	config.InternalIP = os.Getenv("INTERNAL_IP")
@@ -56,5 +60,20 @@ func loadConfig() {
 	config.RecordingDir = os.Getenv("RECORDING_DIR")
 	if config.RecordingDir == "" {
 		logger.Fatal("RECORDING_DIR not set in .env file")
+	}
+
+	// Load TLS configuration
+	config.TLSCertFile = os.Getenv("TLS_CERT_FILE") // Path to the TLS certificate file
+	config.TLSKeyFile = os.Getenv("TLS_KEY_FILE")   // Path to the TLS key file
+	if config.TLSCertFile == "" || config.TLSKeyFile == "" {
+		logger.Warn("TLS_CERT_FILE or TLS_KEY_FILE not set, TLS support will be disabled")
+	}
+
+	// Load TLS port (if specified)
+	tlsPortStr := os.Getenv("TLS_PORT")
+	if tlsPortStr != "" {
+		config.TLSPort, _ = strconv.Atoi(tlsPortStr)
+	} else {
+		config.TLSPort = 0 // Default to 0 if not specified, meaning TLS will not be enabled
 	}
 }
