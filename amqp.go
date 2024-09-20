@@ -17,17 +17,17 @@ func initAMQP() {
 	amqpURL := os.Getenv("AMQP_URL")
 	amqpQueueName = os.Getenv("AMQP_QUEUE_NAME")
 	if amqpURL == "" || amqpQueueName == "" {
-		log.Fatal("AMQP_URL or AMQP_QUEUE_NAME not set in .env file")
+		logger.Fatal("AMQP_URL or AMQP_QUEUE_NAME not set in .env file")
 	}
 
 	conn, err := amqp.Dial(amqpURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to AMQP server: %v", err)
+		logger.Fatalf("Failed to connect to AMQP server: %v", err)
 	}
 
 	amqpChannel, err = conn.Channel()
 	if err != nil {
-		log.Fatalf("Failed to open a channel: %v", err)
+		logger.Fatalf("Failed to open a channel: %v", err)
 	}
 
 	_, err = amqpChannel.QueueDeclare(
@@ -39,7 +39,7 @@ func initAMQP() {
 		nil,   // Arguments
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare a queue: %v", err)
+		logger.Fatalf("Failed to declare a queue: %v", err)
 	}
 }
 
@@ -50,7 +50,7 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal transcription to JSON")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal transcription to JSON")
 		return
 	}
 
@@ -65,6 +65,6 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 		},
 	)
 	if err != nil {
-		log.WithError(err).WithField("call_uuid", callUUID).Error("Failed to publish transcription to AMQP")
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to publish transcription to AMQP")
 	}
 }

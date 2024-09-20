@@ -13,14 +13,14 @@ import (
 )
 
 var (
-	log = logrus.New()
+	logger = logrus.New() // Renamed to avoid conflict with the standard log package
 )
 
 func init() {
 	// Set up logger
-	log.SetFormatter(&logrus.JSONFormatter{})
-	log.SetOutput(os.Stdout)
-	log.SetLevel(logrus.InfoLevel)
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.SetOutput(os.Stdout)
+	logger.SetLevel(logrus.InfoLevel)
 
 	// Load configuration
 	loadConfig()
@@ -28,8 +28,28 @@ func init() {
 	// Initialize AMQP
 	initAMQP()
 
-	// Initialize Google Speech-to-Text client
-	initSpeechClient()
+	// Initialize the STT provider (Google, Deepgram, OpenAI)
+	selectSTTProvider()
+}
+
+// selectSTTProvider sets up the appropriate STT provider based on config
+func selectSTTProvider() {
+	for _, vendor := range config.SupportedVendors {
+		switch vendor {
+		case "google":
+			initSpeechClient() // Initialize Google STT
+		case "deepgram":
+			if err := initDeepgramClient(); err != nil {
+				logger.Fatalf("Error initializing Deepgram client: %v", err)
+			}
+		case "openai":
+			if err := initOpenAIClient(); err != nil {
+				logger.Fatalf("Error initializing OpenAI client: %v", err)
+			}
+		default:
+			logger.Fatalf("Unsupported STT vendor: %v", vendor)
+		}
+	}
 }
 
 func startServer(wg *sync.WaitGroup) {
@@ -39,12 +59,12 @@ func startServer(wg *sync.WaitGroup) {
 
 	ua, err := sipgo.NewUA()
 	if err != nil {
-		log.Fatalf("Failed to create UserAgent: %v", err)
+		logger.Fatalf("Failed to create UserAgent: %v", err)
 	}
 
 	server, err := sipgo.NewServer(ua)
 	if err != nil {
-		log.Fatalf("Failed to create SIP server: %v", err)
+		logger.Fatalf("Failed to create SIP server: %v", err)
 	}
 
 	// Handle INVITE requests
@@ -62,10 +82,10 @@ func startServer(wg *sync.WaitGroup) {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		go func(port int) {
 			if err := server.ListenAndServe(context.Background(), "udp", address); err != nil {
-				log.Fatalf("Failed to start SIP server on port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on port %d: %v", port, err)
 			}
 			if err := server.ListenAndServe(context.Background(), "tcp", address); err != nil {
-				log.Fatalf("Failed to start SIP server on port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on port %d: %v", port, err)
 			}
 		}(port)
 	}
@@ -81,9 +101,9 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, os.Kill)
 	go func() {
 		<-sigChan
-		log.Println("Received shutdown signal, cleaning up...")
+		logger.Println("Received shutdown signal, cleaning up...")
 		cleanupActiveCalls()
-		log.Println("Cleanup complete. Shutting down.")
+		logger.Println("Cleanup complete. Shutting down.")
 		os.Exit(0)
 	}()
 
