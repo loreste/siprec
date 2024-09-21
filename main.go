@@ -32,28 +32,43 @@ func init() {
 
 	// Initialize the speech-to-text client based on the environment configuration
 	selectSTTProvider()
+
+	// Log configuration on startup
+	logStartupConfig()
 }
 
 func selectSTTProvider() {
-	vendor := os.Getenv("SPEECH_VENDOR")
-	if vendor == "" {
-		logger.Fatal("SPEECH_VENDOR not set in .env file")
-	} else {
-		switch vendor {
-		case "google":
-			initSpeechClient() // Initialize Google STT
-		case "deepgram":
-			if err := initDeepgramClient(); err != nil {
-				logger.Fatalf("Error initializing Deepgram client: %v", err)
-			}
-		case "openai":
-			if err := initOpenAIClient(); err != nil {
-				logger.Fatalf("Error initializing OpenAI client: %v", err)
-			}
-		default:
-			logger.Fatalf("Unsupported STT vendor: %v", vendor)
+	vendor := config.DefaultVendor
+	switch vendor {
+	case "google":
+		initSpeechClient() // Initialize Google STT
+	case "deepgram":
+		if err := initDeepgramClient(); err != nil {
+			logger.Fatalf("Error initializing Deepgram client: %v", err)
 		}
+	case "openai":
+		if err := initOpenAIClient(); err != nil {
+			logger.Fatalf("Error initializing OpenAI client: %v", err)
+		}
+	default:
+		logger.Warnf("Unsupported STT vendor: %v, defaulting to Google", vendor)
+		initSpeechClient() // Default to Google STT
 	}
+}
+
+func createTLSConfig() (*tls.Config, error) {
+	// Load TLS certificate and key
+	cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS certificate and key: %v", err)
+	}
+
+	// Create and return a TLS config
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+	return tlsConfig, nil
 }
 
 func startServer(wg *sync.WaitGroup) {
@@ -81,41 +96,56 @@ func startServer(wg *sync.WaitGroup) {
 		handleCancel(req, tx)
 	})
 
-	// Listen on regular SIP (UDP/TCP) ports
+	// Listen on configured ports for SIP traffic
 	for _, port := range config.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		go func(port int) {
-			// Listen for SIP over UDP
+			defer wg.Done()
+			logger.Infof("Starting SIP server on UDP and TCP at %s", address)
 			if err := server.ListenAndServe(context.Background(), "udp", address); err != nil {
-				logger.Fatalf("Failed to start SIP server on UDP port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on port %d (UDP): %v", port, err)
 			}
-
-			// Listen for SIP over TCP
 			if err := server.ListenAndServe(context.Background(), "tcp", address); err != nil {
-				logger.Fatalf("Failed to start SIP server on TCP port %d: %v", port, err)
+				logger.Fatalf("Failed to start SIP server on port %d (TCP): %v", port, err)
 			}
 		}(port)
+		wg.Add(1) // Add to WaitGroup to ensure all ports are handled
 	}
 
-	// If TLS is configured, listen on the TLS port
-	if config.TLSCertFile != "" && config.TLSKeyFile != "" && config.TLSPort != 0 {
+	// Check if TLS is enabled
+	if config.EnableTLS && config.TLSPort != 0 {
 		tlsAddress := fmt.Sprintf("%s:%d", ip, config.TLSPort)
+		tlsConfig, err := createTLSConfig()
+		if err != nil {
+			logger.Fatalf("Failed to create TLS config: %v", err)
+		}
 		go func() {
-			// Create a TLS config
-			cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
-			if err != nil {
-				logger.Fatalf("Failed to load TLS certificate: %v", err)
-			}
-			tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
-
-			// Listen for SIP over TLS
-			if err := server.ListenAndServeTLS(context.Background(), "tls", tlsAddress, tlsConfig); err != nil {
-				logger.Fatalf("Failed to start SIP server on TLS port %d: %v", config.TLSPort, err)
+			defer wg.Done()
+			logger.Infof("Starting SIP server with TLS on %s", tlsAddress)
+			if err := server.ListenAndServeTLS(context.Background(), "tcp", tlsAddress, tlsConfig); err != nil {
+				logger.Fatalf("Failed to start SIP server over TLS on port %d: %v", config.TLSPort, err)
 			}
 		}()
-	} else {
-		logger.Warn("TLS_CERT_FILE, TLS_KEY_FILE, or TLS_PORT not set. SIP over TLS will not be enabled.")
+		wg.Add(1) // Add to WaitGroup for TLS
 	}
+}
+
+func logStartupConfig() {
+	logger.Infof("SIP Server is starting with the following configuration:")
+	logger.Infof("External IP: %s", config.ExternalIP)
+	logger.Infof("Internal IP: %s", config.InternalIP)
+	logger.Infof("SIP Ports: %v", config.Ports)
+	logger.Infof("TLS Enabled: %v", config.EnableTLS)
+	if config.EnableTLS {
+		logger.Infof("TLS Port: %d", config.TLSPort)
+		logger.Infof("TLS Cert File: %s", config.TLSCertFile)
+		logger.Infof("TLS Key File: %s", config.TLSKeyFile)
+	}
+	logger.Infof("SRTP Enabled: %v", config.EnableSRTP)
+	logger.Infof("RTP Port Range: %d-%d", config.RTPPortMin, config.RTPPortMax)
+	logger.Infof("Recording Directory: %s", config.RecordingDir)
+	logger.Infof("Speech-to-Text Vendor: %s", config.DefaultVendor)
+	logger.Infof("Log Level: %s", config.LogLevel.String())
 }
 
 func main() {
