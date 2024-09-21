@@ -23,6 +23,7 @@ type Config struct {
 	TLSCertFile      string       // Path to the TLS certificate file
 	TLSKeyFile       string       // Path to the TLS key file
 	TLSPort          int          // Port for SIP over TLS
+	EnableTLS        bool         // Enable or disable TLS
 	LogLevel         logrus.Level // Log level for structured logging
 }
 
@@ -42,7 +43,7 @@ func loadConfig() {
 	config.InternalIP = os.Getenv("INTERNAL_IP")
 	config.SupportedCodecs = strings.Split(os.Getenv("SUPPORTED_CODECS"), ",")
 	config.SupportedVendors = strings.Split(os.Getenv("SUPPORTED_VENDORS"), ",")
-	config.DefaultVendor = os.Getenv("SPEECH_VENDOR") // Use SPEECH_VENDOR instead of DEFAULT_VENDOR
+	config.DefaultVendor = os.Getenv("SPEECH_VENDOR")
 
 	// Validate SPEECH_VENDOR
 	if config.DefaultVendor == "" {
@@ -98,6 +99,9 @@ func loadConfig() {
 	} else {
 		config.TLSPort = 0 // Default to 0 if not specified
 	}
+
+	// Enable or disable TLS based on the environment variable
+	config.EnableTLS = os.Getenv("ENABLE_TLS") == "true"
 
 	// Set the log level from the environment variable
 	logLevelStr := os.Getenv("LOG_LEVEL")
