@@ -5,6 +5,7 @@ go 1.21.6
 require (
 	cloud.google.com/go/speech v1.25.1
 	github.com/emiago/sipgo v0.23.0
+	github.com/fatih/color v1.17.0
 	github.com/joho/godotenv v1.5.1
 	github.com/pion/sdp/v3 v3.0.9
 	github.com/pion/srtp/v2 v2.0.20
