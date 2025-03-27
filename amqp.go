@@ -20,9 +20,16 @@ func initAMQP() {
 	amqpURL := os.Getenv("AMQP_URL")
 	amqpQueueName = os.Getenv("AMQP_QUEUE_NAME")
 	if amqpURL == "" || amqpQueueName == "" {
-		logger.Fatal("AMQP_URL or AMQP_QUEUE_NAME not set in .env file")
+		logger.Warn("AMQP_URL or AMQP_QUEUE_NAME not set in .env file, AMQP functionality will be disabled")
+		return
 	}
 
+	// Start a background goroutine to handle AMQP connection and reconnection
+	go manageAMQPConnection(amqpURL)
+}
+
+// manageAMQPConnection handles connecting to AMQP and reconnecting if needed
+func manageAMQPConnection(amqpURL string) {
 	for {
 		// Attempt to connect to the AMQP server
 		conn, err := amqp.Dial(amqpURL)
@@ -38,18 +45,24 @@ func initAMQP() {
 		color.Green("Successfully connected to AMQP server at %s", amqpURL)
 		logger.Infof("Successfully connected to AMQP server at %s", amqpURL)
 
+		// Set up connection closed notification channel
+		closeChan := make(chan *amqp.Error)
+		conn.NotifyClose(closeChan)
+
 		// Attempt to open a channel
-		amqpChannel, err = conn.Channel()
+		ch, err := conn.Channel()
 		if err != nil {
 			color.Red("Failed to open AMQP channel: %v", err)
-			logger.WithError(err).Errorf("Retrying opening channel to AMQP server at %s in 5 seconds...", amqpURL)
-			time.Sleep(5 * time.Second) // Wait before retrying
+			logger.WithError(err).Error("Failed to open channel, will retry connection")
+			conn.Close() // Make sure to close the connection before retrying
+			time.Sleep(5 * time.Second)
 			continue
 		}
+
 		color.Green("Successfully opened AMQP channel")
 
 		// Attempt to declare the queue
-		queue, err := amqpChannel.QueueDeclare(
+		queue, err := ch.QueueDeclare(
 			amqpQueueName,
 			true,  // Durable
 			false, // Delete when unused
@@ -59,22 +72,34 @@ func initAMQP() {
 		)
 		if err != nil {
 			color.Red("Failed to declare AMQP queue %s: %v", amqpQueueName, err)
-			logger.WithError(err).Errorf("Retrying declaring queue in 5 seconds...")
-			time.Sleep(5 * time.Second) // Wait before retrying
+			logger.WithError(err).Error("Failed to declare queue, will retry connection")
+			ch.Close()
+			conn.Close()
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
 		// Log success with detailed queue information
 		color.Green("Successfully declared AMQP queue: %s", queue.Name)
 		logger.Infof("Queue Details: Name=%s, Messages=%d, Consumers=%d", queue.Name, queue.Messages, queue.Consumers)
-		break // Exit the retry loop after a successful connection
+
+		// Set channel for global use
+		amqpChannel = ch
+
+		// Wait for connection to close
+		closeErr := <-closeChan
+
+		// Connection closed, clean up and retry
+		amqpChannel = nil
+		logger.WithError(closeErr).Warn("AMQP connection closed, will reconnect")
+		time.Sleep(5 * time.Second)
 	}
 }
 
 // Function to send transcription messages to the AMQP queue
 func sendTranscriptionToAMQP(transcription, callUUID string) {
 	if amqpChannel == nil {
-		logger.WithField("call_uuid", callUUID).Error("AMQP channel not initialized")
+		logger.WithField("call_uuid", callUUID).Warn("AMQP channel not initialized, transcription not sent to AMQP")
 		return
 	}
 
@@ -116,6 +141,7 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 		return
 	}
 
+	// Use channel mutex to avoid race conditions during reconnection
 	err = amqpChannel.Publish(
 		"",            // Exchange
 		amqpQueueName, // Routing key (queue name)
@@ -133,7 +159,7 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 		return
 	}
 
-	logger.WithField("call_uuid", callUUID).Info("Successfully published transcription to AMQP")
+	logger.WithField("call_uuid", callUUID).Debug("Successfully published transcription to AMQP")
 }
 
 // Function to send metadata updates to the AMQP queue
