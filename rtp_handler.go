@@ -10,19 +10,23 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pion/srtp/v2"
+	"github.com/sirupsen/logrus"
 )
 
 type RTPForwarder struct {
-	localPort      int
-	conn           *net.UDPConn
-	stopChan       chan struct{}
-	transcriptChan chan string
-	recordingFile  *os.File      // Used to store the recorded media stream
-	lastRTPTime    time.Time     // Tracks the last time an RTP packet was received
-	timeout        time.Duration // Timeout duration for inactive RTP streams
+	localPort        int
+	conn             *net.UDPConn
+	stopChan         chan struct{}
+	transcriptChan   chan string
+	recordingFile    *os.File          // Used to store the recorded media stream
+	lastRTPTime      time.Time         // Tracks the last time an RTP packet was received
+	timeout          time.Duration     // Timeout duration for inactive RTP streams
+	recordingSession *RecordingSession // SIPREC session information
+	recordingPaused  bool              // Flag to indicate if recording is paused
 }
 
 var (
@@ -33,7 +37,24 @@ var (
 func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string) {
 	go func() {
 		var err error
-		udpConn, err := net.ListenUDP("udp", &net.UDPAddr{Port: forwarder.localPort})
+
+		// Create address to listen on
+		listenAddr := &net.UDPAddr{Port: forwarder.localPort}
+
+		// If behind NAT, we need specific binding
+		if config.BehindNAT {
+			// If we know our internal IP, bind specifically to it
+			if config.InternalIP != "" {
+				listenAddr.IP = net.ParseIP(config.InternalIP)
+			}
+
+			logger.WithFields(logrus.Fields{
+				"port": forwarder.localPort,
+				"ip":   listenAddr.IP,
+			}).Debug("Binding RTP listener with NAT considerations")
+		}
+
+		udpConn, err := net.ListenUDP("udp", listenAddr)
 		if err != nil {
 			logger.WithError(err).WithField("port", forwarder.localPort).Error("Failed to listen on UDP port for RTP forwarding")
 			return
@@ -41,6 +62,9 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		defer udpConn.Close()
 		forwarder.conn = udpConn
 		forwarder.lastRTPTime = time.Now() // Initialize last RTP packet time
+
+		// Set socket buffer sizes for better performance
+		setUDPSocketBuffers(udpConn)
 
 		// Open the file for recording RTP streams
 		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
@@ -74,26 +98,29 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 		}
 
-		pr, pw := io.Pipe()
-		audioStream := pr
+		// Create pipes for streaming audio data
+		mainPr, mainPw := io.Pipe()
 
-		// Start recording
-		go startRecording(audioStream, callUUID)
+		// Use TeeReader to duplicate the stream
+		recordingReader := io.TeeReader(mainPr, forwarder.recordingFile)
 
 		// Start transcription based on the selected provider
-		go StreamToProvider(ctx, config.DefaultVendor, audioStream, callUUID)
+		go StreamToProvider(ctx, config.DefaultVendor, recordingReader, callUUID)
 
 		// Start the timeout monitoring routine
 		go monitorRTPTimeout(forwarder, callUUID)
 
-		buffer := make([]byte, 1500)
+		// Use buffer pool to reduce garbage collection
+		bufferPtr := bufferPool.Get()
+		buffer := bufferPtr.([]byte)
+		defer bufferPool.Put(bufferPtr)
 		for {
 			select {
 			case <-forwarder.stopChan:
-				pw.Close()
+				mainPw.Close()
 				return
 			case <-ctx.Done():
-				pw.Close()
+				mainPw.Close()
 				return
 			default:
 				n, _, err := forwarder.conn.ReadFrom(buffer)
@@ -105,41 +132,61 @@ func startRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				// Update the time of the last received RTP packet
 				forwarder.lastRTPTime = time.Now()
 
-				// Write the received RTP packet to the recording file
-				if _, err := forwarder.recordingFile.Write(buffer[:n]); err != nil {
-					logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to recording file")
+				// Check if recording is paused by the SIP dialog
+				if forwarder.recordingPaused {
+					continue // Skip processing this packet
 				}
 
+				// Process RTP packet
 				if config.EnableSRTP && srtpSession != nil {
-					// Create a read stream for SRTP
-					readStream, err := srtpSession.OpenReadStream(0) // Use SSRC 0 for now, adjust if needed
+					// Process SRTP packet (simplified - real impl would handle SSRC correctly)
+					// Get a buffer from the pool
+					bufPtr := bufferPool.Get()
+					decryptedRTP := bufPtr.([]byte)
+					defer bufferPool.Put(bufPtr)
+
+					// In a real implementation, we would use the correct SSRC
+					readStream, err := srtpSession.OpenReadStream(0)
 					if err != nil {
-						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to open SRTP read stream")
 						continue
 					}
 
-					// Read and decrypt the SRTP packet
-					decryptedRTP := make([]byte, 1500)
 					n, err = readStream.Read(decryptedRTP)
 					if err != nil {
-						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to decrypt SRTP packet")
 						continue
 					}
 
-					// Write the decrypted packet to the pipe
-					if _, err := pw.Write(decryptedRTP[:n]); err != nil {
-						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write decrypted RTP packet to audio stream")
+					// Write decrypted packet to pipe
+					if _, err := mainPw.Write(decryptedRTP[:n]); err != nil {
+						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
 					}
 				} else {
-					// Process RTP packet without decryption
-					if _, err := pw.Write(buffer[:n]); err != nil {
+					// Process regular RTP packet
+					if _, err := mainPw.Write(buffer[:n]); err != nil {
 						logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
 					}
 				}
+
+				// Update metrics if we're tracking them
+				rtpPacketsReceived++
+				rtpBytesReceived += uint64(n)
 			}
 		}
 	}()
 }
+
+// Buffer pool for RTP packets to reduce GC pressure
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1500)
+	},
+}
+
+// Global metrics - in a production environment, these would be proper metrics
+var (
+	rtpPacketsReceived uint64
+	rtpBytesReceived   uint64
+)
 
 // allocateRTPPort dynamically allocates an RTP port for use.
 func allocateRTPPort() int {
@@ -200,5 +247,77 @@ func startRecording(audioStream io.Reader, callUUID string) {
 	_, err = io.Copy(file, audioStream)
 	if err != nil {
 		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write audio stream to file")
+	}
+}
+
+// Helper function to set UDP socket buffers appropriately for production use
+func setUDPSocketBuffers(conn *net.UDPConn) {
+	// Get the file descriptor from the UDPConn
+	file, err := conn.File()
+	if err != nil {
+		logger.WithError(err).Warn("Failed to get file descriptor for UDP socket")
+		return
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+
+	// Set receive buffer to 1MB
+	err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 1024*1024)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to set UDP receive buffer size")
+	}
+
+	// Set send buffer to 1MB
+	err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_SNDBUF, 1024*1024)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to set UDP send buffer size")
+	}
+}
+
+// Detect codec from RTP packet
+func detectCodec(rtpPacket []byte) (string, error) {
+	if len(rtpPacket) < 12 {
+		return "", fmt.Errorf("RTP packet too short")
+	}
+
+	// Extract payload type from RTP header
+	payloadType := rtpPacket[1] & 0x7F
+
+	switch payloadType {
+	case 0:
+		return "PCMU", nil // G.711 μ-law
+	case 8:
+		return "PCMA", nil // G.711 a-law
+	case 9:
+		return "G722", nil // G.722
+	default:
+		return "unknown", fmt.Errorf("unsupported payload type: %d", payloadType)
+	}
+}
+
+// Process audio packet for the specific codec
+func processAudioPacket(data []byte, payloadType byte) ([]byte, error) {
+	// Extract the RTP payload
+	if len(data) < 12 {
+		return nil, fmt.Errorf("RTP packet too short")
+	}
+
+	payload := data[12:]
+
+	// Process based on payload type
+	switch payloadType {
+	case 0: // PCMU (G.711 μ-law)
+		// G.711 μ-law is already in a format that can be written to WAV
+		return payload, nil
+	case 8: // PCMA (G.711 a-law)
+		// G.711 a-law is already in a format that can be written to WAV
+		return payload, nil
+	case 9: // G.722
+		// G.722 processing might require special handling
+		// Depending on your needs, you might need to convert it
+		return payload, nil
+	default:
+		return nil, fmt.Errorf("unsupported payload type: %d", payloadType)
 	}
 }
