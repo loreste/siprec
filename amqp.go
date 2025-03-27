@@ -73,10 +73,43 @@ func initAMQP() {
 
 // Function to send transcription messages to the AMQP queue
 func sendTranscriptionToAMQP(transcription, callUUID string) {
-	body := map[string]string{
-		"call_uuid":     callUUID,
-		"transcription": transcription,
+	if amqpChannel == nil {
+		logger.WithField("call_uuid", callUUID).Error("AMQP channel not initialized")
+		return
 	}
+
+	// Get the recording session if available
+	var recSession *RecordingSession
+	if forwarderValue, exists := activeCalls.Load(callUUID); exists {
+		forwarder := forwarderValue.(*RTPForwarder)
+		recSession = forwarder.recordingSession
+	}
+
+	// Create message body with or without recording session info
+	var body map[string]interface{}
+
+	if recSession != nil {
+		// Include SIPREC metadata
+		body = map[string]interface{}{
+			"call_uuid":     callUUID,
+			"transcription": transcription,
+			"timestamp":     time.Now().Format(time.RFC3339),
+			"siprec": map[string]interface{}{
+				"session_id":      recSession.ID,
+				"recording_state": recSession.RecordingState,
+				"sequence_number": recSession.SequenceNumber,
+				"participants":    recSession.Participants,
+			},
+		}
+	} else {
+		// Basic message without SIPREC data
+		body = map[string]interface{}{
+			"call_uuid":     callUUID,
+			"transcription": transcription,
+			"timestamp":     time.Now().Format(time.RFC3339),
+		}
+	}
+
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal transcription to JSON")
@@ -89,8 +122,10 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 		false,         // Mandatory
 		false,         // Immediate
 		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        bodyBytes,
+			ContentType:  "application/json",
+			Body:         bodyBytes,
+			DeliveryMode: amqp.Persistent, // Make message persistent
+			Timestamp:    time.Now(),
 		},
 	)
 	if err != nil {
@@ -99,4 +134,53 @@ func sendTranscriptionToAMQP(transcription, callUUID string) {
 	}
 
 	logger.WithField("call_uuid", callUUID).Info("Successfully published transcription to AMQP")
+}
+
+// Function to send metadata updates to the AMQP queue
+func sendMetadataUpdateToAMQP(callUUID string, recordingSession *RecordingSession, added, removed, modified []Participant) {
+	if amqpChannel == nil {
+		logger.WithField("call_uuid", callUUID).Error("AMQP channel not initialized")
+		return
+	}
+
+	// Create the message body with SIPREC metadata
+	body := map[string]interface{}{
+		"call_uuid":  callUUID,
+		"event_type": "metadata_update",
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"siprec": map[string]interface{}{
+			"session_id":            recordingSession.ID,
+			"recording_state":       recordingSession.RecordingState,
+			"sequence_number":       recordingSession.SequenceNumber,
+			"participants":          recordingSession.Participants,
+			"participants_added":    added,
+			"participants_removed":  removed,
+			"participants_modified": modified,
+		},
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to marshal metadata update to JSON")
+		return
+	}
+
+	err = amqpChannel.Publish(
+		"",            // Exchange
+		amqpQueueName, // Routing key (queue name)
+		false,         // Mandatory
+		false,         // Immediate
+		amqp.Publishing{
+			ContentType:  "application/json",
+			Body:         bodyBytes,
+			DeliveryMode: amqp.Persistent,
+			Timestamp:    time.Now(),
+		},
+	)
+	if err != nil {
+		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to publish metadata update to AMQP")
+		return
+	}
+
+	logger.WithField("call_uuid", callUUID).Info("Successfully published metadata update to AMQP")
 }
