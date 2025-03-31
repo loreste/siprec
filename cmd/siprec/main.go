@@ -11,17 +11,18 @@ import (
 
 	"github.com/sirupsen/logrus"
 	
+	"siprec-server/pkg/config"
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
-	"siprec-server/pkg/util"
 )
 
 var (
 	logger = logrus.New()
-	config *util.Configuration
+	appConfig *config.Config
+	legacyConfig *config.Configuration
 	amqpClient *messaging.AMQPClient
 	sttManager *stt.ProviderManager
 	sipHandler *sip.Handler
@@ -30,7 +31,7 @@ var (
 )
 
 func main() {
-	// Set up logger with structured JSON logging for production
+	// Set up logger with basic configuration (will be updated after config is loaded)
 	logger.SetFormatter(&logrus.JSONFormatter{
 		TimestampFormat: time.RFC3339Nano,
 		FieldMap: logrus.FieldMap{
@@ -55,8 +56,12 @@ func main() {
 	wg.Add(1)
 	
 	// Start HTTP server for health checks and API
-	httpServer.Start()
-	logger.Info("HTTP server started")
+	if legacyConfig.HTTPEnabled {
+		httpServer.Start()
+		logger.Info("HTTP server started")
+	} else {
+		logger.Info("HTTP server is disabled by configuration")
+	}
 	
 	// Start SIP server
 	go startSIPServer(&wg)
@@ -112,19 +117,24 @@ func main() {
 func initialize() error {
 	var err error
 	
-	// Load configuration
-	config, err = util.LoadConfig(logger)
+	// Load new configuration
+	appConfig, err = config.Load(logger)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+	
+	// Convert to legacy config for backward compatibility
+	legacyConfig = appConfig.ToLegacyConfig(logger)
 
-	// Set log level from config
-	logger.SetLevel(config.LogLevel)
+	// Apply logging configuration
+	if err := appConfig.ApplyLogging(logger); err != nil {
+		return fmt.Errorf("failed to apply logging configuration: %w", err)
+	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
 
 	// Initialize AMQP client
-	if config.AMQPUrl != "" && config.AMQPQueueName != "" {
-		amqpClient = messaging.NewAMQPClient(logger, config.AMQPUrl, config.AMQPQueueName)
+	if appConfig.Messaging.AMQPUrl != "" && appConfig.Messaging.AMQPQueueName != "" {
+		amqpClient = messaging.NewAMQPClient(logger, appConfig.Messaging.AMQPUrl, appConfig.Messaging.AMQPQueueName)
 		if err := amqpClient.Connect(); err != nil {
 			logger.WithError(err).Warn("Failed to connect to AMQP server, continuing without AMQP")
 		}
@@ -133,7 +143,7 @@ func initialize() error {
 	}
 
 	// Initialize speech-to-text providers
-	sttManager = stt.NewProviderManager(logger, config.DefaultVendor)
+	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor)
 	
 	// Register Mock provider for local testing
 	mockProvider := stt.NewMockProvider(logger)
@@ -141,45 +151,44 @@ func initialize() error {
 		logger.WithError(err).Warn("Failed to register Mock Speech-to-Text provider")
 	}
 	
-	// Register Google provider
-	if contains(config.SupportedVendors, "google") {
-		googleProvider := stt.NewGoogleProvider(logger)
-		if err := sttManager.RegisterProvider(googleProvider); err != nil {
-			logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
-		}
-	}
-	
-	// Register Deepgram provider
-	if contains(config.SupportedVendors, "deepgram") {
-		deepgramProvider := stt.NewDeepgramProvider(logger)
-		if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
-			logger.WithError(err).Warn("Failed to register Deepgram provider")
-		}
-	}
-	
-	// Register OpenAI provider
-	if contains(config.SupportedVendors, "openai") {
-		openaiProvider := stt.NewOpenAIProvider(logger)
-		if err := sttManager.RegisterProvider(openaiProvider); err != nil {
-			logger.WithError(err).Warn("Failed to register OpenAI provider")
+	// Register providers based on configuration
+	for _, vendor := range appConfig.STT.SupportedVendors {
+		switch vendor {
+		case "google":
+			googleProvider := stt.NewGoogleProvider(logger)
+			if err := sttManager.RegisterProvider(googleProvider); err != nil {
+				logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
+			}
+		case "deepgram":
+			deepgramProvider := stt.NewDeepgramProvider(logger)
+			if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
+				logger.WithError(err).Warn("Failed to register Deepgram provider")
+			}
+		case "openai":
+			openaiProvider := stt.NewOpenAIProvider(logger)
+			if err := sttManager.RegisterProvider(openaiProvider); err != nil {
+				logger.WithError(err).Warn("Failed to register OpenAI provider")
+			}
+		default:
+			logger.WithField("vendor", vendor).Warn("Unknown STT vendor in configuration")
 		}
 	}
 	
 	// Create the media config
 	mediaConfig := &media.Config{
-		RTPPortMin:    config.RTPPortMin,
-		RTPPortMax:    config.RTPPortMax,
-		EnableSRTP:    config.EnableSRTP,
-		RecordingDir:  config.RecordingDir,
-		BehindNAT:     config.BehindNAT,
-		InternalIP:    config.InternalIP,
-		ExternalIP:    config.ExternalIP,
-		DefaultVendor: config.DefaultVendor,
+		RTPPortMin:    appConfig.Network.RTPPortMin,
+		RTPPortMax:    appConfig.Network.RTPPortMax,
+		EnableSRTP:    appConfig.Network.EnableSRTP,
+		RecordingDir:  appConfig.Recording.Directory,
+		BehindNAT:     appConfig.Network.BehindNAT,
+		InternalIP:    appConfig.Network.InternalIP,
+		ExternalIP:    appConfig.Network.ExternalIP,
+		DefaultVendor: appConfig.STT.DefaultVendor,
 	}
 	
 	// Create SIP handler config
 	sipConfig := &sip.Config{
-		MaxConcurrentCalls: config.MaxConcurrentCalls,
+		MaxConcurrentCalls: appConfig.Resources.MaxConcurrentCalls,
 		MediaConfig:        mediaConfig,
 	}
 	
@@ -194,10 +203,13 @@ func initialize() error {
 	
 	// Initialize HTTP server
 	httpServerConfig := &http_server.Config{
-		Port:            config.HTTPPort,
-		ReadTimeout:     10 * time.Second,
-		WriteTimeout:    30 * time.Second,
+		Port:            appConfig.HTTP.Port,
+		ReadTimeout:     appConfig.HTTP.ReadTimeout,
+		WriteTimeout:    appConfig.HTTP.WriteTimeout,
 		ShutdownTimeout: 5 * time.Second,
+		Enabled:         appConfig.HTTP.Enabled,
+		EnableMetrics:   appConfig.HTTP.EnableMetrics,
+		EnableAPI:       appConfig.HTTP.EnableAPI,
 	}
 	
 	// Create HTTP server with SIP handler adapter for metrics
@@ -221,7 +233,7 @@ func startSIPServer(wg *sync.WaitGroup) {
 	ip := "0.0.0.0" // Listen on all interfaces
 	
 	// Add ports to waitgroup
-	for _, port := range config.Ports {
+	for _, port := range appConfig.Network.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		logger.WithField("address", address).Info("Starting SIP server on UDP")
 		if err := sipHandler.Server.ListenAndServe(context.Background(), "udp", address); err != nil {
@@ -235,8 +247,8 @@ func startSIPServer(wg *sync.WaitGroup) {
 	}
 	
 	// Check if TLS is enabled
-	if config.EnableTLS && config.TLSPort != 0 {
-		tlsAddress := fmt.Sprintf("%s:%d", ip, config.TLSPort)
+	if appConfig.Network.EnableTLS && appConfig.Network.TLSPort != 0 {
+		tlsAddress := fmt.Sprintf("%s:%d", ip, appConfig.Network.TLSPort)
 		logger.WithField("address", tlsAddress).Info("Starting SIP server on TLS")
 		// TODO: Implement TLS support
 		logger.Warn("TLS support is not yet implemented")
@@ -249,50 +261,64 @@ func startSIPServer(wg *sync.WaitGroup) {
 // logStartupConfig logs the current configuration
 func logStartupConfig() {
 	logger.Info("SIPREC Server is starting with the following configuration:")
+	
+	// Network configuration
 	logger.WithFields(logrus.Fields{
-		"external_ip": config.ExternalIP,
-		"internal_ip": config.InternalIP,
-		"sip_ports":   config.Ports,
-		"tls_enabled": config.EnableTLS,
+		"external_ip": appConfig.Network.ExternalIP,
+		"internal_ip": appConfig.Network.InternalIP,
+		"sip_ports":   appConfig.Network.Ports,
+		"tls_enabled": appConfig.Network.EnableTLS,
 	}).Info("Network configuration")
 	
-	if config.EnableTLS {
+	if appConfig.Network.EnableTLS {
 		logger.WithFields(logrus.Fields{
-			"tls_port":     config.TLSPort,
-			"tls_cert":     config.TLSCertFile,
-			"tls_key":      config.TLSKeyFile,
+			"tls_port":     appConfig.Network.TLSPort,
+			"tls_cert":     appConfig.Network.TLSCertFile,
+			"tls_key":      appConfig.Network.TLSKeyFile,
 		}).Info("TLS configuration")
 	}
 	
-	// Log HTTP configuration
+	// HTTP configuration
 	logger.WithFields(logrus.Fields{
-		"http_enabled":       config.HTTPEnabled,
-		"http_port":          config.HTTPPort,
-		"http_metrics":       config.HTTPEnableMetrics,
-		"http_api":           config.HTTPEnableAPI,
+		"http_enabled":       appConfig.HTTP.Enabled,
+		"http_port":          appConfig.HTTP.Port,
+		"http_metrics":       appConfig.HTTP.EnableMetrics,
+		"http_api":           appConfig.HTTP.EnableAPI,
+		"http_read_timeout":  appConfig.HTTP.ReadTimeout,
+		"http_write_timeout": appConfig.HTTP.WriteTimeout,
 	}).Info("HTTP server configuration")
 	
+	// Media configuration
 	logger.WithFields(logrus.Fields{
-		"srtp_enabled":      config.EnableSRTP,
-		"rtp_port_range":    fmt.Sprintf("%d-%d", config.RTPPortMin, config.RTPPortMax),
-		"recording_dir":     config.RecordingDir,
-		"stt_vendor":        config.DefaultVendor,
-		"nat_traversal":     config.BehindNAT,
-		"supported_codecs":  config.SupportedCodecs,
-		"max_calls":         config.MaxConcurrentCalls,
-	}).Info("Media and processing configuration")
+		"srtp_enabled":      appConfig.Network.EnableSRTP,
+		"rtp_port_range":    fmt.Sprintf("%d-%d", appConfig.Network.RTPPortMin, appConfig.Network.RTPPortMax),
+		"recording_dir":     appConfig.Recording.Directory,
+		"recording_max_duration": appConfig.Recording.MaxDuration,
+		"recording_cleanup_days": appConfig.Recording.CleanupDays,
+	}).Info("Media configuration")
 	
-	if config.BehindNAT {
-		logger.WithField("stun_servers", config.STUNServers).Info("STUN configuration")
+	// STT configuration
+	logger.WithFields(logrus.Fields{
+		"stt_vendor":        appConfig.STT.DefaultVendor,
+		"supported_vendors": appConfig.STT.SupportedVendors,
+		"supported_codecs":  appConfig.STT.SupportedCodecs,
+	}).Info("Speech-to-text configuration")
+	
+	// Resource configuration
+	logger.WithFields(logrus.Fields{
+		"max_calls": appConfig.Resources.MaxConcurrentCalls,
+	}).Info("Resource configuration")
+	
+	// NAT configuration
+	if appConfig.Network.BehindNAT {
+		logger.WithField("stun_servers", appConfig.Network.STUNServers).Info("STUN configuration")
 	}
-}
-
-// contains checks if a string is in a slice
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	
+	// Redundancy configuration
+	logger.WithFields(logrus.Fields{
+		"redundancy_enabled": appConfig.Redundancy.Enabled,
+		"session_timeout":    appConfig.Redundancy.SessionTimeout,
+		"check_interval":     appConfig.Redundancy.SessionCheckInterval,
+		"storage_type":       appConfig.Redundancy.StorageType,
+	}).Info("Redundancy configuration")
 }
