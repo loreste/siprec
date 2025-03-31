@@ -60,6 +60,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
+			forwarder.Logger.WithField("call_uuid", callUUID).Info("Setting up SRTP session")
+			
 			// Set up SRTP key management
 			keyingMaterial := make([]byte, 30) // 16 bytes for master key, 14 bytes for salt
 			if _, err := rand.Read(keyingMaterial); err != nil {
@@ -67,18 +69,38 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
-			// Create SRTP session
+			// Create SRTP session with AES-128 Counter Mode and HMAC-SHA1 authentication
+			// RFC 3711 defines these SRTP parameters
 			srtpConfig := &srtp.Config{
 				Profile: srtp.ProtectionProfileAes128CmHmacSha1_80,
 			}
+			
+			// Copy key material to configuration
 			copy(srtpConfig.Keys.LocalMasterKey[:], keyingMaterial[:16])
 			copy(srtpConfig.Keys.LocalMasterSalt[:], keyingMaterial[16:])
+			
+			// Set up remote key - in a real implementation, this would be negotiated
+			// For testing, we'll use the same key for local and remote
+			copy(srtpConfig.Keys.RemoteMasterKey[:], keyingMaterial[:16])
+			copy(srtpConfig.Keys.RemoteMasterSalt[:], keyingMaterial[16:])
+			
+			// Store key material in the forwarder for SDP use
+			forwarder.SRTPMasterKey = make([]byte, 16)
+			forwarder.SRTPMasterSalt = make([]byte, 14)
+			copy(forwarder.SRTPMasterKey, keyingMaterial[:16])
+			copy(forwarder.SRTPMasterSalt, keyingMaterial[16:])
 
+			// Create SRTP session
 			srtpSession, err = srtp.NewSessionSRTP(udpConn, srtpConfig)
 			if err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to set up SRTP session")
 				return
 			}
+			
+			forwarder.Logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"profile": "AES_CM_128_HMAC_SHA1_80",
+			}).Info("SRTP session successfully set up")
 		}
 
 		// Create pipes for streaming audio data
@@ -122,26 +144,68 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 				// Process RTP packet
 				if config.EnableSRTP && srtpSession != nil {
-					// Process SRTP packet (simplified - real impl would handle SSRC correctly)
+					forwarder.SRTPEnabled = true
+					
+					// Process SRTP packet
 					// Get a buffer from the pool
 					bufPtr := BufferPool.Get()
 					decryptedRTP := bufPtr.([]byte)
 					defer BufferPool.Put(bufPtr)
-
-					// In a real implementation, we would use the correct SSRC
-					readStream, err := srtpSession.OpenReadStream(0)
+					
+					// Extract SSRC from RTP packet header
+					// RFC 3550 - RTP header format:
+					// 0                   1                   2                   3
+					// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+					// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+					// |V=2|P|X|  CC   |M|     PT      |       sequence number         |
+					// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+					// |                           timestamp                           |
+					// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+					// |           synchronization source (SSRC) identifier            |
+					// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+					
+					// SSRC is at bytes 8-11 in the RTP header
+					var ssrc uint32
+					if n >= 12 { // Ensure we have enough bytes for a complete RTP header
+						ssrc = uint32(buffer[8])<<24 | uint32(buffer[9])<<16 | uint32(buffer[10])<<8 | uint32(buffer[11])
+					} else {
+						// Default SSRC if header is incomplete
+						ssrc = 0
+					}
+					
+					// Open a read stream with the correct SSRC
+					readStream, err := srtpSession.OpenReadStream(ssrc)
 					if err != nil {
-						continue
+						forwarder.Logger.WithError(err).WithFields(logrus.Fields{
+							"call_uuid": callUUID,
+							"ssrc":      ssrc,
+						}).Debug("Failed to open SRTP read stream, trying default SSRC")
+						
+						// Try with default SSRC as fallback
+						readStream, err = srtpSession.OpenReadStream(0)
+						if err != nil {
+							continue
+						}
 					}
 
 					n, err = readStream.Read(decryptedRTP)
 					if err != nil {
+						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to read from SRTP stream")
 						continue
 					}
 
 					// Write decrypted packet to pipe
 					if _, err := mainPw.Write(decryptedRTP[:n]); err != nil {
 						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+					}
+					
+					// Log successful SRTP decryption (only for debugging, remove in production)
+					if forwarder.Logger.GetLevel() >= logrus.DebugLevel {
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid": callUUID,
+							"ssrc":      ssrc,
+							"bytes":     n,
+						}).Debug("Successfully decrypted SRTP packet")
 					}
 				} else {
 					// Process regular RTP packet

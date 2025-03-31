@@ -1,11 +1,28 @@
 package sip
 
 import (
+	"encoding/base64"
+	"fmt"
 	"strings"
 	
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
 )
+
+// SRTPKeyInfo holds SRTP key information for SDP crypto attributes
+type SRTPKeyInfo struct {
+	// Master key for SRTP (16 bytes for AES-128)
+	MasterKey []byte
+	
+	// Master salt for SRTP (14 bytes recommended)
+	MasterSalt []byte
+	
+	// SRTP crypto profile (e.g., AES_CM_128_HMAC_SHA1_80)
+	Profile string
+	
+	// Key lifetime in packets (optional)
+	KeyLifetime int
+}
 
 // SDPOptions holds the options for SDP generation
 type SDPOptions struct {
@@ -26,6 +43,12 @@ type SDPOptions struct {
 	
 	// Specific port to use, or 0 for dynamic port allocation
 	RTPPort int
+	
+	// Whether to enable SRTP
+	EnableSRTP bool
+	
+	// SRTP key information for SDP crypto attributes
+	SRTPKeyInfo *SRTPKeyInfo
 }
 
 // generateSDP generates an SDP response based on the provided options
@@ -92,6 +115,42 @@ func (h *Handler) generateSDP(receivedSDP *sdp.SessionDescription, options SDPOp
 		if options.BehindNAT && options.IncludeICE {
 			// Add ICE attributes for NAT traversal
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "rtcp-mux", Value: ""})
+		}
+		
+		// Add SRTP crypto attributes if SRTP is enabled
+		if options.EnableSRTP && options.SRTPKeyInfo != nil {
+			// Add 'RTP/SAVP' transport if not already present
+			protoUpdated := false
+			for i, proto := range media.MediaName.Protos {
+				if proto == "RTP/AVP" {
+					media.MediaName.Protos[i] = "RTP/SAVP"
+					protoUpdated = true
+					break
+				}
+			}
+			
+			if !protoUpdated && len(media.MediaName.Protos) > 0 {
+				// If we couldn't update an existing proto, just set the first one
+				media.MediaName.Protos[0] = "RTP/SAVP"
+			}
+
+			// Add crypto attribute (RFC 4568 format: tag AES_CM_128_HMAC_SHA1_80 inline:Base64Key|Base64Salt|lifetime|MKI
+			// Base64 encode the key material
+			base64KeySalt := base64.StdEncoding.EncodeToString(append(options.SRTPKeyInfo.MasterKey, options.SRTPKeyInfo.MasterSalt...))
+			cryptoLine := fmt.Sprintf("1 %s inline:%s", options.SRTPKeyInfo.Profile, base64KeySalt)
+			
+			// Add lifetime if specified
+			if options.SRTPKeyInfo.KeyLifetime > 0 {
+				cryptoLine += fmt.Sprintf("|2^%d", options.SRTPKeyInfo.KeyLifetime)
+			}
+			
+			newAttributes = append(newAttributes, sdp.Attribute{Key: "crypto", Value: cryptoLine})
+			
+			// Log the crypto addition
+			h.Logger.WithFields(logrus.Fields{
+				"profile": options.SRTPKeyInfo.Profile,
+				"media":   media.MediaName.Media,
+			}).Debug("Added SRTP crypto attribute to SDP")
 		}
 		
 		newMedia := &sdp.MediaDescription{

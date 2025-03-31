@@ -417,6 +417,17 @@ func (h *Handler) handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction)
 		ExternalIP: h.Config.MediaConfig.ExternalIP,
 		IncludeICE: true,
 		RTPPort:    rtpPort,
+		EnableSRTP: h.Config.MediaConfig.EnableSRTP,
+	}
+	
+	// Add SRTP information if enabled
+	if h.Config.MediaConfig.EnableSRTP {
+		options.SRTPKeyInfo = &SRTPKeyInfo{
+			Profile:      "AES_CM_128_HMAC_SHA1_80",
+			KeyLifetime:  2147483647, // 2^31 per RFC 3711
+			MasterKey:    callData.Forwarder.SRTPMasterKey,
+			MasterSalt:   callData.Forwarder.SRTPMasterSalt,
+		}
 	}
 	
 	newSDP := h.generateSDP(sdpParsed, options)
@@ -600,6 +611,17 @@ func (h *Handler) recoverSession(req *sip.Request, tx sip.ServerTransaction, old
 		ExternalIP: h.Config.MediaConfig.ExternalIP,
 		IncludeICE: true,
 		RTPPort:    rtpPort,
+		EnableSRTP: h.Config.MediaConfig.EnableSRTP,
+	}
+	
+	// Add SRTP information if enabled
+	if h.Config.MediaConfig.EnableSRTP {
+		options.SRTPKeyInfo = &SRTPKeyInfo{
+			Profile:      "AES_CM_128_HMAC_SHA1_80",
+			KeyLifetime:  2147483647, // 2^31 per RFC 3711
+			MasterKey:    forwarder.SRTPMasterKey,
+			MasterSalt:   forwarder.SRTPMasterSalt,
+		}
 	}
 	
 	newSDP := h.generateSDP(sdpParsed, options)
