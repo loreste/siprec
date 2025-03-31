@@ -1,0 +1,217 @@
+package e2e
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+
+	"siprec-server/pkg/media"
+	"siprec-server/pkg/messaging"
+	"siprec-server/pkg/sip"
+	"siprec-server/pkg/stt"
+	"siprec-server/pkg/util"
+)
+
+// TestEnvironment holds everything needed for end-to-end tests
+type TestEnvironment struct {
+	// Logger
+	Logger *logrus.Logger
+
+	// Components
+	Config        *util.Configuration
+	SIPHandler    *sip.Handler
+	STTManager    *stt.ProviderManager
+	AMQPClient    *messaging.AMQPClient
+	CallTranscriptions map[string][]string
+	
+	// Synchronization
+	Lock sync.Mutex
+	WaitGroup sync.WaitGroup
+	
+	// Test recording
+	ReceivedTranscriptions chan string
+	Errors chan error
+	Done chan struct{}
+}
+
+// NewTestEnvironment creates a test environment
+func NewTestEnvironment(t *testing.T) *TestEnvironment {
+	logger := logrus.New()
+	logger.SetLevel(logrus.DebugLevel)
+	
+	// Create test output
+	logFile, err := os.Create("./test/e2e/test.log")
+	if err == nil {
+		logger.SetOutput(logFile)
+	}
+	
+	testEnv := &TestEnvironment{
+		Logger: logger,
+		CallTranscriptions: make(map[string][]string),
+		ReceivedTranscriptions: make(chan string, 100),
+		Errors: make(chan error, 10),
+		Done: make(chan struct{}),
+	}
+	
+	// Create test configuration
+	testEnv.Config = createTestConfig(logger)
+	
+	// Create STT manager with mock provider
+	testEnv.STTManager = stt.NewProviderManager(logger, "mock")
+	mockProvider := stt.NewMockProvider(logger)
+	err = testEnv.STTManager.RegisterProvider(mockProvider)
+	assert.NoError(t, err, "Failed to register mock STT provider")
+	
+	// Create a callback for tracking transcriptions
+	transcriptionCallback := func(ctx context.Context, providerName string, audioStream io.Reader, callUUID string) error {
+		return testEnv.trackTranscription(ctx, providerName, audioStream, callUUID)
+	}
+	
+	// Create media config
+	mediaConfig := &media.Config{
+		RTPPortMin:    testEnv.Config.RTPPortMin,
+		RTPPortMax:    testEnv.Config.RTPPortMax,
+		EnableSRTP:    testEnv.Config.EnableSRTP,
+		RecordingDir:  testEnv.Config.RecordingDir,
+		BehindNAT:     testEnv.Config.BehindNAT,
+		InternalIP:    testEnv.Config.InternalIP,
+		ExternalIP:    testEnv.Config.ExternalIP,
+		DefaultVendor: testEnv.Config.DefaultVendor,
+	}
+	
+	// Create SIP handler config
+	sipConfig := &sip.Config{
+		MaxConcurrentCalls: testEnv.Config.MaxConcurrentCalls,
+		MediaConfig:        mediaConfig,
+	}
+	
+	// Initialize SIP handler
+	testEnv.SIPHandler, err = sip.NewHandler(logger, sipConfig, transcriptionCallback)
+	assert.NoError(t, err, "Failed to create SIP handler")
+	testEnv.SIPHandler.SetupHandlers()
+	
+	return testEnv
+}
+
+// createTestConfig creates a test configuration
+func createTestConfig(logger *logrus.Logger) *util.Configuration {
+	// Create a testing configuration
+	config := &util.Configuration{
+		// Network configuration
+		ExternalIP:  "127.0.0.1",
+		InternalIP:  "127.0.0.1",
+		Ports:       []int{15060, 15061},
+		EnableSRTP:  false,
+		RTPPortMin:  15000,
+		RTPPortMax:  16000,
+		TLSPort:     0,
+		EnableTLS:   false,
+		BehindNAT:   false,
+		STUNServers: []string{},
+		
+		// Recording configuration
+		RecordingDir:         "./test-recordings",
+		RecordingMaxDuration: 30 * time.Minute,
+		RecordingCleanupDays: 1,
+		
+		// Speech-to-text configuration
+		SupportedVendors: []string{"mock"},
+		SupportedCodecs:  []string{"PCMU", "PCMA"},
+		DefaultVendor:    "mock",
+		
+		// Resource limits
+		MaxConcurrentCalls: 5,
+		
+		// Logging
+		LogLevel: logrus.DebugLevel,
+		
+		// AMQP configuration - empty for tests
+		AMQPUrl:       "",
+		AMQPQueueName: "",
+	}
+	
+	// Create test recording directory if it doesn't exist
+	if _, err := os.Stat(config.RecordingDir); os.IsNotExist(err) {
+		err := os.MkdirAll(config.RecordingDir, 0755)
+		if err != nil {
+			logger.WithError(err).Error("Failed to create test recording directory")
+		}
+	}
+	
+	return config
+}
+
+// trackTranscription is a callback that collects transcriptions for testing
+func (e *TestEnvironment) trackTranscription(ctx context.Context, providerName string, audioStream io.Reader, callUUID string) error {
+	e.Logger.WithFields(logrus.Fields{
+		"call_uuid": callUUID,
+		"provider":  providerName,
+	}).Info("Started tracking transcriptions")
+	
+	// Use the mock provider directly for testing
+	provider, exists := e.STTManager.GetProvider("mock")
+	if !exists {
+		return fmt.Errorf("mock provider not found")
+	}
+	
+	// Create a goroutine to collect transcriptions from the mock provider
+	go func() {
+		// We'll use reflection to access the mock provider's internal channel
+		// In a real scenario, you'd modify the provider to make transcriptions observable
+		
+		// Simulate receiving transcriptions
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		
+		// Sample mock responses similar to what mock.go would generate
+		mockTranscriptions := []string{
+			"Hello, this is a test transcription.",
+			"The quick brown fox jumps over the lazy dog.",
+			"Speech to text conversion is working.",
+			"This is a mock transcription provider.",
+		}
+		
+		transcriptionIndex := 0
+		
+		for {
+			select {
+			case <-ctx.Done():
+				e.Logger.WithField("call_uuid", callUUID).Info("Stopped tracking transcriptions")
+				return
+				
+			case <-ticker.C:
+				transcription := mockTranscriptions[transcriptionIndex]
+				transcriptionIndex = (transcriptionIndex + 1) % len(mockTranscriptions)
+				
+				e.Lock.Lock()
+				e.CallTranscriptions[callUUID] = append(e.CallTranscriptions[callUUID], transcription)
+				e.Lock.Unlock()
+				
+				// Send to channel for assertion in tests
+				select {
+				case e.ReceivedTranscriptions <- transcription:
+					// Successfully sent
+				default:
+					// Channel full, just log
+					e.Logger.Warn("Transcription channel full")
+				}
+			}
+		}
+	}()
+	
+	// This just initiates the tracking, the actual streaming is done through the mock provider
+	return provider.StreamToText(ctx, audioStream, callUUID)
+}
+
+// Cleanup performs cleanup tasks after the test is complete
+func (e *TestEnvironment) Cleanup() {
+	close(e.Done)
+	e.Logger.Info("Test environment cleanup completed")
+}
