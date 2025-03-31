@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -279,9 +281,66 @@ func startSIPServer(wg *sync.WaitGroup) {
 	// Check if TLS is enabled
 	if appConfig.Network.EnableTLS && appConfig.Network.TLSPort != 0 {
 		tlsAddress := fmt.Sprintf("%s:%d", ip, appConfig.Network.TLSPort)
-		logger.WithField("address", tlsAddress).Info("Starting SIP server on TLS")
-		// TODO: Implement TLS support
-		logger.Warn("TLS support is not yet implemented")
+		
+		// Verify TLS certificate and key files exist
+		if appConfig.Network.TLSCertFile == "" || appConfig.Network.TLSKeyFile == "" {
+			logger.Warn("TLS is enabled but certificate or key file is not specified, TLS will not be started")
+			return
+		}
+		
+		// Get absolute paths for certificate files
+		certPath, _ := filepath.Abs(appConfig.Network.TLSCertFile)
+		keyPath, _ := filepath.Abs(appConfig.Network.TLSKeyFile)
+		
+		logger.WithFields(logrus.Fields{
+			"cert_path": certPath,
+			"key_path": keyPath,
+		}).Debug("TLS certificate file paths")
+		
+		// Check if certificate and key files exist
+		if _, err := os.Stat(appConfig.Network.TLSCertFile); os.IsNotExist(err) {
+			logger.WithField("cert_file", appConfig.Network.TLSCertFile).Error("TLS certificate file does not exist, TLS will not be started")
+			return
+		}
+		
+		if _, err := os.Stat(appConfig.Network.TLSKeyFile); os.IsNotExist(err) {
+			logger.WithField("key_file", appConfig.Network.TLSKeyFile).Error("TLS key file does not exist, TLS will not be started")
+			return
+		}
+		
+		// Load and validate TLS certificate
+		cert, err := tls.LoadX509KeyPair(appConfig.Network.TLSCertFile, appConfig.Network.TLSKeyFile)
+		if err != nil {
+			logger.WithError(err).Error("Failed to load TLS certificate and key, TLS will not be started")
+			return
+		}
+		
+		// Set up TLS configuration
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+		}
+		
+		logger.WithFields(logrus.Fields{
+			"address": tlsAddress,
+			"port": appConfig.Network.TLSPort,
+		}).Info("Starting SIP server on TLS")
+		
+		// Start TLS server in a separate goroutine
+		go func() {
+			// The correct signature is ListenAndServeTLS(ctx, network, addr, tlsConfig)
+			if err := sipHandler.Server.ListenAndServeTLS(
+				context.Background(),
+				"tcp", // Use TCP as the network type for TLS
+				tlsAddress,
+				tlsConfig,
+			); err != nil {
+				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
+				return
+			}
+			
+			logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
+		}()
 	}
 	
 	// Keep server running
