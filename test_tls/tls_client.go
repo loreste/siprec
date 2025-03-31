@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func main() {
+func runTLSClient() {
 	config := &tls.Config{
 		InsecureSkipVerify: true,
 	}
