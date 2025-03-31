@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -88,27 +89,178 @@ func runClient() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil {
-		log.Printf("Failed to read data: %v", err)
-		return
-	}
+	// Read multiple requests
+	for {
+		buf := make([]byte, 8192)
+		n, err := conn.Read(buf)
+		if err != nil {
+			log.Printf("Connection closed or read error: %v", err)
+			return
+		}
 
-	fmt.Printf("Received request:\n%s\n", string(buf[:n]))
+		request := string(buf[:n])
+		fmt.Printf("Received request:\n%s\n", request)
 
-	// Send a basic SIP 200 OK response
-	response := "SIP/2.0 200 OK\r\n" +
-		"Via: SIP/2.0/TLS 127.0.0.1:9999;branch=z9hG4bK-test\r\n" +
-		"To: <sip:test@127.0.0.1>\r\n" +
-		"From: <sip:tester@127.0.0.1>;tag=test123\r\n" +
-		"Call-ID: test-call-id\r\n" +
-		"CSeq: 1 OPTIONS\r\n" +
-		"Content-Length: 0\r\n\r\n"
-
-	_, err = conn.Write([]byte(response))
-	if err != nil {
-		log.Printf("Failed to send response: %v", err)
-		return
+		// Parse the request to construct appropriate response
+		if strings.Contains(request, "INVITE") {
+			// Extract key headers for the response
+			var via, to, from, callID, cseq string
+			
+			lines := strings.Split(request, "\r\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "Via:") {
+					via = line
+				} else if strings.HasPrefix(line, "To:") {
+					to = line
+				} else if strings.HasPrefix(line, "From:") {
+					from = line
+				} else if strings.HasPrefix(line, "Call-ID:") {
+					callID = line
+				} else if strings.HasPrefix(line, "CSeq:") {
+					cseq = line
+				}
+			}
+			
+			// Create a tag for the To header
+			toTag := ";tag=responder-tag"
+			if strings.Contains(to, ";tag=") {
+				// Already has a tag, don't add another
+				toTag = ""
+			}
+			
+			// Detect if this is a SIPREC INVITE
+			isSiprec := strings.Contains(request, "application/rs-metadata+xml")
+			
+			// Create proper response
+			if isSiprec {
+				// For SIPREC, respond with 200 OK and minimal SDP
+				sdp := "v=0\r\n" +
+					"o=- 1141236 1141236 IN IP4 127.0.0.1\r\n" +
+					"s=SIP Call\r\n" +
+					"c=IN IP4 127.0.0.1\r\n" +
+					"t=0 0\r\n" +
+					"m=audio 20000 RTP/AVP 0 8\r\n" +
+					"a=rtpmap:0 PCMU/8000\r\n" +
+					"a=rtpmap:8 PCMA/8000\r\n" +
+					"a=recvonly\r\n"
+				
+				contentLength := len(sdp)
+				
+				response := "SIP/2.0 200 OK\r\n" +
+					via + "\r\n" +
+					to + toTag + "\r\n" +
+					from + "\r\n" +
+					callID + "\r\n" +
+					cseq + "\r\n" +
+					"Contact: <sip:responder@127.0.0.1:5063;transport=tls>\r\n" +
+					"Content-Type: application/sdp\r\n" +
+					fmt.Sprintf("Content-Length: %d\r\n\r\n", contentLength) +
+					sdp
+				
+				// Send the response
+				_, err = conn.Write([]byte(response))
+				if err != nil {
+					log.Printf("Failed to send SIPREC INVITE response: %v", err)
+					return
+				}
+				
+			} else {
+				// Regular INVITE, just respond with minimal SDP
+				sdp := "v=0\r\n" +
+					"o=- 1141236 1141236 IN IP4 127.0.0.1\r\n" +
+					"s=SIP Call\r\n" +
+					"c=IN IP4 127.0.0.1\r\n" +
+					"t=0 0\r\n" +
+					"m=audio 20000 RTP/AVP 0 8\r\n" +
+					"a=rtpmap:0 PCMU/8000\r\n" +
+					"a=rtpmap:8 PCMA/8000\r\n" +
+					"a=sendrecv\r\n"
+				
+				contentLength := len(sdp)
+				
+				response := "SIP/2.0 200 OK\r\n" +
+					via + "\r\n" +
+					to + toTag + "\r\n" +
+					from + "\r\n" +
+					callID + "\r\n" +
+					cseq + "\r\n" +
+					"Contact: <sip:responder@127.0.0.1:5063;transport=tls>\r\n" +
+					"Content-Type: application/sdp\r\n" +
+					fmt.Sprintf("Content-Length: %d\r\n\r\n", contentLength) +
+					sdp
+				
+				// Send the response
+				_, err = conn.Write([]byte(response))
+				if err != nil {
+					log.Printf("Failed to send regular INVITE response: %v", err)
+					return
+				}
+			}
+			
+			log.Printf("Sent 200 OK response to INVITE")
+			
+		} else if strings.Contains(request, "OPTIONS") {
+			// Extract key headers for the response
+			var via, to, from, callID, cseq string
+			
+			lines := strings.Split(request, "\r\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "Via:") {
+					via = line
+				} else if strings.HasPrefix(line, "To:") {
+					to = line
+				} else if strings.HasPrefix(line, "From:") {
+					from = line
+				} else if strings.HasPrefix(line, "Call-ID:") {
+					callID = line
+				} else if strings.HasPrefix(line, "CSeq:") {
+					cseq = line
+				}
+			}
+			
+			// Create a tag for the To header
+			toTag := ";tag=responder-tag"
+			if strings.Contains(to, ";tag=") {
+				// Already has a tag, don't add another
+				toTag = ""
+			}
+			
+			// Respond to OPTIONS with Allow and Supported headers
+			response := "SIP/2.0 200 OK\r\n" +
+				via + "\r\n" +
+				to + toTag + "\r\n" +
+				from + "\r\n" +
+				callID + "\r\n" +
+				cseq + "\r\n" +
+				"Contact: <sip:responder@127.0.0.1:5063;transport=tls>\r\n" +
+				"Allow: INVITE, ACK, CANCEL, BYE, OPTIONS\r\n" +
+				"Supported: replaces, siprec\r\n" +
+				"Content-Length: 0\r\n\r\n"
+			
+			// Send the response
+			_, err = conn.Write([]byte(response))
+			if err != nil {
+				log.Printf("Failed to send OPTIONS response: %v", err)
+				return
+			}
+			log.Printf("Sent 200 OK response to OPTIONS")
+			
+		} else {
+			// Generic response for other request types
+			response := "SIP/2.0 200 OK\r\n" +
+				"Via: SIP/2.0/TLS 127.0.0.1:9999;branch=z9hG4bK-test\r\n" +
+				"To: <sip:test@127.0.0.1>;tag=responder-tag\r\n" +
+				"From: <sip:tester@127.0.0.1>;tag=test123\r\n" +
+				"Call-ID: test-call-id\r\n" +
+				"CSeq: 1 UNKNOWN\r\n" +
+				"Content-Length: 0\r\n\r\n"
+				
+			_, err = conn.Write([]byte(response))
+			if err != nil {
+				log.Printf("Failed to send generic response: %v", err)
+				return
+			}
+			log.Printf("Sent generic 200 OK response")
+		}
 	}
 }
