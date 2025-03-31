@@ -22,6 +22,13 @@ type RTPForwarder struct {
 	RecordingSession *siprec.RecordingSession // SIPREC session information
 	RecordingPaused  bool                     // Flag to indicate if recording is paused
 	Logger           *logrus.Logger
+	
+	// SRTP-related fields
+	SRTPEnabled    bool       // Whether SRTP is enabled for this forwarder
+	SRTPMasterKey  []byte     // SRTP master key for crypto attribute in SDP
+	SRTPMasterSalt []byte     // SRTP master salt for crypto attribute in SDP
+	SRTPKeyLifetime int       // SRTP key lifetime in packets (optional)
+	SRTPProfile    string     // SRTP crypto profile (e.g., AES_CM_128_HMAC_SHA1_80)
 }
 
 // NewRTPForwarder creates a new RTP forwarder
@@ -33,6 +40,9 @@ func NewRTPForwarder(port int, timeout time.Duration, recordingSession *siprec.R
 		Timeout:          timeout,
 		RecordingSession: recordingSession,
 		Logger:           logger,
+		SRTPEnabled:      false,
+		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
+		SRTPKeyLifetime:  2^31,                      // Default lifetime from RFC 3711
 	}
 }
 
