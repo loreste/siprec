@@ -9,26 +9,10 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	pkg_errors "siprec-server/pkg/errors"
+	"siprec-server/pkg/errors"
 )
 
-// Config holds HTTP server configuration
-type Config struct {
-	Port            int           `json:"port"`
-	ReadTimeout     time.Duration `json:"read_timeout"`
-	WriteTimeout    time.Duration `json:"write_timeout"`
-	ShutdownTimeout time.Duration `json:"shutdown_timeout"`
-}
-
-// DefaultConfig returns default configuration for the HTTP server
-func DefaultConfig() *Config {
-	return &Config{
-		Port:            8080,
-		ReadTimeout:     10 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		ShutdownTimeout: 5 * time.Second,
-	}
-}
+// Use Config from config.go instead of defining it here
 
 // MetricsProvider is an interface that exposes metrics for the HTTP server
 type MetricsProvider interface {
@@ -192,6 +176,6 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 
 // ErrorResponse sends a standardized error response
 func (s *Server) ErrorResponse(w http.ResponseWriter, err error) {
-	pkg_errors.WriteError(w, err)
+	errors.WriteError(w, err)
 	s.logger.WithError(err).Warn("HTTP error response sent")
 }
