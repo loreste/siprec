@@ -20,8 +20,8 @@ run:
 
 # Run the environment test
 env-test:
-	@echo "Testing environment..."
-	@go run ./cmd/testenv
+	@echo "Testing environment variables..."
+	@go test ./test -run TestEnvironmentLoading
 
 # Run tests
 test:
