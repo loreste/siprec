@@ -404,3 +404,17 @@ func GetErrorLocation(err error) string {
 	}
 	return ""
 }
+
+// NewNotImplemented creates a new ErrNotImplemented error with additional context
+func NewNotImplemented(message string, fields ...map[string]interface{}) *Error {
+	err := New(message, fields...)
+	return &Error{
+		original: ErrNotImplemented,
+		message:  message,
+		fields:   err.fields,
+		stackPC:  err.stackPC,
+		file:     err.file,
+		line:     err.line,
+		Code:     "NOT_IMPLEMENTED",
+	}
+}

@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/errors"
 )
 
 // SIPHandlerAdapter adapts the SIP handler to provide metrics and session information
@@ -59,7 +60,7 @@ func (a *SIPHandlerAdapter) GetSessionByID(id string) (interface{}, error) {
 	}
 	
 	a.logger.Warn("SIP handler does not implement GetSession")
-	return nil, pkg_errors.NewNotImplemented("GetSession not implemented")
+	return nil, errors.NewNotImplemented("GetSession not implemented")
 }
 
 // GetAllSessions returns information about all active sessions
@@ -70,7 +71,7 @@ func (a *SIPHandlerAdapter) GetAllSessions() ([]interface{}, error) {
 	}
 	
 	a.logger.Warn("SIP handler does not implement GetAllSessions")
-	return nil, pkg_errors.NewNotImplemented("GetAllSessions not implemented")
+	return nil, errors.NewNotImplemented("GetAllSessions not implemented")
 }
 
 // GetSessionStatistics returns session statistics
