@@ -6,7 +6,7 @@ import (
 	"net/http"
 	
 	"github.com/sirupsen/logrus"
-	pkg_errors "siprec-server/pkg/errors"
+	"siprec-server/pkg/errors"
 )
 
 // SessionHandler handles HTTP requests related to recording sessions
@@ -59,7 +59,7 @@ func (h *SessionHandler) handleGetSessions(w http.ResponseWriter, r *http.Reques
 	sessions, err := h.service.GetAllSessions()
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to get sessions")
-		pkg_errors.WriteError(w, pkg_errors.Wrap(err, "Failed to get sessions"))
+		errors.WriteError(w, errors.Wrap(err, "Failed to get sessions"))
 		return
 	}
 	
@@ -76,7 +76,7 @@ func (h *SessionHandler) handleGetSessionByID(w http.ResponseWriter, r *http.Req
 	session, err := h.service.GetSessionByID(id)
 	if err != nil {
 		h.logger.WithError(err).WithField("session_id", id).Error("Failed to get session")
-		pkg_errors.WriteError(w, pkg_errors.Wrap(err, fmt.Sprintf("Failed to get session %s", id)))
+		errors.WriteError(w, errors.Wrap(err, fmt.Sprintf("Failed to get session %s", id)))
 		return
 	}
 	

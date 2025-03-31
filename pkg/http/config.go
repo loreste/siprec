@@ -2,8 +2,8 @@ package http
 
 import "time"
 
-// ServerConfig holds the HTTP server configuration
-type ServerConfig struct {
+// Config holds the HTTP server configuration
+type Config struct {
 	// Port is the HTTP server port
 	Port int `json:"port" env:"HTTP_PORT" default:"8080"`
 	
@@ -15,6 +15,9 @@ type ServerConfig struct {
 	
 	// EnableMetrics determines if metrics should be enabled
 	EnableMetrics bool `json:"enable_metrics" env:"HTTP_ENABLE_METRICS" default:"true"`
+	
+	// EnableAPI determines if API endpoints should be enabled
+	EnableAPI bool `json:"enable_api" env:"HTTP_ENABLE_API" default:"true"`
 	
 	// MetricsPath is the path for metrics endpoint
 	MetricsPath string `json:"metrics_path" env:"HTTP_METRICS_PATH" default:"/metrics"`
@@ -38,12 +41,13 @@ type ServerConfig struct {
 }
 
 // NewDefaultConfig returns a new default configuration
-func NewDefaultConfig() *ServerConfig {
-	return &ServerConfig{
+func NewDefaultConfig() *Config {
+	return &Config{
 		Port:            8080,
 		Enabled:         true,
 		Path:            "/",
 		EnableMetrics:   true,
+		EnableAPI:       true,
 		MetricsPath:     "/metrics",
 		ReadTimeout:     10 * time.Second,
 		WriteTimeout:    30 * time.Second,
@@ -51,4 +55,9 @@ func NewDefaultConfig() *ServerConfig {
 		ShutdownTimeout: 5 * time.Second,
 		TLSEnabled:      false,
 	}
+}
+
+// DefaultConfig returns default configuration for the HTTP server (for compatibility)
+func DefaultConfig() *Config {
+	return NewDefaultConfig()
 }
