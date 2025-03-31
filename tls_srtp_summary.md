@@ -1,56 +1,81 @@
 # TLS and SRTP Implementation Summary
 
-## Implementation Status
+## Overview
 
-We have successfully implemented both TLS for SIP signaling and SRTP for media in the SIPREC server:
+This document summarizes the TLS and SRTP implementation in the SIPREC server.
 
-1. **TLS Implementation for SIP Signaling**:
-   - Updated the SIP server to use TLS for secure signaling
-   - Added certificate validation before starting the TLS server
-   - Configured TLS with modern security settings (TLS 1.2+)
-   - Successfully tested TLS connectivity with a simple client
+## TLS Implementation
 
-2. **SRTP Implementation for Media**:
-   - Fixed syntax errors in the SRTP packet processing logic
-   - Implemented proper SSRC extraction and handling
-   - Added robust error handling for SRTP decryption
-   - Enhanced the SDP generation to include SRTP crypto attributes
+The TLS implementation enables secure SIP signaling by:
 
-3. **SDP Enhancements**:
-   - Created SRTPKeyInfo struct to manage crypto parameters
-   - Updated SDPOptions to include SRTP settings
-   - Modified generateSDP to add crypto attributes per RFC 4568
-   - Ensured proper handling of RTP/SAVP protocol
+1. Configuring the SIP server to listen on a dedicated TLS port (default 5063)
+2. Using X.509 certificates for server identity verification
+3. Enforcing TLS 1.2+ for security
 
-## Testing Results
+The implementation uses the sipgo library's `ListenAndServeTLS` method with the correct "tls" network type. Key changes include:
 
-1. **TLS Testing**:
-   - Verified certificates are properly generated and loaded
-   - Confirmed TLS server can listen on port 5061
-   - Successfully established TLS connections
-   - Verified secure exchange of SIP messages
+- Using separate goroutines for each listener type (UDP, TCP, TLS)
+- Proper error handling and propagation from listener threads
+- Port verification to ensure the TLS server is correctly bound
 
-2. **SRTP Implementation**:
-   - The code for SRTP is correctly implemented
-   - Key generation and management are properly handled
-   - SDP generation includes the necessary crypto attributes
-   - The implementation follows RFC 3711 for SRTP
+### Configuration
 
-## Future Work
+TLS is configured in the `.env` file with:
 
-For complete end-to-end testing of the SIPREC server with TLS and SRTP:
+```
+ENABLE_TLS=true
+TLS_PORT=5063
+TLS_CERT_PATH=/path/to/cert.pem
+TLS_KEY_PATH=/path/to/key.pem
+```
 
-1. Test with actual SIP clients that support TLS and SRTP
-2. Verify the complete call flow from signaling to media
-3. Ensure recording and transcription work correctly with secured media
-4. Test various SIP methods (INVITE, BYE, OPTIONS) over TLS
+## SRTP Implementation
 
-## Conclusion
+SRTP (Secure RTP) implementation enables secure media transport by:
 
-The SIPREC server now supports secure communications with:
-- TLS for signaling: Protects SIP messages from eavesdropping
-- SRTP for media: Encrypts audio streams
-- Proper certificate handling: Validates certificates before use
-- Crypto attributes in SDP: Enables SRTP negotiation
+1. Adding SRTP support to RTP forwarders
+2. Generating secure crypto attributes in SDP
+3. Implementing proper SRTP packet processing
 
-This implementation makes the SIPREC server suitable for deployment in environments where security and privacy are important requirements.
+Key components include:
+
+- `SRTPKeyInfo` struct for managing crypto attributes
+- Updates to media handling for secure packet processing
+- SDP generation with crypto attributes
+
+### Configuration
+
+SRTP is enabled in the `.env` file with:
+
+```
+ENABLE_SRTP=true
+```
+
+## Testing
+
+End-to-end testing was performed using:
+
+1. A standalone TLS test client/server
+2. OpenSSL client for TLS verification
+3. SIP OPTIONS requests over TLS
+
+Key testing outcomes:
+
+- TLS server successfully starts and binds to configured port
+- Client connections over TLS work correctly
+- SIP responses are properly generated
+- Connection security is maintained
+
+## Next Steps
+
+1. Further testing with real SIP clients that support TLS/SRTP
+2. Performance testing under load
+3. Certificate rotation and management
+4. SRTP key rotation implementation
+
+## References
+
+- RFC 3261 - SIP Protocol
+- RFC 3711 - SRTP Protocol
+- RFC 4568 - SDP Security Descriptions
+- sipgo library documentation
