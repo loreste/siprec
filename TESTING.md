@@ -11,6 +11,7 @@ The SIPREC server uses multiple levels of testing to ensure quality and correctn
 3. **End-to-End Tests**: Test the complete system flow
 4. **Environment Tests**: Validate configuration and environment setup
 5. **Redundancy Tests**: Verify session resilience during failures
+6. **Security Tests**: Verify TLS and SRTP implementation
 
 ## Getting Started with Testing
 
@@ -191,6 +192,61 @@ The redundancy tests verify:
 4. **Media Continuity**: RTP streams continue with proper sequencing
 5. **Metadata Preservation**: All required metadata is preserved across reconnections
 
+## Security Tests
+
+Security tests verify the TLS and SRTP implementation to ensure secure communication for both signaling and media.
+
+### Running Security Tests
+
+To test TLS functionality:
+
+```bash
+chmod +x test_tls.sh
+./test_tls.sh
+```
+
+To test a complete secure session with both TLS and SRTP:
+
+```bash
+cd test_tls
+go build -o mock_invite_tls mock_invite_tls.go
+./mock_invite_tls
+```
+
+### Security Test Scenarios
+
+1. **TLS Connection Tests**:
+   - Verifies TLS server setup and certificate loading
+   - Tests TLS handshake and connection establishment
+   - Validates server identity through certificates
+   - Tests various TLS client connection patterns
+
+2. **SRTP Session Tests**:
+   - Tests SRTP key generation and exchange
+   - Verifies proper SDP crypto attribute generation
+   - Tests SRTP packet encryption and decryption
+   - Validates SRTP session setup and teardown
+
+3. **Security Shutdown Tests**:
+   - Ensures secure shutdown of TLS connections
+   - Verifies proper cleanup of security resources
+   - Tests graceful termination of encrypted sessions
+
+### Security Test Components
+
+1. **OpenSSL Client**: Tests basic TLS connectivity
+2. **Custom TLS Test Client**: Tests SIP over TLS scenarios
+3. **Mock SIP INVITE with SRTP**: Tests media encryption setup
+4. **TLS Connection Verification**: Ensures ports are properly listening
+
+### Best Practices for Security Tests
+
+1. **Certificate Validation**: Always verify certificate validation works correctly
+2. **Protocol Compliance**: Ensure TLS and SRTP implementations follow relevant RFCs
+3. **Key Testing**: Test key generation, exchange, and management processes
+4. **Connection Lifecycle**: Test the complete lifecycle of secure connections
+5. **Error Handling**: Test how security components handle invalid data or attacks
+
 ## End-to-End Tests
 
 End-to-end tests verify the complete SIPREC call flow from SIP signaling through RTP processing to speech recognition and transcription delivery. These tests are located in the `/test/e2e` directory.
@@ -315,7 +371,7 @@ Future improvements to the testing framework include:
 2. **Chaos Testing**: Simulating network failures and component crashes
 3. **Long-Running Tests**: Testing stability over extended periods
 4. **Real Device Testing**: Testing with actual SIP phones and PBXs
-5. **Security Testing**: Testing authentication and authorization
+5. **Security Testing**: Comprehensive security testing for TLS, SRTP, authentication, and authorization
 6. **Benchmark Tests**: Performance testing for scaling
 
 ## Contributing New Tests
