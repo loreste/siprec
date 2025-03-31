@@ -234,6 +234,17 @@ func initialize() error {
 		InternalIP:    appConfig.Network.InternalIP,
 		ExternalIP:    appConfig.Network.ExternalIP,
 		DefaultVendor: appConfig.STT.DefaultVendor,
+		// Initialize audio processing configuration with sensible defaults
+		AudioProcessing: media.AudioProcessingConfig{
+			Enabled:              true, // Force enable for testing
+			EnableVAD:            true,
+			VADThreshold:         0.02,
+			VADHoldTimeMs:        400,
+			EnableNoiseReduction: true,
+			NoiseReductionLevel:  0.01,
+			ChannelCount:         1,
+			MixChannels:          true,
+		},
 	}
 	
 	// Create SIP handler config
@@ -478,6 +489,15 @@ func logStartupConfig() {
 		"recording_max_duration": appConfig.Recording.MaxDuration,
 		"recording_cleanup_days": appConfig.Recording.CleanupDays,
 	}).Info("Media configuration")
+	
+	// Audio processing configuration
+	logger.WithFields(logrus.Fields{
+		"audio_processing_enabled": true, // Forced on for testing
+		"vad_enabled":             true,
+		"noise_reduction_enabled": true,
+		"channel_count":           1,
+		"mix_channels":            true,
+	}).Info("Audio processing configuration")
 	
 	// STT configuration
 	logger.WithFields(logrus.Fields{

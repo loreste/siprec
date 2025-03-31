@@ -63,6 +63,9 @@ type NetworkConfig struct {
 	
 	// STUN servers for NAT traversal
 	STUNServers []string `json:"stun_servers" env:"STUN_SERVER"`
+	
+	// Whether audio processing is enabled
+	EnableAudioProcessing bool `json:"enable_audio_processing" env:"ENABLE_AUDIO_PROCESSING" default:"true"`
 }
 
 // HTTPConfig holds HTTP server configurations
