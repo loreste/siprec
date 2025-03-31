@@ -95,6 +95,18 @@ You can test the SIPREC server using SIP testing tools like SIPp or Kamailio:
 sipp -sf siprec_invite.xml -m 1 -s 1000 127.0.0.1:5060
 ```
 
+### TLS and SIPREC XML Testing
+
+The repository includes a TLS test client that verifies:
+- Secure SIP over TLS connections
+- SIPREC XML content handling according to RFC 7865/7866
+- SDP media negotiation with SRTP support
+
+```bash
+# Run the TLS test script
+./test_tls.sh
+```
+
 ### Health Check API
 
 The server provides a health check API at port 8080:

@@ -128,6 +128,14 @@ SRTP functionality is tested using:
 2. Mock SIP clients that validate SRTP negotiation
 3. Media packet encryption/decryption tests
 
+### SIPREC XML Testing
+
+SIPREC XML functionality is tested using:
+
+1. A mock INVITE client that sends SIPREC XML content in a multipart MIME message
+2. XML parsing and validation according to RFC 7865/7866
+3. Verification of SIPREC session attributes including participants, streams, and associations
+
 ## Performance Considerations
 
 For optimal TLS and SRTP performance:
