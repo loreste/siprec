@@ -16,7 +16,7 @@ func main() {
 	// Check command line arguments
 	if len(os.Args) > 1 {
 		if os.Args[1] == "client" {
-			runClient()
+			runTLSClient()
 			return
 		} else if os.Args[1] == "audio_test" {
 			// Run with a fixed port for RTP rather than trying to use SIP signaling
