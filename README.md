@@ -8,9 +8,12 @@ A Session Recording Protocol (SIPREC) server implementation in Go with a focus o
 - **Failover Support**: Automatic session recovery after connection failures
 - **Dialog Replacement**: SIP Replaces header implementation for session continuity
 - **Media Stream Continuity**: Maintains RTP stream continuity during failovers
+- **Transport Layer Security (TLS)**: Secure SIP signaling with TLS support
+- **Media Encryption (SRTP)**: Secure Real-time Transport Protocol for encrypted media
 - **Docker Support**: Easy deployment with Docker and docker-compose
 - **Extensive Testing**: Comprehensive test suite for redundancy features
 - **SIP/SIPREC Protocol**: Support for RFC 7865/7866 for recording sessions
+- **Graceful Shutdown**: Clean termination of all resources and connections
 
 ## Project Structure
 
@@ -124,12 +127,19 @@ PORTS=5060,5061               # SIP listening ports
 RTP_PORT_MIN=10000            # RTP port range minimum
 RTP_PORT_MAX=20000            # RTP port range maximum
 
+# TLS/SRTP Configuration
+ENABLE_TLS=true               # Enable TLS for secure SIP signaling
+TLS_PORT=5063                 # TLS listening port
+TLS_CERT_PATH=./certs/cert.pem # Path to TLS certificate file
+TLS_KEY_PATH=./certs/key.pem  # Path to TLS key file
+ENABLE_SRTP=true              # Enable SRTP for secure media transport
+
 # Basic Configuration
 RECORDING_DIR=./recordings    # Directory to store recordings
 MAX_CONCURRENT_CALLS=500      # Maximum concurrent calls
 ```
 
-See [SESSION_REDUNDANCY.md](./docs/SESSION_REDUNDANCY.md) for detailed information about the session redundancy feature and [RFC_COMPLIANCE.md](./docs/RFC_COMPLIANCE.md) for details on RFC compliance.
+See [SESSION_REDUNDANCY.md](./docs/SESSION_REDUNDANCY.md) for detailed information about the session redundancy feature, [RFC_COMPLIANCE.md](./docs/RFC_COMPLIANCE.md) for details on RFC compliance, and [SECURITY.md](./docs/SECURITY.md) for information about TLS and SRTP security features.
 
 ## Redundancy Design
 
