@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -263,19 +264,47 @@ func startSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 	
 	ip := "0.0.0.0" // Listen on all interfaces
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	
-	// Add ports to waitgroup
+	// Create error channel to communicate errors from listener goroutines
+	errChan := make(chan error, 10)
+	
+	// Keep track of active listeners
+	var wgListeners sync.WaitGroup
+	
+	// Start UDP listeners
 	for _, port := range appConfig.Network.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
-		logger.WithField("address", address).Info("Starting SIP server on UDP")
-		if err := sipHandler.Server.ListenAndServe(context.Background(), "udp", address); err != nil {
-			logger.WithError(err).WithField("port", port).Fatal("Failed to start SIP server on UDP")
-		}
+		wgListeners.Add(1)
 		
-		logger.WithField("address", address).Info("Starting SIP server on TCP")
-		if err := sipHandler.Server.ListenAndServe(context.Background(), "tcp", address); err != nil {
-			logger.WithError(err).WithField("port", port).Fatal("Failed to start SIP server on TCP")
-		}
+		go func(address string, port int) {
+			defer wgListeners.Done()
+			
+			logger.WithField("address", address).Info("Starting SIP server on UDP")
+			if err := sipHandler.Server.ListenAndServe(ctx, "udp", address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on UDP")
+				errChan <- fmt.Errorf("UDP listener error: %w", err)
+				return
+			}
+		}(address, port)
+	}
+	
+	// Start TCP listeners
+	for _, port := range appConfig.Network.Ports {
+		address := fmt.Sprintf("%s:%d", ip, port)
+		wgListeners.Add(1)
+		
+		go func(address string, port int) {
+			defer wgListeners.Done()
+			
+			logger.WithField("address", address).Info("Starting SIP server on TCP")
+			if err := sipHandler.Server.ListenAndServe(ctx, "tcp", address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on TCP")
+				errChan <- fmt.Errorf("TCP listener error: %w", err)
+				return
+			}
+		}(address, port)
 	}
 	
 	// Check if TLS is enabled
@@ -315,7 +344,7 @@ func startSIPServer(wg *sync.WaitGroup) {
 			return
 		}
 		
-		// Set up TLS configuration
+		// Set up TLS configuration using sipgo's utility function or manual config
 		tlsConfig := &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			Certificates: []tls.Certificate{cert},
@@ -327,24 +356,55 @@ func startSIPServer(wg *sync.WaitGroup) {
 		}).Info("Starting SIP server on TLS")
 		
 		// Start TLS server in a separate goroutine
+		wgListeners.Add(1)
 		go func() {
-			// The correct signature is ListenAndServeTLS(ctx, network, addr, tlsConfig)
+			defer wgListeners.Done()
+			
+			// According to sipgo docs, use "tls" as the network type, not "tcp"
 			if err := sipHandler.Server.ListenAndServeTLS(
-				context.Background(),
-				"tcp", // Use TCP as the network type for TLS
+				ctx,
+				"tls", // Use TLS as the network type (not TCP)
 				tlsAddress,
 				tlsConfig,
 			); err != nil {
 				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
+				errChan <- fmt.Errorf("TLS listener error: %w", err)
 				return
 			}
 			
 			logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
 		}()
+		
+		// Verify TLS server started successfully by checking if the port is listening
+		// Allow time for the server to start
+		go func() {
+			time.Sleep(1 * time.Second)
+			
+			dialer := &net.Dialer{
+				Timeout: 2 * time.Second,
+			}
+			
+			conn, err := dialer.DialContext(ctx, "tcp", tlsAddress)
+			if err != nil {
+				logger.WithError(err).Warn("TLS port check failed - port does not appear to be listening")
+			} else {
+				conn.Close()
+				logger.WithField("port", appConfig.Network.TLSPort).Info("TLS port verified to be listening")
+			}
+		}()
 	}
 	
-	// Keep server running
-	select {}
+	// Keep server running until an error occurs or context is cancelled
+	select {
+	case err := <-errChan:
+		logger.WithError(err).Error("SIP server error, shutting down")
+		cancel()
+	case <-ctx.Done():
+		logger.Info("SIP server context cancelled, shutting down")
+	}
+	
+	// Wait for all listener goroutines to exit
+	wgListeners.Wait()
 }
 
 // logStartupConfig logs the current configuration
