@@ -1,0 +1,20 @@
+Implement TLS and SRTP support
+
+This commit adds comprehensive support for secure communications in the SIPREC server:
+
+1. TLS for SIP signaling:
+   - Implement proper certificate validation
+   - Run TLS server on port 5061
+   - Configure with modern TLS settings (TLS 1.2+)
+
+2. SRTP for media encryption:
+   - Fix syntax errors in SRTP packet processing
+   - Implement proper SSRC extraction and handling
+   - Add robust error recovery mechanisms
+
+3. SDP enhancements for SRTP:
+   - Add SRTPKeyInfo struct for crypto attributes
+   - Update SDP generation to include SRTP info
+   - Support RTP/SAVP protocol for secure media
+
+The implementation follows RFC 3711 for SRTP and RFC 4568 for SDP security descriptions.
