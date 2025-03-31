@@ -17,4 +17,26 @@ type Config struct {
 	
 	// Speech-to-text configuration
 	DefaultVendor string
+	
+	// Audio processing configuration
+	AudioProcessing AudioProcessingConfig
+}
+
+// AudioProcessingConfig holds audio processing settings
+type AudioProcessingConfig struct {
+	// General settings
+	Enabled bool
+	
+	// Voice Activity Detection
+	EnableVAD bool
+	VADThreshold float64
+	VADHoldTimeMs int
+	
+	// Noise Reduction
+	EnableNoiseReduction bool
+	NoiseReductionLevel float64
+	
+	// Multi-channel
+	ChannelCount int
+	MixChannels bool
 }

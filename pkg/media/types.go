@@ -29,6 +29,9 @@ type RTPForwarder struct {
 	SRTPMasterSalt []byte     // SRTP master salt for crypto attribute in SDP
 	SRTPKeyLifetime int       // SRTP key lifetime in packets (optional)
 	SRTPProfile    string     // SRTP crypto profile (e.g., AES_CM_128_HMAC_SHA1_80)
+	
+	// Audio processing
+	AudioProcessor  interface{} // Audio processing manager (will be *audio.ProcessingManager)
 }
 
 // NewRTPForwarder creates a new RTP forwarder
@@ -43,6 +46,7 @@ func NewRTPForwarder(port int, timeout time.Duration, recordingSession *siprec.R
 		SRTPEnabled:      false,
 		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
 		SRTPKeyLifetime:  2^31,                      // Default lifetime from RFC 3711
+		AudioProcessor:   nil,                        // Will be initialized in StartRTPForwarding
 	}
 }
 

@@ -4,20 +4,33 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() {
-	// Check if we should run as client or server
-	if len(os.Args) > 1 && os.Args[1] == "client" {
-		runClient()
-		return
+	// Check command line arguments
+	if len(os.Args) > 1 {
+		if os.Args[1] == "client" {
+			runClient()
+			return
+		} else if os.Args[1] == "audio_test" {
+			// Run with a fixed port for RTP rather than trying to use SIP signaling
+			runDirectAudioTest()
+			return
+		} else if os.Args[1] == "server" {
+			runServer()
+			return
+		}
 	}
 	
-	// Default: run as server
-	runServer()
+	// Default - client just sends direct RTP packets
+	fmt.Println("Sending direct RTP packets to port 15000 (no SIP signaling)")
+	sendTestRTPPackets(15000)
 }
 
 func runServer() {
@@ -31,13 +44,13 @@ func runServer() {
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	listener, err := tls.Listen("tcp", "127.0.0.1:5063", config)
+	listener, err := tls.Listen("tcp", "127.0.0.1:5064", config) // Use a different port 5064
 	if err != nil {
 		log.Fatalf("Failed to create listener: %v", err)
 	}
 	defer listener.Close()
 
-	fmt.Println("TLS server listening on 127.0.0.1:5063")
+	fmt.Println("TLS server listening on 127.0.0.1:5064")
 
 	for {
 		conn, err := listener.Accept()
@@ -84,6 +97,195 @@ func runClient() {
 	}
 
 	fmt.Printf("Received response:\n%s\n", string(buf[:n]))
+}
+
+// runDirectAudioTest sends test audio directly to a UDP port
+func runDirectAudioTest() {
+    fmt.Println("Running direct RTP packet test to target port 15000...")
+    
+    // Fixed port for SIPREC server test
+    rtpPort := 15000
+    
+    // Send RTP packets to test audio processing
+    fmt.Printf("Sending test RTP packets to port %d...\n", rtpPort)
+    sendTestRTPPackets(rtpPort)
+    
+    fmt.Println("RTP test complete")
+}
+
+// sendTestRTPPackets sends test RTP packets to the specified port
+func sendTestRTPPackets(port int) {
+	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		log.Printf("Failed to resolve address: %v", err)
+		return
+	}
+	
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		log.Printf("Failed to connect to UDP: %v", err)
+		return
+	}
+	defer conn.Close()
+	
+	// Generate test RTP packets (G.711 PCMU - 8000Hz, 20ms frames)
+	sequenceNumber := uint16(1000) // Starting sequence number
+	timestamp := uint32(0)         // Starting timestamp
+	ssrc := uint32(0x12345678)     // SSRC identifier
+	
+	// Create a basic RTP packet
+	createRTPPacket := func(seqNum uint16, ts uint32, payload []byte) []byte {
+		// RTP header - 12 bytes
+		/*
+		0                   1                   2                   3
+		0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		|V=2|P|X|  CC   |M|     PT      |       sequence number         |
+		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		|                           timestamp                           |
+		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		|           synchronization source (SSRC) identifier            |
+		+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+		*/
+		
+		packet := make([]byte, 12+len(payload))
+		
+		// Version=2, Padding=0, Extension=0, CSRC count=0
+		packet[0] = 0x80
+		// Marker=0, Payload Type=0 (PCMU)
+		packet[1] = 0x00
+		
+		// Sequence number (16 bits)
+		packet[2] = byte(seqNum >> 8)
+		packet[3] = byte(seqNum)
+		
+		// Timestamp (32 bits)
+		packet[4] = byte(ts >> 24)
+		packet[5] = byte(ts >> 16)
+		packet[6] = byte(ts >> 8)
+		packet[7] = byte(ts)
+		
+		// SSRC (32 bits)
+		packet[8] = byte(ssrc >> 24)
+		packet[9] = byte(ssrc >> 16)
+		packet[10] = byte(ssrc >> 8)
+		packet[11] = byte(ssrc)
+		
+		// Copy payload
+		copy(packet[12:], payload)
+		
+		return packet
+	}
+	
+	// Create synthetic audio data patterns
+	createAudioPattern := func(patternType string, length int) []byte {
+		data := make([]byte, length)
+		
+		switch patternType {
+		case "silence":
+			// Silence in PCMU is represented by value 0xFF (255)
+			for i := range data {
+				data[i] = 0xFF
+			}
+		case "tone":
+			// Simple tone pattern (alternating values)
+			for i := range data {
+				data[i] = byte(128 + (i % 16) * 8)
+			}
+		case "noise":
+			// Random noise
+			for i := range data {
+				data[i] = byte(rand.Intn(256))
+			}
+		default:
+			// Default pattern - continuous wave
+			for i := range data {
+				data[i] = byte(128 + int(127*math.Sin(float64(i)/10)))
+			}
+		}
+		
+		return data
+	}
+	
+	// Send a series of test patterns to exercise audio processing
+	// Each G.711 frame is 160 bytes (20ms at 8kHz)
+	frameSize := 160
+	
+	// First send silence for 1 second (50 frames) to establish noise floor
+	fmt.Println("Sending silence frames to establish noise floor...")
+	for i := 0; i < 50; i++ {
+		silenceFrame := createAudioPattern("silence", frameSize)
+		packet := createRTPPacket(sequenceNumber, timestamp, silenceFrame)
+		
+		_, err = conn.Write(packet)
+		if err != nil {
+			log.Printf("Failed to send RTP packet: %v", err)
+			return
+		}
+		
+		sequenceNumber++
+		timestamp += uint32(frameSize)
+		time.Sleep(20 * time.Millisecond) // 20ms frame interval
+	}
+	
+	// Then send a tone pattern for 1 second (50 frames)
+	fmt.Println("Sending tone frames to test voice detection...")
+	for i := 0; i < 50; i++ {
+		toneFrame := createAudioPattern("tone", frameSize)
+		packet := createRTPPacket(sequenceNumber, timestamp, toneFrame)
+		
+		_, err = conn.Write(packet)
+		if err != nil {
+			log.Printf("Failed to send RTP packet: %v", err)
+			return
+		}
+		
+		sequenceNumber++
+		timestamp += uint32(frameSize)
+		time.Sleep(20 * time.Millisecond)
+	}
+	
+	// Then send alternating silence and voice to test VAD
+	fmt.Println("Sending alternating silence/tone frames to test VAD...")
+	for i := 0; i < 100; i++ {
+		var frame []byte
+		if i%4 < 2 { // 2 frames of silence, then 2 frames of tone
+			frame = createAudioPattern("silence", frameSize)
+		} else {
+			frame = createAudioPattern("tone", frameSize)
+		}
+		
+		packet := createRTPPacket(sequenceNumber, timestamp, frame)
+		
+		_, err = conn.Write(packet)
+		if err != nil {
+			log.Printf("Failed to send RTP packet: %v", err)
+			return
+		}
+		
+		sequenceNumber++
+		timestamp += uint32(frameSize)
+		time.Sleep(20 * time.Millisecond)
+	}
+	
+	// Finally, send noise pattern to test noise reduction
+	fmt.Println("Sending noise frames to test noise reduction...")
+	for i := 0; i < 50; i++ {
+		noiseFrame := createAudioPattern("noise", frameSize)
+		packet := createRTPPacket(sequenceNumber, timestamp, noiseFrame)
+		
+		_, err = conn.Write(packet)
+		if err != nil {
+			log.Printf("Failed to send RTP packet: %v", err)
+			return
+		}
+		
+		sequenceNumber++
+		timestamp += uint32(frameSize)
+		time.Sleep(20 * time.Millisecond)
+	}
+	
+	fmt.Println("Finished sending test RTP packets")
 }
 
 func handleConnection(conn net.Conn) {
