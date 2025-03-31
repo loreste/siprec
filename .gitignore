@@ -1,11 +1,13 @@
 # Binaries
 /siprec-server
 /env-test
+/test_audio
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+/test_tls/test_tls
 
 # Test binary, built with `go test -c`
 *.test
@@ -22,6 +24,7 @@ go.work
 # Environment variables
 .env
 .env.bak
+.env.online
 !.env.example
 
 # Recordings directory
@@ -45,4 +48,9 @@ go.work
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Backup files and PIDs
+*.bak
+*.pid
+server.pid
 
