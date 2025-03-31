@@ -28,6 +28,11 @@ type Handler struct {
 
 	// Session persistence store - used for redundancy
 	SessionStore SessionStore
+	
+	// Shutdown resources
+	monitorCtx       context.Context
+	monitorCancel    context.CancelFunc
+	sessionMonitorWG sync.WaitGroup
 }
 
 // Config defines SIP handler configuration
@@ -72,19 +77,28 @@ func NewHandler(logger *logrus.Logger, config *Config, sttProvider func(context.
 		sessionStore = NewNoOpSessionStore()
 	}
 	
+	// Create a context for monitoring sessions
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	
 	handler := &Handler{
-		Logger:       logger,
-		Server:       server,
-		UA:           ua,
-		Config:       config,
-		ActiveCalls:  &sync.Map{},
-		SttProvider:  sttProvider,
-		SessionStore: sessionStore,
+		Logger:         logger,
+		Server:         server,
+		UA:             ua,
+		Config:         config,
+		ActiveCalls:    &sync.Map{},
+		SttProvider:    sttProvider,
+		SessionStore:   sessionStore,
+		monitorCtx:     monitorCtx,
+		monitorCancel:  monitorCancel,
 	}
 	
 	// Start session monitoring if redundancy is enabled
 	if config.RedundancyEnabled {
-		go handler.monitorSessions()
+		handler.sessionMonitorWG.Add(1)
+		go func() {
+			defer handler.sessionMonitorWG.Done()
+			handler.monitorSessions()
+		}()
 	}
 	
 	return handler, nil

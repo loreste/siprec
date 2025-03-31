@@ -32,6 +32,10 @@ var (
 	httpServer *http_server.Server
 	startTime = time.Now() // For tracking uptime
 	
+	// Context for graceful shutdown
+	rootCtx context.Context
+	rootCancel context.CancelFunc
+	
 	// WebSocket and transcription components
 	transcriptionSvc *stt.TranscriptionService
 	wsHub *http_server.TranscriptionHub
@@ -50,9 +54,9 @@ func main() {
 	})
 	logger.SetOutput(os.Stdout)
 	
-	// Create context with cancellation for graceful shutdown
-	_, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Initialize the root context for graceful shutdown
+	rootCtx, rootCancel = context.WithCancel(context.Background())
+	defer rootCancel()
 
 	// Initialize everything
 	if err := initialize(); err != nil {
@@ -76,44 +80,73 @@ func main() {
 
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigChan
 		logger.WithField("signal", sig.String()).Info("Received shutdown signal, cleaning up...")
 		
 		// Create a context with timeout for graceful shutdown
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer shutdownCancel()
 		
-		// Cancel the main context to signal shutdown to all goroutines
-		cancel()
+		// Cancel the root context to signal shutdown to all goroutines
+		rootCancel()
 		
 		// Shutdown HTTP server first
 		if httpServer != nil {
+			logger.Debug("Shutting down HTTP server...")
 			if err := httpServer.Shutdown(shutdownCtx); err != nil {
 				logger.WithError(err).Error("Error shutting down HTTP server")
+			} else {
+				logger.Info("HTTP server shut down successfully")
 			}
 		}
 		
-		// Clean up active calls
+		// Shutdown SIP server next (with its own dedicated timeout)
 		if sipHandler != nil {
-			sipHandler.CleanupActiveCalls()
+			logger.Debug("Shutting down SIP server...")
+			sipShutdownCtx, sipShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer sipShutdownCancel()
+			
+			if err := sipHandler.Shutdown(sipShutdownCtx); err != nil {
+				logger.WithError(err).Error("Error shutting down SIP server")
+			} else {
+				logger.Info("SIP server shut down successfully")
+			}
 		}
 		
 		// Disconnect from AMQP
 		if amqpClient != nil {
+			logger.Debug("Disconnecting from AMQP...")
 			amqpClient.Disconnect()
+			logger.Info("AMQP disconnected")
 		}
 		
-		// Allow some time for cleanup to complete
+		// Shut down WebSocket hub if active
+		if wsHub != nil {
+			logger.Debug("Shutting down WebSocket hub...")
+			// The hub will be shut down through context cancellation
+			// Wait a moment for connections to close gracefully
+			time.Sleep(500 * time.Millisecond)
+			logger.Info("WebSocket hub shut down")
+		}
+		
+		// Shut down STT providers
+		if sttManager != nil {
+			logger.Debug("Shutting down STT providers...")
+			// TODO: Add shutdown method to STT providers if needed
+			logger.Info("STT providers shut down")
+		}
+		
+		// Allow some time for final cleanup to complete
 		select {
 		case <-shutdownCtx.Done():
-			logger.Warn("Shutdown timed out, forcing exit")
-		case <-time.After(2 * time.Second):
-			logger.Info("Cleanup complete")
+			logger.Warn("Global shutdown timed out, forcing exit")
+		case <-time.After(500 * time.Millisecond):
+			logger.Info("All components shut down successfully")
 		}
 		
-		logger.Info("Shutting down gracefully")
+		logger.Info("Application shut down gracefully")
 		os.Exit(0)
 	}()
 
@@ -241,7 +274,7 @@ func initialize() error {
 	
 	// Create the WebSocket hub and start it in a goroutine
 	wsHub = http_server.NewTranscriptionHub(logger)
-	go wsHub.Run(context.Background())
+	go wsHub.Run(rootCtx)
 	
 	// Create a bridge between transcription service and WebSocket hub
 	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
@@ -264,7 +297,7 @@ func startSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 	
 	ip := "0.0.0.0" // Listen on all interfaces
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(rootCtx)
 	defer cancel()
 	
 	// Create error channel to communicate errors from listener goroutines

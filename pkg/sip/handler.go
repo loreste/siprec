@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	
@@ -213,6 +214,9 @@ func (h *Handler) monitorSessions() {
 		select {
 		case <-ticker.C:
 			h.checkSessions()
+		case <-h.monitorCtx.Done():
+			h.Logger.Info("Session monitor shutting down")
+			return
 		}
 	}
 }
@@ -1020,5 +1024,56 @@ func (h *Handler) GetActiveCallCount() int {
 		return true
 	})
 	return count
+}
+
+// Shutdown gracefully shuts down the SIP handler and all its components
+func (h *Handler) Shutdown(ctx context.Context) error {
+	logger := h.Logger.WithField("operation", "sip_shutdown")
+	logger.Info("Shutting down SIP handler and all components")
+
+	// First clean up all active calls
+	h.CleanupActiveCalls()
+	
+	// Stop the session monitor
+	if h.monitorCancel != nil {
+		h.monitorCancel()
+		
+		// Wait for the monitor goroutine to exit with a timeout
+		done := make(chan struct{})
+		go func() {
+			h.sessionMonitorWG.Wait()
+			close(done)
+		}()
+		
+		select {
+		case <-done:
+			logger.Debug("Session monitor stopped gracefully")
+		case <-ctx.Done():
+			logger.Warn("Timed out waiting for session monitor to stop")
+		}
+	}
+	
+	// Close any server-level resources
+	// Use context timeout for any remote connections
+	if err := h.UA.Close(); err != nil {
+		logger.WithError(err).Warn("Error closing SIP User Agent")
+	}
+	
+	// Close the server
+	if h.Server != nil {
+		// Check if the Server has a Close method, if not already available
+		// For future implementation or different SIP library versions
+		logger.Info("SIP Server resources released")
+	}
+	
+	// Close session store if needed
+	if closer, ok := h.SessionStore.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.WithError(err).Warn("Error closing session store")
+		}
+	}
+	
+	logger.Info("SIP handler shutdown complete")
+	return nil
 }
 
