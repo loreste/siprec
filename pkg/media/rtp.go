@@ -14,6 +14,7 @@ import (
 
 	"github.com/pion/srtp/v2"
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/audio"
 )
 
 // StartRTPForwarding starts forwarding RTP packets for a call
@@ -62,33 +63,44 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		if config.EnableSRTP {
 			forwarder.Logger.WithField("call_uuid", callUUID).Info("Setting up SRTP session")
 			
-			// Set up SRTP key management
-			keyingMaterial := make([]byte, 30) // 16 bytes for master key, 14 bytes for salt
-			if _, err := rand.Read(keyingMaterial); err != nil {
-				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP keying material")
+			// Set up SRTP key management for pion/srtp v2
+			// Create master key and salt of the correct size
+			masterKey := make([]byte, 16)
+			masterSalt := make([]byte, 14)
+			
+			// Generate random key and salt separately
+			if _, err := rand.Read(masterKey); err != nil {
+				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP master key")
+				return
+			}
+			if _, err := rand.Read(masterSalt); err != nil {
+				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP master salt")
 				return
 			}
 
 			// Create SRTP session with AES-128 Counter Mode and HMAC-SHA1 authentication
-			// RFC 3711 defines these SRTP parameters
 			srtpConfig := &srtp.Config{
 				Profile: srtp.ProtectionProfileAes128CmHmacSha1_80,
+				Keys: srtp.SessionKeys{
+					LocalMasterKey:   masterKey,
+					LocalMasterSalt:  masterSalt,
+					RemoteMasterKey:  masterKey,  // Same key for both directions
+					RemoteMasterSalt: masterSalt, // Same salt for both directions
+				},
 			}
-			
-			// Copy key material to configuration
-			copy(srtpConfig.Keys.LocalMasterKey[:], keyingMaterial[:16])
-			copy(srtpConfig.Keys.LocalMasterSalt[:], keyingMaterial[16:])
-			
-			// Set up remote key - in a real implementation, this would be negotiated
-			// For testing, we'll use the same key for local and remote
-			copy(srtpConfig.Keys.RemoteMasterKey[:], keyingMaterial[:16])
-			copy(srtpConfig.Keys.RemoteMasterSalt[:], keyingMaterial[16:])
-			
+				
 			// Store key material in the forwarder for SDP use
 			forwarder.SRTPMasterKey = make([]byte, 16)
 			forwarder.SRTPMasterSalt = make([]byte, 14)
-			copy(forwarder.SRTPMasterKey, keyingMaterial[:16])
-			copy(forwarder.SRTPMasterSalt, keyingMaterial[16:])
+			copy(forwarder.SRTPMasterKey, masterKey)
+			copy(forwarder.SRTPMasterSalt, masterSalt)
+			
+			// Log for debugging
+			forwarder.Logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"key_len": len(masterKey),
+				"salt_len": len(masterSalt),
+			}).Debug("SRTP keying material generated")
 
 			// Create SRTP session
 			srtpSession, err = srtp.NewSessionSRTP(udpConn, srtpConfig)
@@ -103,11 +115,55 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}).Info("SRTP session successfully set up")
 		}
 
+		// Initialize audio processing if enabled
+		if config.AudioProcessing.Enabled {
+			// Convert to audio processing configuration
+			audioConfig := audio.ProcessingConfig{
+				// Voice Activity Detection
+				EnableVAD:           config.AudioProcessing.EnableVAD,
+				VADThreshold:        config.AudioProcessing.VADThreshold,
+				VADHoldTime:         config.AudioProcessing.VADHoldTimeMs / 20, // Convert ms to frames
+				
+				// Noise Reduction
+				EnableNoiseReduction: config.AudioProcessing.EnableNoiseReduction,
+				NoiseFloor:           config.AudioProcessing.NoiseReductionLevel,
+				NoiseAttenuationDB:   12.0, // Default 12dB noise reduction
+				
+				// Multi-channel Support
+				ChannelCount:         config.AudioProcessing.ChannelCount,
+				MixChannels:          config.AudioProcessing.MixChannels,
+				
+				// General Processing (8kHz telephony standard)
+				SampleRate:           8000,
+				FrameSize:            160, // 20ms at 8kHz
+				BufferSize:           2048,
+			}
+			
+			// Create audio processing manager
+			forwarder.AudioProcessor = audio.NewProcessingManager(audioConfig, forwarder.Logger)
+			
+			forwarder.Logger.WithFields(logrus.Fields{
+				"call_uuid":        callUUID,
+				"vad_enabled":      config.AudioProcessing.EnableVAD,
+				"noise_reduction":  config.AudioProcessing.EnableNoiseReduction,
+				"channels":         config.AudioProcessing.ChannelCount,
+			}).Info("Audio processing initialized")
+		}
+
 		// Create pipes for streaming audio data
 		mainPr, mainPw := io.Pipe()
 
-		// Use TeeReader to duplicate the stream
-		recordingReader := io.TeeReader(mainPr, forwarder.RecordingFile)
+		// Set up reader for final output
+		var recordingReader io.Reader = mainPr
+		
+		// Apply audio processing if enabled
+		if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
+			processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
+			recordingReader = processingManager.WrapReader(mainPr)
+		}
+
+		// Use TeeReader to duplicate the stream to recording file
+		recordingReader = io.TeeReader(recordingReader, forwarder.RecordingFile)
 
 		// Start transcription based on the selected provider
 		go sttProvider(ctx, config.DefaultVendor, recordingReader, callUUID)
@@ -194,9 +250,39 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						continue
 					}
 
-					// Write decrypted packet to pipe
-					if _, err := mainPw.Write(decryptedRTP[:n]); err != nil {
-						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+					// Process audio if enabled
+					if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
+						processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
+						
+						// Add detailed debug log before processing
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid": callUUID,
+							"data_len": n,
+							"srtp": true,
+							"audio_processing": "enabled",
+						}).Debug("Processing SRTP audio packet with audio processing")
+						
+						processedData, err := processingManager.ProcessAudio(decryptedRTP[:n])
+						if err != nil {
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio")
+						} else if len(processedData) > 0 {
+							// Log successful processing
+							forwarder.Logger.WithFields(logrus.Fields{
+								"call_uuid": callUUID,
+								"original_size": n,
+								"processed_size": len(processedData),
+							}).Debug("Successfully processed SRTP audio packet")
+							
+							// Write processed audio to pipe
+							if _, err := mainPw.Write(processedData); err != nil {
+								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write processed audio to stream")
+							}
+						}
+					} else {
+						// Write decrypted packet to pipe
+						if _, err := mainPw.Write(decryptedRTP[:n]); err != nil {
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+						}
 					}
 					
 					// Log successful SRTP decryption (only for debugging, remove in production)
@@ -208,9 +294,49 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						}).Debug("Successfully decrypted SRTP packet")
 					}
 				} else {
-					// Process regular RTP packet
-					if _, err := mainPw.Write(buffer[:n]); err != nil {
-						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+					// Process regular RTP packet with audio processing if enabled
+					if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
+						processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
+						
+						// Add detailed debug log before processing
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid": callUUID,
+							"data_len": n,
+							"srtp": false,
+							"audio_processing": "enabled",
+							"payload_type": buffer[1] & 0x7F, // Extract payload type from RTP header
+						}).Debug("Processing regular RTP audio packet")
+						
+						processedData, err := processingManager.ProcessAudio(buffer[:n])
+						if err != nil {
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio")
+							continue
+						}
+						
+						if len(processedData) > 0 {
+							// Log successful processing
+							forwarder.Logger.WithFields(logrus.Fields{
+								"call_uuid": callUUID,
+								"original_size": n,
+								"processed_size": len(processedData),
+							}).Debug("Successfully processed RTP audio packet")
+							
+							// Write processed audio to pipe
+							if _, err := mainPw.Write(processedData); err != nil {
+								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write processed audio to stream")
+							}
+						}
+					} else {
+						// No processing, just forward
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid": callUUID,
+							"data_len": n,
+							"audio_processing": "disabled",
+						}).Debug("Forwarding unprocessed RTP packet")
+						
+						if _, err := mainPw.Write(buffer[:n]); err != nil {
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+						}
 					}
 				}
 
