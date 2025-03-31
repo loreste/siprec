@@ -46,5 +46,3 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Claude documentation
-CLAUDE.md
