@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	
+	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
 	"siprec-server/pkg/sip"
@@ -26,6 +25,7 @@ var (
 	amqpClient *messaging.AMQPClient
 	sttManager *stt.ProviderManager
 	sipHandler *sip.Handler
+	httpServer *http_server.Server
 	startTime = time.Now() // For tracking uptime
 )
 
@@ -54,12 +54,12 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	
-	// Start health check server explicitly
-	startHealthServer()
-	logger.Info("Health check server started from main")
+	// Start HTTP server for health checks and API
+	httpServer.Start()
+	logger.Info("HTTP server started")
 	
 	// Start SIP server
-	go startServer(&wg)
+	go startSIPServer(&wg)
 
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
@@ -68,8 +68,19 @@ func main() {
 		sig := <-sigChan
 		logger.WithField("signal", sig.String()).Info("Received shutdown signal, cleaning up...")
 		
-		// Cancel context to signal shutdown to all goroutines
+		// Create a context with timeout for graceful shutdown
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		
+		// Cancel the main context to signal shutdown to all goroutines
 		cancel()
+		
+		// Shutdown HTTP server first
+		if httpServer != nil {
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				logger.WithError(err).Error("Error shutting down HTTP server")
+			}
+		}
 		
 		// Clean up active calls
 		if sipHandler != nil {
@@ -82,9 +93,14 @@ func main() {
 		}
 		
 		// Allow some time for cleanup to complete
-		time.Sleep(3 * time.Second)
+		select {
+		case <-shutdownCtx.Done():
+			logger.Warn("Shutdown timed out, forcing exit")
+		case <-time.After(2 * time.Second):
+			logger.Info("Cleanup complete")
+		}
 		
-		logger.Info("Cleanup complete. Shutting down gracefully.")
+		logger.Info("Shutting down gracefully")
 		os.Exit(0)
 	}()
 
@@ -175,6 +191,22 @@ func initialize() error {
 	
 	// Register SIP handlers
 	sipHandler.SetupHandlers()
+	
+	// Initialize HTTP server
+	httpServerConfig := &http_server.Config{
+		Port:            config.HTTPPort,
+		ReadTimeout:     10 * time.Second,
+		WriteTimeout:    30 * time.Second,
+		ShutdownTimeout: 5 * time.Second,
+	}
+	
+	// Create HTTP server with SIP handler adapter for metrics
+	sipAdapter := http_server.NewSIPHandlerAdapter(logger, sipHandler)
+	httpServer = http_server.NewServer(logger, httpServerConfig, sipAdapter)
+	
+	// Create session handler and register HTTP handlers
+	sessionHandler := http_server.NewSessionHandler(logger, sipAdapter)
+	sessionHandler.RegisterHandlers(httpServer)
 
 	// Log configuration on startup
 	logStartupConfig()
@@ -182,8 +214,8 @@ func initialize() error {
 	return nil
 }
 
-// startServer initializes and starts the SIP server
-func startServer(wg *sync.WaitGroup) {
+// startSIPServer initializes and starts the SIP server
+func startSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 	
 	ip := "0.0.0.0" // Listen on all interfaces
@@ -210,84 +242,13 @@ func startServer(wg *sync.WaitGroup) {
 		logger.Warn("TLS support is not yet implemented")
 	}
 	
-	// Start the health check server
-	go startHealthServer()
-	
 	// Keep server running
 	select {}
 }
 
-// Start a simple health check HTTP server
-func startHealthServer() {
-	healthPort := 8080
-	mux := http.NewServeMux()
-	
-	logger.Info("Setting up health check endpoints")
-	
-	// Health endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		logger.WithField("endpoint", "/health").Debug("Health endpoint accessed")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		response := fmt.Sprintf(`{"status":"ok","uptime":"%s"}`, time.Since(startTime).String())
-		_, _ = w.Write([]byte(response))
-	})
-	
-	// Metrics endpoint
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		logger.WithField("endpoint", "/metrics").Debug("Metrics endpoint accessed")
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		
-		// Simple metrics reporting
-		activeCalls := 0
-		if sipHandler != nil {
-			activeCalls = sipHandler.GetActiveCallCount()
-		}
-		
-		metrics := fmt.Sprintf(`# HELP siprec_active_calls Number of active calls
-# TYPE siprec_active_calls gauge
-siprec_active_calls %d
-`, activeCalls)
-		
-		_, _ = w.Write([]byte(metrics))
-	})
-	
-	// Start the server in a goroutine
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", healthPort),
-		Handler: mux,
-	}
-	
-	logger.WithField("port", healthPort).Info("Starting health check server")
-	
-	// Start serving in a goroutine
-	go func() {
-		logger.Infof("Health check server listening on port %d", healthPort)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.WithError(err).Error("Health check server failed")
-		}
-	}()
-	
-	// Also verify that we can actually bind to the port
-	go func() {
-		time.Sleep(1 * time.Second)
-		logger.Info("Verifying health check server is running...")
-		
-		// Try to open a connection to the health port
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", healthPort), 3*time.Second)
-		if err != nil {
-			logger.WithError(err).Error("Could not connect to health check server")
-		} else {
-			logger.Info("Health check server is running correctly")
-			conn.Close()
-		}
-	}()
-}
-
 // logStartupConfig logs the current configuration
 func logStartupConfig() {
-	logger.Info("SIP Server is starting with the following configuration:")
+	logger.Info("SIPREC Server is starting with the following configuration:")
 	logger.WithFields(logrus.Fields{
 		"external_ip": config.ExternalIP,
 		"internal_ip": config.InternalIP,
@@ -302,6 +263,14 @@ func logStartupConfig() {
 			"tls_key":      config.TLSKeyFile,
 		}).Info("TLS configuration")
 	}
+	
+	// Log HTTP configuration
+	logger.WithFields(logrus.Fields{
+		"http_enabled":       config.HTTPEnabled,
+		"http_port":          config.HTTPPort,
+		"http_metrics":       config.HTTPEnableMetrics,
+		"http_api":           config.HTTPEnableAPI,
+	}).Info("HTTP server configuration")
 	
 	logger.WithFields(logrus.Fields{
 		"srtp_enabled":      config.EnableSRTP,
