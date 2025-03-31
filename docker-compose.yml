@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  siprec:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: siprec-server
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5061:5061/udp"
+      - "5061:5061/tcp"
+      - "5062:5062/tcp"
+      - "8080:8080/tcp"
+      - "10000-20000:10000-20000/udp"
+    volumes:
+      - ./recordings:/app/recordings
+      - ./certs:/app/certs
+      - ./sessions:/app/sessions
+      - ./.env:/app/.env
+    restart: unless-stopped
+    networks:
+      - siprec-network
+    depends_on:
+      - rabbitmq
+  
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    restart: unless-stopped
+    networks:
+      - siprec-network
+
+volumes:
+  rabbitmq-data:
+
+networks:
+  siprec-network:
+    driver: bridge

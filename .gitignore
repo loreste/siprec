@@ -1,0 +1,49 @@
+# Binaries
+/siprec-server
+/env-test
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+/vendor/
+
+# Go workspace file
+go.work
+
+# Environment variables
+.env
+!.env.example
+
+# Recordings directory
+/recordings/
+*.wav
+
+# Certificates
+/certs/*.pem
+/certs/*.crt
+/certs/*.key
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Claude documentation
+CLAUDE.md
