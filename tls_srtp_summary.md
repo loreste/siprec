@@ -1,81 +1,154 @@
-# TLS and SRTP Implementation Summary
+# TLS and SRTP Implementation Technical Summary
 
 ## Overview
 
-This document summarizes the TLS and SRTP implementation in the SIPREC server.
+This technical document summarizes the TLS (Transport Layer Security) and SRTP (Secure Real-Time Transport Protocol) implementation in the SIPREC server.
 
 ## TLS Implementation
 
-The TLS implementation enables secure SIP signaling by:
+### Core Components
 
-1. Configuring the SIP server to listen on a dedicated TLS port (default 5063)
-2. Using X.509 certificates for server identity verification
-3. Enforcing TLS 1.2+ for security
+The TLS implementation for SIP signaling security consists of:
 
-The implementation uses the sipgo library's `ListenAndServeTLS` method with the correct "tls" network type. Key changes include:
+1. X.509 certificate management and validation
+2. TLS server configuration with minimum TLS 1.2
+3. Secure listening endpoint on dedicated TLS port
+4. Network protocol handling for TLS connections
 
-- Using separate goroutines for each listener type (UDP, TCP, TLS)
-- Proper error handling and propagation from listener threads
-- Port verification to ensure the TLS server is correctly bound
+### Implementation Details
 
-### Configuration
+The server implements TLS using the following approach:
 
-TLS is configured in the `.env` file with:
+```go
+// Set up TLS configuration
+tlsConfig := &tls.Config{
+    MinVersion: tls.VersionTLS12,
+    Certificates: []tls.Certificate{cert},
+}
 
+// Start TLS server
+if err := sipHandler.Server.ListenAndServeTLS(
+    ctx,
+    "tls", // Network type for TLS
+    tlsAddress,
+    tlsConfig,
+); err != nil {
+    logger.WithError(err).Error("Failed to start SIP server on TLS")
+    return
+}
 ```
-ENABLE_TLS=true
-TLS_PORT=5063
-TLS_CERT_PATH=/path/to/cert.pem
-TLS_KEY_PATH=/path/to/key.pem
+
+Key aspects of the implementation:
+
+1. **Separate Goroutines**: Each listener type (UDP, TCP, TLS) runs in its own goroutine
+2. **Context-Based Shutdown**: All listeners share a context for graceful shutdown
+3. **Error Propagation**: Errors are captured and properly logged
+4. **Connection Verification**: TLS port binding is verified during startup
+
+### Graceful Shutdown
+
+The TLS implementation includes a robust shutdown process:
+
+```go
+// Cancel the context to signal all listeners to shut down
+rootCancel()
+
+// Shutdown with timeout
+sipShutdownCtx, sipShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer sipShutdownCancel()
+
+if err := sipHandler.Shutdown(sipShutdownCtx); err != nil {
+    logger.WithError(err).Error("Error shutting down SIP server")
+} else {
+    logger.Info("SIP server shut down successfully")
+}
 ```
 
 ## SRTP Implementation
 
-SRTP (Secure RTP) implementation enables secure media transport by:
+### Core Components
 
-1. Adding SRTP support to RTP forwarders
-2. Generating secure crypto attributes in SDP
-3. Implementing proper SRTP packet processing
+The SRTP implementation for media encryption consists of:
 
-Key components include:
+1. SRTP key generation and management
+2. SDP security descriptions for key exchange (RFC 4568)
+3. Crypto attribute generation in SDP responses
+4. Media packet encryption/decryption
 
-- `SRTPKeyInfo` struct for managing crypto attributes
-- Updates to media handling for secure packet processing
-- SDP generation with crypto attributes
+### Key Structures
 
-### Configuration
+```go
+// SRTPKeyInfo holds SRTP key information for SDP crypto attributes
+type SRTPKeyInfo struct {
+    MasterKey    []byte // Master key for SRTP (16 bytes for AES-128)
+    MasterSalt   []byte // Master salt for SRTP (14 bytes recommended)
+    Profile      string // SRTP crypto profile (e.g., AES_CM_128_HMAC_SHA1_80)
+    KeyLifetime  int    // Key lifetime in packets (optional)
+}
+```
 
-SRTP is enabled in the `.env` file with:
+### SDP Integration
+
+SRTP is negotiated through SDP extensions following RFC 4568:
 
 ```
-ENABLE_SRTP=true
+m=audio 19688 RTP/SAVP 0 8
+a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:|2^2147483647
 ```
 
-## Testing
+The implementation adds crypto attributes to media descriptions:
 
-End-to-end testing was performed using:
+```go
+// Add SRTP information if enabled
+if config.EnableSRTP {
+    options.SRTPKeyInfo = &SRTPKeyInfo{
+        Profile:      "AES_CM_128_HMAC_SHA1_80",
+        KeyLifetime:  2147483647, // 2^31 per RFC 3711
+        MasterKey:    generateRandomKey(16), // 128-bit key
+        MasterSalt:   generateRandomKey(14), // 112-bit salt
+    }
+}
+```
 
-1. A standalone TLS test client/server
-2. OpenSSL client for TLS verification
-3. SIP OPTIONS requests over TLS
+## Testing Framework
 
-Key testing outcomes:
+### TLS Testing
 
-- TLS server successfully starts and binds to configured port
-- Client connections over TLS work correctly
-- SIP responses are properly generated
-- Connection security is maintained
+TLS functionality is tested using:
 
-## Next Steps
+1. A standalone test server/client that verifies TLS handshakes
+2. OpenSSL client tests for certificate validation
+3. Integration tests for SIP over TLS message exchange
 
-1. Further testing with real SIP clients that support TLS/SRTP
-2. Performance testing under load
-3. Certificate rotation and management
-4. SRTP key rotation implementation
+### SRTP Testing
+
+SRTP functionality is tested using:
+
+1. SDP generation tests that verify crypto attributes
+2. Mock SIP clients that validate SRTP negotiation
+3. Media packet encryption/decryption tests
+
+## Performance Considerations
+
+For optimal TLS and SRTP performance:
+
+1. **Connection Pooling**: Re-use TLS connections when possible
+2. **Connection Timeouts**: Implement proper timeouts for TLS handshakes
+3. **Certificate Caching**: Cache certificate validation results
+4. **SRTP Session Reuse**: Avoid frequent key renegotiation
+
+## Future Enhancements
+
+Planned improvements include:
+
+1. **Mutual TLS Authentication**: Add client certificate validation
+2. **DTLS-SRTP Support**: Implement DTLS for key exchange
+3. **Key Rotation**: Implement automatic key rotation for long sessions
+4. **TLS 1.3 Support**: Upgrade to TLS 1.3 when library support is available
 
 ## References
 
-- RFC 3261 - SIP Protocol
-- RFC 3711 - SRTP Protocol
-- RFC 4568 - SDP Security Descriptions
-- sipgo library documentation
+- RFC 3261 - SIP: Session Initiation Protocol
+- RFC 3711 - The Secure Real-time Transport Protocol (SRTP)
+- RFC 4568 - Session Description Protocol (SDP) Security Descriptions
+- RFC 5246 - The Transport Layer Security (TLS) Protocol Version 1.2
