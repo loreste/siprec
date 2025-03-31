@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	
+	pkg_errors "siprec-server/pkg/errors"
 )
 
 // UpdateRecordingSession updates an existing recording session with new metadata
@@ -274,7 +276,7 @@ func CreateFailoverMetadata(originalSession *RecordingSession) *RSMetadata {
 // Simplified to reduce redundant checks
 func ParseFailoverMetadata(metadata *RSMetadata) (string, string, error) {
 	if metadata == nil {
-		return "", "", fmt.Errorf("cannot parse nil metadata")
+		return "", "", pkg_errors.NewInvalidMetadata("cannot parse nil metadata")
 	}
 	
 	// Extract the original session ID and failover ID
@@ -283,7 +285,11 @@ func ParseFailoverMetadata(metadata *RSMetadata) (string, string, error) {
 	
 	// Validate both values in a single check
 	if originalSessionID == "" || failoverID == "" {
-		return "", "", fmt.Errorf("missing required fields in failover metadata")
+		fields := map[string]interface{}{
+			"has_session_id": originalSessionID != "",
+			"has_fixed_id":   failoverID != "",
+		}
+		return "", "", pkg_errors.NewInvalidMetadata("missing required fields").WithFields(fields)
 	}
 	
 	return originalSessionID, failoverID, nil
@@ -406,13 +412,16 @@ func SerializeMetadata(metadata *RSMetadata) (string, error) {
 // Simplified to remove redundant checks
 func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 	if failoverMetadata == nil {
-		return nil, fmt.Errorf("cannot recover session from nil metadata")
+		return nil, pkg_errors.NewInvalidInput("cannot recover session from nil metadata").
+			WithCode("RECOVERY_FAILED")
 	}
 	
 	// Extract original session ID and failover ID
 	originalSessionID, failoverID, err := ParseFailoverMetadata(failoverMetadata)
 	if err != nil {
-		return nil, err // Error message is already descriptive
+		return nil, pkg_errors.Wrap(err, "failed to parse failover metadata").
+			WithCode("RECOVERY_FAILED").
+			WithField("reason", "metadata_parse_error")
 	}
 	
 	// Create a new recording session with the same ID
@@ -432,6 +441,15 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 			participant := ConvertRSParticipantToParticipant(rsParticipant)
 			session.Participants = append(session.Participants, participant)
 		}
+	} else {
+		// Log a warning about no participants
+		return session, pkg_errors.New("session recovered without participants").
+			WithCode("RECOVERY_WARNING").
+			WithFields(map[string]interface{}{
+				"session_id": originalSessionID,
+				"failover_id": failoverID,
+				"severity": "warning",
+			})
 	}
 	
 	return session, nil
@@ -503,20 +521,39 @@ func ProcessStreamRecovery(session *RecordingSession, metadata *RSMetadata) {
 // as required by RFC 7245
 func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSession) error {
 	if originalSession == nil || recoveredSession == nil {
-		return fmt.Errorf("cannot validate nil sessions")
+		return pkg_errors.NewInvalidInput("cannot validate nil sessions").
+			WithCode("CONTINUITY_VALIDATION_FAILED")
+	}
+	
+	// Collect context information for potential errors
+	context := map[string]interface{}{
+		"original_session_id":  originalSession.ID,
+		"recovered_session_id": recoveredSession.ID,
+		"original_failover_id": originalSession.FailoverID,
+		"recovered_failover_id": recoveredSession.FailoverID,
+		"original_participant_count": len(originalSession.Participants),
+		"recovered_participant_count": len(recoveredSession.Participants),
 	}
 	
 	// Verify session IDs match
 	if originalSession.ID != recoveredSession.ID {
-		return fmt.Errorf("session ID mismatch: original=%s, recovered=%s", 
-			originalSession.ID, recoveredSession.ID)
+		return pkg_errors.NewInvalidInput(
+			fmt.Sprintf("session ID mismatch: original=%s, recovered=%s", 
+				originalSession.ID, recoveredSession.ID)).
+			WithCode("CONTINUITY_VALIDATION_FAILED").
+			WithFields(context).
+			WithField("error_type", "session_id_mismatch")
 	}
 	
-	// Verify failover IDs match
+	// Verify failover IDs match if both are present
 	if originalSession.FailoverID != "" && recoveredSession.FailoverID != "" &&
 		originalSession.FailoverID != recoveredSession.FailoverID {
-		return fmt.Errorf("failover ID mismatch: original=%s, recovered=%s",
-			originalSession.FailoverID, recoveredSession.FailoverID)
+		return pkg_errors.NewInvalidInput(
+			fmt.Sprintf("failover ID mismatch: original=%s, recovered=%s",
+				originalSession.FailoverID, recoveredSession.FailoverID)).
+			WithCode("CONTINUITY_VALIDATION_FAILED").
+			WithFields(context).
+			WithField("error_type", "failover_id_mismatch")
 	}
 	
 	// Verify essential participants are preserved
@@ -531,10 +568,19 @@ func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSessi
 	}
 	
 	// Check for missing participants (all essential participants must be preserved)
+	var missingParticipants []string
 	for id := range originalParticipants {
 		if _, exists := recoveredParticipants[id]; !exists {
-			return fmt.Errorf("essential participant %s missing in recovered session", id)
+			missingParticipants = append(missingParticipants, id)
 		}
+	}
+	
+	if len(missingParticipants) > 0 {
+		return pkg_errors.NewInvalidInput("essential participants missing in recovered session").
+			WithCode("CONTINUITY_VALIDATION_FAILED").
+			WithFields(context).
+			WithField("error_type", "missing_participants").
+			WithField("missing_participants", missingParticipants)
 	}
 	
 	// Session continuity is valid
