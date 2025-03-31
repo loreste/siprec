@@ -471,6 +471,7 @@ func TestStreamContinuityAfterFailover(t *testing.T) {
 	// Simulate audio streams
 	audioStreams := make(map[string][]byte)
 	audioPipes := make(map[string]*io.PipeWriter)
+	var audioMutex sync.Mutex  // Mutex to protect access to audioStreams map
 	
 	for _, stream := range []string{"audio1", "audio2"} {
 		pr, pw := io.Pipe()
@@ -488,8 +489,10 @@ func TestStreamContinuityAfterFailover(t *testing.T) {
 					break
 				}
 				
-				// Append to collected audio
+				// Append to collected audio - use mutex to prevent concurrent map writes
+				audioMutex.Lock()
 				audioStreams[stream] = append(audioStreams[stream], buf[:n]...)
+				audioMutex.Unlock()
 			}
 		}(stream, pr)
 	}
