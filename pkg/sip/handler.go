@@ -409,8 +409,17 @@ func (h *Handler) handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction)
 		return
 	}
 
-	// Generate SDP response
-	newSDP := h.generateSDPResponse(sdpParsed, h.Config.MediaConfig.ExternalIP)
+	// Generate SDP response using our consolidated function
+	options := SDPOptions{
+		IPAddress:  h.Config.MediaConfig.ExternalIP,
+		BehindNAT:  h.Config.MediaConfig.BehindNAT,
+		InternalIP: h.Config.MediaConfig.InternalIP,
+		ExternalIP: h.Config.MediaConfig.ExternalIP,
+		IncludeICE: true,
+		RTPPort:    rtpPort,
+	}
+	
+	newSDP := h.generateSDP(sdpParsed, options)
 	sdpResponseBytes, err := newSDP.Marshal()
 	if err != nil {
 		logger.WithError(err).Error("Failed to marshal SDP for response")
@@ -583,8 +592,17 @@ func (h *Handler) recoverSession(req *sip.Request, tx sip.ServerTransaction, old
 		return
 	}
 	
-	// Generate SDP response
-	newSDP := h.generateSDPResponse(sdpParsed, h.Config.MediaConfig.ExternalIP)
+	// Generate SDP response using our consolidated function
+	options := SDPOptions{
+		IPAddress:  h.Config.MediaConfig.ExternalIP,
+		BehindNAT:  h.Config.MediaConfig.BehindNAT,
+		InternalIP: h.Config.MediaConfig.InternalIP,
+		ExternalIP: h.Config.MediaConfig.ExternalIP,
+		IncludeICE: true,
+		RTPPort:    rtpPort,
+	}
+	
+	newSDP := h.generateSDP(sdpParsed, options)
 	sdpResponseBytes, err := newSDP.Marshal()
 	if err != nil {
 		logger.WithError(err).Error("Failed to marshal SDP for recovery response")
