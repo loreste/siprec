@@ -28,6 +28,11 @@ var (
 	sipHandler *sip.Handler
 	httpServer *http_server.Server
 	startTime = time.Now() // For tracking uptime
+	
+	// WebSocket and transcription components
+	transcriptionSvc *stt.TranscriptionService
+	wsHub *http_server.TranscriptionHub
+	wsHandler *http_server.WebSocketHandler
 )
 
 func main() {
@@ -147,6 +152,13 @@ func initialize() error {
 	
 	// Register Mock provider for local testing
 	mockProvider := stt.NewMockProvider(logger)
+	
+	// Create transcription service before STT providers
+	transcriptionSvc = stt.NewTranscriptionService(logger)
+	
+	// Set transcription service for mock provider
+	mockProvider.SetTranscriptionService(transcriptionSvc)
+	
 	if err := sttManager.RegisterProvider(mockProvider); err != nil {
 		logger.WithError(err).Warn("Failed to register Mock Speech-to-Text provider")
 	}
@@ -155,16 +167,18 @@ func initialize() error {
 	for _, vendor := range appConfig.STT.SupportedVendors {
 		switch vendor {
 		case "google":
-			googleProvider := stt.NewGoogleProvider(logger)
+			googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc)
 			if err := sttManager.RegisterProvider(googleProvider); err != nil {
 				logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
 			}
 		case "deepgram":
+			// For now, Deepgram doesn't support transcription service
 			deepgramProvider := stt.NewDeepgramProvider(logger)
 			if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
 				logger.WithError(err).Warn("Failed to register Deepgram provider")
 			}
 		case "openai":
+			// For now, OpenAI doesn't support transcription service
 			openaiProvider := stt.NewOpenAIProvider(logger)
 			if err := sttManager.RegisterProvider(openaiProvider); err != nil {
 				logger.WithError(err).Warn("Failed to register OpenAI provider")
@@ -219,6 +233,22 @@ func initialize() error {
 	// Create session handler and register HTTP handlers
 	sessionHandler := http_server.NewSessionHandler(logger, sipAdapter)
 	sessionHandler.RegisterHandlers(httpServer)
+	
+	// Initialize WebSocket components
+	
+	// Create the WebSocket hub and start it in a goroutine
+	wsHub = http_server.NewTranscriptionHub(logger)
+	go wsHub.Run(context.Background())
+	
+	// Create a bridge between transcription service and WebSocket hub
+	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
+	transcriptionSvc.AddListener(wsBridge)
+	
+	// Create and register WebSocket handler
+	wsHandler = http_server.NewWebSocketHandler(logger, wsHub)
+	wsHandler.RegisterHandlers(httpServer)
+
+	logger.Info("WebSocket real-time transcription streaming initialized")
 
 	// Log configuration on startup
 	logStartupConfig()
