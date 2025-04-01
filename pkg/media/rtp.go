@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"math/big"
+	mathrand "math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +16,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/audio"
 )
+
+func init() {
+	// Initialize the random number generator
+	mathrand.Seed(time.Now().UnixNano())
+}
 
 // StartRTPForwarding starts forwarding RTP packets for a call
 func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string, config *Config, sttProvider func(context.Context, string, io.Reader, string) error) {
@@ -372,8 +377,8 @@ func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
 	port, err := pm.AllocatePort()
 	if err != nil {
 		logger.WithError(err).Error("Failed to allocate RTP port")
-		// As a fallback, try a random port 
-		randomPort := minPort + rand.Intn(maxPort-minPort)
+		// As a fallback, try a random port
+		randomPort := minPort + mathrand.Intn(maxPort-minPort)
 		logger.WithField("port", randomPort).Warn("Using fallback random port")
 		return randomPort
 	}
