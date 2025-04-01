@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 	
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
@@ -12,6 +13,11 @@ import (
 // generateSDPAdvanced generates an SDP response based on the provided options
 // This consolidates the duplicate logic from generateSDPResponse and generateSDPResponseWithPort
 func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, options SDPOptions) *sdp.SessionDescription {
+	// Handle the case where receivedSDP is nil
+	if receivedSDP == nil {
+		return h.generateDefaultSDP(options)
+	}
+	
 	mediaStreams := make([]*sdp.MediaDescription, len(receivedSDP.MediaDescriptions))
 	
 	// Handle NAT traversal for SDP
@@ -223,4 +229,117 @@ func appendCodecAttributes(attributes []sdp.Attribute, formats []string) []sdp.A
 	}
 	
 	return filteredAttributes
+}
+
+// generateDefaultSDP creates a default SDP response when no receivedSDP is provided
+func (h *Handler) generateDefaultSDP(options SDPOptions) *sdp.SessionDescription {
+	// Determine the connection address accounting for NAT
+	connectionAddr := options.IPAddress
+	if options.BehindNAT {
+		connectionAddr = options.ExternalIP
+		
+		h.Logger.WithFields(logrus.Fields{
+			"internal_ip": options.InternalIP,
+			"external_ip": options.ExternalIP,
+		}).Debug("Using external IP for default SDP due to NAT")
+	}
+	
+	// Create a new SDP description
+	sdpResponse := &sdp.SessionDescription{
+		Origin: sdp.Origin{
+			Username:       "siprec",
+			SessionID:      uint64(time.Now().Unix()),
+			SessionVersion: 1,
+			NetworkType:    "IN",
+			AddressType:    "IP4",
+			UnicastAddress: connectionAddr,
+		},
+		SessionName: sdp.SessionName("SIPREC Media Session"),
+		ConnectionInformation: &sdp.ConnectionInformation{
+			NetworkType: "IN",
+			AddressType: "IP4",
+			Address:     &sdp.Address{Address: connectionAddr},
+		},
+		TimeDescriptions: []sdp.TimeDescription{
+			{
+				Timing: sdp.Timing{
+					StartTime: 0,
+					StopTime:  0,
+				},
+			},
+		},
+		Attributes: []sdp.Attribute{
+			{Key: "a", Value: "recording-session"},
+		},
+	}
+	
+	// Determine the RTP port to use
+	rtpPort := options.RTPPort
+	if rtpPort <= 0 {
+		// Use a default port if not specified
+		rtpPort = 10000
+	}
+	
+	// Create audio media description
+	formats := []string{"0", "8", "9"} // PCMU, PCMA, G722
+	audioMedia := &sdp.MediaDescription{
+		MediaName: sdp.MediaName{
+			Media:   "audio",
+			Port:    sdp.RangedPort{Value: rtpPort},
+			Protos:  []string{"RTP/AVP"},
+			Formats: formats,
+		},
+		ConnectionInformation: &sdp.ConnectionInformation{
+			NetworkType: "IN",
+			AddressType: "IP4",
+			Address:     &sdp.Address{Address: connectionAddr},
+		},
+	}
+	
+	// Add attributes
+	attributes := []sdp.Attribute{
+		{Key: "rtpmap", Value: "0 PCMU/8000"},
+		{Key: "rtpmap", Value: "8 PCMA/8000"},
+		{Key: "rtpmap", Value: "9 G722/8000"},
+		{Key: "ptime", Value: "20"},
+		{Key: "sendrecv", Value: ""},
+	}
+	
+	// Add SRTP crypto attributes if enabled
+	if options.EnableSRTP && options.SRTPKeyInfo != nil {
+		// Change transport from RTP/AVP to RTP/SAVP for SRTP
+		audioMedia.MediaName.Protos = []string{"RTP/SAVP"}
+		
+		// Format the master key and salt for the crypto line
+		var cryptoLine string
+		
+		// If we have real key material, use it
+		if options.SRTPKeyInfo.MasterKey != nil && options.SRTPKeyInfo.MasterSalt != nil {
+			// Base64 encode the key material
+			base64KeySalt := base64.StdEncoding.EncodeToString(
+				append(options.SRTPKeyInfo.MasterKey, options.SRTPKeyInfo.MasterSalt...))
+			
+			cryptoLine = fmt.Sprintf("1 %s inline:%s", 
+				options.SRTPKeyInfo.Profile, base64KeySalt)
+			
+			// Add lifetime if specified
+			if options.SRTPKeyInfo.KeyLifetime > 0 {
+				cryptoLine += fmt.Sprintf("|2^%d", options.SRTPKeyInfo.KeyLifetime)
+			}
+		} else {
+			// Fallback to a placeholder (for testing)
+			cryptoLine = "1 AES_CM_128_HMAC_SHA1_80 inline:c2VjcmV0a2V5c2VjcmV0a2V5c2VjcmU="
+		}
+		
+		attributes = append(attributes, sdp.Attribute{Key: "crypto", Value: cryptoLine})
+		
+		h.Logger.WithFields(logrus.Fields{
+			"profile": options.SRTPKeyInfo.Profile,
+		}).Debug("Added SRTP crypto attribute to default SDP")
+	}
+	
+	audioMedia.Attributes = attributes
+	sdpResponse.MediaDescriptions = []*sdp.MediaDescription{audioMedia}
+	
+	return sdpResponse
 }
