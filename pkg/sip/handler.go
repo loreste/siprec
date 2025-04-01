@@ -676,11 +676,19 @@ func extractMultipartContent(part string) string {
 
 // prepareSdpResponse prepares an SDP response
 func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, error) {
-	// Parse received SDP using pion/sdp directly
-	parsed := &sdp.SessionDescription{}
-	err := parsed.Unmarshal(receivedSDP)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse SDP")
+	var parsed *sdp.SessionDescription
+	
+	// Handle the case where no SDP is provided
+	if receivedSDP == nil || len(receivedSDP) == 0 {
+		h.Logger.Debug("No SDP provided, generating default SDP")
+		parsed = nil
+	} else {
+		// Parse received SDP using pion/sdp directly
+		parsed = &sdp.SessionDescription{}
+		err := parsed.Unmarshal(receivedSDP)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse SDP")
+		}
 	}
 	
 	// Prepare our SDP options
