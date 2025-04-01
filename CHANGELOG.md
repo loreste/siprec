@@ -4,6 +4,11 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ## [Unreleased]
 
+### Added
+- Real-time transcription streaming to AMQP message queues
+- AMQPTranscriptionListener that implements the TranscriptionListener interface
+- Automatic routing of transcriptions to AMQP when connection is available
+
 ### Fixed
 - Fixed potential nil pointer dereference in SDP handler when no SDP content is provided
 - Added generateDefaultSDP function to properly handle nil SDP cases
