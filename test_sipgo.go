@@ -1,4 +1,6 @@
-package main
+// Package test_sipgo provides a test for the sipgo API
+// To use this test, rename the package to main and run with go run test_sipgo.go
+package test_sipgo
 
 import (
 	"fmt"
@@ -9,7 +11,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func main() {
+// TestSipGo tests the sipgo API
+func TestSipGo() {
 	fmt.Println("Testing sipgo API")
 	
 	logger := logrus.New()
@@ -17,14 +20,14 @@ func main() {
 	// Create IP addresses for SIP listening
 	hostIPs := []net.IP{net.ParseIP("127.0.0.1")}
 	
-	// Create user agent
-	ua, err := sipgo.NewUA(
-		sipgo.WithLogger(logger),
-		sipgo.WithHostIPs(hostIPs),
-	)
+	// Create user agent - v0.30.0 style
+	ua, err := sipgo.NewUA()
 	if err != nil {
 		logger.Fatalf("Failed to create user agent: %s", err)
 	}
+	
+	// Set logger manually if needed
+	// ua.Log = logger
 	
 	// Create server
 	server, err := sipgo.NewServer(ua)
@@ -32,16 +35,12 @@ func main() {
 		logger.Fatalf("Failed to create server: %s", err)
 	}
 	
-	// Get router
-	router := server.Router()
-	
 	// Print types
 	fmt.Printf("UA type: %T\n", ua)
 	fmt.Printf("Server type: %T\n", server) 
-	fmt.Printf("Router type: %T\n", router)
 	
-	// Register a handler
-	router.HandleFunc("INVITE", func(req *sip.Request, tx sip.ServerTransaction) {
+	// Register a handler directly on server
+	server.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
 		fmt.Println("Got INVITE")
 	})
 	
