@@ -34,8 +34,31 @@ type RTPForwarder struct {
 	AudioProcessor  interface{} // Audio processing manager (will be *audio.ProcessingManager)
 }
 
-// NewRTPForwarder creates a new RTP forwarder
-func NewRTPForwarder(port int, timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) *RTPForwarder {
+// InitPortManager initializes the port manager with the configured port range
+func InitPortManager(minPort, maxPort int) {
+	portManagerOnce.Do(func() {
+		portManager = NewPortManager(minPort, maxPort)
+	})
+}
+
+// GetPortManager returns the global port manager instance, initializing it if necessary
+func GetPortManager() *PortManager {
+	portManagerOnce.Do(func() {
+		// Initialize with default values if not already initialized
+		portManager = NewPortManager(10000, 20000)
+	})
+	return portManager
+}
+
+// NewRTPForwarder creates a new RTP forwarder using a port allocated from the port manager
+func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) (*RTPForwarder, error) {
+	// Get a port from the port manager
+	pm := GetPortManager()
+	port, err := pm.AllocatePort()
+	if err != nil {
+		return nil, err
+	}
+	
 	return &RTPForwarder{
 		LocalPort:        port,
 		StopChan:         make(chan struct{}),
@@ -47,7 +70,7 @@ func NewRTPForwarder(port int, timeout time.Duration, recordingSession *siprec.R
 		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
 		SRTPKeyLifetime:  2^31,                      // Default lifetime from RFC 3711
 		AudioProcessor:   nil,                        // Will be initialized in StartRTPForwarding
-	}
+	}, nil
 }
 
 // Buffer pool for RTP packets to reduce GC pressure
@@ -61,8 +84,12 @@ var BufferPool = sync.Pool{
 var (
 	RTPPacketsReceived uint64
 	RTPBytesReceived   uint64
-	PortMutex          sync.Mutex
-	UsedRTPPorts       = make(map[int]bool) // Keeps track of used RTP ports
+	
+	// Global port manager instance
+	portManager *PortManager
+	
+	// Init function to ensure portManager is initialized
+	portManagerOnce sync.Once
 )
 
 // CodecInfo holds information about an audio codec
