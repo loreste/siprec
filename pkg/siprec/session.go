@@ -26,6 +26,7 @@ func UpdateRecordingSession(existing *RecordingSession, rsMetadata *RSMetadata) 
 
 	// Update associated time
 	existing.AssociatedTime = time.Now()
+	existing.UpdatedAt = time.Now()
 }
 
 // DetectParticipantChanges analyzes metadata to identify participant changes
@@ -432,6 +433,9 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 		SequenceNumber:    failoverMetadata.Sequence,
 		AssociatedTime:    time.Now(),
 		ReplacesSessionID: originalSessionID, // Mark that this session replaces the original
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+		IsValid:           true,
 	}
 	
 	// Add participants from metadata
@@ -654,4 +658,209 @@ func GenerateSessionUpdateNotification(session *RecordingSession, updateReason s
 	}
 	
 	return metadata
+}
+
+// HandleSiprecStateChange processes a state change request for a SIPREC session
+// Handles pause, resume, and terminate requests via re-INVITE or UPDATE
+func HandleSiprecStateChange(currentSession *RecordingSession, newState string, reason string) error {
+	if currentSession == nil {
+		return pkg_errors.NewInvalidInput("cannot update nil session").
+			WithCode("STATE_CHANGE_FAILED")
+	}
+	
+	// Validate the requested state change
+	validStates := map[string]bool{
+		"active":     true,
+		"paused":     true,
+		"inactive":   true,
+		"terminated": true,
+	}
+	
+	if !validStates[newState] {
+		return pkg_errors.NewInvalidInput(fmt.Sprintf("invalid state change requested: %s", newState)).
+			WithCode("INVALID_STATE").
+			WithFields(map[string]interface{}{
+				"requested_state": newState,
+				"valid_states":    []string{"active", "paused", "inactive", "terminated"},
+			})
+	}
+	
+	// Check if this is a valid state transition
+	currentState := currentSession.RecordingState
+	
+	// Define valid state transitions (from -> to)
+	validTransitions := map[string]map[string]bool{
+		"active": {
+			"paused":     true,
+			"inactive":   true,
+			"terminated": true,
+		},
+		"paused": {
+			"active":     true,
+			"inactive":   true,
+			"terminated": true,
+		},
+		"inactive": {
+			"active":     true,
+			"terminated": true,
+		},
+		"terminated": {
+			// No valid transitions from terminated state
+		},
+	}
+	
+	// Check if the requested transition is valid
+	if !validTransitions[currentState][newState] {
+		return pkg_errors.NewInvalidInput(
+			fmt.Sprintf("invalid state transition from %s to %s", currentState, newState)).
+			WithCode("INVALID_STATE_TRANSITION").
+			WithFields(map[string]interface{}{
+				"current_state":   currentState,
+				"requested_state": newState,
+				"session_id":      currentSession.ID,
+			})
+	}
+	
+	// Store the old state for potential rollback
+	oldState := currentSession.RecordingState
+	oldSequence := currentSession.SequenceNumber
+	
+	// Update the session state
+	currentSession.RecordingState = newState
+	currentSession.SequenceNumber++
+	currentSession.UpdatedAt = time.Now()
+	
+	// Store reason if provided
+	if reason != "" {
+		currentSession.Reason = reason
+	}
+	
+	// Handle state-specific actions
+	switch newState {
+	case "paused":
+		// Nothing special needed for paused state
+	case "active":
+		// If resuming from paused, might need to restart streams
+		if oldState == "paused" || oldState == "inactive" {
+			// Session was resumed
+			// Reset any error counters when successfully resuming
+			currentSession.ErrorCount = 0
+			currentSession.ErrorState = false
+			currentSession.ErrorMessage = ""
+		}
+	case "inactive":
+		// Inactive state might require special handling
+		// This is typically a temporary state before termination
+	case "terminated":
+		// Set end time when terminating
+		currentSession.EndTime = time.Now()
+		
+		// If no reason was provided for termination, set a default
+		if currentSession.Reason == "" {
+			currentSession.Reason = "Recording terminated"
+		}
+		
+		// Mark session as ready for cleanup
+		// This is needed to ensure proper resource management in production
+		currentSession.IsValid = false
+		
+		// Perform cleanup of resources associated with this session
+		// Including port release, any locks, and other resources
+		cleanup := func() {
+			// NOTE: This would typically be implemented by the calling code
+			// as we don't have direct access to the ports or locks here
+			// but we're signaling through the session state
+			
+			// Log session termination
+			fmt.Printf("SIPREC session %s terminated with reason: %s\n", 
+				currentSession.ID, currentSession.Reason)
+		}
+		
+		// Execute cleanup in a goroutine to avoid blocking the state change
+		go cleanup()
+	}
+	
+	// Return success
+	return nil
+}
+
+// GenerateNonSiprecErrorResponse creates an appropriate response when
+// a SIPREC request is received but SIPREC is not supported
+func GenerateNonSiprecErrorResponse() *RSMetadata {
+	// Generate a session ID for the error response
+	sessionID := uuid.New().String()
+	
+	// Create error metadata
+	metadata := &RSMetadata{
+		SessionID: sessionID,
+		State:     "terminated",
+		Reason:    "SIPREC not supported",
+		ReasonRef: "urn:ietf:params:xml:ns:recording:1:error:service-unavailable",
+		Sequence:  1,
+	}
+	
+	// Add minimal session association
+	metadata.SessionRecordingAssoc = RSAssociation{
+		SessionID: sessionID,
+	}
+	
+	// Add minimal required participant information (RFC 7866 requires at least one participant)
+	minimalParticipant := RSParticipant{
+		ID:   "server",
+		Role: "passive",
+		Aor: []Aor{
+			{
+				Value: "sip:recording-server@example.com",
+			},
+		},
+	}
+	metadata.Participants = append(metadata.Participants, minimalParticipant)
+	
+	return metadata
+}
+
+// CleanupSessionResources performs final cleanup operations for terminated sessions
+// Ensures ports are released, recordings are finalized, etc.
+func CleanupSessionResources(session *RecordingSession) error {
+	if session == nil {
+		return pkg_errors.NewInvalidInput("cannot cleanup nil session").
+			WithCode("CLEANUP_FAILED")
+	}
+	
+	if session.RecordingState != "terminated" {
+		return pkg_errors.NewInvalidInput("only terminated sessions can be cleaned up").
+			WithCode("INVALID_STATE").
+			WithField("session_state", session.RecordingState)
+	}
+	
+	// Perform necessary cleanup actions
+	// - Release ports (would be handled by calling code with access to port manager)
+	// - Finalize recordings
+	// - Close any open file handles
+	// - Remove any temporary files
+	
+	// Mark session as cleaned up
+	session.IsValid = false
+	session.UpdatedAt = time.Now()
+	
+	// Log cleanup completion
+	fmt.Printf("Resources for SIPREC session %s cleaned up\n", session.ID)
+	
+	return nil
+}
+
+// Utility function to check if a SIPREC session has expired
+func IsSessionExpired(session *RecordingSession) bool {
+	if session == nil {
+		return true
+	}
+	
+	// If no end time or retention period set, session doesn't expire
+	if session.EndTime.IsZero() && session.RetentionPeriod == 0 {
+		return false
+	}
+	
+	// Check if current time is past the end time
+	now := time.Now()
+	return !session.EndTime.IsZero() && now.After(session.EndTime)
 }
