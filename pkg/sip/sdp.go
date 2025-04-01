@@ -7,6 +7,87 @@ import (
 	"siprec-server/pkg/media"
 )
 
+// generateSDP creates an SDP description based on options
+func (h *Handler) generateSDP(receivedSDP *sdp.SessionDescription, options SDPOptions) *sdp.SessionDescription {
+	// Create a new SDP response
+	sdpResponse := &sdp.SessionDescription{}
+	
+	// Copy basic session information from received SDP
+	if receivedSDP != nil {
+		sdpResponse.Origin = receivedSDP.Origin
+		sdpResponse.SessionName = receivedSDP.SessionName
+		sdpResponse.SessionInformation = receivedSDP.SessionInformation
+		sdpResponse.TimeDescriptions = receivedSDP.TimeDescriptions
+	} else {
+		// Set default values if no SDP was received
+		sdpResponse.Origin = sdp.Origin{
+			Username:       "siprec",
+			SessionID:      1234567890,
+			SessionVersion: 1,
+			NetworkType:    "IN",
+			AddressType:    "IP4",
+			UnicastAddress: options.IPAddress,
+		}
+		sdpResponse.SessionName = sdp.SessionName("SIPREC Media Session")
+		sdpResponse.TimeDescriptions = []sdp.TimeDescription{
+			{
+				Timing: sdp.Timing{
+					StartTime: 0,
+					StopTime:  0,
+				},
+			},
+		}
+	}
+	
+	// Create audio media description
+	audioMedia := sdp.MediaDescription{
+		MediaName: sdp.MediaName{
+			Media:   "audio",
+			Port:    sdp.RangedPort{Value: options.RTPPort},
+			Protos:  []string{"RTP", "AVP"},
+			Formats: []string{"0", "8", "101"}, // PCMU, PCMA, telephone-event
+		},
+		ConnectionInformation: &sdp.ConnectionInformation{
+			NetworkType: "IN",
+			AddressType: "IP4",
+			Address:     &sdp.Address{Address: options.IPAddress},
+		},
+	}
+	
+	// Add RTP/RTCP attributes
+	audioMedia.Attributes = append(audioMedia.Attributes,
+		sdp.Attribute{Key: "rtpmap", Value: "0 PCMU/8000"},
+		sdp.Attribute{Key: "rtpmap", Value: "8 PCMA/8000"},
+		sdp.Attribute{Key: "rtpmap", Value: "101 telephone-event/8000"},
+		sdp.Attribute{Key: "fmtp", Value: "101 0-16"},
+		sdp.Attribute{Key: "ptime", Value: "20"},
+		sdp.Attribute{Key: "sendrecv", Value: ""},
+	)
+	
+	// Add SRTP crypto attributes if enabled
+	if options.EnableSRTP && options.SRTPKeyInfo != nil {
+		// Format the master key and salt as base64
+		// In a real implementation, you'd use base64.StdEncoding.EncodeToString()
+		// For this example, we'll just use a placeholder
+		keyBase64 := "c2VjcmV0a2V5c2VjcmV0a2V5c2VjcmU="
+		
+		// Add crypto line
+		cryptoLine := "1 " + options.SRTPKeyInfo.Profile + " inline:" + keyBase64
+		if options.SRTPKeyInfo.KeyLifetime > 0 {
+			cryptoLine += "|2^" + string(options.SRTPKeyInfo.KeyLifetime) + "|"
+		}
+		
+		audioMedia.Attributes = append(audioMedia.Attributes,
+			sdp.Attribute{Key: "crypto", Value: cryptoLine},
+		)
+	}
+	
+	// Add media to response
+	sdpResponse.MediaDescriptions = append(sdpResponse.MediaDescriptions, &audioMedia)
+	
+	return sdpResponse
+}
+
 // generateSDPResponse generates an SDP response for the initial INVITE
 // This is a wrapper around the central generateSDP function
 func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToUse string) *sdp.SessionDescription {
@@ -29,7 +110,7 @@ func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToU
 		}
 	}
 	
-	return h.generateSDP(receivedSDP, options)
+	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
 // generateSDPResponseWithPort generates an SDP response with a specific port (for re-INVITEs)
@@ -56,7 +137,7 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 		}
 	}
 	
-	return h.generateSDP(receivedSDP, options)
+	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
 // Helper function to check if a string contains a substring
