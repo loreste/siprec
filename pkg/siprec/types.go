@@ -3,17 +3,21 @@ package siprec
 import (
 	"encoding/xml"
 	"time"
+	
+	"github.com/emiago/sipgo/sip"
 )
 
 // RecordingSession represents a SIPREC recording session
 // Enhanced to support RFC 6341 and RFC 7866
 type RecordingSession struct {
 	ID                 string
+	SIPID              string            // SIP Call-ID associated with this recording session
 	Participants       []Participant
 	AssociatedTime     time.Time
 	SequenceNumber     int
-	RecordingType      string // full, selective, etc.
-	RecordingState     string // recording, paused, etc.
+	RecordingType      string            // full, selective, etc.
+	RecordingState     string            // recording, paused, etc.
+	Direction          string            // Direction of the recording (inbound, outbound, unknown)
 	MediaStreamTypes   []string
 	// RFC 6341 fields
 	PolicyID           string            // Recording policy identifier
@@ -43,6 +47,7 @@ type RecordingSession struct {
 	RetryCount         int               // Number of retry attempts
 	Timeout            time.Duration     // Session timeout
 	LogicalResourceID  string            // ID for load balancing/clustering
+	OriginalRequest    *sip.Request      // The original SIP request that started this session
 }
 
 // Participant represents a participant in a recording session
@@ -90,6 +95,7 @@ type RSMetadata struct {
 	ReasonRef             string          `xml:"reasonref,attr,omitempty"`      // URI reference for reason (RFC 7866)
 	Expires               string          `xml:"expires,attr,omitempty"`        // When recording expires (ISO datetime)
 	MediaLabel            string          `xml:"label,attr,omitempty"`          // For selective recording (RFC 7866)
+	Direction             string          `xml:"direction,attr,omitempty"`      // Direction of the recording
 	Group                 []Group         `xml:"group"`
 	Participants          []RSParticipant `xml:"participant"`
 	Streams               []Stream        `xml:"stream"`
