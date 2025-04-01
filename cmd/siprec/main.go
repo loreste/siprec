@@ -173,11 +173,47 @@ func initialize() error {
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
 
-	// Initialize AMQP client
+	// Initialize AMQP client with robust error handling
 	if appConfig.Messaging.AMQPUrl != "" && appConfig.Messaging.AMQPQueueName != "" {
-		amqpClient = messaging.NewAMQPClient(logger, appConfig.Messaging.AMQPUrl, appConfig.Messaging.AMQPQueueName)
-		if err := amqpClient.Connect(); err != nil {
-			logger.WithError(err).Warn("Failed to connect to AMQP server, continuing without AMQP")
+		// Create AMQP client in a separate goroutine with timeout
+		// This ensures that AMQP issues don't block server startup
+		logger.Info("Initializing AMQP client")
+		
+		amqpConnectChan := make(chan struct{
+			client *messaging.AMQPClient
+			err    error
+		}, 1)
+		
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.WithField("recover", r).Error("Recovered from panic in AMQP initialization")
+					amqpConnectChan <- struct {
+						client *messaging.AMQPClient
+						err    error
+					}{nil, fmt.Errorf("panic during AMQP initialization: %v", r)}
+				}
+			}()
+			
+			client := messaging.NewAMQPClient(logger, appConfig.Messaging.AMQPUrl, appConfig.Messaging.AMQPQueueName)
+			err := client.Connect()
+			amqpConnectChan <- struct {
+				client *messaging.AMQPClient
+				err    error
+			}{client, err}
+		}()
+		
+		// Wait for AMQP connection with timeout
+		select {
+		case result := <-amqpConnectChan:
+			if result.err != nil {
+				logger.WithError(result.err).Warn("Failed to connect to AMQP server, continuing without AMQP")
+			} else {
+				amqpClient = result.client
+				logger.Info("AMQP client initialized successfully")
+			}
+		case <-time.After(5 * time.Second):
+			logger.Warn("AMQP initialization timed out after 5 seconds, continuing without AMQP")
 		}
 	} else {
 		logger.Warn("AMQP not configured, transcriptions will not be sent to message queue")

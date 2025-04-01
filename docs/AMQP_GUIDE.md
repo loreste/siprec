@@ -10,6 +10,17 @@ The SIPREC server can send transcriptions to an AMQP (Advanced Message Queuing P
 - Archive transcriptions for later analysis
 - Integrate with other services through a message broker
 
+## Production Readiness Features
+
+The AMQP integration includes several features to ensure production readiness:
+
+- **Fault Tolerance**: AMQP connection issues will not crash the main server
+- **Timeouts**: All AMQP operations have timeouts to prevent blocking
+- **Auto-Reconnection**: The client will automatically attempt to reconnect if the connection is lost
+- **Message Expiration**: Messages have a 12-hour expiration to prevent queue overflow
+- **Graceful Degradation**: If AMQP is unavailable, the server continues to function without interruption
+- **Panic Recovery**: All AMQP operations include panic recovery to prevent cascading failures
+
 ## Configuration
 
 To enable AMQP integration, you need to set the following environment variables in your `.env` file:
