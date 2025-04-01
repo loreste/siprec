@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -48,33 +49,120 @@ func (c *AMQPClient) Connect() error {
 		return fmt.Errorf("AMQP URL or queue name not configured")
 	}
 
-	// Establish connection
+	// Create a connection timeout context
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Use a separate goroutine with the timeout context
+	connChan := make(chan struct {
+		conn *amqp.Connection
+		err  error
+	}, 1)
+
+	go func() {
+		conn, err := amqp.Dial(c.url)
+		connChan <- struct {
+			conn *amqp.Connection
+			err  error
+		}{conn, err}
+	}()
+
+	// Wait for connection with timeout
+	var conn *amqp.Connection
 	var err error
-	c.conn, err = amqp.Dial(c.url)
+	select {
+	case result := <-connChan:
+		conn = result.conn
+		err = result.err
+	case <-ctx.Done():
+		return fmt.Errorf("connection to AMQP server timed out after 5 seconds")
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to connect to AMQP server: %w", err)
 	}
+	
+	// Store the connection
+	c.conn = conn
 
-	// Create channel
-	c.channel, err = c.conn.Channel()
-	if err != nil {
-		c.conn.Close()
-		return fmt.Errorf("failed to open AMQP channel: %w", err)
+	// Create channel with timeout
+	channelChan := make(chan struct {
+		channel *amqp.Channel
+		err     error
+	}, 1)
+
+	go func() {
+		channel, err := conn.Channel()
+		channelChan <- struct {
+			channel *amqp.Channel
+			err     error
+		}{channel, err}
+	}()
+
+	// Wait for channel creation with timeout
+	var channel *amqp.Channel
+	select {
+	case result := <-channelChan:
+		channel = result.channel
+		err = result.err
+	case <-time.After(3 * time.Second):
+		conn.Close()
+		return fmt.Errorf("channel creation timed out after 3 seconds")
 	}
 
-	// Declare queue
-	_, err = c.channel.QueueDeclare(
-		c.queueName,
-		true,  // Durable
-		false, // Delete when unused
-		false, // Exclusive
-		false, // No-wait
-		nil,   // Arguments
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to open AMQP channel: %w", err)
+	}
+	
+	// Store the channel
+	c.channel = channel
+
+	// Declare queue with timeout
+	queueChan := make(chan struct {
+		queue amqp.Queue
+		err   error
+	}, 1)
+
+	go func() {
+		queue, err := channel.QueueDeclare(
+			c.queueName,
+			true,  // Durable
+			false, // Delete when unused
+			false, // Exclusive
+			false, // No-wait
+			nil,   // Arguments
+		)
+		queueChan <- struct {
+			queue amqp.Queue
+			err   error
+		}{queue, err}
+	}()
+
+	// Wait for queue declaration with timeout
+	select {
+	case result := <-queueChan:
+		err = result.err
+	case <-time.After(3 * time.Second):
+		channel.Close()
+		conn.Close()
+		return fmt.Errorf("queue declaration timed out after 3 seconds")
+	}
+
+	if err != nil {
+		channel.Close()
+		conn.Close()
+		return fmt.Errorf("failed to declare AMQP queue: %w", err)
+	}
+
+	// Set up channel Qos to prevent overloading the server
+	err = channel.Qos(
+		10,    // prefetch count (only handle 10 messages at a time)
+		0,     // prefetch size (no specific size limit)
+		false, // global (false means apply to just this channel)
 	)
 	if err != nil {
-		c.channel.Close()
-		c.conn.Close()
-		return fmt.Errorf("failed to declare AMQP queue: %w", err)
+		c.logger.WithError(err).Warn("Failed to set QoS on AMQP channel, continuing anyway")
 	}
 
 	// Set connection status
@@ -84,6 +172,9 @@ func (c *AMQPClient) Connect() error {
 		"queue": c.queueName,
 	}).Info("Connected to AMQP server")
 
+	// Create a new stop channel (in case this is a reconnect)
+	c.stopChan = make(chan struct{})
+	
 	// Start monitoring for connection closing
 	go c.monitorConnection()
 
@@ -123,7 +214,31 @@ func (c *AMQPClient) IsConnected() bool {
 
 // PublishTranscription publishes a transcription message to the AMQP queue
 func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metadata map[string]interface{}) error {
-	if !c.IsConnected() {
+	// Recover from any panics to prevent AMQP issues from crashing the server
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"recover":   r,
+			}).Error("Recovered from panic in AMQP PublishTranscription")
+		}
+	}()
+
+	// Check connection status with timeout for lock acquisition
+	connCheckChan := make(chan bool, 1)
+	go func() {
+		connCheckChan <- c.IsConnected()
+	}()
+
+	// Wait up to 100ms for the connection check
+	var isConnected bool
+	select {
+	case isConnected = <-connCheckChan:
+	case <-time.After(100 * time.Millisecond):
+		return fmt.Errorf("timed out while checking AMQP connection status")
+	}
+
+	if !isConnected {
 		return fmt.Errorf("not connected to AMQP server")
 	}
 
@@ -147,26 +262,52 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 		return fmt.Errorf("failed to marshal transcription to JSON: %w", err)
 	}
 
-	// Publish message
-	c.connMutex.RLock()
-	defer c.connMutex.RUnlock()
+	// Create a timeout context for publishing
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
 
-	err = c.channel.Publish(
-		"",          // Exchange
-		c.queueName, // Routing key (queue name)
-		false,       // Mandatory
-		false,       // Immediate
-		amqp.Publishing{
-			ContentType:  "application/json",
-			Body:         bodyBytes,
-			DeliveryMode: amqp.Persistent, // Make message persistent
-			Timestamp:    time.Now(),
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to publish transcription to AMQP: %w", err)
+	// Publish message with timeout
+	publishChan := make(chan error, 1)
+	go func() {
+		// Acquire the lock
+		c.connMutex.RLock()
+		defer c.connMutex.RUnlock()
+
+		// Check if still connected after acquiring the lock
+		if !c.connected || c.channel == nil {
+			publishChan <- fmt.Errorf("lost AMQP connection before publishing")
+			return
+		}
+
+		// Try publishing
+		err := c.channel.Publish(
+			"",          // Exchange
+			c.queueName, // Routing key (queue name)
+			false,       // Mandatory
+			false,       // Immediate
+			amqp.Publishing{
+				ContentType:  "application/json",
+				Body:         bodyBytes,
+				DeliveryMode: amqp.Persistent, // Make message persistent
+				Timestamp:    time.Now(),
+				// Add message expiration to prevent queue buildup in case of consumer issues
+				Expiration: "43200000", // 12 hours in milliseconds
+			},
+		)
+		publishChan <- err
+	}()
+
+	// Wait for publish with timeout
+	select {
+	case err := <-publishChan:
+		if err != nil {
+			return fmt.Errorf("failed to publish transcription to AMQP: %w", err)
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("publishing to AMQP timed out after 200ms")
 	}
 
+	// Return success
 	c.logger.WithField("call_uuid", callUUID).Debug("Successfully published transcription to AMQP")
 	return nil
 }
