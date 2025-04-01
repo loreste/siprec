@@ -1,4 +1,6 @@
-package main
+// Package test_siprec provides a test for the SIPREC implementation
+// To use this test, rename the package to main and run with go run test_siprec.go
+package test_siprec
 
 import (
 	"encoding/xml"
@@ -8,7 +10,8 @@ import (
 	"siprec-server/pkg/siprec"
 )
 
-func main() {
+// TestSiprec tests the SIPREC implementation
+func TestSiprec() {
 	fmt.Println("Testing enhanced SIPREC implementation")
 	
 	// Create a test RSMetadata
