@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"fmt"
 	"strings"
 	
 	"github.com/pion/sdp/v3"
@@ -74,7 +75,7 @@ func (h *Handler) generateSDP(receivedSDP *sdp.SessionDescription, options SDPOp
 		// Add crypto line
 		cryptoLine := "1 " + options.SRTPKeyInfo.Profile + " inline:" + keyBase64
 		if options.SRTPKeyInfo.KeyLifetime > 0 {
-			cryptoLine += "|2^" + string(options.SRTPKeyInfo.KeyLifetime) + "|"
+			cryptoLine += fmt.Sprintf("|2^%d|", options.SRTPKeyInfo.KeyLifetime)
 		}
 		
 		audioMedia.Attributes = append(audioMedia.Attributes,

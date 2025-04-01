@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -38,18 +39,20 @@ func TestNewHandler(t *testing.T) {
 	assert.NotNil(t, handler.ActiveCalls, "ActiveCalls map should be initialized")
 }
 
-func TestNewCallData(t *testing.T) {
-	// Create a context
-	ctx, cancel := context.WithCancel(context.Background())
+// TestCallData tests the CallData struct
+func TestCallData(t *testing.T) {
+	// Create a call data directly
 	callUUID := "test-call-uuid"
-
-	// Create a new CallData
-	callData := NewCallData(ctx, cancel, callUUID)
+	callData := &CallData{
+		LastActivity: time.Now(),
+		DialogInfo: &DialogInfo{
+			CallID: callUUID,
+		},
+	}
 
 	assert.NotNil(t, callData, "CallData should not be nil")
-	assert.Equal(t, callUUID, callData.CallUUID, "CallUUID should be set")
-	assert.Equal(t, ctx, callData.Context, "Context should be set")
-	assert.NotNil(t, callData.CancelFunc, "CancelFunc should be set")
+	assert.Equal(t, callUUID, callData.DialogInfo.CallID, "CallID should be set")
+	assert.NotNil(t, callData.LastActivity, "LastActivity should be set")
 	assert.Nil(t, callData.Forwarder, "Forwarder should be nil initially")
 	assert.Nil(t, callData.RecordingSession, "RecordingSession should be nil initially")
 }
@@ -71,10 +74,9 @@ func TestGetActiveCallCount(t *testing.T) {
 	assert.Equal(t, 0, count, "Initial active call count should be zero")
 
 	// Add some calls
-	ctx, cancel := context.WithCancel(context.Background())
-	callData1 := NewCallData(ctx, cancel, "call1")
-	callData2 := NewCallData(ctx, cancel, "call2")
-	callData3 := NewCallData(ctx, cancel, "call3")
+	callData1 := &CallData{LastActivity: time.Now(), DialogInfo: &DialogInfo{CallID: "call1"}}
+	callData2 := &CallData{LastActivity: time.Now(), DialogInfo: &DialogInfo{CallID: "call2"}}
+	callData3 := &CallData{LastActivity: time.Now(), DialogInfo: &DialogInfo{CallID: "call3"}}
 
 	handler.ActiveCalls.Store("call1", callData1)
 	handler.ActiveCalls.Store("call2", callData2)
