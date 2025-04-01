@@ -31,6 +31,18 @@ type RecordingSession struct {
 	PauseResumeAllowed bool              // Whether pausing is allowed
 	RealTimeMedia      bool              // Whether this is real-time (vs stored)
 	FailoverID         string            // ID for failover tracking
+	// Enhanced production fields
+	CreatedAt          time.Time         // When this session was created
+	UpdatedAt          time.Time         // Last time this session was updated
+	ErrorCount         int               // Number of errors encountered during session
+	IsValid            bool              // Whether this session is valid
+	SourceIP           string            // IP address of the SRC (recording client)
+	Callbacks          []string          // List of callback URLs for notifications
+	ErrorState         bool              // Whether session is in error state
+	ErrorMessage       string            // Last error message
+	RetryCount         int               // Number of retry attempts
+	Timeout            time.Duration     // Session timeout
+	LogicalResourceID  string            // ID for load balancing/clustering
 }
 
 // Participant represents a participant in a recording session
