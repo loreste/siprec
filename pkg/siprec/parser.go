@@ -2,22 +2,24 @@ package siprec
 
 import (
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"strings"
+	stderrors "errors"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
+	
+	"siprec-server/pkg/errors"
 )
 
 // ParseSiprecInvite extracts SDP and rs-metadata from a SIPREC INVITE request
 func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err error) {
 	contentType := req.GetHeader("Content-Type")
 	if contentType == nil {
-		return "", nil, errors.New("missing Content-Type header")
+		return "", nil, stderrors.New("missing Content-Type header")
 	}
 
 	// Check for multipart MIME content
@@ -27,12 +29,12 @@ func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err 
 	}
 
 	if !strings.HasPrefix(mediaType, "multipart/") {
-		return "", nil, errors.New("not a multipart MIME message")
+		return "", nil, stderrors.New("not a multipart MIME message")
 	}
 
 	boundary, ok := params["boundary"]
 	if !ok {
-		return "", nil, errors.New("no boundary parameter in Content-Type")
+		return "", nil, stderrors.New("no boundary parameter in Content-Type")
 	}
 
 	// Parse multipart MIME body
@@ -68,10 +70,10 @@ func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err 
 	}
 
 	if sdpContent == "" {
-		return "", nil, errors.New("no SDP content found in multipart message")
+		return "", nil, stderrors.New("no SDP content found in multipart message")
 	}
 	if metadataContent == "" {
-		return "", nil, errors.New("no rs-metadata content found in multipart message")
+		return "", nil, stderrors.New("no rs-metadata content found in multipart message")
 	}
 
 	// Parse rs-metadata XML
@@ -133,13 +135,13 @@ Content-Disposition: recording-session
 // Enhanced with better error handling and robustness
 func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 	if req == nil {
-		return nil, pkg_errors.NewInvalidInput("request is nil").
+		return nil, errors.NewInvalidInput("request is nil").
 			WithCode("EXTRACT_METADATA_FAILED")
 	}
 	
 	contentType := req.GetHeader("Content-Type")
 	if contentType == nil {
-		return nil, pkg_errors.NewInvalidInput("missing Content-Type header").
+		return nil, errors.NewInvalidInput("missing Content-Type header").
 			WithCode("MISSING_HEADER").
 			WithField("header", "Content-Type")
 	}
@@ -147,21 +149,21 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 	// Check for multipart MIME content which typically contains rs-metadata
 	mediaType, params, err := mime.ParseMediaType(contentType.Value())
 	if err != nil {
-		return nil, pkg_errors.Wrap(err, "invalid Content-Type header").
+		return nil, errors.Wrap(err, "invalid Content-Type header").
 			WithCode("INVALID_CONTENT_TYPE").
 			WithField("content_type", contentType.Value())
 	}
 
 	// If not multipart, can't contain SIPREC metadata
 	if !strings.HasPrefix(mediaType, "multipart/") {
-		return nil, pkg_errors.NewInvalidInput("not a multipart MIME message").
+		return nil, errors.NewInvalidInput("not a multipart MIME message").
 			WithCode("NOT_MULTIPART").
 			WithField("media_type", mediaType)
 	}
 
 	boundary, ok := params["boundary"]
 	if !ok {
-		return nil, pkg_errors.NewInvalidInput("no boundary parameter in Content-Type").
+		return nil, errors.NewInvalidInput("no boundary parameter in Content-Type").
 			WithCode("MISSING_BOUNDARY").
 			WithField("content_type", contentType.Value())
 	}
@@ -178,7 +180,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 			if err == io.EOF {
 				break
 			}
-			return nil, pkg_errors.Wrap(err, "error reading multipart").
+			return nil, errors.Wrap(err, "error reading multipart").
 				WithCode("MULTIPART_PARSE_ERROR")
 		}
 
@@ -193,7 +195,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 			buf := new(strings.Builder)
 			_, err = io.Copy(buf, part)
 			if err != nil {
-				return nil, pkg_errors.Wrap(err, "error reading rs-metadata part").
+				return nil, errors.Wrap(err, "error reading rs-metadata part").
 					WithCode("METADATA_READ_ERROR")
 			}
 			metadataContent = buf.String()
@@ -208,7 +210,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 
 	// Check for missing parts
 	if metadataContent == "" {
-		return nil, pkg_errors.NewInvalidInput("no rs-metadata content found in multipart message").
+		return nil, errors.NewInvalidInput("no rs-metadata content found in multipart message").
 			WithCode("MISSING_METADATA")
 	}
 	
@@ -221,7 +223,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 	var rsMetadata RSMetadata
 	err = xml.Unmarshal([]byte(metadataContent), &rsMetadata)
 	if err != nil {
-		return nil, pkg_errors.Wrap(err, "error parsing rs-metadata XML").
+		return nil, errors.Wrap(err, "error parsing rs-metadata XML").
 			WithCode("XML_PARSE_ERROR").
 			WithField("xml_content", metadataContent[:min(len(metadataContent), 100)]+"...") // Truncate to avoid huge errors
 	}
@@ -234,7 +236,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 			if strings.Contains(deficiency, "missing session ID") || 
 			   strings.Contains(deficiency, "missing recording state") ||
 			   strings.Contains(deficiency, "invalid recording state") {
-				return nil, pkg_errors.NewInvalidInput(fmt.Sprintf("critical metadata validation failure: %v", deficiencies)).
+				return nil, errors.NewInvalidInput(fmt.Sprintf("critical metadata validation failure: %v", deficiencies)).
 					WithCode("INVALID_METADATA").
 					WithFields(map[string]interface{}{
 						"deficiencies": deficiencies,
@@ -268,7 +270,7 @@ func ExtractRSMetadata(contentType string, body []byte) (*RSMetadata, error) {
 
 	boundary, ok := params["boundary"]
 	if !ok {
-		return nil, errors.New("no boundary parameter in Content-Type")
+		return nil, stderrors.New("no boundary parameter in Content-Type")
 	}
 
 	// Parse multipart MIME body
@@ -299,7 +301,7 @@ func ExtractRSMetadata(contentType string, body []byte) (*RSMetadata, error) {
 	}
 
 	if metadataContent == "" {
-		return nil, errors.New("no rs-metadata content found in multipart message")
+		return nil, stderrors.New("no rs-metadata content found in multipart message")
 	}
 
 	// Parse rs-metadata XML
