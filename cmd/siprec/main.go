@@ -224,6 +224,13 @@ func initialize() error {
 		}
 	}
 	
+		// Initialize the RTP port manager
+		media.InitPortManager(appConfig.Network.RTPPortMin, appConfig.Network.RTPPortMax)
+		logger.WithFields(logrus.Fields{
+			"min_port": appConfig.Network.RTPPortMin,
+			"max_port": appConfig.Network.RTPPortMax,
+		}).Info("Initialized RTP port manager")
+
 	// Create the media config
 	mediaConfig := &media.Config{
 		RTPPortMin:    appConfig.Network.RTPPortMin,
