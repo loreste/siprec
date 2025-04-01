@@ -723,7 +723,7 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 	
 	// Store the old state for potential rollback
 	oldState := currentSession.RecordingState
-	oldSequence := currentSession.SequenceNumber
+	_ = currentSession.SequenceNumber // Keep track of sequence for potential rollback
 	
 	// Update the session state
 	currentSession.RecordingState = newState
