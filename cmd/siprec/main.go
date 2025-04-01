@@ -303,6 +303,15 @@ func initialize() error {
 	wsHandler.RegisterHandlers(httpServer)
 
 	logger.Info("WebSocket real-time transcription streaming initialized")
+	
+	// Register AMQP transcription listener if AMQP is configured
+	if amqpClient != nil && amqpClient.IsConnected() {
+		amqpListener := messaging.NewAMQPTranscriptionListener(logger, amqpClient)
+		transcriptionSvc.AddListener(amqpListener)
+		logger.Info("AMQP transcription listener registered - transcriptions will be sent to message queue")
+	} else {
+		logger.Warn("AMQP not connected, transcriptions will not be sent to message queue")
+	}
 
 	// Log configuration on startup
 	logStartupConfig()
