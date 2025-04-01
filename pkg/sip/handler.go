@@ -5,10 +5,9 @@ package sip
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
+	"mime"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +15,8 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
+	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
-	"siprec-server/pkg/config"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
@@ -59,7 +58,7 @@ type Handler struct {
 	Logger       *logrus.Logger
 	Server       *sipgo.Server
 	UA           *sipgo.UserAgent
-	Router       *sip.Router
+	// Router is removed since sipgo no longer exposes it directly
 	Config       *Config
 	ActiveCalls  sync.Map // Map of call UUID to CallData
 	
@@ -136,13 +135,14 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	}
 	
 	// Create a new server using the user agent
-	server := sipgo.NewServer(ua)
-	router := server.Router()
+	server, err := sipgo.NewServer(ua)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create SIP server")
+	}
 	
 	// Store for later use
 	handler.UA = ua
 	handler.Server = server
-	handler.Router = router
 	
 	// Initialize the session store if redundancy is enabled
 	if config.RedundancyEnabled {
@@ -169,10 +169,10 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 
 // SetupHandlers configures the SIP request handlers
 func (h *Handler) SetupHandlers() {
-	// Create request handlers
-	h.Router.HandleFunc("INVITE", h.handleInvite)
-	h.Router.HandleFunc("BYE", h.handleBye)
-	h.Router.HandleFunc("OPTIONS", h.handleOptions)
+	// Register method handlers using the Server's handler registration methods
+	h.Server.OnInvite(h.handleInvite)
+	h.Server.OnBye(h.handleBye)
+	h.Server.OnOptions(h.handleOptions)
 	
 	h.Logger.Info("SIP request handlers configured")
 }
@@ -214,18 +214,74 @@ func (h *Handler) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		// Store updated remote address for potential reconnection
 		callData.RemoteAddress = getSourceAddress(req)
 		
+		// Check for SIPREC metadata state changes
+		contentType := req.GetHeader("Content-Type")
+		body := req.Body()
+		
+		// Handle SIPREC re-INVITE if this is a SIPREC session
+		if callData.RecordingSession != nil && len(body) > 0 && contentType != nil {
+			mediaType, _, err := mime.ParseMediaType(contentType.Value())
+			if err == nil && strings.HasPrefix(mediaType, "multipart/") {
+				// This might be a SIPREC re-INVITE with state changes
+				rsMetadata, err := siprec.ExtractRSMetadataFromRequest(req)
+				if err == nil && rsMetadata != nil {
+					logger.WithFields(logrus.Fields{
+						"current_state": callData.RecordingSession.RecordingState,
+						"requested_state": rsMetadata.State,
+						"reason": rsMetadata.Reason,
+					}).Info("Processing SIPREC state change request")
+					
+					// Update recording state
+					if rsMetadata.State != "" && rsMetadata.State != callData.RecordingSession.RecordingState {
+						// Apply the state change
+						err := siprec.HandleSiprecStateChange(callData.RecordingSession, rsMetadata.State, rsMetadata.Reason)
+						if err != nil {
+							logger.WithError(err).Warn("Failed to apply SIPREC state change")
+						} else {
+							// Update the forwarder state
+							if rsMetadata.State == "paused" || rsMetadata.State == "inactive" || rsMetadata.State == "terminated" {
+								callData.Forwarder.RecordingPaused = true
+							} else if rsMetadata.State == "active" {
+								callData.Forwarder.RecordingPaused = false
+							}
+							
+							// If terminating, schedule call cleanup
+							if rsMetadata.State == "terminated" {
+								defer func() {
+									time.AfterFunc(1*time.Second, func() {
+										// Close the forwarder
+										close(callData.Forwarder.StopChan)
+										
+										// Remove from active calls
+										h.ActiveCalls.Delete(callUUID)
+										
+										// Remove from session store if redundancy is enabled
+										if h.Config.RedundancyEnabled {
+											h.SessionStore.Delete(callUUID)
+										}
+										
+										logger.Info("Terminated SIPREC session cleaned up")
+									})
+								}()
+							}
+						}
+					}
+					
+					// Update participant information if provided
+					if len(rsMetadata.Participants) > 0 {
+						siprec.UpdateRecordingSession(callData.RecordingSession, rsMetadata)
+						logger.Info("Updated recording session participants")
+					}
+				}
+			}
+		} else if len(body) > 0 && contentType != nil && contentType.Value() == "application/sdp" {
+			// Process standard SDP re-INVITE
+			logger.Debug("Processing SDP update in re-INVITE")
+		}
+		
 		// Update the session store
 		if h.Config.RedundancyEnabled {
 			h.SessionStore.Save(callUUID, callData)
-		}
-		
-		// Process any SDP updates if present
-		contentType := req.GetHeader("Content-Type")
-		body := req.Body()
-		if len(body) > 0 && contentType != nil && 
-		   contentType.Value() == "application/sdp" {
-			// Handle SDP update if needed
-			// For now, just acknowledge without changing media settings
 		}
 		
 		// Respond with 200 OK
@@ -620,8 +676,9 @@ func extractMultipartContent(part string) string {
 
 // prepareSdpResponse prepares an SDP response
 func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, error) {
-	// Parse received SDP
-	parsed, err := sipgo.ParseSDP(receivedSDP)
+	// Parse received SDP using pion/sdp directly
+	parsed := &sdp.SessionDescription{}
+	err := parsed.Unmarshal(receivedSDP)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse SDP")
 	}
@@ -664,19 +721,20 @@ func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, e
 	}
 	
 	// Generate SDP response
-	responseSDP := h.generateSDP(parsed, sdpOptions)
+	responseSDP := h.generateSDPAdvanced(parsed, sdpOptions)
 	
-	// Marshal the SDP object back to bytes
-	return sipgo.MarshalSDP(responseSDP)
+	// Marshal the SDP object back to bytes using pion/sdp directly
+	return responseSDP.Marshal()
 }
 
 // getSourceAddress gets the source address of a SIP request
 func getSourceAddress(req *sip.Request) string {
-	if req == nil || req.Source() == nil {
+	if req == nil {
 		return ""
 	}
 	
-	return req.Source().String()
+	// In sipgo v0.30.0, Source() is a method that returns a string
+	return req.Source()
 }
 
 // extractDialogInfo extracts dialog information from a SIP request
@@ -711,20 +769,34 @@ func extractDialogInfo(req *sip.Request) *DialogInfo {
 }
 
 // getTagParam extracts tag parameter from address header
-func getTagParam(addr *sip.FromHeader) string {
+// Works with both FromHeader and ToHeader
+func getTagParam(addr interface{}) string {
 	if addr == nil {
 		return ""
 	}
 	
-	// Extract tag using string operations since we don't know
-	// the exact interface of the SIP library's FromHeader
-	addrStr := addr.String()
-	tagIndex := strings.Index(addrStr, ";tag=")
-	if tagIndex < 0 {
-		return ""
+	// Check if it's a FromHeader or ToHeader type
+	if fromHeader, ok := addr.(*sip.FromHeader); ok {
+		tag, _ := fromHeader.Params.Get("tag")
+		return tag
 	}
 	
-	return addrStr[tagIndex+5:]
+	if toHeader, ok := addr.(*sip.ToHeader); ok {
+		tag, _ := toHeader.Params.Get("tag")
+		return tag
+	}
+	
+	// Fallback to string method
+	if strAddr, ok := addr.(fmt.Stringer); ok {
+		addrStr := strAddr.String()
+		tagIndex := strings.Index(addrStr, ";tag=")
+		if tagIndex < 0 {
+			return ""
+		}
+		return addrStr[tagIndex+5:]
+	}
+	
+	return ""
 }
 
 // getCSeqValue extracts CSeq number from a request
@@ -1039,7 +1111,34 @@ func (h *Handler) handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction)
 	
 	// Set pause state if specified in metadata
 	if rsMetadata != nil {
-		forwarder.RecordingPaused = rsMetadata.State == "paused"
+		// Handle recording state
+		switch rsMetadata.State {
+		case "paused":
+			forwarder.RecordingPaused = true
+			recordingSession.RecordingState = "paused"
+			logger.Info("Recording session initialized in paused state")
+		case "inactive":
+			forwarder.RecordingPaused = true
+			recordingSession.RecordingState = "inactive"
+			logger.Info("Recording session initialized in inactive state")
+		case "terminated":
+			// This is unusual, but we'll handle it
+			logger.Warn("Recording session requested in terminated state - initializing but will terminate soon")
+			forwarder.RecordingPaused = true
+			recordingSession.RecordingState = "terminated"
+			// Schedule termination after responding
+			defer func() {
+				time.AfterFunc(500*time.Millisecond, func() {
+					close(forwarder.StopChan)
+					h.ActiveCalls.Delete(callUUID)
+				})
+			}()
+		default:
+			// Default to active
+			forwarder.RecordingPaused = false
+			recordingSession.RecordingState = "active"
+			logger.Info("Recording session initialized in active state")
+		}
 	}
 
 	// Store in call data
