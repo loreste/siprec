@@ -22,6 +22,14 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 	go func() {
 		var err error
 
+		// Ensure we release the port when done
+		defer func() {
+			// Get the port manager and release the port
+			pm := GetPortManager()
+			pm.ReleasePort(forwarder.LocalPort)
+			forwarder.Logger.WithField("port", forwarder.LocalPort).Debug("Released RTP port")
+		}()
+
 		// Create address to listen on
 		listenAddr := &net.UDPAddr{Port: forwarder.LocalPort}
 
@@ -350,28 +358,35 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 // AllocateRTPPort dynamically allocates an RTP port for use
 func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
-	PortMutex.Lock()
-	defer PortMutex.Unlock()
-
-	for {
-		// Secure port allocation using crypto/rand
-		port, err := rand.Int(rand.Reader, big.NewInt(int64(maxPort-minPort)))
-		if err != nil {
-			logger.Fatal("Failed to generate random port")
-		}
-		rtpPort := int(port.Int64()) + minPort
-		if !UsedRTPPorts[rtpPort] {
-			UsedRTPPorts[rtpPort] = true
-			return rtpPort
-		}
+	// Initialize port manager if needed
+	portManagerOnce.Do(func() {
+		portManager = NewPortManager(minPort, maxPort)
+		logger.WithFields(logrus.Fields{
+			"min_port": minPort,
+			"max_port": maxPort,
+		}).Info("Initialized RTP port manager")
+	})
+	
+	// Get the port manager and allocate a port
+	pm := GetPortManager()
+	port, err := pm.AllocatePort()
+	if err != nil {
+		logger.WithError(err).Error("Failed to allocate RTP port")
+		// As a fallback, try a random port 
+		randomPort := minPort + rand.Intn(maxPort-minPort)
+		logger.WithField("port", randomPort).Warn("Using fallback random port")
+		return randomPort
 	}
+	
+	logger.WithField("port", port).Debug("Allocated RTP port")
+	return port
 }
 
 // ReleaseRTPPort releases a previously allocated RTP port
 func ReleaseRTPPort(port int) {
-	PortMutex.Lock()
-	defer PortMutex.Unlock()
-	delete(UsedRTPPorts, port)
+	// Get the port manager and release the port
+	pm := GetPortManager()
+	pm.ReleasePort(port)
 }
 
 // MonitorRTPTimeout periodically checks if RTP packets are received within a given timeout period
