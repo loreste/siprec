@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -157,10 +158,54 @@ type RedundancyConfig struct {
 
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
-	// Try loading .env file, but continue if it doesn't exist
-	err := godotenv.Load()
+	// Get current working directory
+	wd, err := os.Getwd()
 	if err != nil {
-		logger.Warn("No .env file found, using environment variables only")
+		logger.WithError(err).Warn("Failed to get current working directory")
+		wd = "unknown"
+	}
+
+	// Define possible locations for .env file
+	possibleEnvFiles := []string{
+		".env",                     // Current directory
+		"../.env",                  // Parent directory
+		filepath.Join(wd, ".env"),  // Absolute path
+	}
+
+	// Try loading .env file from each possible location
+	var loadedFrom string
+	var loadErr error
+
+	for _, envFile := range possibleEnvFiles {
+		// Try to load this .env file
+		if _, statErr := os.Stat(envFile); statErr == nil {
+			absPath, _ := filepath.Abs(envFile)
+			logger.WithField("path", absPath).Debug("Attempting to load .env file")
+			
+			if loadErr = godotenv.Load(envFile); loadErr == nil {
+				loadedFrom = absPath
+				break
+			}
+		}
+	}
+
+	// If all attempts failed, try default Load() which uses working directory
+	if loadedFrom == "" {
+		if loadErr = godotenv.Load(); loadErr == nil {
+			if _, statErr := os.Stat(".env"); statErr == nil {
+				loadedFrom, _ = filepath.Abs(".env")
+			}
+		}
+	}
+
+	// Report results
+	if loadedFrom != "" {
+		logger.WithFields(logrus.Fields{
+			"working_dir": wd,
+			"path": loadedFrom,
+		}).Info("Successfully loaded .env file")
+	} else {
+		logger.WithField("working_dir", wd).Warn("No .env file found, using environment variables only")
 	}
 	
 	// Initialize config with default values
@@ -239,6 +284,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	
 	// Load SIP ports
 	portsStr := getEnv("PORTS", "5060,5061")
+	logger.WithField("ports_env", portsStr).Debug("Loaded PORTS environment variable")
 	portsSlice := strings.Split(portsStr, ",")
 	
 	for _, portStr := range portsSlice {
@@ -263,6 +309,8 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	if len(config.Ports) == 0 {
 		config.Ports = []int{5060, 5061}
 		logger.Warn("No valid ports specified, using defaults: 5060, 5061")
+	} else {
+		logger.WithField("sip_ports", config.Ports).Info("Configured SIP ports")
 	}
 	
 	// Load RTP port range
