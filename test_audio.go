@@ -1,4 +1,6 @@
-package main
+// Package test_audio provides a test for the audio processing features
+// To use this test, rename the package to main and run with go run test_audio.go
+package test_audio
 
 import (
 	"fmt"
@@ -13,7 +15,7 @@ import (
 )
 
 // TestAudioProcessing tests the audio processing features
-func main() {
+func TestAudioProcessing() {
 	// Create a logger
 	logger := logrus.New()
 	logger.Out = os.Stdout
