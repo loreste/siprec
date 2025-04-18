@@ -140,11 +140,37 @@ cp .env.example .env
 nano .env
 ```
 
-#### 5. Run Setup and Build
+#### 5. Build the Application
 
 ```bash
-# Create required directories and build the application
-make setup
+# Create required directories
+mkdir -p recordings sessions
+
+# Build the application
+go build -o siprec-server ./cmd/siprec/
+
+# For production builds with optimization
+go build -ldflags="-s -w" -o siprec-server ./cmd/siprec/
+```
+
+The `-ldflags="-s -w"` option reduces the binary size by removing debugging information.
+
+#### Cross-Compilation for Different Linux Architectures
+
+If you need to build for a different architecture:
+
+```bash
+# For 64-bit Linux (most common)
+GOOS=linux GOARCH=amd64 go build -o siprec-server-amd64 ./cmd/siprec/
+
+# For 32-bit Linux
+GOOS=linux GOARCH=386 go build -o siprec-server-386 ./cmd/siprec/
+
+# For ARM64 (e.g., Raspberry Pi 4 with 64-bit OS)
+GOOS=linux GOARCH=arm64 go build -o siprec-server-arm64 ./cmd/siprec/
+
+# For ARM (e.g., older Raspberry Pi models)
+GOOS=linux GOARCH=arm go build -o siprec-server-arm ./cmd/siprec/
 ```
 
 ## Configuration

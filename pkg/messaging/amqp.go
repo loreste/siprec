@@ -61,10 +61,19 @@ func (c *AMQPClient) Connect() error {
 
 	go func() {
 		conn, err := amqp.Dial(c.url)
-		connChan <- struct {
+		select {
+		case <-ctx.Done():
+			// Context already timed out, clean up and return
+			if conn != nil {
+				conn.Close()
+			}
+			return
+		case connChan <- struct {
 			conn *amqp.Connection
 			err  error
-		}{conn, err}
+		}{conn, err}:
+			// Successfully sent result to channel
+		}
 	}()
 
 	// Wait for connection with timeout
@@ -275,11 +284,17 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 
 		// Check if still connected after acquiring the lock
 		if !c.connected || c.channel == nil {
-			publishChan <- fmt.Errorf("lost AMQP connection before publishing")
+			select {
+			case <-ctx.Done():
+				// Context already timed out, just return
+				return
+			case publishChan <- fmt.Errorf("lost AMQP connection before publishing"):
+				// Successfully sent error
+			}
 			return
 		}
 
-		// Try publishing
+		// Try publishing with deadline from context
 		err := c.channel.Publish(
 			"",          // Exchange
 			c.queueName, // Routing key (queue name)
@@ -294,7 +309,14 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 				Expiration: "43200000", // 12 hours in milliseconds
 			},
 		)
-		publishChan <- err
+
+		select {
+		case <-ctx.Done():
+			// Context already timed out, just return
+			return
+		case publishChan <- err:
+			// Successfully sent result
+		}
 	}()
 
 	// Wait for publish with timeout

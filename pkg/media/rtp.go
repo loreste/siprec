@@ -15,6 +15,7 @@ import (
 	"github.com/pion/srtp/v2"
 	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/audio"
+	"siprec-server/pkg/metrics"
 )
 
 func init() {
@@ -29,11 +30,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		// Ensure we release the port when done
 		defer func() {
-			// Get the port manager and release the port
-			pm := GetPortManager()
-			pm.ReleasePort(forwarder.LocalPort)
-			forwarder.Logger.WithField("port", forwarder.LocalPort).Debug("Released RTP port")
+			// Use the Cleanup method to ensure all resources are properly released
+			forwarder.Cleanup()
 		}()
+
+		// Start metrics for this session if enabled
+		var endSessionMetrics func()
+		if metrics.IsMetricsEnabled() {
+			endSessionMetrics = metrics.StartSessionTimer("rtp_forwarding")
+			defer endSessionMetrics()
+		}
 
 		// Create address to listen on
 		listenAddr := &net.UDPAddr{Port: forwarder.LocalPort}
@@ -54,9 +60,12 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		udpConn, err := net.ListenUDP("udp", listenAddr)
 		if err != nil {
 			forwarder.Logger.WithError(err).WithField("port", forwarder.LocalPort).Error("Failed to listen on UDP port for RTP forwarding")
+			if metrics.IsMetricsEnabled() {
+				metrics.RecordRTPDroppedPackets(callUUID, "listen_failure", 1)
+			}
 			return
 		}
-		defer udpConn.Close()
+		// Don't use defer close since we transfer ownership to forwarder
 		forwarder.Conn = udpConn
 		forwarder.LastRTPTime = time.Now() // Initialize last RTP packet time
 
@@ -68,9 +77,12 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		forwarder.RecordingFile, err = os.Create(filePath)
 		if err != nil {
 			forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
+			if metrics.IsMetricsEnabled() {
+				metrics.RecordRTPDroppedPackets(callUUID, "file_creation_failed", 1)
+			}
 			return
 		}
-		defer forwarder.RecordingFile.Close()
+		// Don't use defer close since we transfer ownership to forwarder
 
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
@@ -84,10 +96,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			// Generate random key and salt separately
 			if _, err := rand.Read(masterKey); err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP master key")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordSRTPEncryptionErrors(callUUID, "key_generation_failed", 1)
+				}
 				return
 			}
 			if _, err := rand.Read(masterSalt); err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to generate SRTP master salt")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordSRTPEncryptionErrors(callUUID, "salt_generation_failed", 1)
+				}
 				return
 			}
 
@@ -119,6 +137,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			srtpSession, err = srtp.NewSessionSRTP(udpConn, srtpConfig)
 			if err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to set up SRTP session")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordSRTPEncryptionErrors(callUUID, "session_setup_failed", 1)
+				}
 				return
 			}
 			
@@ -184,10 +205,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		// Start the timeout monitoring routine
 		go MonitorRTPTimeout(forwarder, callUUID)
 
-		// Use buffer pool to reduce garbage collection
-		bufferPtr := BufferPool.Get()
-		buffer := bufferPtr.([]byte)
-		defer BufferPool.Put(bufferPtr)
+		// Main packet processing loop
 		for {
 			select {
 			case <-forwarder.StopChan:
@@ -197,9 +215,29 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				mainPw.Close()
 				return
 			default:
-				n, _, err := forwarder.Conn.ReadFrom(buffer)
+				// Get an appropriately sized buffer for the packet
+				buffer, returnBuffer := GetPacketBuffer(1500)
+				
+				// Read the next packet with timeout
+				udpConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				n, _, err := udpConn.ReadFrom(buffer)
+				
+				// Record metrics for this packet if enabled
+				if metrics.IsMetricsEnabled() && n > 0 {
+					metrics.RecordRTPPacket(callUUID, n)
+				}
+				
 				if err != nil {
-					forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
+					// Return the buffer to the pool since we're done with it
+					returnBuffer(buffer)
+					
+					// Log error, but only if it's not a timeout
+					if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
+						if metrics.IsMetricsEnabled() {
+							metrics.RecordRTPDroppedPackets(callUUID, "read_error", 1)
+						}
+					}
 					continue
 				}
 
@@ -208,6 +246,10 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 				// Check if recording is paused by the SIP dialog
 				if forwarder.RecordingPaused {
+					returnBuffer(buffer) // Return buffer to pool if paused
+					if metrics.IsMetricsEnabled() {
+						metrics.RecordRTPDroppedPackets(callUUID, "recording_paused", 1)
+					}
 					continue // Skip processing this packet
 				}
 
@@ -215,11 +257,14 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				if config.EnableSRTP && srtpSession != nil {
 					forwarder.SRTPEnabled = true
 					
-					// Process SRTP packet
-					// Get a buffer from the pool
-					bufPtr := BufferPool.Get()
-					decryptedRTP := bufPtr.([]byte)
-					defer BufferPool.Put(bufPtr)
+					// Start measuring processing time for SRTP decryption
+					var finishProcessingTimer func()
+					if metrics.IsMetricsEnabled() {
+						finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "srtp_decryption")
+					}
+					
+					// Get another buffer for the decrypted data
+					decryptedRTP, returnDecryptedBuffer := GetPacketBuffer(n + 20)  // Extra room for any padding
 					
 					// Extract SSRC from RTP packet header
 					// RFC 3550 - RTP header format:
@@ -245,158 +290,247 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					// Open a read stream with the correct SSRC
 					readStream, err := srtpSession.OpenReadStream(ssrc)
 					if err != nil {
+						// Return both buffers to their pools
+						returnBuffer(buffer)
+						returnDecryptedBuffer(decryptedRTP)
+						
 						forwarder.Logger.WithError(err).WithFields(logrus.Fields{
 							"call_uuid": callUUID,
 							"ssrc":      ssrc,
 						}).Debug("Failed to open SRTP read stream, trying default SSRC")
 						
+						if metrics.IsMetricsEnabled() {
+							metrics.RecordSRTPDecryptionErrors(callUUID, "open_stream_error", 1)
+						}
+						
 						// Try with default SSRC as fallback
 						readStream, err = srtpSession.OpenReadStream(0)
 						if err != nil {
+							if finishProcessingTimer != nil {
+								finishProcessingTimer()
+							}
 							continue
 						}
 					}
 
-					n, err = readStream.Read(decryptedRTP)
+					// Read decrypted data directly into our buffer
+					decryptedLen, err := readStream.Read(decryptedRTP[:cap(decryptedRTP)])
 					if err != nil {
+						// Return both buffers to their pools
+						returnBuffer(buffer)
+						returnDecryptedBuffer(decryptedRTP)
+						
 						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to read from SRTP stream")
+						
+						if metrics.IsMetricsEnabled() {
+							metrics.RecordSRTPDecryptionErrors(callUUID, "read_error", 1)
+						}
+						
+						if finishProcessingTimer != nil {
+							finishProcessingTimer()
+						}
 						continue
+					}
+					
+					// Track successful SRTP packet processing
+					if metrics.IsMetricsEnabled() {
+						metrics.RecordSRTPPacketsProcessed(callUUID, "rx", 1)
+					}
+
+					// We can release the original encrypted buffer now
+					returnBuffer(buffer)
+					
+					// Finish timing SRTP decryption
+					if finishProcessingTimer != nil {
+						finishProcessingTimer()
 					}
 
 					// Process audio if enabled
 					if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
+						// Start timer for audio processing
+						var finishAudioProcessingTimer func()
+						if metrics.IsMetricsEnabled() {
+							finishAudioProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "audio_processing")
+						}
+						
 						processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
 						
 						// Add detailed debug log before processing
 						forwarder.Logger.WithFields(logrus.Fields{
 							"call_uuid": callUUID,
-							"data_len": n,
+							"data_len": decryptedLen,
 							"srtp": true,
 							"audio_processing": "enabled",
 						}).Debug("Processing SRTP audio packet with audio processing")
 						
-						processedData, err := processingManager.ProcessAudio(decryptedRTP[:n])
+						processedData, err := processingManager.ProcessAudio(decryptedRTP[:decryptedLen])
+						
+						// Finish timing audio processing
+						if finishAudioProcessingTimer != nil {
+							finishAudioProcessingTimer()
+						}
+						
+						// Return the decrypted buffer now that we have processed its contents
+						returnDecryptedBuffer(decryptedRTP)
+						
 						if err != nil {
 							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio")
+							if metrics.IsMetricsEnabled() {
+								metrics.RecordAudioProcessingError(callUUID, "processing_error", 1)
+							}
 						} else if len(processedData) > 0 {
 							// Log successful processing
 							forwarder.Logger.WithFields(logrus.Fields{
 								"call_uuid": callUUID,
-								"original_size": n,
+								"original_size": decryptedLen,
 								"processed_size": len(processedData),
 							}).Debug("Successfully processed SRTP audio packet")
 							
+							// Record VAD event if processing included VAD
+							if config.AudioProcessing.EnableVAD && metrics.IsMetricsEnabled() {
+								// If we have access to VAD status, we could record it here
+								// metrics.RecordVADEvent(callUUID, "speech_detected", 1)
+							}
+							
 							// Write processed audio to pipe
+							startWrite := time.Now()
 							if _, err := mainPw.Write(processedData); err != nil {
 								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write processed audio to stream")
+								if metrics.IsMetricsEnabled() {
+									metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
+								}
+							} else if metrics.IsMetricsEnabled() {
+								// Record write latency
+								metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
 							}
 						}
 					} else {
-						// Write decrypted packet to pipe
-						if _, err := mainPw.Write(decryptedRTP[:n]); err != nil {
+						// Write decrypted packet directly to pipe
+						startWrite := time.Now()
+						if _, err := mainPw.Write(decryptedRTP[:decryptedLen]); err != nil {
 							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
+							if metrics.IsMetricsEnabled() {
+								metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
+							}
+						} else if metrics.IsMetricsEnabled() {
+							// Record write latency
+							metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
+						}
+						
+						// Now that we've written the decrypted data, we can return the buffer
+						returnDecryptedBuffer(decryptedRTP)
+					}
+				} else {
+					// For non-SRTP traffic, process the RTP payload directly
+					
+					// Start measuring processing time
+					var finishProcessingTimer func()
+					if metrics.IsMetricsEnabled() {
+						finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "rtp_processing")
+					}
+					
+					// Process audio if enabled
+					if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
+						// Start timer for audio processing 
+						var finishAudioProcessingTimer func()
+						if metrics.IsMetricsEnabled() {
+							finishAudioProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "audio_processing")
+						}
+						
+						processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
+						
+						// Process the RTP payload starting after the header (typically 12 bytes)
+						// A proper implementation would extract the payload based on the header values
+						var payloadStart int = 12
+						if n > payloadStart {
+							// Process the audio payload
+							processed, err := processingManager.ProcessAudio(buffer[payloadStart:n])
+							
+							// Finish timing audio processing
+							if finishAudioProcessingTimer != nil {
+								finishAudioProcessingTimer()
+							}
+							
+							if err != nil {
+								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio from RTP payload")
+								if metrics.IsMetricsEnabled() {
+									metrics.RecordAudioProcessingError(callUUID, "processing_error", 1)
+								}
+							} else if len(processed) > 0 {
+								// Write processed audio to pipe
+								startWrite := time.Now()
+								if _, err := mainPw.Write(processed); err != nil {
+									forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write processed audio to stream")
+									if metrics.IsMetricsEnabled() {
+										metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
+									}
+								} else if metrics.IsMetricsEnabled() {
+									// Record write latency
+									metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
+								}
+							}
+						}
+					} else {
+						// Write unprocessed RTP payload to pipe - skip the RTP header
+						var payloadStart int = 12 
+						if n > payloadStart {
+							startWrite := time.Now()
+							if _, err := mainPw.Write(buffer[payloadStart:n]); err != nil {
+								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP payload to audio stream")
+								if metrics.IsMetricsEnabled() {
+									metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
+								}
+							} else if metrics.IsMetricsEnabled() {
+								// Record write latency
+								metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
+							}
 						}
 					}
 					
-					// Log successful SRTP decryption (only for debugging, remove in production)
-					if forwarder.Logger.GetLevel() >= logrus.DebugLevel {
-						forwarder.Logger.WithFields(logrus.Fields{
-							"call_uuid": callUUID,
-							"ssrc":      ssrc,
-							"bytes":     n,
-						}).Debug("Successfully decrypted SRTP packet")
+					// Finish timing RTP processing
+					if finishProcessingTimer != nil {
+						finishProcessingTimer()
 					}
-				} else {
-					// Process regular RTP packet with audio processing if enabled
-					if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
-						processingManager := forwarder.AudioProcessor.(*audio.ProcessingManager)
-						
-						// Add detailed debug log before processing
-						forwarder.Logger.WithFields(logrus.Fields{
-							"call_uuid": callUUID,
-							"data_len": n,
-							"srtp": false,
-							"audio_processing": "enabled",
-							"payload_type": buffer[1] & 0x7F, // Extract payload type from RTP header
-						}).Debug("Processing regular RTP audio packet")
-						
-						processedData, err := processingManager.ProcessAudio(buffer[:n])
-						if err != nil {
-							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio")
-							continue
-						}
-						
-						if len(processedData) > 0 {
-							// Log successful processing
-							forwarder.Logger.WithFields(logrus.Fields{
-								"call_uuid": callUUID,
-								"original_size": n,
-								"processed_size": len(processedData),
-							}).Debug("Successfully processed RTP audio packet")
-							
-							// Write processed audio to pipe
-							if _, err := mainPw.Write(processedData); err != nil {
-								forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write processed audio to stream")
-							}
-						}
-					} else {
-						// No processing, just forward
-						forwarder.Logger.WithFields(logrus.Fields{
-							"call_uuid": callUUID,
-							"data_len": n,
-							"audio_processing": "disabled",
-						}).Debug("Forwarding unprocessed RTP packet")
-						
-						if _, err := mainPw.Write(buffer[:n]); err != nil {
-							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write RTP packet to audio stream")
-						}
-					}
+					
+					// Return the buffer to the pool now that we're done with it
+					returnBuffer(buffer)
 				}
-
-				// Update metrics
-				RTPPacketsReceived++
-				RTPBytesReceived += uint64(n)
 			}
 		}
 	}()
 }
 
-// AllocateRTPPort dynamically allocates an RTP port for use
-func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
-	// Initialize port manager if needed
-	portManagerOnce.Do(func() {
-		portManager = NewPortManager(minPort, maxPort)
-		logger.WithFields(logrus.Fields{
-			"min_port": minPort,
-			"max_port": maxPort,
-		}).Info("Initialized RTP port manager")
-	})
-	
-	// Get the port manager and allocate a port
-	pm := GetPortManager()
-	port, err := pm.AllocatePort()
+// SetUDPSocketBuffers sets optimal socket buffer sizes for RTP traffic
+func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
+	// Set read buffer size to handle network bursts
+	const readBufferSize = 16 * 1024 * 1024
+	err := conn.SetReadBuffer(readBufferSize)
 	if err != nil {
-		logger.WithError(err).Error("Failed to allocate RTP port")
-		// As a fallback, try a random port
-		randomPort := minPort + mathrand.Intn(maxPort-minPort)
-		logger.WithField("port", randomPort).Warn("Using fallback random port")
-		return randomPort
+		logger.WithError(err).Warn("Failed to set UDP read buffer size, using system default")
+	} else {
+		logger.WithField("size_bytes", readBufferSize).Debug("Set UDP read buffer size")
 	}
-	
-	logger.WithField("port", port).Debug("Allocated RTP port")
-	return port
+
+	// Set write buffer size for outgoing packets
+	const writeBufferSize = 1 * 1024 * 1024
+	err = conn.SetWriteBuffer(writeBufferSize)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to set UDP write buffer size, using system default")
+	} else {
+		logger.WithField("size_bytes", writeBufferSize).Debug("Set UDP write buffer size")
+	}
+
+	// Configure socket to not delay small packets
+	if fd, err := conn.File(); err == nil {
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
+		fd.Close()
+	}
 }
 
-// ReleaseRTPPort releases a previously allocated RTP port
-func ReleaseRTPPort(port int) {
-	// Get the port manager and release the port
-	pm := GetPortManager()
-	pm.ReleasePort(port)
-}
-
-// MonitorRTPTimeout periodically checks if RTP packets are received within a given timeout period
+// MonitorRTPTimeout monitors for RTP inactivity and cleans up forwarder
 func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
-	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -404,37 +538,37 @@ func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
 		case <-forwarder.StopChan:
 			return
 		case <-ticker.C:
-			// Check if the last RTP packet was received more than the timeout duration ago
+			// Check if we've timed out
 			if time.Since(forwarder.LastRTPTime) > forwarder.Timeout {
-				forwarder.Logger.WithField("call_uuid", callUUID).Warn("RTP timeout reached, terminating session")
-				forwarder.StopChan <- struct{}{}
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid": callUUID,
+					"last_rtp":  forwarder.LastRTPTime,
+					"timeout":   forwarder.Timeout,
+				}).Info("RTP timeout detected, closing forwarder")
+				
+				// Signal the main goroutine to stop
+				close(forwarder.StopChan)
 				return
 			}
 		}
 	}
 }
 
-// SetUDPSocketBuffers sets appropriate buffer sizes for UDP sockets
-func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
-	// Get the file descriptor from the UDPConn
-	file, err := conn.File()
+// AllocateRTPPort allocates a port for RTP traffic
+func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
+	// Use the port manager to get an available port
+	pm := GetPortManager()
+	port, err := pm.AllocatePort()
 	if err != nil {
-		logger.WithError(err).Warn("Failed to get file descriptor for UDP socket")
-		return
+		logger.WithError(err).Error("Failed to allocate RTP port, using default port")
+		return 10000 // Default fallback port
 	}
-	defer file.Close()
-
-	fd := int(file.Fd())
-
-	// Set receive buffer to 1MB
-	err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 1024*1024)
-	if err != nil {
-		logger.WithError(err).Warn("Failed to set UDP receive buffer size")
+	
+	// Update metrics
+	if metrics.IsMetricsEnabled() {
+		metrics.PortsInUse.Inc()
 	}
-
-	// Set send buffer to 1MB
-	err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_SNDBUF, 1024*1024)
-	if err != nil {
-		logger.WithError(err).Warn("Failed to set UDP send buffer size")
-	}
+	
+	logger.WithField("port", port).Debug("Allocated RTP port")
+	return port
 }
