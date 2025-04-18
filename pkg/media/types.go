@@ -22,6 +22,8 @@ type RTPForwarder struct {
 	RecordingSession *siprec.RecordingSession // SIPREC session information
 	RecordingPaused  bool                     // Flag to indicate if recording is paused
 	Logger           *logrus.Logger
+	isCleanedUp      bool                     // Flag to track if resources have been cleaned up
+	cleanupMutex     sync.Mutex               // Mutex to protect cleanup operations
 	
 	// SRTP-related fields
 	SRTPEnabled    bool       // Whether SRTP is enabled for this forwarder
@@ -32,6 +34,51 @@ type RTPForwarder struct {
 	
 	// Audio processing
 	AudioProcessor  interface{} // Audio processing manager (will be *audio.ProcessingManager)
+	
+	// Cleanup tracking
+	MarkedForCleanup bool       // Flag indicating if this forwarder has been marked for cleanup
+}
+
+// SDPOptions defines options for SDP generation
+type SDPOptions struct {
+	// IP Address to use in SDP
+	IPAddress string
+	
+	// Whether the server is behind NAT
+	BehindNAT bool
+	
+	// Internal IP address (for ICE candidates)
+	InternalIP string
+	
+	// External IP address (for ICE candidates)
+	ExternalIP string
+	
+	// Whether to include ICE candidates
+	IncludeICE bool
+	
+	// RTP port to use
+	RTPPort int
+	
+	// Whether SRTP is enabled
+	EnableSRTP bool
+	
+	// SRTP key information
+	SRTPKeyInfo *SRTPKeyInfo
+}
+
+// SRTPKeyInfo holds SRTP key information
+type SRTPKeyInfo struct {
+	// SRTP master key
+	MasterKey []byte
+	
+	// SRTP master salt
+	MasterSalt []byte
+	
+	// SRTP profile (e.g., "AES_CM_128_HMAC_SHA1_80")
+	Profile string
+	
+	// SRTP key lifetime
+	KeyLifetime int
 }
 
 // InitPortManager initializes the port manager with the configured port range
@@ -70,39 +117,125 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
 		SRTPKeyLifetime:  2^31,                      // Default lifetime from RFC 3711
 		AudioProcessor:   nil,                        // Will be initialized in StartRTPForwarding
+		isCleanedUp:      false,                      // Not cleaned up initially
+		MarkedForCleanup: false,                      // Not marked for cleanup initially
 	}, nil
 }
 
-// Buffer pool for RTP packets to reduce GC pressure
-var BufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 1500)
-	},
+// Cleanup performs a thorough cleanup of all resources used by the RTPForwarder
+// It ensures resources are only released once to prevent memory leaks
+func (f *RTPForwarder) Cleanup() {
+	// Use mutex to ensure thread safety
+	f.cleanupMutex.Lock()
+	defer f.cleanupMutex.Unlock()
+	
+	// Check if already cleaned up
+	if f.isCleanedUp {
+		return
+	}
+	
+	// Mark as cleaned up to prevent duplicate cleanup
+	f.isCleanedUp = true
+	
+	// Get the port manager and release the port
+	pm := GetPortManager()
+	pm.ReleasePort(f.LocalPort)
+	f.Logger.WithField("port", f.LocalPort).Debug("Released RTP port during cleanup")
+	
+	// Close UDP connection if open
+	if f.Conn != nil {
+		f.Conn.Close()
+		f.Conn = nil
+	}
+	
+	// Close recording file if open
+	if f.RecordingFile != nil {
+		f.RecordingFile.Close()
+		f.RecordingFile = nil
+	}
+	
+	// Close audio processor if it implements a Close method
+	if f.AudioProcessor != nil {
+		if closer, ok := f.AudioProcessor.(interface{ Close() error }); ok {
+			closer.Close()
+		}
+		f.AudioProcessor = nil
+	}
+	
+	// Clean up SRTP resources
+	f.SRTPMasterKey = nil
+	f.SRTPMasterSalt = nil
+	
+	f.Logger.Debug("RTP forwarder resources have been cleaned up")
 }
 
-// Global metrics - in a production environment, these would be proper metrics
+// Define multiple buffer pools for different sizes to optimize memory usage
 var (
-	RTPPacketsReceived uint64
-	RTPBytesReceived   uint64
+	// Small buffer pool for control packets (up to 128 bytes)
+	SmallBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 128)
+		},
+	}
 	
-	// Global port manager instance
-	portManager *PortManager
+	// Medium buffer pool for typical RTP packets (up to 1024 bytes)
+	MediumBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 1024)
+		},
+	}
 	
-	// Init function to ensure portManager is initialized
-	portManagerOnce sync.Once
+	// Large buffer pool for larger RTP packets with many CSRC identifiers, etc. (up to 1500 bytes)
+	LargeBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 1500)
+		},
+	}
+	
+	// Very large buffer pool for processing chunks (up to 4096 bytes)
+	VeryLargeBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 4096)
+		},
+	}
+	
+	// For backward compatibility - defaults to medium size buffer
+	BufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 1024)
+		},
+	}
 )
 
-// CodecInfo holds information about an audio codec
-type CodecInfo struct {
-	Name       string
-	PayloadType byte
-	SampleRate int
-	Channels   int
+// GetPacketBuffer returns an appropriately sized buffer for the given size
+// This helps optimize memory usage by using the right pool
+func GetPacketBuffer(size int) ([]byte, func(interface{})) {
+	var buffer interface{}
+	var pool *sync.Pool
+	
+	switch {
+	case size <= 128:
+		buffer = SmallBufferPool.Get()
+		pool = &SmallBufferPool
+	case size <= 1024:
+		buffer = MediumBufferPool.Get()
+		pool = &MediumBufferPool
+	case size <= 1500:
+		buffer = LargeBufferPool.Get()
+		pool = &LargeBufferPool
+	default:
+		buffer = VeryLargeBufferPool.Get()
+		pool = &VeryLargeBufferPool
+	}
+	
+	// Return the buffer and a function to return it to the pool
+	return buffer.([]byte), func(b interface{}) {
+		pool.Put(b)
+	}
 }
 
-// Known codecs
+// Global port manager instance
 var (
-	CodecPCMU = CodecInfo{Name: "PCMU", PayloadType: 0, SampleRate: 8000, Channels: 1}
-	CodecPCMA = CodecInfo{Name: "PCMA", PayloadType: 8, SampleRate: 8000, Channels: 1}
-	CodecG722 = CodecInfo{Name: "G722", PayloadType: 9, SampleRate: 16000, Channels: 1}
+	portManager     *PortManager
+	portManagerOnce sync.Once
 )
