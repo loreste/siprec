@@ -51,6 +51,11 @@ type Config struct {
 	
 	// Storage type for redundancy (memory, redis)
 	RedundancyStorageType string
+	
+	// Number of shards for concurrent session handling
+	// Higher values reduce lock contention but increase memory usage
+	// Must be a power of 2 (16, 32, 64, etc.)
+	ShardCount int
 }
 
 // Handler for SIP requests
@@ -60,7 +65,7 @@ type Handler struct {
 	UA           *sipgo.UserAgent
 	// Router is removed since sipgo no longer exposes it directly
 	Config       *Config
-	ActiveCalls  sync.Map // Map of call UUID to CallData
+	ActiveCalls  *ShardedMap // Sharded map of call UUID to CallData for better concurrency
 	
 	// Speech-to-text callback function
 	STTCallback func(context.Context, string, io.Reader, string) error
@@ -122,10 +127,22 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 		return nil, errors.New("configuration cannot be nil")
 	}
 	
+	// Determine shard count - use default of 32 if not specified
+	shardCount := config.ShardCount
+	if shardCount <= 0 {
+		shardCount = 32
+		logger.WithField("default_shard_count", shardCount).Info("Using default shard count for call map")
+	}
+	
+	// Create a new sharded map for active calls
+	activeCalls := NewShardedMap(shardCount)
+	
+	// Create the handler
 	handler := &Handler{
 		Logger:       logger,
 		Config:       config,
 		STTCallback:  sttCallback,
+		ActiveCalls:  activeCalls,
 	}
 	
 	// Create a new SIP stack
@@ -588,6 +605,10 @@ func extractSDP(req *sip.Request) ([]byte, error) {
 	
 	// Check content type
 	if strings.Contains(contentType.Value(), "application/sdp") {
+		// Validate the SDP content
+		if err := ValidateSDP(body); err != nil {
+			return nil, errors.Wrap(err, "invalid SDP content")
+		}
 		return body, nil
 	} else if strings.Contains(contentType.Value(), "multipart/mixed") {
 		// For multipart content, extract the SDP part
@@ -602,7 +623,14 @@ func extractSDP(req *sip.Request) ([]byte, error) {
 			if strings.Contains(part, "Content-Type: application/sdp") {
 				// Extract SDP content
 				sdpContent := extractMultipartContent(part)
-				return []byte(sdpContent), nil
+				sdpBytes := []byte(sdpContent)
+				
+				// Validate the SDP content
+				if err := ValidateSDP(sdpBytes); err != nil {
+					return nil, errors.Wrap(err, "invalid SDP content in multipart body")
+				}
+				
+				return sdpBytes, nil
 			}
 		}
 		
@@ -692,7 +720,7 @@ func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, e
 	}
 	
 	// Prepare our SDP options
-	sdpOptions := SDPOptions{
+	sdpOptions := &media.SDPOptions{
 		IPAddress:  h.Config.MediaConfig.InternalIP,
 		BehindNAT:  h.Config.MediaConfig.BehindNAT,
 		InternalIP: h.Config.MediaConfig.InternalIP,
@@ -720,7 +748,7 @@ func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, e
 			masterSalt[i] = byte(i + 100)
 		}
 		
-		sdpOptions.SRTPKeyInfo = &SRTPKeyInfo{
+		sdpOptions.SRTPKeyInfo = &media.SRTPKeyInfo{
 			MasterKey:   masterKey,
 			MasterSalt:  masterSalt,
 			Profile:     "AES_CM_128_HMAC_SHA1_80",
@@ -987,9 +1015,16 @@ func (h *Handler) cleanupStaleSessions() {
 		if callData.IsStale(staleDuration) {
 			logger.WithField("call_uuid", callUUID).Info("Cleaning up stale session")
 			
-			// Stop RTP forwarding
+			// Stop RTP forwarding and properly clean up resources
 			if callData.Forwarder != nil {
+				// Mark for cleanup tracking
+				callData.Forwarder.MarkedForCleanup = true
+				
+				// Signal forwarding to stop
 				close(callData.Forwarder.StopChan)
+				
+				// Perform thorough cleanup of all RTP forwarder resources
+				callData.Forwarder.Cleanup()
 			}
 			
 			// Remove from active calls
@@ -1226,18 +1261,17 @@ func (h *Handler) CleanupActiveCalls() {
 
 // GetActiveCallCount returns the number of currently active calls
 func (h *Handler) GetActiveCallCount() int {
-	count := 0
-	h.ActiveCalls.Range(func(_, _ interface{}) bool {
-		count++
-		return true
-	})
-	return count
+	return h.ActiveCalls.Count()
 }
 
 // Shutdown gracefully shuts down the SIP handler and all its components
 func (h *Handler) Shutdown(ctx context.Context) error {
 	logger := h.Logger.WithField("operation", "sip_shutdown")
 	logger.Info("Shutting down SIP handler and all components")
+	
+	// Log the number of active calls before shutdown
+	callCount := h.GetActiveCallCount()
+	logger.WithField("active_calls", callCount).Info("Active calls before shutdown")
 
 	// First clean up all active calls
 	h.CleanupActiveCalls()

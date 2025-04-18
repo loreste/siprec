@@ -45,8 +45,9 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	for port := pm.minPort; port <= pm.maxPort; port += 2 {
 		// RTP ports are typically even
 		if !pm.usedPorts[port] {
-			// Check if the port is actually available
-			if isPortAvailable(port) {
+			// Check if the port is actually available while holding the lock
+			// to prevent race conditions with other goroutines
+			if isPortAvailableWithLock(port) {
 				pm.usedPorts[port] = true
 				return port, nil
 			}
@@ -56,7 +57,7 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	// Second try - check all ports in the range regardless of our usedPorts map
 	// This handles cases where ports were released externally
 	for port := pm.minPort; port <= pm.maxPort; port += 2 {
-		if isPortAvailable(port) {
+		if isPortAvailableWithLock(port) {
 			pm.usedPorts[port] = true
 			return port, nil
 		}
@@ -87,7 +88,20 @@ func (pm *PortManager) GetUsedPortCount() int {
 }
 
 // isPortAvailable checks if a UDP port is available for binding
+// This function should only be called from outside AllocatePort
 func isPortAvailable(port int) bool {
+	addr := net.UDPAddr{Port: port}
+	conn, err := net.ListenUDP("udp", &addr)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// isPortAvailableWithLock checks if a UDP port is available for binding
+// This variant is used within AllocatePort while the mutex is held
+func isPortAvailableWithLock(port int) bool {
 	addr := net.UDPAddr{Port: port}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {

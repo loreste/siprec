@@ -357,8 +357,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	
 	// If TLS is enabled, ensure certificates are provided
 	if config.EnableTLS && (config.TLSCertFile == "" || config.TLSKeyFile == "") {
-		logger.Warn("TLS is enabled but certificate or key file is missing, TLS will be disabled")
-		config.EnableTLS = false
+		return errors.New("TLS is enabled but certificate or key file is missing. Please provide both TLS_CERT_PATH and TLS_KEY_PATH environment variables")
 	}
 	
 	// Load STUN servers
