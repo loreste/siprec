@@ -1,4 +1,4 @@
-# SIPREC Server with RFC 7245 Session Redundancy
+# SIPREC Server with RFC 7245 Session Redundancy (v0.1.0)
 
 A Session Recording Protocol (SIPREC) server implementation in Go with a focus on high availability through session redundancy (RFC 7245) to maintain recording continuity during network failures or server restarts.
 
@@ -10,6 +10,9 @@ A Session Recording Protocol (SIPREC) server implementation in Go with a focus o
 - **Media Stream Continuity**: Maintains RTP stream continuity during failovers
 - **Transport Layer Security (TLS)**: Secure SIP signaling with TLS support
 - **Media Encryption (SRTP)**: Secure Real-time Transport Protocol for encrypted media
+- **Concurrent Session Handling**: Sharded map implementation for high-throughput session management
+- **Memory Optimization**: Efficient buffer pooling for RTP packet processing
+- **Performance Metrics**: Comprehensive Prometheus metrics for production monitoring
 - **Docker Support**: Easy deployment with Docker and docker-compose
 - **Extensive Testing**: Comprehensive test suite for redundancy features
 - **SIP/SIPREC Protocol**: Support for RFC 7865/7866 for recording sessions
@@ -132,6 +135,7 @@ ENABLE_REDUNDANCY=true        # Enable session redundancy
 SESSION_TIMEOUT=30s           # Timeout for session inactivity
 SESSION_CHECK_INTERVAL=10s    # Interval for checking session health
 REDUNDANCY_STORAGE_TYPE=memory # Storage type for redundancy (memory, redis planned)
+SHARD_COUNT=32                # Number of shards for concurrent session handling
 
 # SIP/RTP Configuration
 EXTERNAL_IP=auto              # Public IP address for SDP (auto=detect)
