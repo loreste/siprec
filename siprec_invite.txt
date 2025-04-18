@@ -1,0 +1,41 @@
+INVITE sip:record@127.0.0.1:5060 SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.100:5080;branch=z9hG4bK-siprec-test
+From: <sip:recorder@example.com>;tag=siprec-from-tag
+To: <sip:record@127.0.0.1>
+Call-ID: test-call-1743470046
+CSeq: 1 INVITE
+Max-Forwards: 70
+Contact: <sip:recorder@192.168.1.100:5080>
+Content-Type: multipart/mixed;boundary=boundary1
+Content-Length:      892
+
+--boundary1
+Content-Type: application/sdp
+
+v=0
+o=recorder 1622133 1622133 IN IP4 192.168.1.100
+s=SIPREC Test Call
+c=IN IP4 192.168.1.100
+t=0 0
+m=audio 10000 RTP/AVP 0 8
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=sendonly
+
+--boundary1
+Content-Type: application/rs-metadata+xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1">
+  <session session="test-session-1743470046" state="active" direction="inbound">
+    <participant id="p1" name="Alice">
+      <aor>sip:alice@example.com</aor>
+    </participant>
+    <participant id="p2" name="Bob">
+      <aor>sip:bob@example.com</aor>
+    </participant>
+    <stream label="stream1" streamid="audio-stream" mode="separate" type="audio"></stream>
+    <sessionrecordingassoc sessionid="test-session-1743470046" callid="test-call-1743470046"></sessionrecordingassoc>
+  </session>
+</recording>
+--boundary1--

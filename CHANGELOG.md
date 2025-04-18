@@ -2,6 +2,26 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.1.0] - 2025-04-17
+
+### Added
+- Initial release with core SIPREC server functionality
+- RFC 7245 compliant session redundancy implementation
+- SIP Dialog replacement support via Replaces header
+- TLS and SRTP security for signaling and media
+- Concurrent session handling with sharded maps
+- Memory optimization with RTP buffer pooling
+- Production-ready Prometheus metrics
+- Basic health check API
+- Docker and docker-compose support
+- Comprehensive testing suite
+
+### Optimized
+- Concurrent session handling using sharded maps in `pkg/sip/handler.go`
+- Reduced lock contention for better scaling with many concurrent calls
+- Efficient memory usage with buffer pooling for RTP packets
+- Better performance under high load with concurrent processing
+
 ## [Unreleased]
 
 ### Added
