@@ -2,7 +2,7 @@ package messaging
 
 import (
 	"time"
-	
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +44,7 @@ func (l *AMQPTranscriptionListener) OnTranscription(callUUID string, transcripti
 		l.logger.WithField("call_uuid", callUUID).Debug("AMQP client is nil, skipping transcription publishing")
 		return
 	}
-	
+
 	if !l.client.IsConnected() {
 		l.logger.WithField("call_uuid", callUUID).Debug("AMQP client not connected, skipping transcription publishing")
 		return

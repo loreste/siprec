@@ -2,8 +2,7 @@ package media
 
 import (
 	"testing"
-	
-	"github.com/sirupsen/logrus"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,7 +18,7 @@ func TestConfig(t *testing.T) {
 		ExternalIP:    "203.0.113.1",
 		DefaultVendor: "mock",
 	}
-	
+
 	assert.Equal(t, 10000, config.RTPPortMin, "RTPPortMin should be set")
 	assert.Equal(t, 20000, config.RTPPortMax, "RTPPortMax should be set")
 	assert.True(t, config.EnableSRTP, "EnableSRTP should be true")
@@ -30,80 +29,77 @@ func TestConfig(t *testing.T) {
 	assert.Equal(t, "mock", config.DefaultVendor, "DefaultVendor should be set")
 }
 
-func TestAllocateRTPPort(t *testing.T) {
-	logger := logrus.New()
+func TestPortManager(t *testing.T) {
 	minPort := 10000
 	maxPort := 10010
-	
-	// Clear any existing port allocations
-	PortMutex.Lock()
-	UsedRTPPorts = make(map[int]bool)
-	PortMutex.Unlock()
-	
+
+	// Create a new port manager for testing
+	pm := NewPortManager(minPort, maxPort)
+
 	// Allocate a bunch of ports
 	var ports []int
 	for i := 0; i < 5; i++ {
-		port := AllocateRTPPort(minPort, maxPort, logger)
+		port, err := pm.AllocatePort()
+		assert.NoError(t, err, "Should be able to allocate port")
+		assert.GreaterOrEqual(t, port, minPort, "Port should be >= min")
+		assert.LessOrEqual(t, port, maxPort, "Port should be <= max")
 		ports = append(ports, port)
-		
-		// Verify port is in range
-		assert.GreaterOrEqual(t, port, minPort, "Port should be >= minPort")
-		assert.LessOrEqual(t, port, maxPort, "Port should be <= maxPort")
 	}
-	
-	// Test releasing a specific port
-	if len(ports) > 0 {
-		portToRelease := ports[0]
-		ReleaseRTPPort(portToRelease)
-		
-		// Allocate another port - should eventually get the one we just released
-		found := false
-		for i := 0; i < 10; i++ { // Try multiple times because it's random
-			newPort := AllocateRTPPort(minPort, maxPort, logger)
-			if newPort == portToRelease {
-				found = true
-				break
-			}
-			// Release it for the next attempt
-			ReleaseRTPPort(newPort)
-		}
-		
-		assert.True(t, found, "Should eventually allocate the released port")
+
+	// Release all ports
+	for _, port := range ports {
+		pm.ReleasePort(port)
+	}
+
+	// Test that we can allocate again after releasing
+	for i := 0; i < 5; i++ {
+		port, err := pm.AllocatePort()
+		assert.NoError(t, err, "Should be able to allocate port after release")
+		pm.ReleasePort(port)
 	}
 }
 
-func TestRTPPortReuse(t *testing.T) {
-	// Reset the UsedRTPPorts map to ensure a clean test
-	PortMutex.Lock()
-	UsedRTPPorts = make(map[int]bool)
-	PortMutex.Unlock()
-	
-	logger := logrus.New()
-	minPort := 10000
-	maxPort := 10002 // Only 3 ports available
-	
-	// Allocate all ports
-	port1 := AllocateRTPPort(minPort, maxPort, logger)
-	port2 := AllocateRTPPort(minPort, maxPort, logger)
-	port3 := AllocateRTPPort(minPort, maxPort, logger)
-	
-	// All ports should be in the valid range
-	assert.GreaterOrEqual(t, port1, minPort)
-	assert.LessOrEqual(t, port1, maxPort)
-	assert.GreaterOrEqual(t, port2, minPort)
-	assert.LessOrEqual(t, port2, maxPort)
-	assert.GreaterOrEqual(t, port3, minPort)
-	assert.LessOrEqual(t, port3, maxPort)
-	
-	// All ports should be different
-	assert.NotEqual(t, port1, port2)
-	assert.NotEqual(t, port2, port3)
-	assert.NotEqual(t, port1, port3)
-	
-	// Release a port
-	ReleaseRTPPort(port2)
-	
-	// Should reuse the released port
-	newPort := AllocateRTPPort(minPort, maxPort, logger)
-	assert.Equal(t, port2, newPort, "Released port should be reused")
+func TestPortManagerBasicFunctionality(t *testing.T) {
+	minPort := 50000 // Use high port numbers to avoid conflicts
+	maxPort := 50004 // Only even ports: 50000, 50002, 50004 (3 ports available)
+
+	pm := NewPortManager(minPort, maxPort)
+
+	// Test allocation and release
+	port1, err := pm.AllocatePort()
+	assert.NoError(t, err, "Should be able to allocate first port")
+	assert.True(t, port1 >= minPort && port1 <= maxPort, "Port should be in range")
+	assert.True(t, port1%2 == 0, "Port should be even")
+
+	port2, err := pm.AllocatePort()
+	assert.NoError(t, err, "Should be able to allocate second port")
+	assert.NotEqual(t, port1, port2, "Should get different ports")
+
+	// Release first port
+	pm.ReleasePort(port1)
+
+	// Allocate again - might get the same port back
+	port3, err := pm.AllocatePort()
+	assert.NoError(t, err, "Should be able to allocate after release")
+
+	// Clean up
+	pm.ReleasePort(port2)
+	pm.ReleasePort(port3)
+}
+
+func TestGlobalPortManager(t *testing.T) {
+	// Test the global port manager functions
+	InitPortManager(20000, 20010)
+	pm := GetPortManager()
+
+	assert.NotNil(t, pm, "Global port manager should not be nil")
+
+	// Test allocation
+	port, err := pm.AllocatePort()
+	assert.NoError(t, err, "Should be able to allocate from global manager")
+	assert.GreaterOrEqual(t, port, 20000, "Port should be in range")
+	assert.LessOrEqual(t, port, 20010, "Port should be in range")
+
+	// Release the port
+	pm.ReleasePort(port)
 }

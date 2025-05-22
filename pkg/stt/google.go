@@ -13,9 +13,9 @@ import (
 
 // GoogleProvider implements the Provider interface for Google Speech-to-Text
 type GoogleProvider struct {
-	logger            *logrus.Logger
-	client            *speech.Client
-	transcriptionSvc  *TranscriptionService
+	logger           *logrus.Logger
+	client           *speech.Client
+	transcriptionSvc *TranscriptionService
 }
 
 // NewGoogleProvider creates a new Google Speech-to-Text provider
@@ -148,11 +148,11 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 
 							// Create metadata
 							metadata := map[string]interface{}{
-								"provider": p.Name(),
+								"provider":   p.Name(),
 								"confidence": alt.Confidence,
 								"word_count": len(strings.Fields(transcription)),
 							}
-							
+
 							// Publish to transcription service for real-time streaming
 							if p.transcriptionSvc != nil {
 								p.transcriptionSvc.PublishTranscription(callUUID, transcription, true, metadata)
@@ -163,13 +163,13 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 								"transcription": transcription,
 								"final":         false,
 							}).Debug("Received interim transcription")
-							
+
 							// Create metadata for interim result
 							metadata := map[string]interface{}{
 								"provider": p.Name(),
-								"interim": true,
+								"interim":  true,
 							}
-							
+
 							// Publish interim results for real-time streaming
 							if p.transcriptionSvc != nil {
 								p.transcriptionSvc.PublishTranscription(callUUID, transcription, false, metadata)

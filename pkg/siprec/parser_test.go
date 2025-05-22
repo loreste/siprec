@@ -28,11 +28,11 @@ func TestConvertRSParticipantToParticipant(t *testing.T) {
 	assert.Equal(t, "John Doe", participant.Name, "Participant Name should match")
 	assert.Equal(t, "name1", participant.DisplayName, "Participant DisplayName should match")
 	assert.Len(t, participant.CommunicationIDs, 2, "Should have 2 CommunicationIDs")
-	
+
 	// Check first CommunicationID (SIP)
 	assert.Equal(t, "sip", participant.CommunicationIDs[0].Type, "First CommunicationID type should be sip")
 	assert.Equal(t, "sip:john@example.com", participant.CommunicationIDs[0].Value, "First CommunicationID value should match")
-	
+
 	// Check second CommunicationID (SIP) - the function always creates SIP types
 	assert.Equal(t, "sip", participant.CommunicationIDs[1].Type, "Second CommunicationID type should be sip")
 	assert.Equal(t, "tel:+12345678901", participant.CommunicationIDs[1].Value, "Second CommunicationID value should match")
@@ -41,7 +41,7 @@ func TestConvertRSParticipantToParticipant(t *testing.T) {
 func TestCreateMultipartResponse(t *testing.T) {
 	// Create test data
 	sdp := "v=0\r\no=- 123456 2 IN IP4 192.168.1.100\r\ns=SIPREC Test\r\nc=IN IP4 192.168.1.100\r\nt=0 0\r\nm=audio 10000 RTP/AVP 0 8\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\n"
-	
+
 	metadata := `<?xml version="1.0" encoding="UTF-8"?>
 <recording xmlns="urn:ietf:params:xml:ns:recording:1" session="some-uuid" state="recording">
   <participant id="participant1">
@@ -56,10 +56,10 @@ func TestCreateMultipartResponse(t *testing.T) {
 	// Verify content type contains boundary
 	assert.Contains(t, contentType, "multipart/mixed", "Content-Type should be multipart/mixed")
 	assert.Contains(t, contentType, "boundary=", "Content-Type should contain boundary parameter")
-	
+
 	// Extract boundary (for debugging if needed)
 	_ = contentType[strings.Index(contentType, "boundary=")+9:]
-	
+
 	// Verify body contains both parts
 	assert.Contains(t, body, "Content-Type: application/sdp", "Body should contain SDP part")
 	assert.Contains(t, body, "Content-Type: application/rs-metadata+xml", "Body should contain metadata part")
@@ -128,14 +128,14 @@ func TestRecordingSession(t *testing.T) {
 	assert.Equal(t, "recording", session.RecordingState, "Recording state should match")
 	assert.Equal(t, "full", session.RecordingType, "Recording type should match")
 	assert.Len(t, session.Participants, 1, "Should have 1 participant")
-	
+
 	// Test participant properties
 	participant := session.Participants[0]
 	assert.Equal(t, "participant1", participant.ID, "Participant ID should match")
 	assert.Equal(t, "John Doe", participant.Name, "Participant name should match")
 	assert.Equal(t, "active", participant.Role, "Participant role should match")
 	assert.Len(t, participant.CommunicationIDs, 1, "Should have 1 communication ID")
-	
+
 	// Test communication ID properties
 	commID := participant.CommunicationIDs[0]
 	assert.Equal(t, "sip", commID.Type, "Communication ID type should match")
