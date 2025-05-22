@@ -7,11 +7,12 @@ This document describes the testing approach for the SIPREC server, with a focus
 The SIPREC server uses multiple levels of testing to ensure quality and correctness:
 
 1. **Unit Tests**: Test individual components in isolation (packages)
-2. **Integration Tests**: Test interactions between components
-3. **End-to-End Tests**: Test the complete system flow
+2. **Integration Tests**: Test STT provider integrations and component interactions  
+3. **End-to-End Tests**: Test the complete system flow with real components
 4. **Environment Tests**: Validate configuration and environment setup
 5. **Redundancy Tests**: Verify session resilience during failures
 6. **Security Tests**: Verify TLS and SRTP implementation
+7. **Provider Tests**: Test speech-to-text provider integrations
 
 ## Getting Started with Testing
 
@@ -29,6 +30,15 @@ Run all tests with:
 
 ```bash
 make test
+```
+
+Run specific test suites:
+
+```bash
+make test-unit              # Unit tests only
+make test-integration       # Integration tests (STT providers)
+make test-e2e              # End-to-end tests
+make test-coverage         # Tests with coverage report
 ```
 
 ## Unit Tests
@@ -84,20 +94,31 @@ func TestMyFunction(t *testing.T) {
 
 ## Integration Tests
 
-Integration tests verify that components work together correctly. These tests are located in the `/test` directory.
+Integration tests verify that components work together correctly, with a focus on STT provider integrations. These tests are located in the `test/integration/` directory.
 
 To run integration tests:
 
 ```bash
-go test ./test/...
+make test-integration
 ```
 
-### Key Integration Test Areas
+### STT Provider Integration Tests
 
-1. **SIP Messaging**: Tests for SIP message processing
-2. **RTP Handling**: Tests for RTP packet processing
-3. **STT Integration**: Tests for speech-to-text processing
-4. **Storage**: Tests for session storage and retrieval
+The integration test suite includes comprehensive testing for multiple speech-to-text providers:
+
+1. **Amazon Transcribe**: Tests real-time streaming transcription
+2. **Azure Speech Services**: Tests cognitive services integration  
+3. **Google Speech-to-Text**: Tests Cloud Speech API integration
+4. **Mock Provider**: Tests internal mock provider for development
+
+### Integration Test Features
+
+1. **Provider Resilience**: Tests provider failover and recovery
+2. **Circuit Breaker**: Tests circuit breaker patterns for provider failures
+3. **Guaranteed Delivery**: Tests message delivery guarantees with retry logic
+4. **Memory Storage**: Tests concurrent access to in-memory storage
+5. **Synthetic Audio**: Generates test audio for realistic provider testing
+6. **Performance Benchmarks**: Benchmarks provider response times and throughput
 
 ## Environment Tests
 

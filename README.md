@@ -33,15 +33,17 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 - **Performance Metrics**: Comprehensive statistics for sessions, memory, and resource usage
 - **Health Monitoring**: Real-time health checks and resource utilization tracking
 - **Graceful Shutdown**: Clean termination with configurable timeouts
-- **Docker Support**: Production-ready containerization with docker-compose
-- **Extensive Testing**: Comprehensive test suite including E2E redundancy scenarios
+- **Docker Support**: Production-ready multi-stage containerization with docker-compose
+- **Comprehensive Testing**: Full test suite with unit, integration, and E2E tests
+- **STT Provider Integration**: Support for multiple speech-to-text providers with testing
 
 ## Project Structure
 
 ```
 /
 ├── cmd/
-│   └── siprec/       # Main application entry point
+│   ├── siprec/       # Main SIPREC server application
+│   └── testenv/      # Environment validation tool
 ├── docs/             # Documentation
 │   ├── SESSION_REDUNDANCY.md  # Session redundancy documentation
 │   └── RFC_COMPLIANCE.md      # RFC compliance documentation
@@ -72,16 +74,19 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 ├── scripts/          # Testing and utility scripts
 │   └── test_redundancy.sh      # Redundancy feature testing
 ├── sessions/         # Session storage (for redundancy)
-└── test/             # Comprehensive test suite
-    ├── e2e/          # End-to-end tests
-    │   ├── session_recovery_test.go    # Session recovery scenarios
-    │   ├── siprec_redundancy_test.go   # SIPREC redundancy testing
-    │   └── siprec_simulation_test.go   # Full SIPREC flow simulation
-    └── providers/    # Provider resilience tests
-        └── stt_resilience_test.go      # STT provider testing
+├── test/             # Comprehensive test suite
+│   ├── e2e/          # End-to-end tests
+│   │   ├── session_recovery_test.go    # Session recovery scenarios
+│   │   ├── siprec_redundancy_test.go   # SIPREC redundancy testing
+│   │   └── siprec_simulation_test.go   # Full SIPREC flow simulation
+│   └── providers/    # Provider resilience tests
+│       └── stt_resilience_test.go      # STT provider testing
+└── test_tls/         # TLS testing tools and utilities
 ```
 
 ## Quick Start
+
+### Native Installation
 
 1. Clone the repository
 2. Copy `.env.example` to `.env` and configure it
@@ -93,9 +98,21 @@ make setup
 
 # Start the server
 make run
+```
 
-# Alternatively, run with docker-compose (with RabbitMQ)
+### Docker Installation
+
+Run with Docker for production deployment:
+
+```bash
+# Build Docker image
+make docker-build
+
+# Run with docker-compose (includes RabbitMQ, Redis, PostgreSQL)
 make docker-up
+
+# Development environment with all services
+docker-compose -f docker-compose.dev.yml up
 ```
 
 ## Development
@@ -110,14 +127,22 @@ make fmt
 # Lint code
 make lint
 
-# Run unit tests
+# Run all tests
 make test
 
-# Run end-to-end tests
-make test-e2e
+# Run specific test suites
+make test-unit              # Unit tests only
+make test-integration       # Integration tests (STT providers)
+make test-e2e              # End-to-end tests
 
 # Run tests with coverage
 make test-coverage
+
+# Build for development
+make build
+
+# Clean build artifacts
+make clean
 ```
 
 ## Testing the Server
@@ -222,6 +247,46 @@ HTTP_ENABLED=true             # Enable HTTP API and health checks
 HTTP_PORT=8080                # HTTP server port
 ENABLE_METRICS=true           # Enable Prometheus metrics
 ```
+
+## Docker Deployment
+
+### Multi-Stage Docker Build
+
+The project includes a production-ready multi-stage Docker build system:
+
+- **Builder Stage**: Compiles the Go application with optimized build flags
+- **Tester Stage**: Runs the complete test suite during build
+- **Production Stage**: Minimal runtime image with security hardening
+- **Development Stage**: Full development environment with debugging tools
+
+### Docker Compose Environments
+
+**Production (docker-compose.yml)**:
+```bash
+make docker-up
+```
+
+**Development (docker-compose.dev.yml)**:
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
+The development environment includes:
+- RabbitMQ for message queuing
+- Redis for caching
+- PostgreSQL for persistent storage
+- Prometheus for metrics
+- Grafana for visualization
+- Nginx for load balancing
+
+### Docker Configuration
+
+Key Docker features:
+- **Security**: Non-root user execution, minimal attack surface
+- **Health Checks**: Built-in health monitoring
+- **Signal Handling**: Graceful shutdown with proper signal handling
+- **Environment Validation**: Startup validation of required configuration
+- **Multi-Architecture**: Support for AMD64 and ARM64 platforms
 
 See [RESOURCE_OPTIMIZATION.md](./docs/RESOURCE_OPTIMIZATION.md) for detailed information about performance optimization features, [SESSION_REDUNDANCY.md](./docs/SESSION_REDUNDANCY.md) for session redundancy documentation, [RFC_COMPLIANCE.md](./docs/RFC_COMPLIANCE.md) for RFC compliance details, and [SECURITY.md](./docs/SECURITY.md) for TLS and SRTP security features.
 
