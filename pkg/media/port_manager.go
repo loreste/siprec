@@ -21,12 +21,12 @@ type PortManager struct {
 
 // PortManagerStats tracks port allocation statistics
 type PortManagerStats struct {
-	TotalPorts       int
-	UsedPorts        int
-	AvailablePorts   int
-	AllocationCount  int64
+	TotalPorts        int
+	UsedPorts         int
+	AvailablePorts    int
+	AllocationCount   int64
 	DeallocationCount int64
-	ReuseHits        int64
+	ReuseHits         int64
 }
 
 // NewPortManager creates a new port manager with the specified port range
@@ -44,7 +44,7 @@ func NewPortManager(minPort, maxPort int) *PortManager {
 	}
 
 	totalPorts := (maxPort - minPort + 1) / 2 // Even ports only
-	cacheSize := totalPorts / 4 // Cache 25% of ports for reuse optimization
+	cacheSize := totalPorts / 4               // Cache 25% of ports for reuse optimization
 
 	return &PortManager{
 		minPort:      minPort,
@@ -113,10 +113,10 @@ func (pm *PortManager) ReleasePort(port int) {
 	if pm.usedPorts[port] {
 		delete(pm.usedPorts, port)
 		pm.stats.DeallocationCount++
-		
+
 		// Cache recently freed port for reuse optimization
 		pm.recentlyUsed.Set(fmt.Sprintf("port_%d", port), port)
-		
+
 		pm.updateStats()
 	}
 }
@@ -149,7 +149,7 @@ func (pm *PortManager) GetStats() PortManagerStats {
 func (pm *PortManager) getRecentlyFreedPorts() []int {
 	var ports []int
 	keys := pm.recentlyUsed.Keys()
-	
+
 	for _, key := range keys {
 		if cached, found := pm.recentlyUsed.Get(key); found {
 			if port, ok := cached.(int); ok {
@@ -157,7 +157,7 @@ func (pm *PortManager) getRecentlyFreedPorts() []int {
 			}
 		}
 	}
-	
+
 	return ports
 }
 

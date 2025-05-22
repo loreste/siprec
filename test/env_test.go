@@ -104,10 +104,11 @@ func TestRunEnvironmentCheck(t *testing.T) {
 }
 
 // This is the test function that Go will run
-func ExampleEnvironmentCheck() {
+func ExampleRunEnvironmentCheck() {
 	// This is just a stub to demonstrate usage
-	fmt.Println("Environment check example")
-	// Output: Environment check example
+	RunEnvironmentCheck()
+	fmt.Println("Environment check completed")
+	// Output: Environment check completed
 }
 
 // TestGetEnvWithDefault tests the GetEnvWithDefault function

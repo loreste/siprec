@@ -15,16 +15,16 @@ type OptimizedAudioProcessor struct {
 	// Resource pools
 	resourcePool *util.ResourcePool
 	workerPool   *util.WorkerPoolManager
-	
+
 	// Processing configuration
 	maxConcurrent int32
 	bufferSize    int
-	
+
 	// Statistics
 	activeProcessors int32
 	totalProcessed   int64
 	processingTime   int64 // nanoseconds
-	
+
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -33,12 +33,12 @@ type OptimizedAudioProcessor struct {
 
 // AudioProcessingTask represents an audio processing job
 type AudioProcessingTask struct {
-	SessionID    string
-	AudioData    []byte
-	SampleRate   int
-	Channels     int
-	Timestamp    time.Time
-	Callback     func(processed []byte, err error)
+	SessionID  string
+	AudioData  []byte
+	SampleRate int
+	Channels   int
+	Timestamp  time.Time
+	Callback   func(processed []byte, err error)
 }
 
 // ProcessorStats provides audio processor statistics
@@ -140,11 +140,11 @@ func (oap *OptimizedAudioProcessor) processMonoAudio(data []byte, sampleRate int
 		}
 
 		frame := data[offset:end]
-		
+
 		// Apply noise reduction and echo cancellation
 		processedFrame := oap.applyNoiseReduction(frame)
 		processedFrame = oap.applyEchoCancellation(processedFrame)
-		
+
 		// Append to output buffer
 		outputBuffer = append(outputBuffer, processedFrame...)
 	}
@@ -159,18 +159,18 @@ func (oap *OptimizedAudioProcessor) processMonoAudio(data []byte, sampleRate int
 func (oap *OptimizedAudioProcessor) processStereoAudio(data []byte, sampleRate int, outputBuffer []byte) ([]byte, error) {
 	// Stereo processing with channel separation optimization
 	channelData := oap.separateChannels(data)
-	
+
 	// Process each channel independently
 	leftProcessed, err := oap.processMonoAudio(channelData[0], sampleRate, nil)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	rightProcessed, err := oap.processMonoAudio(channelData[1], sampleRate, nil)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Interleave channels back together
 	return oap.interleaveChannels([][]byte{leftProcessed, rightProcessed}), nil
 }
@@ -179,7 +179,7 @@ func (oap *OptimizedAudioProcessor) processStereoAudio(data []byte, sampleRate i
 func (oap *OptimizedAudioProcessor) processMultiChannelAudio(data []byte, sampleRate, channels int, outputBuffer []byte) ([]byte, error) {
 	// Separate channels
 	channelData := oap.separateMultipleChannels(data, channels)
-	
+
 	// Process each channel
 	processedChannels := make([][]byte, channels)
 	for i, channel := range channelData {
@@ -189,7 +189,7 @@ func (oap *OptimizedAudioProcessor) processMultiChannelAudio(data []byte, sample
 		}
 		processedChannels[i] = processed
 	}
-	
+
 	// Recombine channels
 	return oap.interleaveChannels(processedChannels), nil
 }
@@ -198,22 +198,22 @@ func (oap *OptimizedAudioProcessor) processMultiChannelAudio(data []byte, sample
 func (oap *OptimizedAudioProcessor) applyNoiseReduction(data []byte) []byte {
 	// Simplified noise reduction - in production this would be more sophisticated
 	result := make([]byte, len(data))
-	
+
 	// Apply simple high-pass filter
 	for i := 2; i < len(data)-2; i += 2 {
 		// Convert to 16-bit sample
 		sample := int16(data[i]) | int16(data[i+1])<<8
-		
+
 		// Simple noise gate
 		if abs(int32(sample)) < 100 {
 			sample = 0
 		}
-		
+
 		// Convert back to bytes
 		result[i] = byte(sample & 0xFF)
 		result[i+1] = byte((sample >> 8) & 0xFF)
 	}
-	
+
 	return result
 }
 
@@ -222,19 +222,19 @@ func (oap *OptimizedAudioProcessor) applyEchoCancellation(data []byte) []byte {
 	// Simplified echo cancellation - in production this would use sophisticated algorithms
 	result := make([]byte, len(data))
 	copy(result, data)
-	
+
 	// Apply simple echo reduction
 	for i := 4; i < len(result)-4; i += 2 {
 		current := int16(result[i]) | int16(result[i+1])<<8
 		delayed := int16(result[i-4]) | int16(result[i-3])<<8
-		
+
 		// Subtract delayed signal (simplified echo cancellation)
 		processed := current - (delayed / 4)
-		
+
 		result[i] = byte(processed & 0xFF)
 		result[i+1] = byte((processed >> 8) & 0xFF)
 	}
-	
+
 	return result
 }
 
@@ -242,21 +242,21 @@ func (oap *OptimizedAudioProcessor) applyEchoCancellation(data []byte) []byte {
 func (oap *OptimizedAudioProcessor) separateChannels(data []byte) [][]byte {
 	channels := make([][]byte, 2)
 	channelSize := len(data) / 2
-	
+
 	channels[0] = make([]byte, channelSize) // Left channel
 	channels[1] = make([]byte, channelSize) // Right channel
-	
+
 	// Separate interleaved stereo data
 	for i := 0; i < len(data); i += 4 {
 		// Left channel (samples 0, 1)
 		channels[0][i/2] = data[i]
 		channels[0][i/2+1] = data[i+1]
-		
+
 		// Right channel (samples 2, 3)
 		channels[1][i/2] = data[i+2]
 		channels[1][i/2+1] = data[i+3]
 	}
-	
+
 	return channels
 }
 
@@ -264,26 +264,26 @@ func (oap *OptimizedAudioProcessor) separateChannels(data []byte) [][]byte {
 func (oap *OptimizedAudioProcessor) separateMultipleChannels(data []byte, numChannels int) [][]byte {
 	channels := make([][]byte, numChannels)
 	channelSize := len(data) / numChannels
-	
+
 	for ch := 0; ch < numChannels; ch++ {
 		channels[ch] = make([]byte, channelSize)
 	}
-	
+
 	bytesPerSample := 2 // 16-bit samples
 	frameSize := numChannels * bytesPerSample
-	
+
 	for frame := 0; frame < len(data)/frameSize; frame++ {
 		frameOffset := frame * frameSize
-		
+
 		for ch := 0; ch < numChannels; ch++ {
 			sampleOffset := frameOffset + ch*bytesPerSample
 			channelOffset := frame * bytesPerSample
-			
+
 			channels[ch][channelOffset] = data[sampleOffset]
 			channels[ch][channelOffset+1] = data[sampleOffset+1]
 		}
 	}
-	
+
 	return channels
 }
 
@@ -292,26 +292,26 @@ func (oap *OptimizedAudioProcessor) interleaveChannels(channels [][]byte) []byte
 	if len(channels) == 0 {
 		return nil
 	}
-	
+
 	numChannels := len(channels)
 	channelSize := len(channels[0])
 	totalSize := numChannels * channelSize
-	
+
 	result := make([]byte, totalSize)
 	bytesPerSample := 2
-	
+
 	for frame := 0; frame < channelSize/bytesPerSample; frame++ {
 		frameOffset := frame * numChannels * bytesPerSample
-		
+
 		for ch := 0; ch < numChannels; ch++ {
 			sampleOffset := frameOffset + ch*bytesPerSample
 			channelOffset := frame * bytesPerSample
-			
+
 			result[sampleOffset] = channels[ch][channelOffset]
 			result[sampleOffset+1] = channels[ch][channelOffset+1]
 		}
 	}
-	
+
 	return result
 }
 
@@ -319,14 +319,14 @@ func (oap *OptimizedAudioProcessor) interleaveChannels(channels [][]byte) []byte
 func (oap *OptimizedAudioProcessor) GetStats() ProcessorStats {
 	totalProcessed := atomic.LoadInt64(&oap.totalProcessed)
 	totalTime := atomic.LoadInt64(&oap.processingTime)
-	
+
 	var avgTime time.Duration
 	if totalProcessed > 0 {
 		avgTime = time.Duration(totalTime / totalProcessed)
 	}
-	
+
 	memStats := util.GetMemoryStats()
-	
+
 	return ProcessorStats{
 		ActiveProcessors: atomic.LoadInt32(&oap.activeProcessors),
 		TotalProcessed:   totalProcessed,
@@ -338,7 +338,7 @@ func (oap *OptimizedAudioProcessor) GetStats() ProcessorStats {
 // Shutdown gracefully shuts down the processor
 func (oap *OptimizedAudioProcessor) Shutdown(timeout time.Duration) {
 	oap.cancel()
-	
+
 	// Wait for active processors to complete
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
