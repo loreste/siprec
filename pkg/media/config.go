@@ -6,18 +6,18 @@ type Config struct {
 	RTPPortMin int
 	RTPPortMax int
 	EnableSRTP bool
-	
+
 	// Recording configuration
 	RecordingDir string
-	
+
 	// NAT configuration
 	BehindNAT  bool
 	InternalIP string
 	ExternalIP string
-	
+
 	// Speech-to-text configuration
 	DefaultVendor string
-	
+
 	// Audio processing configuration
 	AudioProcessing AudioProcessingConfig
 }
@@ -26,17 +26,17 @@ type Config struct {
 type AudioProcessingConfig struct {
 	// General settings
 	Enabled bool
-	
+
 	// Voice Activity Detection
-	EnableVAD bool
-	VADThreshold float64
+	EnableVAD     bool
+	VADThreshold  float64
 	VADHoldTimeMs int
-	
+
 	// Noise Reduction
 	EnableNoiseReduction bool
-	NoiseReductionLevel float64
-	
+	NoiseReductionLevel  float64
+
 	// Multi-channel
 	ChannelCount int
-	MixChannels bool
+	MixChannels  bool
 }

@@ -1,4 +1,4 @@
-package sip
+package util
 
 import (
 	"hash/fnv"

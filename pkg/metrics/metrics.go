@@ -24,10 +24,10 @@ var (
 	RTPProcessingTime  *prometheus.HistogramVec
 
 	// SIP metrics
-	SIPRequestsTotal       *prometheus.CounterVec
-	SIPResponsesTotal      *prometheus.CounterVec
-	SIPSessionsActive      prometheus.Gauge
-	SIPSessionDuration     *prometheus.HistogramVec
+	SIPRequestsTotal        *prometheus.CounterVec
+	SIPResponsesTotal       *prometheus.CounterVec
+	SIPSessionsActive       prometheus.Gauge
+	SIPSessionDuration      *prometheus.HistogramVec
 	SIPSessionEstablishTime *prometheus.HistogramVec
 
 	// SRTP metrics

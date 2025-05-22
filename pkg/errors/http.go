@@ -21,7 +21,7 @@ var errorStatusCodes = map[error]int{
 	ErrFailedPrecondition: http.StatusPreconditionFailed,
 	ErrAborted:            http.StatusConflict,
 	ErrCanceled:           http.StatusRequestTimeout,
-	
+
 	// Domain-specific error mappings
 	ErrInvalidSIPMessage:   http.StatusBadRequest,
 	ErrInvalidSDP:          http.StatusBadRequest,
@@ -39,7 +39,7 @@ func WriteError(w http.ResponseWriter, err error) {
 	// Extract structured error if possible
 	var statusCode int
 	var response map[string]interface{}
-	
+
 	// Check if it's our custom error
 	var serr *Error
 	if err == nil {
@@ -59,11 +59,11 @@ func WriteError(w http.ResponseWriter, err error) {
 			"error": err.Error(),
 		}
 	}
-	
+
 	// Set content type and status code
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	
+
 	// Write the response
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -78,7 +78,7 @@ func HTTPStatusFromError(err error) int {
 		if code, ok := errorStatusCodes[err]; ok {
 			return code
 		}
-		
+
 		// Try unwrapping
 		unwrapped := errors.Unwrap(err)
 		if unwrapped == err || unwrapped == nil {
@@ -86,7 +86,7 @@ func HTTPStatusFromError(err error) int {
 		}
 		err = unwrapped
 	}
-	
+
 	// Default to internal server error
 	return http.StatusInternalServerError
 }

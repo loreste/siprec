@@ -93,12 +93,12 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 		case <-ticker.C:
 			transcription := mockTranscriptions[transcriptionIndex]
 			transcriptionIndex = (transcriptionIndex + 1) % len(mockTranscriptions)
-			
+
 			p.logger.WithFields(logrus.Fields{
-				"call_uuid": callUUID,
+				"call_uuid":     callUUID,
 				"transcription": transcription,
 			}).Info("Mock transcription generated")
-			
+
 			// First send an interim transcription (incomplete)
 			if p.transcriptionSvc != nil {
 				words := strings.Split(transcription, " ")
@@ -106,16 +106,16 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 					interim := strings.Join(words[:len(words)/2], " ")
 					p.transcriptionSvc.PublishTranscription(callUUID, interim, false, map[string]interface{}{
 						"provider": p.Name(),
-						"interim": true,
+						"interim":  true,
 					})
-					
+
 					// Wait a bit before sending final
 					time.Sleep(time.Duration(500+rand.Intn(1500)) * time.Millisecond)
 				}
-				
+
 				// Then send the final transcription
 				p.transcriptionSvc.PublishTranscription(callUUID, transcription, true, map[string]interface{}{
-					"provider": p.Name(),
+					"provider":   p.Name(),
 					"confidence": 0.95,
 					"word_count": len(strings.Fields(transcription)),
 				})
