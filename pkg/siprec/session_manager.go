@@ -13,20 +13,20 @@ import (
 
 // SessionManager manages concurrent SIPREC sessions with optimized resource usage
 type SessionManager struct {
-	sessions    *util.ShardedMap
-	cache       *util.StatsCache
-	workerPool  *util.WorkerPoolManager
+	sessions     *util.ShardedMap
+	cache        *util.StatsCache
+	workerPool   *util.WorkerPoolManager
 	resourcePool *util.ResourcePool
-	
+
 	// Configuration
 	maxSessions     int32
 	sessionTimeout  time.Duration
 	cleanupInterval time.Duration
-	
+
 	// Statistics
 	activeSessions int32
 	totalSessions  int64
-	
+
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -58,24 +58,24 @@ func NewSessionManager(config *SessionManagerConfig) *SessionManager {
 	if config == nil {
 		config = DefaultSessionManagerConfig()
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	sm := &SessionManager{
 		sessions:        util.NewShardedMap(64), // 64 shards for high concurrency
-		cache:          util.NewStatsCache(config.CacheSize, config.CacheTTL),
-		workerPool:     util.GetGlobalWorkerPoolManager(),
-		resourcePool:   util.GetGlobalResourcePool(),
-		maxSessions:    int32(config.MaxSessions),
-		sessionTimeout: config.SessionTimeout,
+		cache:           util.NewStatsCache(config.CacheSize, config.CacheTTL),
+		workerPool:      util.GetGlobalWorkerPoolManager(),
+		resourcePool:    util.GetGlobalResourcePool(),
+		maxSessions:     int32(config.MaxSessions),
+		sessionTimeout:  config.SessionTimeout,
 		cleanupInterval: config.CleanupInterval,
-		ctx:            ctx,
-		cancel:         cancel,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
-	
+
 	// Start background tasks
 	sm.startBackgroundTasks()
-	
+
 	return sm
 }
 
@@ -86,44 +86,44 @@ func (sm *SessionManager) CreateSession(sessionID string, metadata *RSMetadata) 
 	if current >= sm.maxSessions {
 		return nil, fmt.Errorf("maximum sessions (%d) reached", sm.maxSessions)
 	}
-	
+
 	// Check if session already exists
 	if existing, exists := sm.sessions.Load(sessionID); exists {
 		if session, ok := existing.(*RecordingSession); ok {
 			return session, nil
 		}
 	}
-	
+
 	// Create new session with optimized initialization
 	session := &RecordingSession{
-		ID:                sessionID,
-		RecordingState:    "active",
-		SequenceNumber:    1,
-		AssociatedTime:    time.Now(),
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
-		IsValid:           true,
+		ID:                 sessionID,
+		RecordingState:     "active",
+		SequenceNumber:     1,
+		AssociatedTime:     time.Now(),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+		IsValid:            true,
 		PauseResumeAllowed: true,
-		Participants:      make([]Participant, 0, 4), // Pre-allocate for typical use
-		MediaStreamTypes:  make([]string, 0, 2),      // Pre-allocate for audio/video
+		Participants:       make([]Participant, 0, 4), // Pre-allocate for typical use
+		MediaStreamTypes:   make([]string, 0, 2),      // Pre-allocate for audio/video
 	}
-	
+
 	// Set expiration
 	SetSessionExpiration(session, sm.sessionTimeout)
-	
+
 	// Process metadata if provided
 	if metadata != nil {
 		UpdateRecordingSession(session, metadata)
 	}
-	
+
 	// Store session
 	sm.sessions.Store(sessionID, session)
 	sm.cache.Set(sessionID, session)
-	
+
 	// Update statistics
 	atomic.AddInt32(&sm.activeSessions, 1)
 	atomic.AddInt64(&sm.totalSessions, 1)
-	
+
 	return session, nil
 }
 
@@ -140,7 +140,7 @@ func (sm *SessionManager) GetSession(sessionID string) (*RecordingSession, bool)
 			sm.cache.Delete(sessionID)
 		}
 	}
-	
+
 	// Fall back to main storage
 	if stored, exists := sm.sessions.Load(sessionID); exists {
 		if session, ok := stored.(*RecordingSession); ok {
@@ -149,13 +149,13 @@ func (sm *SessionManager) GetSession(sessionID string) (*RecordingSession, bool)
 				sm.removeSession(sessionID)
 				return nil, false
 			}
-			
+
 			// Update cache for future access
 			sm.cache.Set(sessionID, session)
 			return session, true
 		}
 	}
-	
+
 	return nil, false
 }
 
@@ -165,22 +165,22 @@ func (sm *SessionManager) UpdateSession(sessionID string, metadata *RSMetadata) 
 	if !exists {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	
+
 	// Submit update task to worker pool to avoid blocking
 	task := func() {
 		UpdateRecordingSession(session, metadata)
-		
+
 		// Update cache
 		sm.cache.Set(sessionID, session)
 	}
-	
+
 	// Use dedicated session pool for session updates
 	if !sm.workerPool.SubmitTask("session_updates", task) {
 		// Fallback to synchronous update if pool is full
 		UpdateRecordingSession(session, metadata)
 		sm.cache.Set(sessionID, session)
 	}
-	
+
 	return nil
 }
 
@@ -190,26 +190,26 @@ func (sm *SessionManager) TerminateSession(sessionID string, reason string) erro
 	if !exists {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	
+
 	// Update session state
 	err := HandleSiprecStateChange(session, "terminated", reason)
 	if err != nil {
 		return err
 	}
-	
+
 	// Schedule cleanup task
 	task := func() {
 		CleanupSessionResources(session)
 		sm.removeSession(sessionID)
 	}
-	
+
 	// Use dedicated cleanup pool
 	if !sm.workerPool.SubmitTask("session_cleanup", task) {
 		// Fallback to immediate cleanup if pool is full
 		CleanupSessionResources(session)
 		sm.removeSession(sessionID)
 	}
-	
+
 	return nil
 }
 
@@ -219,12 +219,12 @@ func (sm *SessionManager) PauseSession(sessionID string, reason string) error {
 	if !exists {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	
+
 	err := PauseRecording(session, reason)
 	if err != nil {
 		return err
 	}
-	
+
 	// Update cache
 	sm.cache.Set(sessionID, session)
 	return nil
@@ -236,12 +236,12 @@ func (sm *SessionManager) ResumeSession(sessionID string, reason string) error {
 	if !exists {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	
+
 	err := ResumeRecording(session, reason)
 	if err != nil {
 		return err
 	}
-	
+
 	// Update cache
 	sm.cache.Set(sessionID, session)
 	return nil
@@ -251,7 +251,7 @@ func (sm *SessionManager) ResumeSession(sessionID string, reason string) error {
 func (sm *SessionManager) GetAllSessions(offset, limit int) ([]*RecordingSession, int) {
 	var sessions []*RecordingSession
 	count := 0
-	
+
 	sm.sessions.Range(func(key, value interface{}) bool {
 		if session, ok := value.(*RecordingSession); ok {
 			if session.IsValid && !IsSessionExpired(session) {
@@ -263,7 +263,7 @@ func (sm *SessionManager) GetAllSessions(offset, limit int) ([]*RecordingSession
 		}
 		return true
 	})
-	
+
 	return sessions, count
 }
 
@@ -277,31 +277,31 @@ func (sm *SessionManager) GetStatistics() SessionManagerStats {
 	cacheStats := sm.cache.GetStats()
 	workerStats := sm.workerPool.GetAllStats()
 	memStats := util.GetMemoryStats()
-	
+
 	return SessionManagerStats{
-		ActiveSessions:    atomic.LoadInt32(&sm.activeSessions),
-		TotalSessions:     atomic.LoadInt64(&sm.totalSessions),
-		MaxSessions:       sm.maxSessions,
-		CacheHitRate:      cacheStats.HitRate,
-		CacheSize:         cacheStats.Size,
-		WorkerPoolStats:   workerStats,
-		MemoryUsage:       memStats.AllocatedBytes,
-		GoroutineCount:    memStats.NumGoroutines,
-		GCCycles:          int64(memStats.GCCycles),
+		ActiveSessions:  atomic.LoadInt32(&sm.activeSessions),
+		TotalSessions:   atomic.LoadInt64(&sm.totalSessions),
+		MaxSessions:     sm.maxSessions,
+		CacheHitRate:    cacheStats.HitRate,
+		CacheSize:       cacheStats.Size,
+		WorkerPoolStats: workerStats,
+		MemoryUsage:     memStats.AllocatedBytes,
+		GoroutineCount:  memStats.NumGoroutines,
+		GCCycles:        int64(memStats.GCCycles),
 	}
 }
 
 // SessionManagerStats provides comprehensive statistics
 type SessionManagerStats struct {
-	ActiveSessions  int32                    `json:"active_sessions"`
-	TotalSessions   int64                    `json:"total_sessions"`
-	MaxSessions     int32                    `json:"max_sessions"`
-	CacheHitRate    float64                  `json:"cache_hit_rate"`
-	CacheSize       int                      `json:"cache_size"`
+	ActiveSessions  int32                     `json:"active_sessions"`
+	TotalSessions   int64                     `json:"total_sessions"`
+	MaxSessions     int32                     `json:"max_sessions"`
+	CacheHitRate    float64                   `json:"cache_hit_rate"`
+	CacheSize       int                       `json:"cache_size"`
 	WorkerPoolStats map[string]util.PoolStats `json:"worker_pool_stats"`
-	MemoryUsage     uint64                   `json:"memory_usage_bytes"`
-	GoroutineCount  int                      `json:"goroutine_count"`
-	GCCycles        int64                    `json:"gc_cycles"`
+	MemoryUsage     uint64                    `json:"memory_usage_bytes"`
+	GoroutineCount  int                       `json:"goroutine_count"`
+	GCCycles        int64                     `json:"gc_cycles"`
 }
 
 // removeSession removes a session from storage and cache
@@ -319,7 +319,7 @@ func (sm *SessionManager) startBackgroundTasks() {
 		defer sm.wg.Done()
 		sm.cleanupExpiredSessions()
 	}()
-	
+
 	// Memory optimization task
 	sm.wg.Add(1)
 	go func() {
@@ -332,7 +332,7 @@ func (sm *SessionManager) startBackgroundTasks() {
 func (sm *SessionManager) cleanupExpiredSessions() {
 	ticker := time.NewTicker(sm.cleanupInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -346,7 +346,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 // performCleanup removes expired and invalid sessions
 func (sm *SessionManager) performCleanup() {
 	var toRemove []string
-	
+
 	// Collect expired sessions
 	sm.sessions.Range(func(key, value interface{}) bool {
 		if sessionID, ok := key.(string); ok {
@@ -358,7 +358,7 @@ func (sm *SessionManager) performCleanup() {
 		}
 		return true
 	})
-	
+
 	// Remove expired sessions
 	for _, sessionID := range toRemove {
 		if session, exists := sm.GetSession(sessionID); exists {
@@ -372,7 +372,7 @@ func (sm *SessionManager) performCleanup() {
 func (sm *SessionManager) memoryOptimization() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -389,24 +389,24 @@ func (sm *SessionManager) memoryOptimization() {
 // Shutdown gracefully shuts down the session manager
 func (sm *SessionManager) Shutdown(timeout time.Duration) error {
 	sm.cancel()
-	
+
 	// Wait for background tasks to complete
 	done := make(chan struct{})
 	go func() {
 		sm.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// Clean shutdown
 	case <-time.After(timeout):
 		return fmt.Errorf("shutdown timeout exceeded")
 	}
-	
+
 	// Close cache
 	sm.cache.Close()
-	
+
 	return nil
 }
 
