@@ -31,40 +31,40 @@ type Config struct {
 type NetworkConfig struct {
 	// External IP address for SIP/RTP (auto = auto-detect)
 	ExternalIP string `json:"external_ip" env:"EXTERNAL_IP" default:"auto"`
-	
+
 	// Internal IP address for binding (auto = auto-detect)
 	InternalIP string `json:"internal_ip" env:"INTERNAL_IP" default:"auto"`
-	
+
 	// SIP ports to listen on
 	Ports []int `json:"ports" env:"PORTS" default:"5060,5061"`
-	
+
 	// Whether SRTP is enabled
 	EnableSRTP bool `json:"enable_srtp" env:"ENABLE_SRTP" default:"false"`
-	
+
 	// RTP port range minimum
 	RTPPortMin int `json:"rtp_port_min" env:"RTP_PORT_MIN" default:"10000"`
-	
+
 	// RTP port range maximum
 	RTPPortMax int `json:"rtp_port_max" env:"RTP_PORT_MAX" default:"20000"`
-	
+
 	// TLS certificate file
 	TLSCertFile string `json:"tls_cert_file" env:"TLS_CERT_PATH"`
-	
+
 	// TLS key file
 	TLSKeyFile string `json:"tls_key_file" env:"TLS_KEY_PATH"`
-	
+
 	// TLS port
 	TLSPort int `json:"tls_port" env:"TLS_PORT" default:"5062"`
-	
+
 	// Whether TLS is enabled
 	EnableTLS bool `json:"enable_tls" env:"ENABLE_TLS" default:"false"`
-	
+
 	// Whether the server is behind NAT
 	BehindNAT bool `json:"behind_nat" env:"BEHIND_NAT" default:"false"`
-	
+
 	// STUN servers for NAT traversal
 	STUNServers []string `json:"stun_servers" env:"STUN_SERVER"`
-	
+
 	// Whether audio processing is enabled
 	EnableAudioProcessing bool `json:"enable_audio_processing" env:"ENABLE_AUDIO_PROCESSING" default:"true"`
 }
@@ -73,19 +73,19 @@ type NetworkConfig struct {
 type HTTPConfig struct {
 	// HTTP port
 	Port int `json:"port" env:"HTTP_PORT" default:"8080"`
-	
+
 	// Whether HTTP server is enabled
 	Enabled bool `json:"enabled" env:"HTTP_ENABLED" default:"true"`
-	
+
 	// Whether metrics endpoint is enabled
 	EnableMetrics bool `json:"enable_metrics" env:"HTTP_ENABLE_METRICS" default:"true"`
-	
+
 	// Whether API endpoints are enabled
 	EnableAPI bool `json:"enable_api" env:"HTTP_ENABLE_API" default:"true"`
-	
+
 	// Read timeout for HTTP requests
 	ReadTimeout time.Duration `json:"read_timeout" env:"HTTP_READ_TIMEOUT" default:"10s"`
-	
+
 	// Write timeout for HTTP responses
 	WriteTimeout time.Duration `json:"write_timeout" env:"HTTP_WRITE_TIMEOUT" default:"30s"`
 }
@@ -94,10 +94,10 @@ type HTTPConfig struct {
 type RecordingConfig struct {
 	// Directory to store recordings
 	Directory string `json:"directory" env:"RECORDING_DIR" default:"./recordings"`
-	
+
 	// Maximum duration for recordings
 	MaxDuration time.Duration `json:"max_duration" env:"RECORDING_MAX_DURATION_HOURS" default:"4h"`
-	
+
 	// Days to keep recordings before cleanup
 	CleanupDays int `json:"cleanup_days" env:"RECORDING_CLEANUP_DAYS" default:"30"`
 }
@@ -106,10 +106,10 @@ type RecordingConfig struct {
 type STTConfig struct {
 	// Supported STT vendors
 	SupportedVendors []string `json:"supported_vendors" env:"SUPPORTED_VENDORS" default:"google"`
-	
+
 	// Supported audio codecs
 	SupportedCodecs []string `json:"supported_codecs" env:"SUPPORTED_CODECS" default:"PCMU,PCMA,G722"`
-	
+
 	// Default STT vendor
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
 }
@@ -124,10 +124,10 @@ type ResourceConfig struct {
 type LoggingConfig struct {
 	// Log level
 	Level string `json:"level" env:"LOG_LEVEL" default:"info"`
-	
+
 	// Log format (json or text)
 	Format string `json:"format" env:"LOG_FORMAT" default:"json"`
-	
+
 	// Log output file (empty = stdout)
 	OutputFile string `json:"output_file" env:"LOG_OUTPUT_FILE"`
 }
@@ -136,7 +136,7 @@ type LoggingConfig struct {
 type MessagingConfig struct {
 	// AMQP URL
 	AMQPUrl string `json:"amqp_url" env:"AMQP_URL"`
-	
+
 	// AMQP queue name
 	AMQPQueueName string `json:"amqp_queue_name" env:"AMQP_QUEUE_NAME"`
 }
@@ -145,13 +145,13 @@ type MessagingConfig struct {
 type RedundancyConfig struct {
 	// Whether session redundancy is enabled
 	Enabled bool `json:"enabled" env:"ENABLE_REDUNDANCY" default:"true"`
-	
+
 	// Session timeout
 	SessionTimeout time.Duration `json:"session_timeout" env:"SESSION_TIMEOUT" default:"30s"`
-	
+
 	// Session check interval
 	SessionCheckInterval time.Duration `json:"session_check_interval" env:"SESSION_CHECK_INTERVAL" default:"10s"`
-	
+
 	// Storage type for redundancy (memory, redis)
 	StorageType string `json:"storage_type" env:"REDUNDANCY_STORAGE_TYPE" default:"memory"`
 }
@@ -167,9 +167,9 @@ func Load(logger *logrus.Logger) (*Config, error) {
 
 	// Define possible locations for .env file
 	possibleEnvFiles := []string{
-		".env",                     // Current directory
-		"../.env",                  // Parent directory
-		filepath.Join(wd, ".env"),  // Absolute path
+		".env",                    // Current directory
+		"../.env",                 // Parent directory
+		filepath.Join(wd, ".env"), // Absolute path
 	}
 
 	// Try loading .env file from each possible location
@@ -181,7 +181,7 @@ func Load(logger *logrus.Logger) (*Config, error) {
 		if _, statErr := os.Stat(envFile); statErr == nil {
 			absPath, _ := filepath.Abs(envFile)
 			logger.WithField("path", absPath).Debug("Attempting to load .env file")
-			
+
 			if loadErr = godotenv.Load(envFile); loadErr == nil {
 				loadedFrom = absPath
 				break
@@ -202,65 +202,65 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	if loadedFrom != "" {
 		logger.WithFields(logrus.Fields{
 			"working_dir": wd,
-			"path": loadedFrom,
+			"path":        loadedFrom,
 		}).Info("Successfully loaded .env file")
 	} else {
 		logger.WithField("working_dir", wd).Warn("No .env file found, using environment variables only")
 	}
-	
+
 	// Initialize config with default values
 	config := &Config{}
-	
+
 	// Load network configuration
 	if err := loadNetworkConfig(logger, &config.Network); err != nil {
 		return nil, errors.Wrap(err, "failed to load network configuration")
 	}
-	
+
 	// Load HTTP configuration
 	if err := loadHTTPConfig(logger, &config.HTTP); err != nil {
 		return nil, errors.Wrap(err, "failed to load HTTP configuration")
 	}
-	
+
 	// Load recording configuration
 	if err := loadRecordingConfig(logger, &config.Recording); err != nil {
 		return nil, errors.Wrap(err, "failed to load recording configuration")
 	}
-	
+
 	// Load STT configuration
 	if err := loadSTTConfig(logger, &config.STT); err != nil {
 		return nil, errors.Wrap(err, "failed to load STT configuration")
 	}
-	
+
 	// Load resource configuration
 	if err := loadResourceConfig(logger, &config.Resources); err != nil {
 		return nil, errors.Wrap(err, "failed to load resource configuration")
 	}
-	
+
 	// Load logging configuration
 	if err := loadLoggingConfig(logger, &config.Logging); err != nil {
 		return nil, errors.Wrap(err, "failed to load logging configuration")
 	}
-	
+
 	// Load messaging configuration
 	if err := loadMessagingConfig(logger, &config.Messaging); err != nil {
 		return nil, errors.Wrap(err, "failed to load messaging configuration")
 	}
-	
+
 	// Load redundancy configuration
 	if err := loadRedundancyConfig(logger, &config.Redundancy); err != nil {
 		return nil, errors.Wrap(err, "failed to load redundancy configuration")
 	}
-	
+
 	// Validate the complete configuration
 	if err := validateConfig(logger, config); err != nil {
 		return nil, errors.Wrap(err, "configuration validation failed")
 	}
-	
+
 	// Ensure required directories exist
 	if err := ensureDirectories(logger, config); err != nil {
 		return nil, errors.Wrap(err, "failed to create required directories")
 	}
-	
+
 	return config, nil
 }
 
@@ -273,7 +273,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 		config.ExternalIP = getExternalIP(logger)
 		logger.WithField("external_ip", config.ExternalIP).Info("Auto-detected external IP")
 	}
-	
+
 	// Load internal IP
 	config.InternalIP = getEnv("INTERNAL_IP", "auto")
 	if config.InternalIP == "auto" {
@@ -281,30 +281,30 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 		config.InternalIP = getInternalIP(logger)
 		logger.WithField("internal_ip", config.InternalIP).Info("Auto-detected internal IP")
 	}
-	
+
 	// Load SIP ports
 	portsStr := getEnv("PORTS", "5060,5061")
 	logger.WithField("ports_env", portsStr).Debug("Loaded PORTS environment variable")
 	portsSlice := strings.Split(portsStr, ",")
-	
+
 	for _, portStr := range portsSlice {
 		portStr = strings.TrimSpace(portStr)
 		if portStr == "" {
 			continue
 		}
-		
+
 		port, err := strconv.Atoi(portStr)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("invalid port in PORTS: %s", portStr))
 		}
-		
+
 		if port < 1 || port > 65535 {
 			return errors.New(fmt.Sprintf("port out of range in PORTS: %d", port))
 		}
-		
+
 		config.Ports = append(config.Ports, port)
 	}
-	
+
 	// If no valid ports were specified, use defaults
 	if len(config.Ports) == 0 {
 		config.Ports = []int{5060, 5061}
@@ -312,7 +312,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	} else {
 		logger.WithField("sip_ports", config.Ports).Info("Configured SIP ports")
 	}
-	
+
 	// Load RTP port range
 	rtpMinStr := getEnv("RTP_PORT_MIN", "10000")
 	rtpMin, err := strconv.Atoi(rtpMinStr)
@@ -322,7 +322,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	} else {
 		config.RTPPortMin = rtpMin
 	}
-	
+
 	rtpMaxStr := getEnv("RTP_PORT_MAX", "20000")
 	rtpMax, err := strconv.Atoi(rtpMaxStr)
 	if err != nil || rtpMax <= config.RTPPortMin || rtpMax > 65535 {
@@ -331,16 +331,16 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	} else {
 		config.RTPPortMax = rtpMax
 	}
-	
+
 	// Ensure there are enough ports in the range
 	if (config.RTPPortMax - config.RTPPortMin) < 100 {
 		logger.Warn("RTP port range too small, at least 100 ports are recommended")
 	}
-	
+
 	// Load TLS configuration
 	config.TLSCertFile = getEnv("TLS_CERT_PATH", "")
 	config.TLSKeyFile = getEnv("TLS_KEY_PATH", "")
-	
+
 	tlsPortStr := getEnv("TLS_PORT", "5062")
 	tlsPort, err := strconv.Atoi(tlsPortStr)
 	if err != nil || tlsPort < 1 || tlsPort > 65535 {
@@ -349,17 +349,17 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	} else {
 		config.TLSPort = tlsPort
 	}
-	
+
 	// Load feature flags
 	config.EnableTLS = getEnvBool("ENABLE_TLS", false)
 	config.EnableSRTP = getEnvBool("ENABLE_SRTP", false)
 	config.BehindNAT = getEnvBool("BEHIND_NAT", false)
-	
+
 	// If TLS is enabled, ensure certificates are provided
 	if config.EnableTLS && (config.TLSCertFile == "" || config.TLSKeyFile == "") {
 		return errors.New("TLS is enabled but certificate or key file is missing. Please provide both TLS_CERT_PATH and TLS_KEY_PATH environment variables")
 	}
-	
+
 	// Load STUN servers
 	stunServersStr := getEnv("STUN_SERVER", "")
 	if stunServersStr == "" {
@@ -378,7 +378,7 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 			config.STUNServers[i] = strings.TrimSpace(server)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -393,12 +393,12 @@ func loadHTTPConfig(logger *logrus.Logger, config *HTTPConfig) error {
 	} else {
 		config.Port = httpPort
 	}
-	
+
 	// Load feature flags
 	config.Enabled = getEnvBool("HTTP_ENABLED", true)
 	config.EnableMetrics = getEnvBool("HTTP_ENABLE_METRICS", true)
 	config.EnableAPI = getEnvBool("HTTP_ENABLE_API", true)
-	
+
 	// Load timeouts
 	readTimeoutStr := getEnv("HTTP_READ_TIMEOUT", "10s")
 	readTimeout, err := time.ParseDuration(readTimeoutStr)
@@ -408,7 +408,7 @@ func loadHTTPConfig(logger *logrus.Logger, config *HTTPConfig) error {
 	} else {
 		config.ReadTimeout = readTimeout
 	}
-	
+
 	writeTimeoutStr := getEnv("HTTP_WRITE_TIMEOUT", "30s")
 	writeTimeout, err := time.ParseDuration(writeTimeoutStr)
 	if err != nil {
@@ -417,7 +417,7 @@ func loadHTTPConfig(logger *logrus.Logger, config *HTTPConfig) error {
 	} else {
 		config.WriteTimeout = writeTimeout
 	}
-	
+
 	return nil
 }
 
@@ -425,7 +425,7 @@ func loadHTTPConfig(logger *logrus.Logger, config *HTTPConfig) error {
 func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 	// Load recording directory
 	config.Directory = getEnv("RECORDING_DIR", "./recordings")
-	
+
 	// Load recording max duration
 	maxDurationStr := getEnv("RECORDING_MAX_DURATION_HOURS", "4")
 	maxDuration, err := strconv.Atoi(maxDurationStr)
@@ -435,7 +435,7 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 	} else {
 		config.MaxDuration = time.Duration(maxDuration) * time.Hour
 	}
-	
+
 	// Load recording cleanup days
 	cleanupDaysStr := getEnv("RECORDING_CLEANUP_DAYS", "30")
 	cleanupDays, err := strconv.Atoi(cleanupDaysStr)
@@ -445,7 +445,7 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 	} else {
 		config.CleanupDays = cleanupDays
 	}
-	
+
 	return nil
 }
 
@@ -463,7 +463,7 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 		}
 		config.SupportedVendors = vendors
 	}
-	
+
 	// Load supported codecs
 	codecsStr := getEnv("SUPPORTED_CODECS", "PCMU,PCMA,G722")
 	if codecsStr == "" {
@@ -476,14 +476,14 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 		}
 		config.SupportedCodecs = codecs
 	}
-	
+
 	// Load default vendor
 	config.DefaultVendor = getEnv("DEFAULT_SPEECH_VENDOR", "google")
 	if config.DefaultVendor == "" {
 		logger.Warn("DEFAULT_SPEECH_VENDOR not set, using default: google")
 		config.DefaultVendor = "google"
 	}
-	
+
 	// Validate that the default vendor is in the supported vendors list
 	found := false
 	for _, vendor := range config.SupportedVendors {
@@ -492,12 +492,12 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 			break
 		}
 	}
-	
+
 	if !found {
 		logger.Warnf("Default vendor '%s' is not in the supported vendors list, adding it", config.DefaultVendor)
 		config.SupportedVendors = append(config.SupportedVendors, config.DefaultVendor)
 	}
-	
+
 	return nil
 }
 
@@ -512,7 +512,7 @@ func loadResourceConfig(logger *logrus.Logger, config *ResourceConfig) error {
 	} else {
 		config.MaxConcurrentCalls = maxCalls
 	}
-	
+
 	return nil
 }
 
@@ -520,24 +520,24 @@ func loadResourceConfig(logger *logrus.Logger, config *ResourceConfig) error {
 func loadLoggingConfig(logger *logrus.Logger, config *LoggingConfig) error {
 	// Load log level
 	config.Level = getEnv("LOG_LEVEL", "info")
-	
+
 	// Validate log level
 	_, err := logrus.ParseLevel(config.Level)
 	if err != nil {
 		logger.Warnf("Invalid LOG_LEVEL '%s', defaulting to 'info'", config.Level)
 		config.Level = "info"
 	}
-	
+
 	// Load log format
 	config.Format = getEnv("LOG_FORMAT", "json")
 	if config.Format != "json" && config.Format != "text" {
 		logger.Warn("Invalid LOG_FORMAT, must be 'json' or 'text', defaulting to 'json'")
 		config.Format = "json"
 	}
-	
+
 	// Load log output file
 	config.OutputFile = getEnv("LOG_OUTPUT_FILE", "")
-	
+
 	return nil
 }
 
@@ -545,15 +545,15 @@ func loadLoggingConfig(logger *logrus.Logger, config *LoggingConfig) error {
 func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	// Load AMQP URL
 	config.AMQPUrl = getEnv("AMQP_URL", "")
-	
+
 	// Load AMQP queue name
 	config.AMQPQueueName = getEnv("AMQP_QUEUE_NAME", "")
-	
+
 	// Validate AMQP config - both URL and queue name must be provided
 	if (config.AMQPUrl != "" && config.AMQPQueueName == "") || (config.AMQPUrl == "" && config.AMQPQueueName != "") {
 		logger.Warn("Incomplete AMQP configuration: both AMQP_URL and AMQP_QUEUE_NAME must be provided")
 	}
-	
+
 	return nil
 }
 
@@ -561,7 +561,7 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 func loadRedundancyConfig(logger *logrus.Logger, config *RedundancyConfig) error {
 	// Load redundancy enabled flag
 	config.Enabled = getEnvBool("ENABLE_REDUNDANCY", true)
-	
+
 	// Load session timeout
 	sessionTimeoutStr := getEnv("SESSION_TIMEOUT", "30s")
 	sessionTimeout, err := time.ParseDuration(sessionTimeoutStr)
@@ -571,7 +571,7 @@ func loadRedundancyConfig(logger *logrus.Logger, config *RedundancyConfig) error
 	} else {
 		config.SessionTimeout = sessionTimeout
 	}
-	
+
 	// Load session check interval
 	sessionCheckIntervalStr := getEnv("SESSION_CHECK_INTERVAL", "10s")
 	sessionCheckInterval, err := time.ParseDuration(sessionCheckIntervalStr)
@@ -581,14 +581,14 @@ func loadRedundancyConfig(logger *logrus.Logger, config *RedundancyConfig) error
 	} else {
 		config.SessionCheckInterval = sessionCheckInterval
 	}
-	
+
 	// Load storage type
 	config.StorageType = getEnv("REDUNDANCY_STORAGE_TYPE", "memory")
 	if config.StorageType != "memory" && config.StorageType != "redis" {
 		logger.Warn("Invalid REDUNDANCY_STORAGE_TYPE value, must be 'memory' or 'redis', using default: memory")
 		config.StorageType = "memory"
 	}
-	
+
 	return nil
 }
 
@@ -599,40 +599,40 @@ func validateConfig(logger *logrus.Logger, config *Config) error {
 		if sipPort == config.HTTP.Port {
 			return errors.New(fmt.Sprintf("port conflict: SIP port %d conflicts with HTTP port", sipPort))
 		}
-		
+
 		if config.Network.EnableTLS && sipPort == config.Network.TLSPort {
 			return errors.New(fmt.Sprintf("port conflict: SIP port %d conflicts with TLS port", sipPort))
 		}
 	}
-	
+
 	if config.Network.EnableTLS && config.Network.TLSPort == config.HTTP.Port {
 		return errors.New(fmt.Sprintf("port conflict: TLS port %d conflicts with HTTP port", config.Network.TLSPort))
 	}
-	
+
 	// Validate RTP port range
 	if config.Network.RTPPortMax <= config.Network.RTPPortMin {
 		return errors.New("invalid RTP port range: RTP_PORT_MAX must be greater than RTP_PORT_MIN")
 	}
-	
+
 	// Validate redundancy configuration
 	if config.Redundancy.Enabled {
 		if config.Redundancy.SessionTimeout <= 0 {
 			return errors.New("invalid SESSION_TIMEOUT: must be a positive duration")
 		}
-		
+
 		if config.Redundancy.SessionCheckInterval <= 0 {
 			return errors.New("invalid SESSION_CHECK_INTERVAL: must be a positive duration")
 		}
-		
+
 		if config.Redundancy.SessionCheckInterval >= config.Redundancy.SessionTimeout {
 			logger.Warn("SESSION_CHECK_INTERVAL should be smaller than SESSION_TIMEOUT for effective monitoring")
 		}
-		
+
 		if config.Redundancy.StorageType == "redis" && config.Messaging.AMQPUrl == "" {
 			logger.Warn("Redis storage type selected but AMQP not configured for notifications")
 		}
 	}
-	
+
 	// Validate logging configuration
 	if config.Logging.OutputFile != "" {
 		// Check if the log file can be created/written
@@ -642,7 +642,7 @@ func validateConfig(logger *logrus.Logger, config *Config) error {
 		}
 		f.Close()
 	}
-	
+
 	return nil
 }
 
@@ -652,7 +652,7 @@ func ensureDirectories(logger *logrus.Logger, config *Config) error {
 	if err := os.MkdirAll(config.Recording.Directory, 0755); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("failed to create recording directory: %s", config.Recording.Directory))
 	}
-	
+
 	// Ensure sessions directory exists if redundancy is enabled
 	if config.Redundancy.Enabled && config.Redundancy.StorageType == "memory" {
 		sessionsDir := "sessions"
@@ -660,7 +660,7 @@ func ensureDirectories(logger *logrus.Logger, config *Config) error {
 			return errors.Wrap(err, fmt.Sprintf("failed to create sessions directory: %s", sessionsDir))
 		}
 	}
-	
+
 	return nil
 }
 
@@ -672,7 +672,7 @@ func (c *Config) ApplyLogging(logger *logrus.Logger) error {
 		return errors.Wrap(err, fmt.Sprintf("invalid log level: %s", c.Logging.Level))
 	}
 	logger.SetLevel(level)
-	
+
 	// Set log format
 	if c.Logging.Format == "json" {
 		logger.SetFormatter(&logrus.JSONFormatter{
@@ -689,7 +689,7 @@ func (c *Config) ApplyLogging(logger *logrus.Logger) error {
 			TimestampFormat: time.RFC3339Nano,
 		})
 	}
-	
+
 	// Set log output
 	if c.Logging.OutputFile != "" {
 		f, err := os.OpenFile(c.Logging.OutputFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
@@ -700,7 +700,7 @@ func (c *Config) ApplyLogging(logger *logrus.Logger) error {
 	} else {
 		logger.SetOutput(os.Stdout)
 	}
-	
+
 	return nil
 }
 
@@ -719,7 +719,7 @@ func getEnvBool(key string, defaultValue bool) bool {
 	if value == "" {
 		return defaultValue
 	}
-	
+
 	switch strings.ToLower(value) {
 	case "true", "yes", "1", "on":
 		return true
@@ -736,12 +736,12 @@ func getEnvInt(key string, defaultValue int) int {
 	if value == "" {
 		return defaultValue
 	}
-	
+
 	intValue, err := strconv.Atoi(value)
 	if err != nil {
 		return defaultValue
 	}
-	
+
 	return intValue
 }
 
@@ -751,12 +751,12 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if value == "" {
 		return defaultValue
 	}
-	
+
 	duration, err := time.ParseDuration(value)
 	if err != nil {
 		return defaultValue
 	}
-	
+
 	return duration
 }
 

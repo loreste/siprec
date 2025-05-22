@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	
+
 	pkg_errors "siprec-server/pkg/errors"
 )
 
@@ -85,7 +85,7 @@ func DetectParticipantChanges(existing *RecordingSession, rsMetadata *RSMetadata
 					for _, aor := range newP.Aor {
 						newAors[aor.Value] = true
 					}
-					
+
 					// Check if all existing AORs are in new set
 					for _, comm := range existingP.CommunicationIDs {
 						if !newAors[comm.Value] {
@@ -230,23 +230,23 @@ func CreateFailoverMetadata(originalSession *RecordingSession) *RSMetadata {
 	if failoverID == "" {
 		failoverID = uuid.New().String()
 	}
-	
+
 	// Create base metadata
 	metadata := &RSMetadata{
-		SessionID:             originalSession.ID,
-		State:                 originalSession.RecordingState,
-		Sequence:              originalSession.SequenceNumber + 1,
-		Reason:                "failover",
-		ReasonRef:             "urn:ietf:params:xml:ns:recording:1:failover",
+		SessionID: originalSession.ID,
+		State:     originalSession.RecordingState,
+		Sequence:  originalSession.SequenceNumber + 1,
+		Reason:    "failover",
+		ReasonRef: "urn:ietf:params:xml:ns:recording:1:failover",
 	}
-	
+
 	// Add RFC 7245 specific Session Recording Association information
 	metadata.SessionRecordingAssoc = RSAssociation{
-		SessionID:   originalSession.ID,
-		FixedID:     failoverID,  // Use the failover ID as the fixed ID for recovery
-		CallID:      originalSession.ID,  // Original session ID
+		SessionID: originalSession.ID,
+		FixedID:   failoverID,         // Use the failover ID as the fixed ID for recovery
+		CallID:    originalSession.ID, // Original session ID
 	}
-	
+
 	// Add participant information
 	for _, participant := range originalSession.Participants {
 		rsParticipant := RSParticipant{
@@ -256,7 +256,7 @@ func CreateFailoverMetadata(originalSession *RecordingSession) *RSMetadata {
 			DisplayName: participant.DisplayName,
 			Role:        participant.Role,
 		}
-		
+
 		// Add communication identifiers
 		for _, commID := range participant.CommunicationIDs {
 			rsParticipant.Aor = append(rsParticipant.Aor, Aor{
@@ -265,10 +265,10 @@ func CreateFailoverMetadata(originalSession *RecordingSession) *RSMetadata {
 				Priority: commID.Priority,
 			})
 		}
-		
+
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
-	
+
 	return metadata
 }
 
@@ -279,11 +279,11 @@ func ParseFailoverMetadata(metadata *RSMetadata) (string, string, error) {
 	if metadata == nil {
 		return "", "", pkg_errors.NewInvalidMetadata("cannot parse nil metadata")
 	}
-	
+
 	// Extract the original session ID and failover ID
 	originalSessionID := metadata.SessionID
 	failoverID := metadata.SessionRecordingAssoc.FixedID
-	
+
 	// Validate both values in a single check
 	if originalSessionID == "" || failoverID == "" {
 		fields := map[string]interface{}{
@@ -292,7 +292,7 @@ func ParseFailoverMetadata(metadata *RSMetadata) (string, string, error) {
 		}
 		return "", "", pkg_errors.NewInvalidMetadata("missing required fields").WithFields(fields)
 	}
-	
+
 	return originalSessionID, failoverID, nil
 }
 
@@ -305,13 +305,13 @@ func GenerateStateChangeMetadata(session *RecordingSession, newState string, rea
 		Sequence:  session.SequenceNumber + 1,
 		Reason:    reason,
 	}
-	
+
 	// Add the session recording association
 	metadata.SessionRecordingAssoc = RSAssociation{
 		SessionID: session.ID,
 		FixedID:   session.FailoverID,
 	}
-	
+
 	// Include minimal participant information (required by RFC 7866)
 	for _, participant := range session.Participants {
 		rsParticipant := RSParticipant{
@@ -319,17 +319,17 @@ func GenerateStateChangeMetadata(session *RecordingSession, newState string, rea
 			NameID: participant.DisplayName,
 			Role:   participant.Role,
 		}
-		
+
 		// Add at least one communication identifier
 		if len(participant.CommunicationIDs) > 0 {
 			rsParticipant.Aor = append(rsParticipant.Aor, Aor{
 				Value: participant.CommunicationIDs[0].Value,
 			})
 		}
-		
+
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
-	
+
 	return metadata
 }
 
@@ -338,7 +338,7 @@ func GenerateStateChangeMetadata(session *RecordingSession, newState string, rea
 func CreateReplacesHeader(session *RecordingSession, dialogID string, earlyFlag bool) string {
 	// Format: Replaces: call-id;to-tag=to-tag-value;from-tag=from-tag-value
 	replacesHeader := session.ID
-	
+
 	// Add dialog tags if available
 	if dialogID != "" {
 		// Extract to-tag and from-tag from dialogID
@@ -348,12 +348,12 @@ func CreateReplacesHeader(session *RecordingSession, dialogID string, earlyFlag 
 			replacesHeader += ";" + part
 		}
 	}
-	
+
 	// Add early-only parameter if this is an early dialog
 	if earlyFlag {
 		replacesHeader += ";early-only"
 	}
-	
+
 	return replacesHeader
 }
 
@@ -363,15 +363,15 @@ func ParseReplacesHeader(replacesHeader string) (callID string, toTag string, fr
 	if replacesHeader == "" {
 		return "", "", "", false, fmt.Errorf("empty Replaces header")
 	}
-	
+
 	parts := strings.Split(replacesHeader, ";")
 	if len(parts) < 3 {
 		return "", "", "", false, fmt.Errorf("invalid Replaces header format: missing tags")
 	}
-	
+
 	// First part is the Call-ID
 	callID = parts[0]
-	
+
 	// Extract tags and flags
 	for _, part := range parts[1:] {
 		if strings.HasPrefix(part, "to-tag=") {
@@ -382,12 +382,12 @@ func ParseReplacesHeader(replacesHeader string) (callID string, toTag string, fr
 			earlyOnly = true
 		}
 	}
-	
+
 	// Validate required components
 	if callID == "" || toTag == "" || fromTag == "" {
 		return callID, toTag, fromTag, earlyOnly, fmt.Errorf("invalid Replaces header: missing required components")
 	}
-	
+
 	return callID, toTag, fromTag, earlyOnly, nil
 }
 
@@ -397,12 +397,12 @@ func SerializeMetadata(metadata *RSMetadata) (string, error) {
 	if metadata == nil {
 		return "", fmt.Errorf("cannot serialize nil metadata")
 	}
-	
+
 	xmlBytes, err := xml.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal metadata to XML: %v", err)
 	}
-	
+
 	// Add XML declaration
 	xmlString := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + string(xmlBytes)
 	return xmlString, nil
@@ -416,7 +416,7 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 		return nil, pkg_errors.NewInvalidInput("cannot recover session from nil metadata").
 			WithCode("RECOVERY_FAILED")
 	}
-	
+
 	// Extract original session ID and failover ID
 	originalSessionID, failoverID, err := ParseFailoverMetadata(failoverMetadata)
 	if err != nil {
@@ -424,7 +424,7 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 			WithCode("RECOVERY_FAILED").
 			WithField("reason", "metadata_parse_error")
 	}
-	
+
 	// Create a new recording session with the same ID
 	session := &RecordingSession{
 		ID:                originalSessionID,
@@ -437,7 +437,7 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 		UpdatedAt:         time.Now(),
 		IsValid:           true,
 	}
-	
+
 	// Add participants from metadata
 	if len(failoverMetadata.Participants) > 0 {
 		session.Participants = make([]Participant, 0, len(failoverMetadata.Participants))
@@ -450,12 +450,12 @@ func RecoverSession(failoverMetadata *RSMetadata) (*RecordingSession, error) {
 		return session, pkg_errors.New("session recovered without participants").
 			WithCode("RECOVERY_WARNING").
 			WithFields(map[string]interface{}{
-				"session_id": originalSessionID,
+				"session_id":  originalSessionID,
 				"failover_id": failoverID,
-				"severity": "warning",
+				"severity":    "warning",
 			})
 	}
-	
+
 	return session, nil
 }
 
@@ -465,10 +465,10 @@ func ProcessStreamRecovery(session *RecordingSession, metadata *RSMetadata) {
 	if session == nil || metadata == nil {
 		return
 	}
-	
+
 	// Clear existing media stream types to rebuild from metadata
 	session.MediaStreamTypes = []string{}
-	
+
 	// Process stream information from metadata
 	for _, stream := range metadata.Streams {
 		// Add stream type to recording session if not already present
@@ -481,16 +481,16 @@ func ProcessStreamRecovery(session *RecordingSession, metadata *RSMetadata) {
 					break
 				}
 			}
-			
+
 			if !found {
 				session.MediaStreamTypes = append(session.MediaStreamTypes, streamType)
 			}
 		}
-		
+
 		// Update participant stream associations
 		for _, participant := range metadata.Participants {
 			participantID := participant.ID
-			
+
 			// Check if participant sends to this stream
 			for _, sendLabel := range participant.Send {
 				if sendLabel == stream.Label {
@@ -505,10 +505,10 @@ func ProcessStreamRecovery(session *RecordingSession, metadata *RSMetadata) {
 									break
 								}
 							}
-							
+
 							if !foundStream {
 								session.Participants[i].MediaStreams = append(
-									session.Participants[i].MediaStreams, 
+									session.Participants[i].MediaStreams,
 									stream.StreamID,
 								)
 							}
@@ -528,27 +528,27 @@ func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSessi
 		return pkg_errors.NewInvalidInput("cannot validate nil sessions").
 			WithCode("CONTINUITY_VALIDATION_FAILED")
 	}
-	
+
 	// Collect context information for potential errors
 	context := map[string]interface{}{
-		"original_session_id":  originalSession.ID,
-		"recovered_session_id": recoveredSession.ID,
-		"original_failover_id": originalSession.FailoverID,
-		"recovered_failover_id": recoveredSession.FailoverID,
-		"original_participant_count": len(originalSession.Participants),
+		"original_session_id":         originalSession.ID,
+		"recovered_session_id":        recoveredSession.ID,
+		"original_failover_id":        originalSession.FailoverID,
+		"recovered_failover_id":       recoveredSession.FailoverID,
+		"original_participant_count":  len(originalSession.Participants),
 		"recovered_participant_count": len(recoveredSession.Participants),
 	}
-	
+
 	// Verify session IDs match
 	if originalSession.ID != recoveredSession.ID {
 		return pkg_errors.NewInvalidInput(
-			fmt.Sprintf("session ID mismatch: original=%s, recovered=%s", 
+			fmt.Sprintf("session ID mismatch: original=%s, recovered=%s",
 				originalSession.ID, recoveredSession.ID)).
 			WithCode("CONTINUITY_VALIDATION_FAILED").
 			WithFields(context).
 			WithField("error_type", "session_id_mismatch")
 	}
-	
+
 	// Verify failover IDs match if both are present
 	if originalSession.FailoverID != "" && recoveredSession.FailoverID != "" &&
 		originalSession.FailoverID != recoveredSession.FailoverID {
@@ -559,18 +559,18 @@ func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSessi
 			WithFields(context).
 			WithField("error_type", "failover_id_mismatch")
 	}
-	
+
 	// Verify essential participants are preserved
 	originalParticipants := make(map[string]struct{})
 	for _, p := range originalSession.Participants {
 		originalParticipants[p.ID] = struct{}{}
 	}
-	
+
 	recoveredParticipants := make(map[string]struct{})
 	for _, p := range recoveredSession.Participants {
 		recoveredParticipants[p.ID] = struct{}{}
 	}
-	
+
 	// Check for missing participants (all essential participants must be preserved)
 	var missingParticipants []string
 	for id := range originalParticipants {
@@ -578,7 +578,7 @@ func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSessi
 			missingParticipants = append(missingParticipants, id)
 		}
 	}
-	
+
 	if len(missingParticipants) > 0 {
 		return pkg_errors.NewInvalidInput("essential participants missing in recovered session").
 			WithCode("CONTINUITY_VALIDATION_FAILED").
@@ -586,7 +586,7 @@ func ValidateSessionContinuity(originalSession, recoveredSession *RecordingSessi
 			WithField("error_type", "missing_participants").
 			WithField("missing_participants", missingParticipants)
 	}
-	
+
 	// Session continuity is valid
 	return nil
 }
@@ -597,10 +597,10 @@ func SetSessionExpiration(session *RecordingSession, duration time.Duration) {
 	if session == nil {
 		return
 	}
-	
+
 	// Set the expiration time based on the current time plus the duration
 	session.RetentionPeriod = duration
-	
+
 	// Calculate the actual expiration time
 	if !session.StartTime.IsZero() {
 		session.EndTime = session.StartTime.Add(duration)
@@ -609,6 +609,83 @@ func SetSessionExpiration(session *RecordingSession, duration time.Duration) {
 		session.StartTime = time.Now()
 		session.EndTime = session.StartTime.Add(duration)
 	}
+}
+
+// SendRecordingIndicator creates a recording status indicator for participants
+// RFC 7866 requires notifying participants of recording status
+func SendRecordingIndicator(session *RecordingSession, participantID string, indicate bool) *RSMetadata {
+	if session == nil {
+		return nil
+	}
+
+	// Find the participant
+	var targetParticipant *Participant
+	for i := range session.Participants {
+		if session.Participants[i].ID == participantID {
+			targetParticipant = &session.Participants[i]
+			break
+		}
+	}
+
+	if targetParticipant == nil {
+		return nil
+	}
+
+	// Update participant recording awareness
+	targetParticipant.RecordingAware = indicate
+
+	// Create notification metadata
+	metadata := &RSMetadata{
+		SessionID: session.ID,
+		State:     session.RecordingState,
+		Sequence:  session.SequenceNumber + 1,
+		Reason:    "recording-indication",
+	}
+
+	// Add session recording association
+	metadata.SessionRecordingAssoc = RSAssociation{
+		SessionID: session.ID,
+		FixedID:   session.FailoverID,
+	}
+
+	// Add the specific participant with recording indicator
+	rsParticipant := RSParticipant{
+		ID:          targetParticipant.ID,
+		Name:        targetParticipant.Name,
+		DisplayName: targetParticipant.DisplayName,
+		Role:        targetParticipant.Role,
+	}
+
+	// Add communication identifiers
+	for _, commID := range targetParticipant.CommunicationIDs {
+		rsParticipant.Aor = append(rsParticipant.Aor, Aor{
+			Value:    commID.Value,
+			Display:  commID.DisplayName,
+			Priority: commID.Priority,
+		})
+	}
+
+	metadata.Participants = append(metadata.Participants, rsParticipant)
+
+	return metadata
+}
+
+// NotifyAllParticipants sends recording status to all participants
+func NotifyAllParticipants(session *RecordingSession, recordingActive bool) []*RSMetadata {
+	if session == nil {
+		return nil
+	}
+
+	var notifications []*RSMetadata
+
+	for _, participant := range session.Participants {
+		notification := SendRecordingIndicator(session, participant.ID, recordingActive)
+		if notification != nil {
+			notifications = append(notifications, notification)
+		}
+	}
+
+	return notifications
 }
 
 // GenerateSessionUpdateNotification creates metadata for session updates
@@ -621,21 +698,21 @@ func GenerateSessionUpdateNotification(session *RecordingSession, updateReason s
 		Sequence:  session.SequenceNumber + 1,
 		Reason:    updateReason,
 	}
-	
+
 	// Set expiration time if applicable
 	if !session.EndTime.IsZero() {
 		metadata.Expires = session.EndTime.Format(time.RFC3339)
 	}
-	
+
 	// Add session recording association with failover ID if present
 	metadata.SessionRecordingAssoc = RSAssociation{
 		SessionID: session.ID,
 	}
-	
+
 	if session.FailoverID != "" {
 		metadata.SessionRecordingAssoc.FixedID = session.FailoverID
 	}
-	
+
 	// Add essential participant information
 	for _, participant := range session.Participants {
 		rsParticipant := RSParticipant{
@@ -643,7 +720,7 @@ func GenerateSessionUpdateNotification(session *RecordingSession, updateReason s
 			NameID: participant.DisplayName,
 			Role:   participant.Role,
 		}
-		
+
 		// Add at least one communication identifier for each participant
 		if len(participant.CommunicationIDs) > 0 {
 			commID := participant.CommunicationIDs[0]
@@ -653,11 +730,88 @@ func GenerateSessionUpdateNotification(session *RecordingSession, updateReason s
 				Priority: commID.Priority,
 			})
 		}
-		
+
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
-	
+
 	return metadata
+}
+
+// PauseRecording pauses the recording session
+func PauseRecording(session *RecordingSession, reason string) error {
+	if session == nil {
+		return pkg_errors.NewInvalidInput("cannot pause nil session").
+			WithCode("PAUSE_FAILED")
+	}
+
+	// Check if pause is allowed
+	if !session.PauseResumeAllowed {
+		return pkg_errors.NewInvalidInput("pause not allowed for this session").
+			WithCode("PAUSE_NOT_ALLOWED").
+			WithField("session_id", session.ID)
+	}
+
+	// Check current state
+	if session.RecordingState == "paused" {
+		return pkg_errors.NewInvalidInput("session already paused").
+			WithCode("ALREADY_PAUSED").
+			WithField("session_id", session.ID)
+	}
+
+	if session.RecordingState == "terminated" {
+		return pkg_errors.NewInvalidInput("cannot pause terminated session").
+			WithCode("INVALID_STATE").
+			WithField("session_id", session.ID)
+	}
+
+	// Update session state
+	session.RecordingState = "paused"
+	session.SequenceNumber++
+	session.UpdatedAt = time.Now()
+	if reason != "" {
+		session.Reason = reason
+	}
+
+	return nil
+}
+
+// ResumeRecording resumes a paused recording session
+func ResumeRecording(session *RecordingSession, reason string) error {
+	if session == nil {
+		return pkg_errors.NewInvalidInput("cannot resume nil session").
+			WithCode("RESUME_FAILED")
+	}
+
+	// Check if pause/resume is allowed
+	if !session.PauseResumeAllowed {
+		return pkg_errors.NewInvalidInput("resume not allowed for this session").
+			WithCode("RESUME_NOT_ALLOWED").
+			WithField("session_id", session.ID)
+	}
+
+	// Check current state
+	if session.RecordingState != "paused" {
+		return pkg_errors.NewInvalidInput(
+			fmt.Sprintf("can only resume paused sessions, current state: %s", session.RecordingState)).
+			WithCode("INVALID_STATE").
+			WithField("session_id", session.ID).
+			WithField("current_state", session.RecordingState)
+	}
+
+	// Update session state
+	session.RecordingState = "active"
+	session.SequenceNumber++
+	session.UpdatedAt = time.Now()
+	if reason != "" {
+		session.Reason = reason
+	}
+
+	// Reset error counters when successfully resuming
+	session.ErrorCount = 0
+	session.ErrorState = false
+	session.ErrorMessage = ""
+
+	return nil
 }
 
 // HandleSiprecStateChange processes a state change request for a SIPREC session
@@ -667,7 +821,7 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 		return pkg_errors.NewInvalidInput("cannot update nil session").
 			WithCode("STATE_CHANGE_FAILED")
 	}
-	
+
 	// Validate the requested state change
 	validStates := map[string]bool{
 		"active":     true,
@@ -675,7 +829,7 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 		"inactive":   true,
 		"terminated": true,
 	}
-	
+
 	if !validStates[newState] {
 		return pkg_errors.NewInvalidInput(fmt.Sprintf("invalid state change requested: %s", newState)).
 			WithCode("INVALID_STATE").
@@ -684,10 +838,10 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 				"valid_states":    []string{"active", "paused", "inactive", "terminated"},
 			})
 	}
-	
+
 	// Check if this is a valid state transition
 	currentState := currentSession.RecordingState
-	
+
 	// Define valid state transitions (from -> to)
 	validTransitions := map[string]map[string]bool{
 		"active": {
@@ -708,7 +862,7 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 			// No valid transitions from terminated state
 		},
 	}
-	
+
 	// Check if the requested transition is valid
 	if !validTransitions[currentState][newState] {
 		return pkg_errors.NewInvalidInput(
@@ -720,21 +874,21 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 				"session_id":      currentSession.ID,
 			})
 	}
-	
+
 	// Store the old state for potential rollback
 	oldState := currentSession.RecordingState
 	_ = currentSession.SequenceNumber // Keep track of sequence for potential rollback
-	
+
 	// Update the session state
 	currentSession.RecordingState = newState
 	currentSession.SequenceNumber++
 	currentSession.UpdatedAt = time.Now()
-	
+
 	// Store reason if provided
 	if reason != "" {
 		currentSession.Reason = reason
 	}
-	
+
 	// Handle state-specific actions
 	switch newState {
 	case "paused":
@@ -754,32 +908,32 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 	case "terminated":
 		// Set end time when terminating
 		currentSession.EndTime = time.Now()
-		
+
 		// If no reason was provided for termination, set a default
 		if currentSession.Reason == "" {
 			currentSession.Reason = "Recording terminated"
 		}
-		
+
 		// Mark session as ready for cleanup
 		// This is needed to ensure proper resource management in production
 		currentSession.IsValid = false
-		
+
 		// Perform cleanup of resources associated with this session
 		// Including port release, any locks, and other resources
 		cleanup := func() {
 			// NOTE: This would typically be implemented by the calling code
 			// as we don't have direct access to the ports or locks here
 			// but we're signaling through the session state
-			
+
 			// Log session termination
-			fmt.Printf("SIPREC session %s terminated with reason: %s\n", 
+			fmt.Printf("SIPREC session %s terminated with reason: %s\n",
 				currentSession.ID, currentSession.Reason)
 		}
-		
+
 		// Execute cleanup in a goroutine to avoid blocking the state change
 		go cleanup()
 	}
-	
+
 	// Return success
 	return nil
 }
@@ -789,7 +943,7 @@ func HandleSiprecStateChange(currentSession *RecordingSession, newState string, 
 func GenerateNonSiprecErrorResponse() *RSMetadata {
 	// Generate a session ID for the error response
 	sessionID := uuid.New().String()
-	
+
 	// Create error metadata
 	metadata := &RSMetadata{
 		SessionID: sessionID,
@@ -798,12 +952,12 @@ func GenerateNonSiprecErrorResponse() *RSMetadata {
 		ReasonRef: "urn:ietf:params:xml:ns:recording:1:error:service-unavailable",
 		Sequence:  1,
 	}
-	
+
 	// Add minimal session association
 	metadata.SessionRecordingAssoc = RSAssociation{
 		SessionID: sessionID,
 	}
-	
+
 	// Add minimal required participant information (RFC 7866 requires at least one participant)
 	minimalParticipant := RSParticipant{
 		ID:   "server",
@@ -815,7 +969,7 @@ func GenerateNonSiprecErrorResponse() *RSMetadata {
 		},
 	}
 	metadata.Participants = append(metadata.Participants, minimalParticipant)
-	
+
 	return metadata
 }
 
@@ -826,26 +980,26 @@ func CleanupSessionResources(session *RecordingSession) error {
 		return pkg_errors.NewInvalidInput("cannot cleanup nil session").
 			WithCode("CLEANUP_FAILED")
 	}
-	
+
 	if session.RecordingState != "terminated" {
 		return pkg_errors.NewInvalidInput("only terminated sessions can be cleaned up").
 			WithCode("INVALID_STATE").
 			WithField("session_state", session.RecordingState)
 	}
-	
+
 	// Perform necessary cleanup actions
 	// - Release ports (would be handled by calling code with access to port manager)
 	// - Finalize recordings
 	// - Close any open file handles
 	// - Remove any temporary files
-	
+
 	// Mark session as cleaned up
 	session.IsValid = false
 	session.UpdatedAt = time.Now()
-	
+
 	// Log cleanup completion
 	fmt.Printf("Resources for SIPREC session %s cleaned up\n", session.ID)
-	
+
 	return nil
 }
 
@@ -854,12 +1008,12 @@ func IsSessionExpired(session *RecordingSession) bool {
 	if session == nil {
 		return true
 	}
-	
+
 	// If no end time or retention period set, session doesn't expire
 	if session.EndTime.IsZero() && session.RetentionPeriod == 0 {
 		return false
 	}
-	
+
 	// Check if current time is past the end time
 	now := time.Now()
 	return !session.EndTime.IsZero() && now.After(session.EndTime)

@@ -8,13 +8,13 @@ type DialogState int
 const (
 	// DialogNone represents no dialog or initial state
 	DialogNone DialogState = iota
-	
+
 	// DialogEarly represents early dialog state
 	DialogEarly
-	
+
 	// DialogConfirmed represents confirmed dialog state
 	DialogConfirmed
-	
+
 	// DialogTerminated represents terminated dialog state
 	DialogTerminated
 )

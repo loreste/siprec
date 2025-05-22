@@ -2,16 +2,16 @@ package siprec
 
 import (
 	"encoding/xml"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"strings"
-	stderrors "errors"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
-	
+
 	"siprec-server/pkg/errors"
 )
 
@@ -122,7 +122,7 @@ Content-Disposition: recording-session
 
 %s
 --%s--
-`, 
+`,
 		boundary, sdp, boundary, metadata, boundary)
 
 	// Create the Content-Type header with proper boundary parameter
@@ -138,7 +138,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 		return nil, errors.NewInvalidInput("request is nil").
 			WithCode("EXTRACT_METADATA_FAILED")
 	}
-	
+
 	contentType := req.GetHeader("Content-Type")
 	if contentType == nil {
 		return nil, errors.NewInvalidInput("missing Content-Type header").
@@ -186,7 +186,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 
 		partContentType := part.Header.Get("Content-Type")
 		partDisposition := part.Header.Get("Content-Disposition")
-		
+
 		// Check for SDP part - we need to track if it's present for a valid SIPREC request
 		if partContentType == "application/sdp" {
 			sdpFound = true
@@ -199,7 +199,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 					WithCode("METADATA_READ_ERROR")
 			}
 			metadataContent = buf.String()
-			
+
 			// Verify proper Content-Disposition for SIPREC compliance
 			if !strings.Contains(partDisposition, "recording-session") {
 				// This is just a warning, not a hard error
@@ -213,7 +213,7 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 		return nil, errors.NewInvalidInput("no rs-metadata content found in multipart message").
 			WithCode("MISSING_METADATA")
 	}
-	
+
 	if !sdpFound {
 		// This is just a warning since we might still be able to process some SIPREC operations without SDP
 		fmt.Println("Warning: SIPREC request missing SDP part")
@@ -233,18 +233,18 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 	if len(deficiencies) > 0 {
 		// If there are critical deficiencies, return an error
 		for _, deficiency := range deficiencies {
-			if strings.Contains(deficiency, "missing session ID") || 
-			   strings.Contains(deficiency, "missing recording state") ||
-			   strings.Contains(deficiency, "invalid recording state") {
+			if strings.Contains(deficiency, "missing session ID") ||
+				strings.Contains(deficiency, "missing recording state") ||
+				strings.Contains(deficiency, "invalid recording state") {
 				return nil, errors.NewInvalidInput(fmt.Sprintf("critical metadata validation failure: %v", deficiencies)).
 					WithCode("INVALID_METADATA").
 					WithFields(map[string]interface{}{
 						"deficiencies": deficiencies,
-						"session_id": rsMetadata.SessionID,
+						"session_id":   rsMetadata.SessionID,
 					})
 			}
 		}
-		
+
 		// For non-critical issues, just return the metadata with a warning
 		return &rsMetadata, fmt.Errorf("metadata validation warnings: %v", deficiencies)
 	}
@@ -320,7 +320,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
 	if rsMetadata == nil {
 		return []string{"metadata is nil"}
 	}
-	
+
 	deficiencies := []string{}
 
 	// Check for required fields
@@ -342,11 +342,11 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
 			"inactive":   true,
 			"terminated": true,
 		}
-		
+
 		if !validStates[rsMetadata.State] {
 			deficiencies = append(deficiencies, fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
 		}
-		
+
 		// If state is terminated, reason should be provided
 		if rsMetadata.State == "terminated" && rsMetadata.Reason == "" {
 			deficiencies = append(deficiencies, "termination reason not provided")
@@ -364,7 +364,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
 	} else if rsMetadata.SessionRecordingAssoc.SessionID == "" {
 		deficiencies = append(deficiencies, "missing session ID in recording association")
 	}
-	
+
 	// Validate additional association fields for compliance
 	if rsMetadata.SessionRecordingAssoc.CallID == "" && rsMetadata.SessionRecordingAssoc.FixedID == "" {
 		deficiencies = append(deficiencies, "session association missing both call-ID and fixed-ID")
@@ -379,24 +379,24 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
 			if participant.ID == "" {
 				deficiencies = append(deficiencies, fmt.Sprintf("participant %d missing ID", i))
 			}
-			
+
 			// Check if participant has any identifiers
 			if len(participant.Aor) == 0 {
 				deficiencies = append(deficiencies, fmt.Sprintf("participant %s has no address of record", participant.ID))
 			}
-			
+
 			// Validate AOR URIs
 			for j, aor := range participant.Aor {
 				if aor.Value == "" {
 					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has empty AOR at index %d", participant.ID, j))
 				}
-				
+
 				// Basic URI validation if URI format is specified
 				if aor.URI != "" && !strings.Contains(aor.URI, ":") {
 					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has invalid URI format for AOR", participant.ID))
 				}
 			}
-			
+
 			// Validate role if provided
 			if participant.Role != "" {
 				validRoles := map[string]bool{
@@ -405,39 +405,39 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
 					"focus":   true,
 					"mixer":   true,
 				}
-				
+
 				if !validRoles[participant.Role] {
 					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has invalid role: %s", participant.ID, participant.Role))
 				}
 			}
 		}
 	}
-	
+
 	// Validate stream information if present
 	for i, stream := range rsMetadata.Streams {
 		if stream.Label == "" {
 			deficiencies = append(deficiencies, fmt.Sprintf("stream at index %d missing label", i))
 		}
-		
+
 		if stream.StreamID == "" {
 			deficiencies = append(deficiencies, fmt.Sprintf("stream with label %s missing stream ID", stream.Label))
 		}
-		
+
 		// Validate stream type if provided
 		if stream.Type != "" {
 			validTypes := map[string]bool{
-				"audio": true,
-				"video": true,
-				"text":  true,
-				"message": true,
+				"audio":       true,
+				"video":       true,
+				"text":        true,
+				"message":     true,
 				"application": true,
 			}
-			
+
 			if !validTypes[stream.Type] {
 				deficiencies = append(deficiencies, fmt.Sprintf("stream %s has invalid type: %s", stream.Label, stream.Type))
 			}
 		}
-		
+
 		// For mixed streams, validate mixing information
 		if stream.Mode == "mixed" && len(stream.Mixing.MixedStreams) == 0 {
 			deficiencies = append(deficiencies, fmt.Sprintf("mixed stream %s has no source streams defined", stream.Label))
@@ -454,7 +454,7 @@ func GenerateErrorResponse(errorCode int, errorReason string, requestSessionID s
 	if requestSessionID == "" {
 		requestSessionID = uuid.New().String()
 	}
-	
+
 	// Create a minimal valid metadata response indicating an error
 	metadata := &RSMetadata{
 		SessionID: requestSessionID,
@@ -462,7 +462,7 @@ func GenerateErrorResponse(errorCode int, errorReason string, requestSessionID s
 		Reason:    errorReason,
 		Sequence:  1,
 	}
-	
+
 	// Map standard error codes to standardized reason references
 	reasonRef := ""
 	switch errorCode {
@@ -479,16 +479,16 @@ func GenerateErrorResponse(errorCode int, errorReason string, requestSessionID s
 	case 503: // Service Unavailable
 		reasonRef = "urn:ietf:params:xml:ns:recording:1:error:service-unavailable"
 	}
-	
+
 	if reasonRef != "" {
 		metadata.ReasonRef = reasonRef
 	}
-	
+
 	// Add minimal session recording association
 	metadata.SessionRecordingAssoc = RSAssociation{
 		SessionID: requestSessionID,
 	}
-	
+
 	// Add minimal required participant information (RFC 7866 requires at least one participant)
 	minimalParticipant := RSParticipant{
 		ID:   "server",
@@ -500,6 +500,6 @@ func GenerateErrorResponse(errorCode int, errorReason string, requestSessionID s
 		},
 	}
 	metadata.Participants = append(metadata.Participants, minimalParticipant)
-	
+
 	return metadata
 }
