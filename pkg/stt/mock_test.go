@@ -18,7 +18,7 @@ func TestMockProviderInterface(t *testing.T) {
 func TestNewMockProvider(t *testing.T) {
 	logger := logrus.New()
 	provider := NewMockProvider(logger)
-	
+
 	assert.NotNil(t, provider, "MockProvider should not be nil")
 	assert.Equal(t, logger, provider.logger, "Logger should be set correctly")
 }
@@ -26,14 +26,14 @@ func TestNewMockProvider(t *testing.T) {
 func TestMockProviderName(t *testing.T) {
 	logger := logrus.New()
 	provider := NewMockProvider(logger)
-	
+
 	assert.Equal(t, "mock", provider.Name(), "Name should return 'mock'")
 }
 
 func TestMockProviderInitialize(t *testing.T) {
 	logger := logrus.New()
 	provider := NewMockProvider(logger)
-	
+
 	err := provider.Initialize()
 	assert.NoError(t, err, "Initialize should not return an error")
 }
@@ -41,30 +41,30 @@ func TestMockProviderInitialize(t *testing.T) {
 func TestMockProviderStreamToText(t *testing.T) {
 	logger := logrus.New()
 	provider := NewMockProvider(logger)
-	
+
 	// Create audio data and context with cancellation
 	audioData := []byte("test audio data")
 	audioStream := bytes.NewReader(audioData)
 	callUUID := "test-call-uuid"
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Create a channel to signal when the function returns
 	done := make(chan struct{})
-	
+
 	// Start streaming in a goroutine
 	go func() {
 		err := provider.StreamToText(ctx, audioStream, callUUID)
 		assert.NoError(t, err, "StreamToText should not return an error when cancelled")
 		close(done)
 	}()
-	
+
 	// Give it a moment to start processing
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// Then cancel the context to stop processing
 	cancel()
-	
+
 	// Wait for the function to complete
 	select {
 	case <-done:

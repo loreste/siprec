@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	
+
 	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
 )
@@ -19,10 +19,10 @@ type SessionHandler struct {
 type SessionService interface {
 	// GetSessionByID returns session info by ID
 	GetSessionByID(id string) (interface{}, error)
-	
+
 	// GetAllSessions returns information about all active sessions
 	GetAllSessions() ([]interface{}, error)
-	
+
 	// GetSessionStatistics returns session statistics
 	GetSessionStatistics() map[string]interface{}
 }
@@ -47,14 +47,14 @@ func (h *SessionHandler) handleGetSessions(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// Check if a specific session ID was requested
 	sessionID := r.URL.Query().Get("id")
 	if sessionID != "" {
 		h.handleGetSessionByID(w, r, sessionID)
 		return
 	}
-	
+
 	// Get all sessions
 	sessions, err := h.service.GetAllSessions()
 	if err != nil {
@@ -62,7 +62,7 @@ func (h *SessionHandler) handleGetSessions(w http.ResponseWriter, r *http.Reques
 		errors.WriteError(w, errors.Wrap(err, "Failed to get sessions"))
 		return
 	}
-	
+
 	// Return the sessions
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -79,7 +79,7 @@ func (h *SessionHandler) handleGetSessionByID(w http.ResponseWriter, r *http.Req
 		errors.WriteError(w, errors.Wrap(err, fmt.Sprintf("Failed to get session %s", id)))
 		return
 	}
-	
+
 	// Return the session
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(session)
@@ -91,10 +91,10 @@ func (h *SessionHandler) handleSessionStats(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// Get session statistics
 	stats := h.service.GetSessionStatistics()
-	
+
 	// Return the statistics
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)

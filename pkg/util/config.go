@@ -28,13 +28,13 @@ type Configuration struct {
 	EnableTLS   bool
 	BehindNAT   bool
 	STUNServers []string
-	
+
 	// HTTP server configuration
-	HTTPPort             int
-	HTTPEnabled          bool
-	HTTPEnableMetrics    bool
-	HTTPEnableAPI        bool
-	
+	HTTPPort          int
+	HTTPEnabled       bool
+	HTTPEnableMetrics bool
+	HTTPEnableAPI     bool
+
 	// Recording configuration
 	RecordingDir         string
 	RecordingMaxDuration time.Duration
@@ -220,7 +220,7 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	// Load AMQP configuration
 	config.AMQPUrl = os.Getenv("AMQP_URL")
 	config.AMQPQueueName = os.Getenv("AMQP_QUEUE_NAME")
-	
+
 	// Load HTTP configuration
 	httpPortStr := os.Getenv("HTTP_PORT")
 	if httpPortStr != "" {
@@ -232,13 +232,13 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	} else {
 		config.HTTPPort = 8080 // Default HTTP port
 	}
-	
+
 	// HTTP enabled/disabled
 	config.HTTPEnabled = true
 	if os.Getenv("HTTP_ENABLED") == "false" {
 		config.HTTPEnabled = false
 	}
-	
+
 	// HTTP metrics and API endpoints
 	config.HTTPEnableMetrics = os.Getenv("HTTP_ENABLE_METRICS") != "false" // Enabled by default
 	config.HTTPEnableAPI = os.Getenv("HTTP_ENABLE_API") != "false"         // Enabled by default

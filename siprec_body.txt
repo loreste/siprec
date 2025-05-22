@@ -16,7 +16,7 @@ Content-Type: application/rs-metadata+xml
 
 <?xml version="1.0" encoding="UTF-8"?>
 <recording xmlns="urn:ietf:params:xml:ns:recording:1">
-  <session session="test-session-1743470046" state="active" direction="inbound">
+  <session session="test-session-1747936322" state="active" direction="inbound">
     <participant id="p1" name="Alice">
       <aor>sip:alice@example.com</aor>
     </participant>
@@ -24,7 +24,7 @@ Content-Type: application/rs-metadata+xml
       <aor>sip:bob@example.com</aor>
     </participant>
     <stream label="stream1" streamid="audio-stream" mode="separate" type="audio"></stream>
-    <sessionrecordingassoc sessionid="test-session-1743470046" callid="test-call-1743470046"></sessionrecordingassoc>
+    <sessionrecordingassoc sessionid="test-session-1747936322" callid="test-call-1747936322"></sessionrecordingassoc>
   </session>
 </recording>
 --boundary1--

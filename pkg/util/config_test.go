@@ -16,12 +16,12 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 	// Create a mock version of LoadConfig that skips loading .env file
 	mockLoadConfig := func(logger *logrus.Logger) (*Configuration, error) {
 		config := &Configuration{}
-		
+
 		// Load values directly from environment
 		config.EnableSRTP = os.Getenv("ENABLE_SRTP") == "true"
 		config.ExternalIP = os.Getenv("EXTERNAL_IP")
 		config.InternalIP = os.Getenv("INTERNAL_IP")
-		
+
 		// Load port values
 		portsStr := os.Getenv("PORTS")
 		if portsStr != "" {
@@ -31,7 +31,7 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 				config.Ports = append(config.Ports, port)
 			}
 		}
-		
+
 		// Load RTP ports
 		rtpMinStr := os.Getenv("RTP_PORT_MIN")
 		if rtpMinStr != "" {
@@ -39,14 +39,14 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 		} else {
 			config.RTPPortMin = 10000
 		}
-		
+
 		rtpMaxStr := os.Getenv("RTP_PORT_MAX")
 		if rtpMaxStr != "" {
 			config.RTPPortMax, _ = strconv.Atoi(rtpMaxStr)
 		} else {
 			config.RTPPortMax = 20000
 		}
-		
+
 		// Load codecs
 		codecsEnv := os.Getenv("SUPPORTED_CODECS")
 		if codecsEnv == "" {
@@ -54,7 +54,7 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 		} else {
 			config.SupportedCodecs = strings.Split(codecsEnv, ",")
 		}
-		
+
 		// Load vendors
 		vendorsEnv := os.Getenv("SUPPORTED_VENDORS")
 		if vendorsEnv == "" {
@@ -62,43 +62,43 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 		} else {
 			config.SupportedVendors = strings.Split(vendorsEnv, ",")
 		}
-		
+
 		// Load other config
 		config.DefaultVendor = os.Getenv("DEFAULT_SPEECH_VENDOR")
 		if config.DefaultVendor == "" {
 			config.DefaultVendor = "google"
 		}
-		
+
 		config.RecordingDir = os.Getenv("RECORDING_DIR")
 		if config.RecordingDir == "" {
 			config.RecordingDir = "./recordings"
 		}
-		
+
 		config.BehindNAT = os.Getenv("BEHIND_NAT") == "true"
-		
+
 		maxCallsStr := os.Getenv("MAX_CONCURRENT_CALLS")
 		if maxCallsStr != "" {
 			config.MaxConcurrentCalls, _ = strconv.Atoi(maxCallsStr)
 		} else {
 			config.MaxConcurrentCalls = 500
 		}
-		
+
 		// Parse log level
 		logLevelStr := os.Getenv("LOG_LEVEL")
 		if logLevelStr == "" {
 			logLevelStr = "info"
 		}
-		
+
 		level, err := logrus.ParseLevel(logLevelStr)
 		if err != nil {
 			config.LogLevel = logrus.InfoLevel
 		} else {
 			config.LogLevel = level
 		}
-		
+
 		return config, nil
 	}
-	
+
 	// Setup test environment
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
@@ -145,12 +145,12 @@ func TestLoadConfigDefaults(t *testing.T) {
 	// Create a mock version of LoadConfig that skips loading .env file
 	mockLoadConfig := func(logger *logrus.Logger) (*Configuration, error) {
 		config := &Configuration{}
-		
+
 		// Load values directly from environment
 		config.EnableSRTP = os.Getenv("ENABLE_SRTP") == "true"
 		config.ExternalIP = os.Getenv("EXTERNAL_IP")
 		config.InternalIP = os.Getenv("INTERNAL_IP")
-		
+
 		// Load port values
 		portsStr := os.Getenv("PORTS")
 		if portsStr != "" {
@@ -160,7 +160,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 				config.Ports = append(config.Ports, port)
 			}
 		}
-		
+
 		// Load RTP ports
 		rtpMinStr := os.Getenv("RTP_PORT_MIN")
 		if rtpMinStr != "" {
@@ -168,14 +168,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.RTPPortMin = 10000
 		}
-		
+
 		rtpMaxStr := os.Getenv("RTP_PORT_MAX")
 		if rtpMaxStr != "" {
 			config.RTPPortMax, _ = strconv.Atoi(rtpMaxStr)
 		} else {
 			config.RTPPortMax = 20000
 		}
-		
+
 		// Load codecs with defaults
 		codecsEnv := os.Getenv("SUPPORTED_CODECS")
 		if codecsEnv == "" {
@@ -183,7 +183,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.SupportedCodecs = strings.Split(codecsEnv, ",")
 		}
-		
+
 		// Load vendors with defaults
 		vendorsEnv := os.Getenv("SUPPORTED_VENDORS")
 		if vendorsEnv == "" {
@@ -191,13 +191,13 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.SupportedVendors = strings.Split(vendorsEnv, ",")
 		}
-		
+
 		// Load default vendor
 		config.DefaultVendor = os.Getenv("DEFAULT_SPEECH_VENDOR")
 		if config.DefaultVendor == "" {
 			config.DefaultVendor = "google"
 		}
-		
+
 		// Recording duration
 		recordMaxHours := os.Getenv("RECORDING_MAX_DURATION_HOURS")
 		if recordMaxHours != "" {
@@ -206,7 +206,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.RecordingMaxDuration = 4 * time.Hour
 		}
-		
+
 		// Cleanup days
 		cleanupDays := os.Getenv("RECORDING_CLEANUP_DAYS")
 		if cleanupDays != "" {
@@ -214,13 +214,13 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.RecordingCleanupDays = 30
 		}
-		
+
 		// Recording directory
 		config.RecordingDir = os.Getenv("RECORDING_DIR")
 		if config.RecordingDir == "" {
 			config.RecordingDir = "./recordings"
 		}
-		
+
 		// Max concurrent calls
 		maxCallsStr := os.Getenv("MAX_CONCURRENT_CALLS")
 		if maxCallsStr != "" {
@@ -228,23 +228,23 @@ func TestLoadConfigDefaults(t *testing.T) {
 		} else {
 			config.MaxConcurrentCalls = 500
 		}
-		
+
 		// Log level with default
 		logLevelStr := os.Getenv("LOG_LEVEL")
 		if logLevelStr == "" {
 			logLevelStr = "info"
 		}
-		
+
 		level, err := logrus.ParseLevel(logLevelStr)
 		if err != nil {
 			config.LogLevel = logrus.InfoLevel
 		} else {
 			config.LogLevel = level
 		}
-		
+
 		return config, nil
 	}
-	
+
 	// Setup test environment
 	logger := logrus.New()
 	logger.SetLevel(logrus.DebugLevel)
