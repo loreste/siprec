@@ -33,10 +33,10 @@ func NewLRUCache(maxSize int, defaultTTL time.Duration) *LRUCache {
 		defaultTTL:  defaultTTL,
 		cleanupDone: make(chan struct{}),
 	}
-	
+
 	// Start cleanup goroutine
 	go cache.cleanup()
-	
+
 	return cache
 }
 
@@ -44,21 +44,21 @@ func NewLRUCache(maxSize int, defaultTTL time.Duration) *LRUCache {
 func (c *LRUCache) Get(key string) (interface{}, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	item, exists := c.items[key]
 	if !exists {
 		return nil, false
 	}
-	
+
 	// Check expiration
 	if time.Now().After(item.Expiration) {
 		c.removeItem(item)
 		return nil, false
 	}
-	
+
 	// Move to front (most recently used)
 	c.lruList.MoveToFront(item.element)
-	
+
 	return item.Value, true
 }
 
@@ -71,10 +71,10 @@ func (c *LRUCache) Set(key string, value interface{}) {
 func (c *LRUCache) SetWithTTL(key string, value interface{}, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	now := time.Now()
 	expiration := now.Add(ttl)
-	
+
 	// Check if item already exists
 	if existing, exists := c.items[key]; exists {
 		// Update existing item
@@ -83,18 +83,18 @@ func (c *LRUCache) SetWithTTL(key string, value interface{}, ttl time.Duration) 
 		c.lruList.MoveToFront(existing.element)
 		return
 	}
-	
+
 	// Create new item
 	item := &CacheItem{
 		Key:        key,
 		Value:      value,
 		Expiration: expiration,
 	}
-	
+
 	// Add to front of LRU list
 	item.element = c.lruList.PushFront(item)
 	c.items[key] = item
-	
+
 	// Check if we need to evict items
 	c.evictIfNeeded()
 }
@@ -103,7 +103,7 @@ func (c *LRUCache) SetWithTTL(key string, value interface{}, ttl time.Duration) 
 func (c *LRUCache) Delete(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	if item, exists := c.items[key]; exists {
 		c.removeItem(item)
 	}
@@ -113,7 +113,7 @@ func (c *LRUCache) Delete(key string) {
 func (c *LRUCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.items = make(map[string]*CacheItem)
 	c.lruList.Init()
 }
@@ -122,7 +122,7 @@ func (c *LRUCache) Clear() {
 func (c *LRUCache) Size() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	return len(c.items)
 }
 
@@ -130,7 +130,7 @@ func (c *LRUCache) Size() int {
 func (c *LRUCache) Keys() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	keys := make([]string, 0, len(c.items))
 	for key := range c.items {
 		keys = append(keys, key)
@@ -160,7 +160,7 @@ func (c *LRUCache) evictIfNeeded() {
 func (c *LRUCache) cleanup() {
 	ticker := time.NewTicker(time.Minute) // Cleanup every minute
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -175,17 +175,17 @@ func (c *LRUCache) cleanup() {
 func (c *LRUCache) removeExpired() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	now := time.Now()
 	var toRemove []*CacheItem
-	
+
 	// Collect expired items
 	for _, item := range c.items {
 		if now.After(item.Expiration) {
 			toRemove = append(toRemove, item)
 		}
 	}
-	
+
 	// Remove expired items
 	for _, item := range toRemove {
 		c.removeItem(item)
@@ -224,7 +224,7 @@ func NewStatsCache(maxSize int, defaultTTL time.Duration) *StatsCache {
 // Get retrieves an item and updates statistics
 func (sc *StatsCache) Get(key string) (interface{}, bool) {
 	value, found := sc.cache.Get(key)
-	
+
 	sc.statsMutex.Lock()
 	if found {
 		sc.hits++
@@ -232,7 +232,7 @@ func (sc *StatsCache) Get(key string) (interface{}, bool) {
 		sc.misses++
 	}
 	sc.statsMutex.Unlock()
-	
+
 	return value, found
 }
 
@@ -255,13 +255,13 @@ func (sc *StatsCache) Delete(key string) {
 func (sc *StatsCache) GetStats() CacheStats {
 	sc.statsMutex.RLock()
 	defer sc.statsMutex.RUnlock()
-	
+
 	total := sc.hits + sc.misses
 	var hitRate float64
 	if total > 0 {
 		hitRate = float64(sc.hits) / float64(total)
 	}
-	
+
 	return CacheStats{
 		Size:        sc.cache.Size(),
 		MaxSize:     sc.cache.maxSize,
