@@ -23,17 +23,17 @@ func NewWebSocketHandler(logger *logrus.Logger, hub *TranscriptionHub) *WebSocke
 // RegisterHandlers registers WebSocket handlers with the HTTP server
 func (h *WebSocketHandler) RegisterHandlers(server *Server) {
 	server.RegisterHandler("/ws/transcriptions", h.handleTranscriptionWS)
-	
+
 	// API endpoint that serves the WebSocket client HTML page
 	server.RegisterHandler("/websocket-client", h.handleWebSocketClientPage)
-	
+
 	h.logger.Info("Registered WebSocket handlers")
 }
 
 // handleTranscriptionWS handles WebSocket connections for real-time transcription streaming
 func (h *WebSocketHandler) handleTranscriptionWS(w http.ResponseWriter, r *http.Request) {
 	h.logger.WithField("remote_addr", r.RemoteAddr).Info("WebSocket connection request received")
-	
+
 	// Let the hub serve the WebSocket connection
 	h.hub.ServeWs(w, r)
 }
@@ -42,7 +42,7 @@ func (h *WebSocketHandler) handleTranscriptionWS(w http.ResponseWriter, r *http.
 func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
-	
+
 	html := `
 <!DOCTYPE html>
 <html>

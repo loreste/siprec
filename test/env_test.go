@@ -13,7 +13,7 @@ import (
 func TestEnvironmentLoading(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(os.Stdout)
-	
+
 	// Test environment loading
 	projectRoot, err := LoadEnvironment(logger)
 	if err != nil {
@@ -21,12 +21,12 @@ func TestEnvironmentLoading(t *testing.T) {
 		t.Log("This is not critical as we can continue with defaults")
 	} else {
 		t.Logf("Found project root at: %s", projectRoot)
-		
+
 		if projectRoot == "" {
 			t.Fatal("Project root path is empty")
 		}
 	}
-	
+
 	// Verify critical environment variables for redundancy
 	t.Run("RedundancyConfig", func(t *testing.T) {
 		envVars := []string{
@@ -34,7 +34,7 @@ func TestEnvironmentLoading(t *testing.T) {
 			"SESSION_TIMEOUT",
 			"SESSION_CHECK_INTERVAL",
 		}
-		
+
 		for _, envVar := range envVars {
 			value := GetEnvWithDefault(envVar, "")
 			if value == "" {
@@ -44,43 +44,43 @@ func TestEnvironmentLoading(t *testing.T) {
 			}
 		}
 	})
-	
+
 	// Test the relative path handling
 	t.Run("DirectoryPaths", func(t *testing.T) {
 		// Test with different recording directory paths
 		testCases := []struct {
-			name        string
+			name         string
 			recordingDir string
-			projectRoot string
-			expected    string
+			projectRoot  string
+			expected     string
 		}{
 			{
-				name:        "Relative Path",
+				name:         "Relative Path",
 				recordingDir: "./recordings",
-				projectRoot: "/test/root",
-				expected:    "/test/root/recordings",
+				projectRoot:  "/test/root",
+				expected:     "/test/root/recordings",
 			},
 			{
-				name:        "Absolute Path",
+				name:         "Absolute Path",
 				recordingDir: "/var/recordings",
-				projectRoot: "/test/root",
-				expected:    "/var/recordings",
+				projectRoot:  "/test/root",
+				expected:     "/var/recordings",
 			},
 			{
-				name:        "Empty Path",
+				name:         "Empty Path",
 				recordingDir: "",
-				projectRoot: "/test/root",
-				expected:    "/test/root/recordings", // Should use default
+				projectRoot:  "/test/root",
+				expected:     "/test/root/recordings", // Should use default
 			},
 		}
-		
+
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				if tc.recordingDir != "" {
 					os.Setenv("RECORDING_DIR", tc.recordingDir)
 					defer os.Unsetenv("RECORDING_DIR")
 				}
-				
+
 				recordingDir := GetEnvWithDefault("RECORDING_DIR", "./recordings")
 				var recordingDirPath string
 				if filepath.IsAbs(recordingDir) {
@@ -88,7 +88,7 @@ func TestEnvironmentLoading(t *testing.T) {
 				} else {
 					recordingDirPath = filepath.Join(tc.projectRoot, recordingDir)
 				}
-				
+
 				if recordingDirPath != tc.expected {
 					t.Errorf("Expected path %s, got %s", tc.expected, recordingDirPath)
 				}
@@ -142,17 +142,17 @@ func TestGetEnvWithDefault(t *testing.T) {
 			expected:     "",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.envValue != "" {
 				os.Setenv(tc.key, tc.envValue)
 				defer os.Unsetenv(tc.key)
 			}
-			
+
 			result := GetEnvWithDefault(tc.key, tc.defaultValue)
 			if result != tc.expected {
-				t.Errorf("Expected GetEnvWithDefault(%s, %s) to return %s, got %s", 
+				t.Errorf("Expected GetEnvWithDefault(%s, %s) to return %s, got %s",
 					tc.key, tc.defaultValue, tc.expected, result)
 			}
 		})

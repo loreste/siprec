@@ -21,13 +21,13 @@ type Configuration struct {
 	EnableTLS   bool
 	BehindNAT   bool
 	STUNServers []string
-	
+
 	// HTTP server configuration
-	HTTPPort             int
-	HTTPEnabled          bool
-	HTTPEnableMetrics    bool
-	HTTPEnableAPI        bool
-	
+	HTTPPort          int
+	HTTPEnabled       bool
+	HTTPEnableMetrics bool
+	HTTPEnableAPI     bool
+
 	// Recording configuration
 	RecordingDir         string
 	RecordingMaxDuration time.Duration
@@ -47,11 +47,11 @@ type Configuration struct {
 	// AMQP configuration
 	AMQPUrl       string
 	AMQPQueueName string
-	
+
 	// Redundancy configuration
-	RedundancyEnabled    bool
-	SessionTimeout       time.Duration
-	StateCheckInterval   time.Duration
+	RedundancyEnabled     bool
+	SessionTimeout        time.Duration
+	StateCheckInterval    time.Duration
 	RedundancyStorageType string
 }
 
@@ -63,7 +63,7 @@ func (c *Config) ToLegacyConfig(logger *logrus.Logger) *Configuration {
 		logLevel = logrus.InfoLevel
 		logger.Warnf("Invalid log level %s, defaulting to info", c.Logging.Level)
 	}
-	
+
 	return &Configuration{
 		// Network configuration
 		ExternalIP:  c.Network.ExternalIP,
@@ -78,33 +78,33 @@ func (c *Config) ToLegacyConfig(logger *logrus.Logger) *Configuration {
 		EnableTLS:   c.Network.EnableTLS,
 		BehindNAT:   c.Network.BehindNAT,
 		STUNServers: c.Network.STUNServers,
-		
+
 		// HTTP server configuration
 		HTTPPort:          c.HTTP.Port,
 		HTTPEnabled:       c.HTTP.Enabled,
 		HTTPEnableMetrics: c.HTTP.EnableMetrics,
 		HTTPEnableAPI:     c.HTTP.EnableAPI,
-		
+
 		// Recording configuration
 		RecordingDir:         c.Recording.Directory,
 		RecordingMaxDuration: c.Recording.MaxDuration,
 		RecordingCleanupDays: c.Recording.CleanupDays,
-		
+
 		// Speech-to-text configuration
 		SupportedVendors: c.STT.SupportedVendors,
 		SupportedCodecs:  c.STT.SupportedCodecs,
 		DefaultVendor:    c.STT.DefaultVendor,
-		
+
 		// Resource limits
 		MaxConcurrentCalls: c.Resources.MaxConcurrentCalls,
-		
+
 		// Logging
 		LogLevel: logLevel,
-		
+
 		// AMQP configuration
 		AMQPUrl:       c.Messaging.AMQPUrl,
 		AMQPQueueName: c.Messaging.AMQPQueueName,
-		
+
 		// Redundancy configuration
 		RedundancyEnabled:     c.Redundancy.Enabled,
 		SessionTimeout:        c.Redundancy.SessionTimeout,
@@ -121,7 +121,7 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Convert to legacy config
 	return config.ToLegacyConfig(logger), nil
 }

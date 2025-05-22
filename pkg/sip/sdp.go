@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	
+
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
@@ -17,61 +17,61 @@ func ValidateSDP(sdpData []byte) error {
 	if len(sdpData) == 0 {
 		return errors.New("empty SDP content")
 	}
-	
+
 	// Parse the SDP to validate it
 	parsedSDP := &sdp.SessionDescription{}
 	if err := parsedSDP.Unmarshal(sdpData); err != nil {
 		return errors.Wrap(err, "invalid SDP format")
 	}
-	
+
 	// Validate required fields
 	if parsedSDP.Origin.Username == "" {
 		return errors.New("missing origin username in SDP")
 	}
-	
+
 	if parsedSDP.Origin.SessionID == 0 {
 		return errors.New("missing session ID in SDP")
 	}
-	
+
 	if parsedSDP.SessionName == "" {
 		return errors.New("missing session name in SDP")
 	}
-	
+
 	// Validate media sections
 	if len(parsedSDP.MediaDescriptions) == 0 {
 		return errors.New("SDP contains no media sections")
 	}
-	
+
 	// Validate at least one audio section exists
 	hasAudio := false
 	for _, md := range parsedSDP.MediaDescriptions {
 		if md.MediaName.Media == "audio" {
 			hasAudio = true
-			
+
 			// Validate port structure (in newer pion/sdp versions this is a struct)
 			// Access as Port.Value or first make sure it's not nil
 			portValue := 0
 			if md.MediaName.Port.Value > 0 {
 				portValue = md.MediaName.Port.Value
 			}
-			
+
 			if portValue == 0 {
 				return errors.New("audio section has port 0")
 			}
-			
+
 			// Validate formats
 			if len(md.MediaName.Formats) == 0 {
 				return errors.New("audio section has no codecs specified")
 			}
-			
+
 			break
 		}
 	}
-	
+
 	if !hasAudio {
 		return errors.New("SDP contains no audio section")
 	}
-	
+
 	return nil
 }
 
@@ -93,16 +93,16 @@ func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToU
 		RTPPort:    0, // Will use dynamic ports
 		EnableSRTP: h.Config.MediaConfig.EnableSRTP,
 	}
-	
+
 	// Add SRTP information if SRTP is enabled
 	if h.Config.MediaConfig.EnableSRTP {
 		options.SRTPKeyInfo = &media.SRTPKeyInfo{
-			Profile:      "AES_CM_128_HMAC_SHA1_80",
-			KeyLifetime:  2147483647, // 2^31 per RFC 3711
+			Profile:     "AES_CM_128_HMAC_SHA1_80",
+			KeyLifetime: 2147483647, // 2^31 per RFC 3711
 			// Note: actual keys will be populated by the caller
 		}
 	}
-	
+
 	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
@@ -118,18 +118,18 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 		RTPPort:    rtpPort,
 		EnableSRTP: h.Config.MediaConfig.EnableSRTP && rtpForwarder != nil && rtpForwarder.SRTPEnabled,
 	}
-	
+
 	// Add SRTP information if SRTP is enabled and we have keys
-	if options.EnableSRTP && rtpForwarder != nil && 
-	   rtpForwarder.SRTPMasterKey != nil && rtpForwarder.SRTPMasterSalt != nil {
+	if options.EnableSRTP && rtpForwarder != nil &&
+		rtpForwarder.SRTPMasterKey != nil && rtpForwarder.SRTPMasterSalt != nil {
 		options.SRTPKeyInfo = &media.SRTPKeyInfo{
-			MasterKey:    rtpForwarder.SRTPMasterKey,
-			MasterSalt:   rtpForwarder.SRTPMasterSalt,
-			Profile:      rtpForwarder.SRTPProfile,
-			KeyLifetime:  rtpForwarder.SRTPKeyLifetime,
+			MasterKey:   rtpForwarder.SRTPMasterKey,
+			MasterSalt:  rtpForwarder.SRTPMasterSalt,
+			Profile:     rtpForwarder.SRTPProfile,
+			KeyLifetime: rtpForwarder.SRTPKeyLifetime,
 		}
 	}
-	
+
 	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
@@ -144,22 +144,22 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 	if receivedSDP == nil {
 		return h.generateDefaultSDP(options)
 	}
-	
+
 	mediaStreams := make([]*sdp.MediaDescription, len(receivedSDP.MediaDescriptions))
-	
+
 	// Handle NAT traversal for SDP
 	connectionAddr := options.IPAddress
 	if options.BehindNAT {
 		// Use external IP for connection address
 		connectionAddr = options.ExternalIP
-		
+
 		// Log NAT traversal
 		h.Logger.WithFields(logrus.Fields{
 			"internal_ip": options.InternalIP,
 			"external_ip": options.ExternalIP,
 		}).Debug("Using external IP for SDP due to NAT")
 	}
-	
+
 	for i, media := range receivedSDP.MediaDescriptions {
 		// Determine the RTP port to use
 		rtpPort := options.RTPPort
@@ -167,11 +167,11 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			// Use a dynamic port if not specified
 			rtpPort = 10000 + i
 		}
-		
+
 		// Create new attributes, handling direction and NAT
 		newAttributes := []sdp.Attribute{}
 		foundDirectionAttr := false
-		
+
 		for _, attr := range media.Attributes {
 			// Process direction attributes
 			switch attr.Key {
@@ -192,22 +192,22 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 				if options.BehindNAT && (attr.Key == "candidate" && strings.Contains(attr.Value, options.InternalIP)) {
 					continue
 				}
-				
+
 				newAttributes = append(newAttributes, attr)
 			}
 		}
-		
+
 		// If no direction attribute found, default to recvonly
 		if !foundDirectionAttr {
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "recvonly"})
 		}
-		
+
 		// Add NAT-specific attributes if needed
 		if options.BehindNAT && options.IncludeICE {
 			// Add ICE attributes for NAT traversal
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "rtcp-mux", Value: ""})
 		}
-		
+
 		// Add SRTP crypto attributes if SRTP is enabled
 		if options.EnableSRTP && options.SRTPKeyInfo != nil {
 			// Add 'RTP/SAVP' transport if not already present
@@ -219,31 +219,31 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 					break
 				}
 			}
-			
+
 			if !protoUpdated && len(media.MediaName.Protos) > 0 {
 				// If we couldn't update an existing proto, just set the first one
 				media.MediaName.Protos[0] = "RTP/SAVP"
 			}
-			
+
 			// Add crypto attribute (RFC 4568 format: tag AES_CM_128_HMAC_SHA1_80 inline:Base64Key|Base64Salt|lifetime|MKI
 			// Base64 encode the key material
 			base64KeySalt := base64.StdEncoding.EncodeToString(append(options.SRTPKeyInfo.MasterKey, options.SRTPKeyInfo.MasterSalt...))
 			cryptoLine := fmt.Sprintf("1 %s inline:%s", options.SRTPKeyInfo.Profile, base64KeySalt)
-			
+
 			// Add lifetime if specified
 			if options.SRTPKeyInfo.KeyLifetime > 0 {
 				cryptoLine += fmt.Sprintf("|2^%d", options.SRTPKeyInfo.KeyLifetime)
 			}
-			
+
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "crypto", Value: cryptoLine})
-			
+
 			// Log the crypto addition
 			h.Logger.WithFields(logrus.Fields{
 				"profile": options.SRTPKeyInfo.Profile,
 				"media":   media.MediaName.Media,
 			}).Debug("Added SRTP crypto attribute to SDP")
 		}
-		
+
 		newMedia := &sdp.MediaDescription{
 			MediaName: sdp.MediaName{
 				Media:   media.MediaName.Media,
@@ -260,7 +260,7 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		}
 		mediaStreams[i] = newMedia
 	}
-	
+
 	// Create the complete session description
 	sessionDesc := &sdp.SessionDescription{
 		Origin: sdp.Origin{
@@ -281,7 +281,7 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		MediaDescriptions: mediaStreams,
 		Attributes:        []sdp.Attribute{{Key: "a", Value: "recording-session"}},
 	}
-	
+
 	return sessionDesc
 }
 
@@ -291,13 +291,13 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 	connectionAddr := options.IPAddress
 	if options.BehindNAT {
 		connectionAddr = options.ExternalIP
-		
+
 		h.Logger.WithFields(logrus.Fields{
 			"internal_ip": options.InternalIP,
 			"external_ip": options.ExternalIP,
 		}).Debug("Using external IP for default SDP due to NAT")
 	}
-	
+
 	// Create a new SDP description
 	sdpResponse := &sdp.SessionDescription{
 		Origin: sdp.Origin{
@@ -326,14 +326,14 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 			{Key: "a", Value: "recording-session"},
 		},
 	}
-	
+
 	// Determine the RTP port to use
 	rtpPort := options.RTPPort
 	if rtpPort <= 0 {
 		// Use a default port if not specified
 		rtpPort = 10000
 	}
-	
+
 	// Create audio media description
 	formats := []string{"0", "8", "9"} // PCMU, PCMA, G722
 	audioMedia := &sdp.MediaDescription{
@@ -349,7 +349,7 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 			Address:     &sdp.Address{Address: connectionAddr},
 		},
 	}
-	
+
 	// Add attributes
 	attributes := []sdp.Attribute{
 		{Key: "rtpmap", Value: "0 PCMU/8000"},
@@ -358,24 +358,24 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 		{Key: "ptime", Value: "20"},
 		{Key: "sendrecv", Value: ""},
 	}
-	
+
 	// Add SRTP crypto attributes if enabled
 	if options.EnableSRTP && options.SRTPKeyInfo != nil {
 		// Change transport from RTP/AVP to RTP/SAVP for SRTP
 		audioMedia.MediaName.Protos = []string{"RTP/SAVP"}
-		
+
 		// Format the master key and salt for the crypto line
 		var cryptoLine string
-		
+
 		// If we have real key material, use it
 		if options.SRTPKeyInfo.MasterKey != nil && options.SRTPKeyInfo.MasterSalt != nil {
 			// Base64 encode the key material
 			base64KeySalt := base64.StdEncoding.EncodeToString(
 				append(options.SRTPKeyInfo.MasterKey, options.SRTPKeyInfo.MasterSalt...))
-			
-			cryptoLine = fmt.Sprintf("1 %s inline:%s", 
+
+			cryptoLine = fmt.Sprintf("1 %s inline:%s",
 				options.SRTPKeyInfo.Profile, base64KeySalt)
-			
+
 			// Add lifetime if specified
 			if options.SRTPKeyInfo.KeyLifetime > 0 {
 				cryptoLine += fmt.Sprintf("|2^%d", options.SRTPKeyInfo.KeyLifetime)
@@ -384,17 +384,17 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 			// Fallback to a placeholder (for testing)
 			cryptoLine = "1 AES_CM_128_HMAC_SHA1_80 inline:c2VjcmV0a2V5c2VjcmV0a2V5c2VjcmU="
 		}
-		
+
 		attributes = append(attributes, sdp.Attribute{Key: "crypto", Value: cryptoLine})
-		
+
 		h.Logger.WithFields(logrus.Fields{
 			"profile": options.SRTPKeyInfo.Profile,
 		}).Debug("Added SRTP crypto attribute to default SDP")
 	}
-	
+
 	audioMedia.Attributes = attributes
 	sdpResponse.MediaDescriptions = []*sdp.MediaDescription{audioMedia}
-	
+
 	return sdpResponse
 }
 
@@ -403,15 +403,15 @@ func prioritizeCodecs(formats []string) []string {
 	// G.711 μ-law (PCMU) payload type is 0
 	// G.711 a-law (PCMA) payload type is 8
 	// G.722 payload type is 9
-	
+
 	// Create a map for easy lookup
 	formatMap := make(map[string]bool)
 	for _, format := range formats {
 		formatMap[format] = true
 	}
-	
+
 	prioritized := []string{}
-	
+
 	// Add G.711 codecs first as highest priority
 	preferredG711 := []string{"0", "8"} // PCMU, PCMA (G.711 variants)
 	for _, codec := range preferredG711 {
@@ -420,20 +420,20 @@ func prioritizeCodecs(formats []string) []string {
 			delete(formatMap, codec) // Remove to avoid duplicates
 		}
 	}
-	
+
 	// Then add G.722 if available
 	if formatMap["9"] { // G.722
 		prioritized = append(prioritized, "9")
 		delete(formatMap, "9")
 	}
-	
+
 	// Add any remaining formats
 	for _, format := range formats {
 		if formatMap[format] {
 			prioritized = append(prioritized, format)
 		}
 	}
-	
+
 	return prioritized
 }
 
@@ -446,7 +446,7 @@ func appendCodecAttributes(attributes []sdp.Attribute, formats []string) []sdp.A
 			filteredAttributes = append(filteredAttributes, attr)
 		}
 	}
-	
+
 	// Add attributes for prioritized codecs
 	for _, format := range formats {
 		switch format {
@@ -467,6 +467,6 @@ func appendCodecAttributes(attributes []sdp.Attribute, formats []string) []sdp.A
 			})
 		}
 	}
-	
+
 	return filteredAttributes
 }

@@ -312,7 +312,7 @@ func TestProcessStreamRecovery(t *testing.T) {
 			},
 			{
 				Label:    "video1",
-				StreamID: "stream2", 
+				StreamID: "stream2",
 				Type:     "video",
 			},
 		},
@@ -331,7 +331,7 @@ func TestProcessStreamRecovery(t *testing.T) {
 	if len(session.MediaStreamTypes) != 2 {
 		t.Fatalf("Expected 2 media stream types, got %d", len(session.MediaStreamTypes))
 	}
-	
+
 	foundAudio := false
 	foundVideo := false
 	for _, streamType := range session.MediaStreamTypes {
@@ -342,7 +342,7 @@ func TestProcessStreamRecovery(t *testing.T) {
 			foundVideo = true
 		}
 	}
-	
+
 	if !foundAudio {
 		t.Errorf("Expected 'audio' in media stream types")
 	}
@@ -354,7 +354,7 @@ func TestProcessStreamRecovery(t *testing.T) {
 	if len(session.Participants[0].MediaStreams) != 2 {
 		t.Fatalf("Expected 2 streams for participant, got %d", len(session.Participants[0].MediaStreams))
 	}
-	
+
 	foundStream1 := false
 	foundStream2 := false
 	for _, streamID := range session.Participants[0].MediaStreams {
@@ -365,7 +365,7 @@ func TestProcessStreamRecovery(t *testing.T) {
 			foundStream2 = true
 		}
 	}
-	
+
 	if !foundStream1 {
 		t.Errorf("Expected 'stream1' in participant streams")
 	}
@@ -452,16 +452,16 @@ func TestSetSessionExpiration(t *testing.T) {
 	// Test with start time already set
 	startTime := time.Now().Add(-1 * time.Hour)
 	session.StartTime = startTime
-	
+
 	// Set expiration
 	SetSessionExpiration(session, 24*time.Hour)
-	
+
 	// Validate
 	expectedEnd := startTime.Add(24 * time.Hour)
 	if session.RetentionPeriod != 24*time.Hour {
 		t.Errorf("Expected retention period of 24h, got %v", session.RetentionPeriod)
 	}
-	
+
 	// Allow a small tolerance for time calculations
 	timeDiff := session.EndTime.Sub(expectedEnd)
 	if timeDiff < -time.Second || timeDiff > time.Second {
@@ -472,21 +472,21 @@ func TestSetSessionExpiration(t *testing.T) {
 	session = &RecordingSession{
 		ID: "test-session-123",
 	}
-	
+
 	before := time.Now()
 	SetSessionExpiration(session, 12*time.Hour)
 	after := time.Now()
-	
+
 	// Validate
 	if session.RetentionPeriod != 12*time.Hour {
 		t.Errorf("Expected retention period of 12h, got %v", session.RetentionPeriod)
 	}
-	
+
 	// StartTime should be set to current time
 	if session.StartTime.Before(before) || session.StartTime.After(after) {
 		t.Errorf("Start time should be between test boundaries")
 	}
-	
+
 	// EndTime should be start time + 12h
 	expectedEnd = session.StartTime.Add(12 * time.Hour)
 	timeDiff = session.EndTime.Sub(expectedEnd)
@@ -537,12 +537,12 @@ func TestGenerateSessionUpdateNotification(t *testing.T) {
 	if metadata.Reason != "maintenance" {
 		t.Errorf("Expected reason 'maintenance', got %s", metadata.Reason)
 	}
-	
+
 	// Check expiration
 	if !strings.Contains(metadata.Expires, session.EndTime.Format(time.RFC3339)[:10]) {
 		t.Errorf("Expiration date should contain the session end date")
 	}
-	
+
 	// Check participants
 	if len(metadata.Participants) != 1 {
 		t.Fatalf("Expected 1 participant, got %d", len(metadata.Participants))
@@ -553,14 +553,14 @@ func TestGenerateSessionUpdateNotification(t *testing.T) {
 	if metadata.Participants[0].Role != "active" {
 		t.Errorf("Expected role 'active', got %s", metadata.Participants[0].Role)
 	}
-	
+
 	// Check association
 	if metadata.SessionRecordingAssoc.SessionID != session.ID {
-		t.Errorf("Expected association session ID %s, got %s", 
+		t.Errorf("Expected association session ID %s, got %s",
 			session.ID, metadata.SessionRecordingAssoc.SessionID)
 	}
 	if metadata.SessionRecordingAssoc.FixedID != session.FailoverID {
-		t.Errorf("Expected association fixed ID %s, got %s", 
+		t.Errorf("Expected association fixed ID %s, got %s",
 			session.FailoverID, metadata.SessionRecordingAssoc.FixedID)
 	}
 }
