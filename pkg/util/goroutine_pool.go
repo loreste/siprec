@@ -41,7 +41,7 @@ func NewGoroutinePool(maxWorkers int, queueSize int) *GoroutinePool {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &GoroutinePool{
 		maxWorkers: int32(maxWorkers),
 		taskQueue:  make(chan Task, queueSize),
@@ -76,7 +76,7 @@ func (gp *GoroutinePool) Submit(task Task) bool {
 	case gp.taskQueue <- task:
 		atomic.AddInt64(&gp.stats.TasksSubmitted, 1)
 		atomic.StoreInt32(&gp.stats.QueueLength, int32(len(gp.taskQueue)))
-		
+
 		// Scale up workers if needed
 		gp.scaleUp()
 		return true
@@ -103,7 +103,7 @@ func (gp *GoroutinePool) Submit(task Task) bool {
 func (gp *GoroutinePool) addWorker() {
 	atomic.AddInt32(&gp.workers, 1)
 	atomic.AddInt32(&gp.stats.TotalWorkers, 1)
-	
+
 	gp.wg.Add(1)
 	go gp.worker()
 }
@@ -122,7 +122,7 @@ func (gp *GoroutinePool) worker() {
 			if task != nil {
 				atomic.AddInt32(&gp.stats.ActiveWorkers, 1)
 				atomic.StoreInt32(&gp.stats.QueueLength, int32(len(gp.taskQueue)))
-				
+
 				// Execute the task with panic recovery
 				func() {
 					defer func() {
@@ -135,7 +135,7 @@ func (gp *GoroutinePool) worker() {
 					}()
 					task()
 				}()
-				
+
 				// Reset idle timer after completing work
 				idleTimer.Reset(30 * time.Second)
 			}
@@ -157,13 +157,13 @@ func (gp *GoroutinePool) worker() {
 func (gp *GoroutinePool) scaleUp() bool {
 	currentWorkers := atomic.LoadInt32(&gp.workers)
 	queueLen := int32(len(gp.taskQueue))
-	
+
 	// Add worker if queue is getting full and we haven't reached max
 	if queueLen > currentWorkers*2 && currentWorkers < gp.maxWorkers {
 		gp.addWorker()
 		return true
 	}
-	
+
 	return false
 }
 
@@ -171,12 +171,12 @@ func (gp *GoroutinePool) scaleUp() bool {
 func (gp *GoroutinePool) shouldTerminateWorker() bool {
 	currentWorkers := atomic.LoadInt32(&gp.workers)
 	queueLen := int32(len(gp.taskQueue))
-	
+
 	// Keep at least 1 worker, and don't terminate if queue has work
 	if currentWorkers <= 1 || queueLen > 0 {
 		return false
 	}
-	
+
 	// Terminate worker if we have too many workers for current load
 	return queueLen < currentWorkers/4
 }
@@ -195,14 +195,14 @@ func (gp *GoroutinePool) GetStats() PoolStats {
 // Shutdown gracefully shuts down the pool
 func (gp *GoroutinePool) Shutdown(timeout time.Duration) {
 	gp.cancel()
-	
+
 	// Wait for workers to finish with timeout
 	done := make(chan struct{})
 	go func() {
 		gp.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// All workers finished
@@ -229,19 +229,19 @@ func (wpm *WorkerPoolManager) GetPool(category string, maxWorkers, queueSize int
 	wpm.mu.RLock()
 	pool, exists := wpm.pools[category]
 	wpm.mu.RUnlock()
-	
+
 	if exists {
 		return pool
 	}
-	
+
 	wpm.mu.Lock()
 	defer wpm.mu.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if pool, exists := wpm.pools[category]; exists {
 		return pool
 	}
-	
+
 	// Create new pool
 	pool = NewGoroutinePool(maxWorkers, queueSize)
 	pool.Start(maxWorkers / 2)
@@ -260,7 +260,7 @@ func (wpm *WorkerPoolManager) SubmitTask(category string, task Task) bool {
 func (wpm *WorkerPoolManager) GetAllStats() map[string]PoolStats {
 	wpm.mu.RLock()
 	defer wpm.mu.RUnlock()
-	
+
 	stats := make(map[string]PoolStats)
 	for category, pool := range wpm.pools {
 		stats[category] = pool.GetStats()
@@ -276,7 +276,7 @@ func (wpm *WorkerPoolManager) Shutdown(timeout time.Duration) {
 		pools = append(pools, pool)
 	}
 	wpm.mu.RUnlock()
-	
+
 	// Shutdown all pools concurrently
 	var wg sync.WaitGroup
 	for _, pool := range pools {
@@ -286,7 +286,7 @@ func (wpm *WorkerPoolManager) Shutdown(timeout time.Duration) {
 			p.Shutdown(timeout)
 		}(pool)
 	}
-	
+
 	wg.Wait()
 }
 
