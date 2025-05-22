@@ -10,14 +10,20 @@ import (
 
 func TestNewAMQPClient(t *testing.T) {
 	logger := logrus.New()
-	url := "amqp://guest:guest@localhost:5672/"
-	queueName := "test_queue"
+	config := AMQPConfig{
+		URL:          "amqp://guest:guest@localhost:5672/",
+		QueueName:    "test_queue",
+		ExchangeName: "",
+		RoutingKey:   "test_queue",
+		Durable:      true,
+		AutoDelete:   false,
+	}
 
-	client := NewAMQPClient(logger, url, queueName)
+	client := NewAMQPClient(logger, config)
 
 	assert.NotNil(t, client, "AMQPClient should not be nil")
-	assert.Equal(t, url, client.url, "URL should be set correctly")
-	assert.Equal(t, queueName, client.queueName, "Queue name should be set correctly")
+	assert.Equal(t, config.URL, client.config.URL, "URL should be set correctly")
+	assert.Equal(t, config.QueueName, client.config.QueueName, "Queue name should be set correctly")
 	assert.NotNil(t, client.stopChan, "Stop channel should be initialized")
 	assert.False(t, client.connected, "Client should not be connected initially")
 }
@@ -26,7 +32,11 @@ func TestAMQPClientWithEmptyConfig(t *testing.T) {
 	logger := logrus.New()
 
 	// Create client with empty configuration
-	client := NewAMQPClient(logger, "", "")
+	config := AMQPConfig{
+		URL:       "",
+		QueueName: "",
+	}
+	client := NewAMQPClient(logger, config)
 
 	// Try to connect
 	err := client.Connect()
@@ -39,10 +49,16 @@ func TestAMQPClientWithEmptyConfig(t *testing.T) {
 
 func TestPublishTranscription(t *testing.T) {
 	logger := logrus.New()
-	url := "amqp://guest:guest@localhost:5672/"
-	queueName := "test_queue"
+	config := AMQPConfig{
+		URL:          "amqp://guest:guest@localhost:5672/",
+		QueueName:    "test_queue",
+		ExchangeName: "",
+		RoutingKey:   "test_queue",
+		Durable:      true,
+		AutoDelete:   false,
+	}
 
-	client := NewAMQPClient(logger, url, queueName)
+	client := NewAMQPClient(logger, config)
 
 	// Create metadata for the test
 	metadata := map[string]interface{}{
@@ -61,10 +77,16 @@ func TestPublishTranscription(t *testing.T) {
 
 func TestDisconnect(t *testing.T) {
 	logger := logrus.New()
-	url := "amqp://guest:guest@localhost:5672/"
-	queueName := "test_queue"
+	config := AMQPConfig{
+		URL:          "amqp://guest:guest@localhost:5672/",
+		QueueName:    "test_queue",
+		ExchangeName: "",
+		RoutingKey:   "test_queue",
+		Durable:      true,
+		AutoDelete:   false,
+	}
 
-	client := NewAMQPClient(logger, url, queueName)
+	client := NewAMQPClient(logger, config)
 
 	// Disconnect should not crash even if not connected
 	client.Disconnect()

@@ -195,7 +195,15 @@ func initialize() error {
 				}
 			}()
 
-			client := messaging.NewAMQPClient(logger, appConfig.Messaging.AMQPUrl, appConfig.Messaging.AMQPQueueName)
+			amqpConfig := messaging.AMQPConfig{
+				URL:          appConfig.Messaging.AMQPUrl,
+				QueueName:    appConfig.Messaging.AMQPQueueName,
+				ExchangeName: "",
+				RoutingKey:   appConfig.Messaging.AMQPQueueName,
+				Durable:      true,
+				AutoDelete:   false,
+			}
+			client := messaging.NewAMQPClient(logger, amqpConfig)
 			err := client.Connect()
 			amqpConnectChan <- struct {
 				client *messaging.AMQPClient

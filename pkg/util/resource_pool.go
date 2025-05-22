@@ -22,23 +22,23 @@ func NewResourcePool() *ResourcePool {
 // GetBufferPool returns a buffer pool for the specified size
 func (rp *ResourcePool) GetBufferPool(size int) *sync.Pool {
 	key := bufferPoolKey(size)
-	
+
 	rp.mu.RLock()
 	pool, exists := rp.pools[key]
 	rp.mu.RUnlock()
-	
+
 	if exists {
 		return pool
 	}
-	
+
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if pool, exists := rp.pools[key]; exists {
 		return pool
 	}
-	
+
 	// Create new pool
 	pool = &sync.Pool{
 		New: func() interface{} {
@@ -60,10 +60,10 @@ func (rp *ResourcePool) PutBuffer(buf []byte) {
 	if len(buf) == 0 {
 		return
 	}
-	
+
 	size := cap(buf)
 	pool := rp.GetBufferPool(size)
-	
+
 	// Reset buffer to ensure clean state
 	buf = buf[:0]
 	pool.Put(buf)
@@ -72,23 +72,23 @@ func (rp *ResourcePool) PutBuffer(buf []byte) {
 // GetStringBuilderPool returns a pool for string builders
 func (rp *ResourcePool) GetStringBuilderPool() *sync.Pool {
 	const key = "string_builder"
-	
+
 	rp.mu.RLock()
 	pool, exists := rp.pools[key]
 	rp.mu.RUnlock()
-	
+
 	if exists {
 		return pool
 	}
-	
+
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if pool, exists := rp.pools[key]; exists {
 		return pool
 	}
-	
+
 	// Create new pool
 	pool = &sync.Pool{
 		New: func() interface{} {
@@ -110,8 +110,9 @@ func (sb *StringBuilder) WriteString(s string) {
 }
 
 // WriteByte appends a byte to the builder
-func (sb *StringBuilder) WriteByte(b byte) {
+func (sb *StringBuilder) WriteByte(b byte) error {
 	sb.buf = append(sb.buf, b)
+	return nil
 }
 
 // String returns the built string
@@ -137,7 +138,7 @@ func (rp *ResourcePool) PutStringBuilder(sb *StringBuilder) {
 	if sb == nil {
 		return
 	}
-	
+
 	pool := rp.GetStringBuilderPool()
 	sb.Reset()
 	pool.Put(sb)
@@ -145,28 +146,28 @@ func (rp *ResourcePool) PutStringBuilder(sb *StringBuilder) {
 
 // MemoryStats provides memory usage statistics
 type MemoryStats struct {
-	AllocatedBytes    uint64
-	TotalAllocations  uint64
-	SystemBytes       uint64
-	GCCycles          uint32
-	NextGCThreshold   uint64
-	NumGoroutines     int
-	LastGCTime        time.Time
+	AllocatedBytes   uint64
+	TotalAllocations uint64
+	SystemBytes      uint64
+	GCCycles         uint32
+	NextGCThreshold  uint64
+	NumGoroutines    int
+	LastGCTime       time.Time
 }
 
 // GetMemoryStats returns current memory statistics
 func GetMemoryStats() *MemoryStats {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	
+
 	return &MemoryStats{
-		AllocatedBytes:    ms.Alloc,
-		TotalAllocations:  ms.TotalAlloc,
-		SystemBytes:       ms.Sys,
-		GCCycles:          ms.NumGC,
-		NextGCThreshold:   ms.NextGC,
-		NumGoroutines:     runtime.NumGoroutine(),
-		LastGCTime:        time.Unix(0, int64(ms.LastGC)),
+		AllocatedBytes:   ms.Alloc,
+		TotalAllocations: ms.TotalAlloc,
+		SystemBytes:      ms.Sys,
+		GCCycles:         ms.NumGC,
+		NextGCThreshold:  ms.NextGC,
+		NumGoroutines:    runtime.NumGoroutine(),
+		LastGCTime:       time.Unix(0, int64(ms.LastGC)),
 	}
 }
 
