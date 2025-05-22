@@ -90,7 +90,7 @@ func (c *AMQPClient) Connect() error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to AMQP server: %w", err)
 	}
-	
+
 	// Store the connection
 	c.conn = conn
 
@@ -123,7 +123,7 @@ func (c *AMQPClient) Connect() error {
 		conn.Close()
 		return fmt.Errorf("failed to open AMQP channel: %w", err)
 	}
-	
+
 	// Store the channel
 	c.channel = channel
 
@@ -183,7 +183,7 @@ func (c *AMQPClient) Connect() error {
 
 	// Create a new stop channel (in case this is a reconnect)
 	c.stopChan = make(chan struct{})
-	
+
 	// Start monitoring for connection closing
 	go c.monitorConnection()
 

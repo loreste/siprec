@@ -32,7 +32,7 @@ func NewTranscriptionService(logger *logrus.Logger) *TranscriptionService {
 func (s *TranscriptionService) AddListener(listener TranscriptionListener) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	s.listeners = append(s.listeners, listener)
 	s.logger.Info("Added new transcription listener")
 }
@@ -41,7 +41,7 @@ func (s *TranscriptionService) AddListener(listener TranscriptionListener) {
 func (s *TranscriptionService) RemoveListener(listener TranscriptionListener) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	for i, l := range s.listeners {
 		if l == listener {
 			// Remove listener by replacing with last element and truncating
@@ -57,18 +57,18 @@ func (s *TranscriptionService) RemoveListener(listener TranscriptionListener) {
 func (s *TranscriptionService) PublishTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{}) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	if transcription == "" {
 		return // Don't publish empty transcriptions
 	}
-	
+
 	s.logger.WithFields(logrus.Fields{
-		"call_uuid":     callUUID,
-		"transcription": transcription,
-		"is_final":      isFinal,
+		"call_uuid":      callUUID,
+		"transcription":  transcription,
+		"is_final":       isFinal,
 		"listener_count": len(s.listeners),
 	}).Debug("Publishing transcription to listeners")
-	
+
 	for _, listener := range s.listeners {
 		listener.OnTranscription(callUUID, transcription, isFinal, metadata)
 	}
@@ -109,17 +109,19 @@ func (b *WebSocketTranscriptionBridge) OnTranscription(callUUID string, transcri
 		Timestamp:     time.Now(),
 		Metadata:      metadata,
 	}
-	
+
 	// Broadcast to WebSocket clients using reflection
 	if hub, ok := b.hub.(interface{ BroadcastTranscription(message interface{}) }); ok {
 		hub.BroadcastTranscription(message)
-	} else if hub, ok := b.hub.(interface{ BroadcastTranscription(message *struct {
-		CallUUID      string                 `json:"call_uuid"`
-		Transcription string                 `json:"transcription"`
-		IsFinal       bool                   `json:"is_final"`
-		Timestamp     time.Time              `json:"timestamp"`
-		Metadata      map[string]interface{} `json:"metadata,omitempty"`
-	}) }); ok {
+	} else if hub, ok := b.hub.(interface {
+		BroadcastTranscription(message *struct {
+			CallUUID      string                 `json:"call_uuid"`
+			Transcription string                 `json:"transcription"`
+			IsFinal       bool                   `json:"is_final"`
+			Timestamp     time.Time              `json:"timestamp"`
+			Metadata      map[string]interface{} `json:"metadata,omitempty"`
+		})
+	}); ok {
 		hub.BroadcastTranscription(&message)
 	} else {
 		b.logger.Error("WebSocket hub does not implement expected BroadcastTranscription method")
