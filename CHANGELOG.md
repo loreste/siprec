@@ -2,6 +2,33 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.2.0] - 2025-05-23
+
+### Added
+- **End-to-End Encryption**: Optional AES-256-GCM and ChaCha20-Poly1305 encryption for audio recordings and session metadata
+- **Automatic Key Management**: Secure key generation, rotation, and storage with configurable intervals
+- **Multiple Key Stores**: File-based persistent storage and memory-based volatile storage options
+- **Encrypted File Format**: Custom `.siprec` format with encryption headers and chunk-based storage
+- **Session Isolation**: Independent encryption contexts for each recording session
+- **Key Rotation Service**: Automated background service for key rotation with configurable intervals
+- **Comprehensive Encryption Tests**: Unit, integration, and performance tests for all encryption functionality
+- **Encryption Documentation**: Complete guide with usage examples, security considerations, and best practices
+- **Configuration Integration**: Full environment variable configuration with validation and defaults
+- **Docker Integration**: Enhanced Docker containerization with multi-stage builds and testing
+- **STT Provider Integration**: Comprehensive testing for Amazon Transcribe, Azure Speech, Google Speech, and Mock providers
+
+### Enhanced
+- **Security**: Added forward secrecy through automatic key rotation
+- **Testing Suite**: Expanded with integration tests for STT providers and comprehensive unit tests
+- **Documentation**: Updated with encryption capabilities and configuration options
+- **Docker Support**: Production-ready multi-stage builds with security hardening
+- **Build System**: Enhanced Makefile with cross-platform support and quality assurance
+
+### Security
+- **Authenticated Encryption**: AEAD modes prevent tampering with encrypted data
+- **Secure Defaults**: Strong cryptographic parameters and secure key generation
+- **Session Security**: Per-session encryption contexts with audit logging capabilities
+
 ## [0.1.0] - 2025-04-17
 
 ### Added
