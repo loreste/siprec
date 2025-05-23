@@ -54,7 +54,6 @@ Thumbs.db
 *.pid
 server.pid
 
-CLAUDE.md
 test-results/.gocache/
 build/
 siprec
