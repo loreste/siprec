@@ -25,6 +25,7 @@ type Config struct {
 	Logging    LoggingConfig    `json:"logging"`
 	Messaging  MessagingConfig  `json:"messaging"`
 	Redundancy RedundancyConfig `json:"redundancy"`
+	Encryption EncryptionConfig `json:"encryption"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -156,6 +157,31 @@ type RedundancyConfig struct {
 	StorageType string `json:"storage_type" env:"REDUNDANCY_STORAGE_TYPE" default:"memory"`
 }
 
+// EncryptionConfig holds the configuration for encryption features
+type EncryptionConfig struct {
+	// Enable/disable encryption
+	EnableRecordingEncryption bool `json:"enable_recording_encryption" env:"ENABLE_RECORDING_ENCRYPTION" default:"false"`
+	EnableMetadataEncryption  bool `json:"enable_metadata_encryption" env:"ENABLE_METADATA_ENCRYPTION" default:"false"`
+
+	// Algorithm configuration
+	Algorithm           string `json:"algorithm" env:"ENCRYPTION_ALGORITHM" default:"AES-256-GCM"`
+	KeyDerivationMethod string `json:"key_derivation_method" env:"KEY_DERIVATION_METHOD" default:"PBKDF2"`
+
+	// Key management
+	MasterKeyPath       string        `json:"master_key_path" env:"MASTER_KEY_PATH" default:"./keys"`
+	KeyRotationInterval time.Duration `json:"key_rotation_interval" env:"KEY_ROTATION_INTERVAL" default:"24h"`
+	KeyBackupEnabled    bool          `json:"key_backup_enabled" env:"KEY_BACKUP_ENABLED" default:"true"`
+
+	// Security parameters
+	KeySize         int `json:"key_size" env:"ENCRYPTION_KEY_SIZE" default:"32"`
+	NonceSize       int `json:"nonce_size" env:"ENCRYPTION_NONCE_SIZE" default:"12"`
+	SaltSize        int `json:"salt_size" env:"ENCRYPTION_SALT_SIZE" default:"32"`
+	PBKDF2Iterations int `json:"pbkdf2_iterations" env:"PBKDF2_ITERATIONS" default:"100000"`
+
+	// Storage encryption
+	EncryptionKeyStore string `json:"encryption_key_store" env:"ENCRYPTION_KEY_STORE" default:"file"`
+}
+
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
 	// Get current working directory
@@ -249,6 +275,11 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load redundancy configuration
 	if err := loadRedundancyConfig(logger, &config.Redundancy); err != nil {
 		return nil, errors.Wrap(err, "failed to load redundancy configuration")
+	}
+
+	// Load encryption configuration
+	if err := loadEncryptionConfig(logger, &config.Encryption); err != nil {
+		return nil, errors.Wrap(err, "failed to load encryption configuration")
 	}
 
 	// Validate the complete configuration
@@ -587,6 +618,86 @@ func loadRedundancyConfig(logger *logrus.Logger, config *RedundancyConfig) error
 	if config.StorageType != "memory" && config.StorageType != "redis" {
 		logger.Warn("Invalid REDUNDANCY_STORAGE_TYPE value, must be 'memory' or 'redis', using default: memory")
 		config.StorageType = "memory"
+	}
+
+	return nil
+}
+
+// loadEncryptionConfig loads the encryption configuration section
+func loadEncryptionConfig(logger *logrus.Logger, config *EncryptionConfig) error {
+	// Load encryption enabled flags
+	config.EnableRecordingEncryption = getEnvBool("ENABLE_RECORDING_ENCRYPTION", false)
+	config.EnableMetadataEncryption = getEnvBool("ENABLE_METADATA_ENCRYPTION", false)
+
+	// Load algorithm configuration
+	config.Algorithm = getEnv("ENCRYPTION_ALGORITHM", "AES-256-GCM")
+	if config.Algorithm != "AES-256-GCM" && config.Algorithm != "AES-256-CBC" && config.Algorithm != "ChaCha20-Poly1305" {
+		logger.Warn("Invalid ENCRYPTION_ALGORITHM value, using default: AES-256-GCM")
+		config.Algorithm = "AES-256-GCM"
+	}
+
+	config.KeyDerivationMethod = getEnv("KEY_DERIVATION_METHOD", "PBKDF2")
+	if config.KeyDerivationMethod != "PBKDF2" && config.KeyDerivationMethod != "Argon2id" {
+		logger.Warn("Invalid KEY_DERIVATION_METHOD value, using default: PBKDF2")
+		config.KeyDerivationMethod = "PBKDF2"
+	}
+
+	// Load key management configuration
+	config.MasterKeyPath = getEnv("MASTER_KEY_PATH", "./keys")
+	config.KeyBackupEnabled = getEnvBool("KEY_BACKUP_ENABLED", true)
+
+	// Load key rotation interval
+	keyRotationIntervalStr := getEnv("KEY_ROTATION_INTERVAL", "24h")
+	keyRotationInterval, err := time.ParseDuration(keyRotationIntervalStr)
+	if err != nil {
+		logger.Warn("Invalid KEY_ROTATION_INTERVAL value, using default: 24h")
+		config.KeyRotationInterval = 24 * time.Hour
+	} else {
+		config.KeyRotationInterval = keyRotationInterval
+	}
+
+	// Load security parameters
+	config.KeySize = getEnvInt("ENCRYPTION_KEY_SIZE", 32)
+	if config.KeySize != 16 && config.KeySize != 24 && config.KeySize != 32 {
+		logger.Warn("Invalid ENCRYPTION_KEY_SIZE value, using default: 32")
+		config.KeySize = 32
+	}
+
+	config.NonceSize = getEnvInt("ENCRYPTION_NONCE_SIZE", 12)
+	if config.NonceSize < 8 || config.NonceSize > 24 {
+		logger.Warn("Invalid ENCRYPTION_NONCE_SIZE value, using default: 12")
+		config.NonceSize = 12
+	}
+
+	config.SaltSize = getEnvInt("ENCRYPTION_SALT_SIZE", 32)
+	if config.SaltSize < 16 || config.SaltSize > 64 {
+		logger.Warn("Invalid ENCRYPTION_SALT_SIZE value, using default: 32")
+		config.SaltSize = 32
+	}
+
+	config.PBKDF2Iterations = getEnvInt("PBKDF2_ITERATIONS", 100000)
+	if config.PBKDF2Iterations < 10000 {
+		logger.Warn("PBKDF2_ITERATIONS too low for security, using minimum: 100000")
+		config.PBKDF2Iterations = 100000
+	}
+
+	// Load storage configuration
+	config.EncryptionKeyStore = getEnv("ENCRYPTION_KEY_STORE", "file")
+	if config.EncryptionKeyStore != "file" && config.EncryptionKeyStore != "env" && config.EncryptionKeyStore != "vault" {
+		logger.Warn("Invalid ENCRYPTION_KEY_STORE value, using default: file")
+		config.EncryptionKeyStore = "file"
+	}
+
+	// Log encryption status
+	if config.EnableRecordingEncryption || config.EnableMetadataEncryption {
+		logger.WithFields(logrus.Fields{
+			"recording_encryption": config.EnableRecordingEncryption,
+			"metadata_encryption":  config.EnableMetadataEncryption,
+			"algorithm":           config.Algorithm,
+			"key_store":           config.EncryptionKeyStore,
+		}).Info("Encryption enabled")
+	} else {
+		logger.Debug("Encryption disabled")
 	}
 
 	return nil
