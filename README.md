@@ -1,6 +1,6 @@
-# SIPREC Server with Advanced Resource Optimization (v0.1.0)
+# SIPREC Server with End-to-End Encryption (v0.2.0)
 
-A high-performance Session Recording Protocol (SIPREC) server implementation in Go with advanced resource optimization for concurrent session handling, comprehensive SIPREC metadata processing, and production-ready session redundancy (RFC 7245).
+A high-performance Session Recording Protocol (SIPREC) server implementation in Go with advanced resource optimization, comprehensive SIPREC metadata processing, production-ready session redundancy (RFC 7245), and optional end-to-end encryption for recordings and metadata.
 
 ## Features
 
@@ -26,6 +26,8 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 ### Media & Security
 - **Transport Layer Security (TLS)**: Secure SIP signaling with TLS 1.2+ support
 - **Media Encryption (SRTP)**: Secure Real-time Transport Protocol for encrypted media
+- **End-to-End Encryption**: Optional AES-256-GCM/ChaCha20-Poly1305 encryption for recordings and metadata
+- **Key Management**: Automated key generation, rotation, and secure storage
 - **Audio Processing**: Multi-channel support with noise reduction and voice activity detection
 - **Codec Support**: PCMU, PCMA, Opus, and EVS codecs with quality metrics
 
@@ -36,6 +38,14 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 - **Docker Support**: Production-ready multi-stage containerization with docker-compose
 - **Comprehensive Testing**: Full test suite with unit, integration, and E2E tests
 - **STT Provider Integration**: Support for multiple speech-to-text providers with testing
+
+### Security & Encryption
+- **End-to-End Encryption**: Optional AES-256-GCM/ChaCha20-Poly1305 encryption for recordings and metadata
+- **Automatic Key Management**: Secure key generation, rotation, and storage
+- **Multiple Key Stores**: File-based persistent storage and memory-based volatile storage
+- **Encryption Algorithms**: Support for AES-256-GCM and ChaCha20-Poly1305
+- **Session Isolation**: Independent encryption contexts for each recording session
+- **Forward Secrecy**: Configurable automatic key rotation for enhanced security
 
 ## Project Structure
 
@@ -48,11 +58,17 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 │   ├── SESSION_REDUNDANCY.md  # Session redundancy documentation
 │   └── RFC_COMPLIANCE.md      # RFC compliance documentation
 ├── pkg/
-│   ├── audio/        # Audio processing with optimization
+│   ├── audio/        # Audio processing with optimization and encryption
 │   │   ├── manager.go          # Audio processing manager
 │   │   ├── multi_channel.go    # Multi-channel audio support
 │   │   ├── optimized_processor.go # High-performance audio processing
+│   │   ├── encrypted_manager.go # Encrypted audio recording management
 │   │   └── types.go            # Audio processing types
+│   ├── encryption/   # End-to-end encryption system
+│   │   ├── manager.go          # Encryption operations and key management
+│   │   ├── keystore.go         # Secure key storage implementations
+│   │   ├── rotation_service.go # Automatic key rotation service
+│   │   └── types.go            # Encryption types and interfaces
 │   ├── media/        # Media handling with enhanced port management
 │   │   ├── codec.go            # Codec support (PCMU, PCMA, Opus, EVS)
 │   │   ├── port_manager.go     # Optimized RTP port allocation
@@ -61,10 +77,11 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 │   │   ├── handler.go          # SIP request handling with redundancy
 │   │   ├── sharded_map.go      # High-concurrency session storage
 │   │   └── types.go            # SIP types and session store
-│   ├── siprec/       # SIPREC protocol implementation
+│   ├── siprec/       # SIPREC protocol implementation with encryption
 │   │   ├── parser.go           # Comprehensive metadata parsing
 │   │   ├── session.go          # Session redundancy (RFC 7245)
 │   │   ├── session_manager.go  # Optimized session management
+│   │   ├── encrypted_session.go # Encrypted session management
 │   │   └── types.go            # SIPREC data structures
 │   └── util/         # Resource optimization utilities
 │       ├── goroutine_pool.go   # Dynamic worker pool management
@@ -78,7 +95,12 @@ A high-performance Session Recording Protocol (SIPREC) server implementation in 
 │   ├── e2e/          # End-to-end tests
 │   │   ├── session_recovery_test.go    # Session recovery scenarios
 │   │   ├── siprec_redundancy_test.go   # SIPREC redundancy testing
-│   │   └── siprec_simulation_test.go   # Full SIPREC flow simulation
+│   │   ├── siprec_simulation_test.go   # Full SIPREC flow simulation
+│   │   └── server_test.go              # Complete server functionality tests
+│   ├── integration/  # Integration tests
+│   │   └── stt_providers_test.go       # STT provider integration testing
+│   ├── unit/         # Unit tests
+│   │   └── messaging_test.go           # Messaging component tests
 │   └── providers/    # Provider resilience tests
 │       └── stt_resilience_test.go      # STT provider testing
 └── test_tls/         # TLS testing tools and utilities
@@ -189,6 +211,19 @@ curl http://localhost:8080/stun-status
 
 Edit the `.env` file to configure the server. Key configuration sections:
 
+### Encryption Configuration (New!)
+```properties
+# End-to-End Encryption (Optional)
+ENABLE_RECORDING_ENCRYPTION=false    # Encrypt audio recordings
+ENABLE_METADATA_ENCRYPTION=false     # Encrypt session metadata
+ENCRYPTION_ALGORITHM=AES-256-GCM     # Encryption algorithm (AES-256-GCM, ChaCha20-Poly1305)
+KEY_ROTATION_INTERVAL=24h            # Automatic key rotation interval
+MASTER_KEY_PATH=./keys               # Key storage directory
+ENCRYPTION_KEY_STORE=file            # Key storage type (file, memory)
+KEY_BACKUP_ENABLED=true              # Enable automatic key backups
+PBKDF2_ITERATIONS=100000             # PBKDF2 iterations for key derivation
+```
+
 ### Resource Optimization
 ```properties
 # Concurrent Session Management
@@ -234,6 +269,15 @@ ENABLE_AUDIO_PROCESSING=true  # Enable advanced audio processing
 ENABLE_VAD=true               # Voice Activity Detection
 ENABLE_NOISE_REDUCTION=true   # Noise reduction processing
 MULTI_CHANNEL_SUPPORT=true    # Multi-channel audio support
+
+# End-to-End Encryption (Optional)
+ENABLE_RECORDING_ENCRYPTION=false    # Encrypt audio recordings
+ENABLE_METADATA_ENCRYPTION=false     # Encrypt session metadata
+ENCRYPTION_ALGORITHM=AES-256-GCM     # Encryption algorithm (AES-256-GCM, ChaCha20-Poly1305)
+KEY_ROTATION_INTERVAL=24h            # Automatic key rotation interval
+MASTER_KEY_PATH=./keys               # Key storage directory
+ENCRYPTION_KEY_STORE=file            # Key storage type (file, memory)
+KEY_BACKUP_ENABLED=true              # Enable automatic key backups
 ```
 
 ### Basic Configuration
@@ -288,7 +332,7 @@ Key Docker features:
 - **Environment Validation**: Startup validation of required configuration
 - **Multi-Architecture**: Support for AMD64 and ARM64 platforms
 
-See [RESOURCE_OPTIMIZATION.md](./docs/RESOURCE_OPTIMIZATION.md) for detailed information about performance optimization features, [SESSION_REDUNDANCY.md](./docs/SESSION_REDUNDANCY.md) for session redundancy documentation, [RFC_COMPLIANCE.md](./docs/RFC_COMPLIANCE.md) for RFC compliance details, and [SECURITY.md](./docs/SECURITY.md) for TLS and SRTP security features.
+See [RESOURCE_OPTIMIZATION.md](./docs/RESOURCE_OPTIMIZATION.md) for detailed information about performance optimization features, [SESSION_REDUNDANCY.md](./docs/SESSION_REDUNDANCY.md) for session redundancy documentation, [RFC_COMPLIANCE.md](./docs/RFC_COMPLIANCE.md) for RFC compliance details, [SECURITY.md](./docs/SECURITY.md) for TLS and SRTP security features, and [ENCRYPTION.md](./docs/ENCRYPTION.md) for end-to-end encryption capabilities.
 
 ## Performance & Optimization
 
