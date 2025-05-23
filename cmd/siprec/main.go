@@ -15,10 +15,12 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/config"
+	"siprec-server/pkg/encryption"
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
 	"siprec-server/pkg/sip"
+	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/stt"
 )
 
@@ -40,6 +42,11 @@ var (
 	transcriptionSvc *stt.TranscriptionService
 	wsHub            *http_server.TranscriptionHub
 	wsHandler        *http_server.WebSocketHandler
+
+	// Encryption components
+	encryptionManager   encryption.EncryptionManager
+	keyRotationService  *encryption.RotationService
+	encryptedSessionMgr *siprec.EncryptedSessionManager
 )
 
 func main() {
@@ -138,6 +145,16 @@ func main() {
 			logger.Info("STT providers shut down")
 		}
 
+		// Stop encryption services
+		if keyRotationService != nil {
+			logger.Debug("Stopping key rotation service...")
+			if err := keyRotationService.Stop(); err != nil {
+				logger.WithError(err).Error("Error stopping key rotation service")
+			} else {
+				logger.Info("Key rotation service stopped")
+			}
+		}
+
 		// Allow some time for final cleanup to complete
 		select {
 		case <-shutdownCtx.Done():
@@ -172,6 +189,14 @@ func initialize() error {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
+
+	// Initialize encryption manager
+	logger.Info("About to initialize encryption...")
+	if err := initializeEncryption(); err != nil {
+		logger.WithError(err).Error("Failed to initialize encryption")
+		return fmt.Errorf("failed to initialize encryption: %w", err)
+	}
+	logger.Info("Encryption initialization completed")
 
 	// Initialize AMQP client with robust error handling
 	if appConfig.Messaging.AMQPUrl != "" && appConfig.Messaging.AMQPQueueName != "" {
@@ -583,4 +608,67 @@ func logStartupConfig() {
 		"check_interval":     appConfig.Redundancy.SessionCheckInterval,
 		"storage_type":       appConfig.Redundancy.StorageType,
 	}).Info("Redundancy configuration")
+}
+
+// initializeEncryption initializes the encryption subsystem
+func initializeEncryption() error {
+	logger.Info("Initializing encryption subsystem")
+
+	// Convert config to encryption config
+	encConfig := &encryption.EncryptionConfig{
+		EnableRecordingEncryption: appConfig.Encryption.EnableRecordingEncryption,
+		EnableMetadataEncryption:  appConfig.Encryption.EnableMetadataEncryption,
+		Algorithm:                 appConfig.Encryption.Algorithm,
+		KeyDerivationMethod:       appConfig.Encryption.KeyDerivationMethod,
+		MasterKeyPath:            appConfig.Encryption.MasterKeyPath,
+		KeyRotationInterval:      appConfig.Encryption.KeyRotationInterval,
+		KeyBackupEnabled:         appConfig.Encryption.KeyBackupEnabled,
+		KeySize:                  appConfig.Encryption.KeySize,
+		NonceSize:                appConfig.Encryption.NonceSize,
+		SaltSize:                 appConfig.Encryption.SaltSize,
+		PBKDF2Iterations:         appConfig.Encryption.PBKDF2Iterations,
+		EncryptionKeyStore:       appConfig.Encryption.EncryptionKeyStore,
+	}
+
+	// Create key store
+	var keyStore encryption.KeyStore
+	var err error
+
+	switch encConfig.EncryptionKeyStore {
+	case "file":
+		keyStore, err = encryption.NewFileKeyStore(encConfig.MasterKeyPath, logger)
+		if err != nil {
+			return fmt.Errorf("failed to create file key store: %w", err)
+		}
+	case "memory":
+		keyStore = encryption.NewMemoryKeyStore()
+	default:
+		return fmt.Errorf("unsupported key store type: %s", encConfig.EncryptionKeyStore)
+	}
+
+	// Create encryption manager
+	encryptionManager, err = encryption.NewManager(encConfig, keyStore, logger)
+	if err != nil {
+		return fmt.Errorf("failed to create encryption manager: %w", err)
+	}
+
+	// Create key rotation service if encryption is enabled
+	if encConfig.EnableRecordingEncryption || encConfig.EnableMetadataEncryption {
+		keyRotationService = encryption.NewRotationService(encryptionManager, encConfig, logger)
+		
+		// Start key rotation service
+		if err := keyRotationService.Start(); err != nil {
+			return fmt.Errorf("failed to start key rotation service: %w", err)
+		}
+	}
+
+	logger.WithFields(logrus.Fields{
+		"recording_encryption": encConfig.EnableRecordingEncryption,
+		"metadata_encryption":  encConfig.EnableMetadataEncryption,
+		"algorithm":           encConfig.Algorithm,
+		"key_store":           encConfig.EncryptionKeyStore,
+		"rotation_enabled":    keyRotationService != nil,
+	}).Info("Encryption subsystem initialized")
+
+	return nil
 }
