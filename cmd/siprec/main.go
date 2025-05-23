@@ -662,6 +662,19 @@ func initializeEncryption() error {
 		}
 	}
 
+	// Create encrypted session manager
+	sessionMgr := siprec.GetGlobalSessionManager()
+	encryptedSessionMgr, err = siprec.NewEncryptedSessionManager(
+		sessionMgr,
+		encryptionManager,
+		appConfig.Recording.Directory,
+		appConfig.Recording.Directory+"/metadata",
+		logger,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create encrypted session manager: %w", err)
+	}
+
 	logger.WithFields(logrus.Fields{
 		"recording_encryption": encConfig.EnableRecordingEncryption,
 		"metadata_encryption":  encConfig.EnableMetadataEncryption,
