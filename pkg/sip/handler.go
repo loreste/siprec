@@ -190,14 +190,34 @@ func (h *Handler) SetupHandlers() {
 	h.Server.OnInvite(h.handleInvite)
 	h.Server.OnBye(h.handleBye)
 	h.Server.OnOptions(h.handleOptions)
+	
+	// Add handlers for other common SIP methods for debugging
+	h.Server.OnRegister(func(req *sip.Request, tx sip.ServerTransaction) {
+		h.Logger.WithField("method", "REGISTER").Info("Received REGISTER request")
+		resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
+		tx.Respond(resp)
+	})
+	
+	h.Server.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
+		h.Logger.WithField("method", "ACK").Debug("Received ACK")
+	})
+	
+	// Note: sipgo doesn't have a catch-all handler, specific methods only
 
 	h.Logger.Info("SIP request handlers configured")
 }
 
+
 // handleInvite handles INVITE requests
 func (h *Handler) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	callUUID := req.CallID().String()
-	logger := h.Logger.WithField("call_uuid", callUUID)
+	logger := h.Logger.WithFields(logrus.Fields{
+		"call_uuid": callUUID,
+		"from":      req.From().String(),
+		"to":        req.To().String(),
+		"source":    req.Source(),
+	})
+	logger.Info("Received INVITE request")
 
 	// Check if this is a re-INVITE for an existing call
 	callDataValue, exists := h.ActiveCalls.Load(callUUID)
@@ -336,6 +356,12 @@ func (h *Handler) processNewInvite(req *sip.Request, tx sip.ServerTransaction, c
 	issiprec, rsMetadata := h.isSIPREC(req)
 
 	// Extract SDP information
+	logger.WithFields(logrus.Fields{
+		"content_type": req.GetHeader("Content-Type").Value(),
+		"body_length":  len(req.Body()),
+		"is_siprec":    issiprec,
+	}).Debug("Processing INVITE body")
+	
 	sdp, err := extractSDP(req)
 	if err != nil {
 		logger.WithError(err).Error("Failed to extract SDP")
@@ -531,7 +557,13 @@ func (h *Handler) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 
 // handleOptions handles OPTIONS requests
 func (h *Handler) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
-	logger := h.Logger.WithField("call_uuid", req.CallID().String())
+	logger := h.Logger.WithFields(logrus.Fields{
+		"call_uuid": req.CallID().String(),
+		"from":      req.From().String(),
+		"to":        req.To().String(),
+		"source":    req.Source(),
+	})
+	logger.Info("Received OPTIONS request")
 
 	// Create response
 	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
@@ -548,7 +580,7 @@ func (h *Handler) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 
-	logger.Debug("Responded to OPTIONS request")
+	logger.Info("Successfully responded to OPTIONS request")
 }
 
 // UpdateActivity updates the last activity timestamp for a call
@@ -623,6 +655,12 @@ func extractSDP(req *sip.Request) ([]byte, error) {
 			if strings.Contains(part, "Content-Type: application/sdp") {
 				// Extract SDP content
 				sdpContent := extractMultipartContent(part)
+				
+				// Important: SDP must end with CRLF for proper parsing
+				if !strings.HasSuffix(sdpContent, "\r\n") {
+					sdpContent += "\r\n"
+				}
+				
 				sdpBytes := []byte(sdpContent)
 
 				// Validate the SDP content
@@ -698,8 +736,10 @@ func extractMultipartContent(part string) string {
 		return "" // No content found
 	}
 
-	// Return the content part
-	return segments[1]
+	// Return the content part without trimming trailing CRLF
+	// SDP parser needs the final CRLF
+	content := segments[1]
+	return content
 }
 
 // prepareSdpResponse prepares an SDP response

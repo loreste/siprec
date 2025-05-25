@@ -28,6 +28,9 @@ type Server struct {
 	metricsProvider    MetricsProvider
 	startTime          time.Time
 	additionalHandlers map[string]http.HandlerFunc
+	sipHandler         interface{} // Reference to SIP handler
+	wsHub              *TranscriptionHub
+	amqpClient         interface{} // Reference to AMQP client
 }
 
 // NewServer creates a new HTTP server instance
@@ -47,7 +50,9 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	mux := http.NewServeMux()
 
 	// Register standard endpoints
-	mux.HandleFunc("/health", server.healthHandler)
+	mux.HandleFunc("/health", server.HealthHandler)
+	mux.HandleFunc("/health/live", server.LivenessHandler)
+	mux.HandleFunc("/health/ready", server.ReadinessHandler)
 	mux.HandleFunc("/metrics", server.metricsHandler)
 	mux.HandleFunc("/status", server.statusHandler)
 
@@ -71,6 +76,21 @@ func (s *Server) RegisterHandler(path string, handler http.HandlerFunc) {
 	mux.HandleFunc(path, handler)
 
 	s.logger.WithField("path", path).Info("Registered custom HTTP handler")
+}
+
+// SetSIPHandler sets the SIP handler reference for health checks
+func (s *Server) SetSIPHandler(handler interface{}) {
+	s.sipHandler = handler
+}
+
+// SetWebSocketHub sets the WebSocket hub reference for health checks
+func (s *Server) SetWebSocketHub(hub *TranscriptionHub) {
+	s.wsHub = hub
+}
+
+// SetAMQPClient sets the AMQP client reference for health checks
+func (s *Server) SetAMQPClient(client interface{}) {
+	s.amqpClient = client
 }
 
 // Start starts the HTTP server in a goroutine

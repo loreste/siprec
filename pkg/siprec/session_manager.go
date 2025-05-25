@@ -272,6 +272,11 @@ func (sm *SessionManager) GetSessionCount() int {
 	return int(atomic.LoadInt32(&sm.activeSessions))
 }
 
+// GetActiveSessionCount returns the number of active sessions (alias for GetSessionCount)
+func (sm *SessionManager) GetActiveSessionCount() int {
+	return sm.GetSessionCount()
+}
+
 // GetStatistics returns comprehensive session manager statistics
 func (sm *SessionManager) GetStatistics() SessionManagerStats {
 	cacheStats := sm.cache.GetStats()

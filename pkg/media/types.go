@@ -239,3 +239,13 @@ var (
 	portManager     *PortManager
 	portManagerOnce sync.Once
 )
+
+// GetPortManagerStats returns statistics about port usage
+func GetPortManagerStats() (available int, total int) {
+	pm := GetPortManager()
+	if pm == nil {
+		return 0, 0
+	}
+	stats := pm.GetStats()
+	return stats.AvailablePorts, stats.TotalPorts
+}

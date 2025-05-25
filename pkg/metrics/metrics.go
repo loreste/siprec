@@ -546,17 +546,26 @@ func RecordSRTPPacketsProcessed(callUUID, direction string, count float64) {
 
 // StartSessionTimer returns a function that records the session duration when called
 func StartSessionTimer(sessionType string) func() {
-	if !metricsEnabled {
+	if !metricsEnabled || SIPSessionsActive == nil {
 		return func() {}
 	}
 
 	SIPSessionsActive.Inc()
 	start := time.Now()
 	return func() {
-		SIPSessionsActive.Dec()
-		duration := time.Since(start)
-		SIPSessionDuration.WithLabelValues(sessionType).Observe(duration.Seconds())
+		if SIPSessionsActive != nil {
+			SIPSessionsActive.Dec()
+		}
+		if SIPSessionDuration != nil {
+			duration := time.Since(start)
+			SIPSessionDuration.WithLabelValues(sessionType).Observe(duration.Seconds())
+		}
 	}
+}
+
+// SetMetricsEnabled enables or disables metrics collection
+func SetMetricsEnabled(enabled bool) {
+	metricsEnabled = enabled
 }
 
 // RecordAudioProcessingError records audio processing errors
