@@ -26,19 +26,27 @@ func init() {
 // StartRTPForwarding starts forwarding RTP packets for a call
 func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string, config *Config, sttProvider func(context.Context, string, io.Reader, string) error) {
 	go func() {
-		var err error
-
-		// Ensure we release the port when done
+		// Add panic recovery
 		defer func() {
-			// Use the Cleanup method to ensure all resources are properly released
+			if r := recover(); r != nil {
+				forwarder.Logger.WithFields(logrus.Fields{
+					"panic": r,
+					"call_uuid": callUUID,
+				}).Error("Panic in RTP forwarding goroutine")
+			}
+			// Always cleanup resources
 			forwarder.Cleanup()
 		}()
+
+		var err error
 
 		// Start metrics for this session if enabled
 		var endSessionMetrics func()
 		if metrics.IsMetricsEnabled() {
 			endSessionMetrics = metrics.StartSessionTimer("rtp_forwarding")
-			defer endSessionMetrics()
+			if endSessionMetrics != nil {
+				defer endSessionMetrics()
+			}
 		}
 
 		// Create address to listen on
@@ -565,7 +573,7 @@ func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
 	}
 
 	// Update metrics
-	if metrics.IsMetricsEnabled() {
+	if metrics.IsMetricsEnabled() && metrics.PortsInUse != nil {
 		metrics.PortsInUse.Inc()
 	}
 
