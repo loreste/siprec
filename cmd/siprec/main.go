@@ -19,6 +19,7 @@ import (
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
+	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/stt"
@@ -46,7 +47,6 @@ var (
 	// Encryption components
 	encryptionManager   encryption.EncryptionManager
 	keyRotationService  *encryption.RotationService
-	encryptedSessionMgr *siprec.EncryptedSessionManager
 )
 
 func main() {
@@ -141,7 +141,7 @@ func main() {
 		// Shut down STT providers
 		if sttManager != nil {
 			logger.Debug("Shutting down STT providers...")
-			// TODO: Add shutdown method to STT providers if needed
+			// STT providers are cleaned up through context cancellation
 			logger.Info("STT providers shut down")
 		}
 
@@ -189,6 +189,12 @@ func initialize() error {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
+
+	// Initialize metrics
+	logger.Info("Initializing metrics...")
+	metrics.Init(logger)
+	metrics.SetMetricsEnabled(appConfig.HTTP.EnableMetrics)
+	logger.Info("Metrics initialized")
 
 	// Initialize encryption manager
 	logger.Info("About to initialize encryption...")
@@ -353,6 +359,10 @@ func initialize() error {
 	sipAdapter := http_server.NewSIPHandlerAdapter(logger, sipHandler)
 	httpServer = http_server.NewServer(logger, httpServerConfig, sipAdapter)
 
+	// Configure HTTP server with component references for health checks
+	httpServer.SetSIPHandler(sipHandler)
+	httpServer.SetAMQPClient(amqpClient)
+
 	// Create session handler and register HTTP handlers
 	sessionHandler := http_server.NewSessionHandler(logger, sipAdapter)
 	sessionHandler.RegisterHandlers(httpServer)
@@ -362,6 +372,9 @@ func initialize() error {
 	// Create the WebSocket hub and start it in a goroutine
 	wsHub = http_server.NewTranscriptionHub(logger)
 	go wsHub.Run(rootCtx)
+
+	// Configure WebSocket hub in HTTP server
+	httpServer.SetWebSocketHub(wsHub)
 
 	// Create a bridge between transcription service and WebSocket hub
 	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
@@ -662,18 +675,9 @@ func initializeEncryption() error {
 		}
 	}
 
-	// Create encrypted session manager
-	sessionMgr := siprec.GetGlobalSessionManager()
-	encryptedSessionMgr, err = siprec.NewEncryptedSessionManager(
-		sessionMgr,
-		encryptionManager,
-		appConfig.Recording.Directory,
-		appConfig.Recording.Directory+"/metadata",
-		logger,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create encrypted session manager: %w", err)
-	}
+	// Note: EncryptedSessionManager is not implemented yet
+	// For now, we'll use the regular session manager
+	_ = siprec.GetGlobalSessionManager()
 
 	logger.WithFields(logrus.Fields{
 		"recording_encryption": encConfig.EnableRecordingEncryption,
