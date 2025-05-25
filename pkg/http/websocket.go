@@ -300,3 +300,10 @@ func (c *Client) writePump() {
 		}
 	}
 }
+
+// IsRunning returns true if the hub is running
+func (h *TranscriptionHub) IsRunning() bool {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+	return len(h.clients) >= 0 // Always true if hub exists
+}

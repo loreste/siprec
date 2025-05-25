@@ -1,8 +1,12 @@
 package messaging
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -576,22 +580,66 @@ func (d *GuaranteedDeliveryService) isDuplicate(msg *PendingMessage) bool {
 		return false
 	}
 
-	// Simple deduplication check - could be enhanced with more sophisticated logic
-	// This is a placeholder for demonstration
+	// Check recent messages for duplicates
+	recent, err := d.storage.List(100)
+	if err != nil {
+		return false
+	}
+	
+	// Compare with recent messages
+	for _, existing := range recent {
+		if existing.CallUUID == msg.CallUUID && 
+		   existing.Content == msg.Content &&
+		   time.Since(existing.CreatedAt) < 5*time.Minute {
+			return true
+		}
+	}
+	
 	return false
 }
 
-// compressContent compresses message content (placeholder implementation)
+// compressContent compresses message content using gzip
 func (d *GuaranteedDeliveryService) compressContent(content string) (string, error) {
-	// Placeholder for compression implementation
-	// Could use gzip, lz4, or other compression algorithms
-	return content, nil
+	// For small messages, compression overhead isn't worth it
+	if len(content) < 1024 {
+		return content, nil
+	}
+	
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	
+	if _, err := gz.Write([]byte(content)); err != nil {
+		return "", err
+	}
+	
+	if err := gz.Close(); err != nil {
+		return "", err
+	}
+	
+	// Base64 encode for safe string storage
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-// decompressContent decompresses message content (placeholder implementation)
+// decompressContent decompresses message content from gzip
 func (d *GuaranteedDeliveryService) decompressContent(content string) (string, error) {
-	// Placeholder for decompression implementation
-	return content, nil
+	// If not base64, assume uncompressed
+	compressed, err := base64.StdEncoding.DecodeString(content)
+	if err != nil {
+		return content, nil // Return as-is if not base64
+	}
+	
+	gz, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return content, nil // Return as-is if not gzipped
+	}
+	defer gz.Close()
+	
+	decompressed, err := io.ReadAll(gz)
+	if err != nil {
+		return "", err
+	}
+	
+	return string(decompressed), nil
 }
 
 // updateMetrics updates delivery metrics
