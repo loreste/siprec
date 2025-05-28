@@ -54,3 +54,7 @@ Thumbs.db
 *.pid
 server.pid
 
+test-results/.gocache/
+build/
+siprec
+testenv

@@ -41,7 +41,7 @@ type Error struct {
 	// original is the underlying error
 	original error
 
-	// message is the error message 
+	// message is the error message
 	message string
 
 	// fields contains contextual information
@@ -61,7 +61,7 @@ type Error struct {
 // New creates a new structured error with the given message
 func New(message string, fields ...map[string]interface{}) *Error {
 	pc, file, line, _ := runtime.Caller(1)
-	
+
 	var fieldMap map[string]interface{}
 	if len(fields) > 0 && fields[0] != nil {
 		fieldMap = fields[0]
@@ -86,7 +86,7 @@ func Wrap(err error, message string, fields ...map[string]interface{}) *Error {
 	}
 
 	pc, file, line, _ := runtime.Caller(1)
-	
+
 	var fieldMap map[string]interface{}
 	if len(fields) > 0 && fields[0] != nil {
 		fieldMap = fields[0]
@@ -109,7 +109,7 @@ func (e *Error) WithField(key string, value interface{}) *Error {
 	if e == nil {
 		return nil
 	}
-	
+
 	// Create a copy to avoid modifying the original
 	result := &Error{
 		original: e.original,
@@ -120,15 +120,15 @@ func (e *Error) WithField(key string, value interface{}) *Error {
 		line:     e.line,
 		Code:     e.Code,
 	}
-	
+
 	// Copy existing fields
 	for k, v := range e.fields {
 		result.fields[k] = v
 	}
-	
+
 	// Add new field
 	result.fields[key] = value
-	
+
 	return result
 }
 
@@ -137,7 +137,7 @@ func (e *Error) WithFields(fields map[string]interface{}) *Error {
 	if e == nil {
 		return nil
 	}
-	
+
 	// Create a copy to avoid modifying the original
 	result := &Error{
 		original: e.original,
@@ -148,17 +148,17 @@ func (e *Error) WithFields(fields map[string]interface{}) *Error {
 		line:     e.line,
 		Code:     e.Code,
 	}
-	
+
 	// Copy existing fields
 	for k, v := range e.fields {
 		result.fields[k] = v
 	}
-	
+
 	// Add new fields
 	for k, v := range fields {
 		result.fields[k] = v
 	}
-	
+
 	return result
 }
 
@@ -167,7 +167,7 @@ func (e *Error) WithCode(code string) *Error {
 	if e == nil {
 		return nil
 	}
-	
+
 	result := &Error{
 		original: e.original,
 		message:  e.message,
@@ -177,7 +177,7 @@ func (e *Error) WithCode(code string) *Error {
 		line:     e.line,
 		Code:     code,
 	}
-	
+
 	return result
 }
 
@@ -186,11 +186,11 @@ func (e *Error) Error() string {
 	if e == nil || e.original == nil {
 		return ""
 	}
-	
+
 	if e.message == "" {
 		return e.original.Error()
 	}
-	
+
 	// Include both our message and the original error
 	return fmt.Sprintf("%s: %v", e.message, e.original)
 }
@@ -208,11 +208,11 @@ func (e *Error) Location() string {
 	if e == nil {
 		return ""
 	}
-	
+
 	// Extract just the filename without the full path
 	parts := strings.Split(e.file, "/")
 	filename := parts[len(parts)-1]
-	
+
 	return fmt.Sprintf("%s:%d", filename, e.line)
 }
 
@@ -238,12 +238,12 @@ func (e *Error) Is(target error) bool {
 	if e == nil || target == nil {
 		return false
 	}
-	
+
 	// Check if our original error matches the target
 	if errors.Is(e.original, target) {
 		return true
 	}
-	
+
 	// Check if we ourselves match exactly
 	return e == target
 }
@@ -253,20 +253,20 @@ func (e *Error) AsJSON() map[string]interface{} {
 	if e == nil {
 		return nil
 	}
-	
+
 	result := map[string]interface{}{
-		"message": e.Error(),
+		"message":  e.Error(),
 		"location": e.Location(),
 	}
-	
+
 	if e.Code != "" {
 		result["code"] = e.Code
 	}
-	
+
 	if len(e.fields) > 0 {
 		result["context"] = e.fields
 	}
-	
+
 	return result
 }
 
@@ -319,9 +319,9 @@ func NewSessionNotFound(sessionID string, fields ...map[string]interface{}) *Err
 		fieldMap = fields[0]
 	}
 	fieldMap["session_id"] = sessionID
-	
+
 	pc, file, line, _ := runtime.Caller(1)
-	
+
 	return &Error{
 		original: ErrSessionNotFound,
 		message:  fmt.Sprintf("recording session not found: %s", sessionID),
@@ -339,9 +339,9 @@ func NewInvalidSIP(details string, fields ...map[string]interface{}) *Error {
 	if len(fields) > 0 && fields[0] != nil {
 		fieldMap = fields[0]
 	}
-	
+
 	pc, file, line, _ := runtime.Caller(1)
-	
+
 	return &Error{
 		original: ErrInvalidSIPMessage,
 		message:  fmt.Sprintf("invalid SIP message: %s", details),
@@ -359,9 +359,9 @@ func NewInvalidMetadata(details string, fields ...map[string]interface{}) *Error
 	if len(fields) > 0 && fields[0] != nil {
 		fieldMap = fields[0]
 	}
-	
+
 	pc, file, line, _ := runtime.Caller(1)
-	
+
 	return &Error{
 		original: ErrInvalidMetadata,
 		message:  fmt.Sprintf("invalid metadata: %s", details),

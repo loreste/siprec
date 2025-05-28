@@ -22,12 +22,15 @@ type MetricsProvider interface {
 
 // Server represents the HTTP server for health checks and metrics
 type Server struct {
-	config         *Config
-	logger         *logrus.Logger
-	httpServer     *http.Server
-	metricsProvider MetricsProvider
-	startTime      time.Time
+	config             *Config
+	logger             *logrus.Logger
+	httpServer         *http.Server
+	metricsProvider    MetricsProvider
+	startTime          time.Time
 	additionalHandlers map[string]http.HandlerFunc
+	sipHandler         interface{} // Reference to SIP handler
+	wsHub              *TranscriptionHub
+	amqpClient         interface{} // Reference to AMQP client
 }
 
 // NewServer creates a new HTTP server instance
@@ -37,17 +40,19 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	}
 
 	server := &Server{
-		config:         config,
-		logger:         logger,
-		metricsProvider: metricsProvider,
-		startTime:      time.Now(),
+		config:             config,
+		logger:             logger,
+		metricsProvider:    metricsProvider,
+		startTime:          time.Now(),
 		additionalHandlers: make(map[string]http.HandlerFunc),
 	}
 
 	mux := http.NewServeMux()
-	
+
 	// Register standard endpoints
-	mux.HandleFunc("/health", server.healthHandler)
+	mux.HandleFunc("/health", server.HealthHandler)
+	mux.HandleFunc("/health/live", server.LivenessHandler)
+	mux.HandleFunc("/health/ready", server.ReadinessHandler)
 	mux.HandleFunc("/metrics", server.metricsHandler)
 	mux.HandleFunc("/status", server.statusHandler)
 
@@ -65,18 +70,33 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 // RegisterHandler adds a custom handler to the server
 func (s *Server) RegisterHandler(path string, handler http.HandlerFunc) {
 	s.additionalHandlers[path] = handler
-	
+
 	// Add to mux
 	mux := s.httpServer.Handler.(*http.ServeMux)
 	mux.HandleFunc(path, handler)
-	
+
 	s.logger.WithField("path", path).Info("Registered custom HTTP handler")
+}
+
+// SetSIPHandler sets the SIP handler reference for health checks
+func (s *Server) SetSIPHandler(handler interface{}) {
+	s.sipHandler = handler
+}
+
+// SetWebSocketHub sets the WebSocket hub reference for health checks
+func (s *Server) SetWebSocketHub(hub *TranscriptionHub) {
+	s.wsHub = hub
+}
+
+// SetAMQPClient sets the AMQP client reference for health checks
+func (s *Server) SetAMQPClient(client interface{}) {
+	s.amqpClient = client
 }
 
 // Start starts the HTTP server in a goroutine
 func (s *Server) Start() {
 	s.logger.WithField("port", s.config.Port).Info("Starting HTTP server")
-	
+
 	// Start serving in a goroutine
 	go func() {
 		s.logger.Infof("HTTP server listening on port %d", s.config.Port)
@@ -84,12 +104,12 @@ func (s *Server) Start() {
 			s.logger.WithError(err).Error("HTTP server failed")
 		}
 	}()
-	
+
 	// Verify that we can actually bind to the port
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		s.logger.Info("Verifying HTTP server is running...")
-		
+
 		// Try to open a connection to the server port
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.config.Port), 2*time.Second)
 		if err != nil {
@@ -110,12 +130,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // healthHandler handles the /health endpoint
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.WithField("endpoint", "/health").Debug("Health endpoint accessed")
-	
+
 	response := map[string]interface{}{
 		"status": "ok",
 		"uptime": time.Since(s.startTime).String(),
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
@@ -124,13 +144,13 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 // metricsHandler handles the /metrics endpoint
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.WithField("endpoint", "/metrics").Debug("Metrics endpoint accessed")
-	
+
 	// Simple metrics in Prometheus format
 	activeCalls := 0
 	if s.metricsProvider != nil {
 		activeCalls = s.metricsProvider.GetActiveCallCount()
 	}
-	
+
 	metrics := fmt.Sprintf(`# HELP siprec_active_calls Number of active calls
 # TYPE siprec_active_calls gauge
 siprec_active_calls %d
@@ -139,7 +159,7 @@ siprec_active_calls %d
 # TYPE siprec_uptime_seconds counter
 siprec_uptime_seconds %d
 `, activeCalls, int(time.Since(s.startTime).Seconds()))
-	
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(metrics))
@@ -150,17 +170,17 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.WithField("endpoint", "/status").Debug("Status endpoint accessed")
 
 	status := map[string]interface{}{
-		"status":      "ok",
-		"uptime":      time.Since(s.startTime).String(),
+		"status":       "ok",
+		"uptime":       time.Since(s.startTime).String(),
 		"active_calls": 0,
-		"version":     "1.0.0", // Replace with actual version from build
-		"started_at":  s.startTime.Format(time.RFC3339),
+		"version":      "1.0.0", // Replace with actual version from build
+		"started_at":   s.startTime.Format(time.RFC3339),
 	}
 
 	// Add metrics if available
 	if s.metricsProvider != nil {
 		status["active_calls"] = s.metricsProvider.GetActiveCallCount()
-		
+
 		// Add other metrics if available
 		if metrics := s.metricsProvider.GetMetrics(); metrics != nil {
 			for k, v := range metrics {

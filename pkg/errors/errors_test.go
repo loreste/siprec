@@ -13,11 +13,11 @@ func TestNew(t *testing.T) {
 	if err == nil {
 		t.Fatal("New() returned nil")
 	}
-	
+
 	if !strings.Contains(err.Error(), "test error") {
 		t.Errorf("Expected error message to contain 'test error', got: %s", err.Error())
 	}
-	
+
 	if err.Location() == "" {
 		t.Error("Location should not be empty")
 	}
@@ -26,19 +26,19 @@ func TestNew(t *testing.T) {
 func TestWrap(t *testing.T) {
 	baseErr := errors.New("base error")
 	err := Wrap(baseErr, "wrapped")
-	
+
 	if err == nil {
 		t.Fatal("Wrap() returned nil")
 	}
-	
+
 	if !strings.Contains(err.Error(), "wrapped") {
 		t.Errorf("Expected error message to contain 'wrapped', got: %s", err.Error())
 	}
-	
+
 	if !strings.Contains(err.Error(), "base error") {
 		t.Errorf("Expected error message to contain 'base error', got: %s", err.Error())
 	}
-	
+
 	// Test unwrapping
 	unwrapped := errors.Unwrap(err)
 	if unwrapped != baseErr {
@@ -48,12 +48,12 @@ func TestWrap(t *testing.T) {
 
 func TestWithField(t *testing.T) {
 	err := New("test error").WithField("key", "value")
-	
+
 	fields := err.GetFields()
 	if len(fields) != 1 {
 		t.Fatalf("Expected 1 field, got %d", len(fields))
 	}
-	
+
 	if fields["key"] != "value" {
 		t.Errorf("Expected field['key'] = 'value', got: %v", fields["key"])
 	}
@@ -64,18 +64,18 @@ func TestWithFields(t *testing.T) {
 		"key1": "value1",
 		"key2": 123,
 	}
-	
+
 	err := New("test error").WithFields(fields)
-	
+
 	errFields := err.GetFields()
 	if len(errFields) != 2 {
 		t.Fatalf("Expected 2 fields, got %d", len(errFields))
 	}
-	
+
 	if errFields["key1"] != "value1" {
 		t.Errorf("Expected field['key1'] = 'value1', got: %v", errFields["key1"])
 	}
-	
+
 	if errFields["key2"] != 123 {
 		t.Errorf("Expected field['key2'] = 123, got: %v", errFields["key2"])
 	}
@@ -83,7 +83,7 @@ func TestWithFields(t *testing.T) {
 
 func TestWithCode(t *testing.T) {
 	err := New("test error").WithCode("TEST_CODE")
-	
+
 	if err.GetCode() != "TEST_CODE" {
 		t.Errorf("Expected code 'TEST_CODE', got: %s", err.GetCode())
 	}
@@ -95,7 +95,7 @@ func TestErrorIs(t *testing.T) {
 	if !errors.Is(notFoundErr, ErrNotFound) {
 		t.Error("errors.Is() should return true for ErrNotFound")
 	}
-	
+
 	// Test with wrapped errors
 	wrapped := Wrap(ErrInvalidInput, "wrapped invalid input")
 	if !errors.Is(wrapped, ErrInvalidInput) {
@@ -105,12 +105,12 @@ func TestErrorIs(t *testing.T) {
 
 func TestErrorAs(t *testing.T) {
 	err := New("test error").WithCode("TEST_CODE")
-	
+
 	var structErr *Error
 	if !errors.As(err, &structErr) {
 		t.Error("errors.As() should successfully cast to *Error")
 	}
-	
+
 	if structErr.GetCode() != "TEST_CODE" {
 		t.Errorf("Expected code 'TEST_CODE', got: %s", structErr.GetCode())
 	}
@@ -122,20 +122,20 @@ func TestHelperFunctions(t *testing.T) {
 	if !IsErrorType(notFoundErr, ErrNotFound) {
 		t.Error("IsErrorType() should return true for ErrNotFound")
 	}
-	
+
 	// Test GetErrorCode
 	codeErr := New("test error").WithCode("TEST_CODE")
 	if GetErrorCode(codeErr) != "TEST_CODE" {
 		t.Errorf("GetErrorCode() should return 'TEST_CODE', got: %s", GetErrorCode(codeErr))
 	}
-	
+
 	// Test GetErrorFields
 	fieldsErr := New("test error").WithField("key", "value")
 	fields := GetErrorFields(fieldsErr)
 	if fields == nil || fields["key"] != "value" {
 		t.Error("GetErrorFields() should return the error fields")
 	}
-	
+
 	// Test GetErrorLocation
 	locErr := New("test error")
 	if GetErrorLocation(locErr) == "" {
@@ -156,7 +156,7 @@ func TestHTTPStatusFromError(t *testing.T) {
 		{"SessionNotFound", NewSessionNotFound("123"), http.StatusNotFound},
 		{"InvalidSIP", NewInvalidSIP("bad format"), http.StatusBadRequest},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			status := HTTPStatusFromError(tc.err)
@@ -193,23 +193,23 @@ func TestWriteError(t *testing.T) {
 			expectedBody:   `"session_id": "123"`,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			WriteError(rec, tc.err)
-			
+
 			// Check status code
 			if rec.Code != tc.expectedStatus {
 				t.Errorf("Expected status %d, got: %d", tc.expectedStatus, rec.Code)
 			}
-			
+
 			// Check content type
 			contentType := rec.Header().Get("Content-Type")
 			if contentType != "application/json" {
 				t.Errorf("Expected Content-Type 'application/json', got: %s", contentType)
 			}
-			
+
 			// Check response body contains expected strings
 			body := rec.Body.String()
 			if !strings.Contains(body, tc.expectedBody) {

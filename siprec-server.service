@@ -1,0 +1,41 @@
+[Unit]
+Description=SIPREC Recording Server
+Documentation=https://github.com/loreste/siprec
+After=network.target
+
+[Service]
+Type=simple
+User=siprec
+Group=siprec
+WorkingDirectory=/opt/siprec-server
+
+# Environment
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-/opt/siprec-server/.env.production
+
+# Executable
+ExecStart=/opt/siprec-server/siprec-server
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=0
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/siprec-server/recordings /opt/siprec-server/logs
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=siprec-server
+
+[Install]
+WantedBy=multi-user.target

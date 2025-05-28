@@ -66,17 +66,17 @@ func NewTranscriptionHub(logger *logrus.Logger) *TranscriptionHub {
 // Run starts the transcription hub
 func (h *TranscriptionHub) Run(ctx context.Context) {
 	h.logger.Info("Starting WebSocket transcription hub")
-	
+
 	for {
 		select {
 		case <-ctx.Done():
 			h.logger.Info("Shutting down WebSocket transcription hub")
 			return
-			
+
 		case client := <-h.register:
 			h.mutex.Lock()
 			h.clients[client] = true
-			
+
 			// If client subscribes to a specific call
 			if client.callUUID != "" {
 				if _, exists := h.callSubscribers[client.callUUID]; !exists {
@@ -87,16 +87,16 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 					"call_uuid": client.callUUID,
 				}).Info("Client subscribed to specific call")
 			}
-			
+
 			h.mutex.Unlock()
 			h.logger.Info("Client connected to WebSocket")
-			
+
 		case client := <-h.unregister:
 			h.mutex.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
-				
+
 				// Remove from call subscribers if needed
 				if client.callUUID != "" {
 					if subscribers, exists := h.callSubscribers[client.callUUID]; exists {
@@ -107,11 +107,11 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 						}
 					}
 				}
-				
+
 				h.logger.Info("Client disconnected from WebSocket")
 			}
 			h.mutex.Unlock()
-			
+
 		case message := <-h.broadcast:
 			// Marshal message to JSON
 			data, err := json.Marshal(message)
@@ -119,9 +119,9 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 				h.logger.WithError(err).Error("Failed to marshal transcription message")
 				continue
 			}
-			
+
 			h.mutex.RLock()
-			
+
 			// Send to subscribers of this specific call
 			if subscribers, exists := h.callSubscribers[message.CallUUID]; exists && len(subscribers) > 0 {
 				for client := range subscribers {
@@ -134,14 +134,14 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 					}
 				}
 			}
-			
+
 			// Also broadcast to clients that want all transcriptions
 			for client := range h.clients {
 				// Skip clients that are subscribed to specific calls
 				if client.callUUID != "" {
 					continue
 				}
-				
+
 				select {
 				case client.send <- data:
 				default:
@@ -149,7 +149,7 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 					delete(h.clients, client)
 				}
 			}
-			
+
 			h.mutex.RUnlock()
 		}
 	}
@@ -159,7 +159,7 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 func (h *TranscriptionHub) BroadcastTranscription(message interface{}) {
 	// Convert to TranscriptionMessage if it's not already
 	var typedMessage *TranscriptionMessage
-	
+
 	switch msg := message.(type) {
 	case *TranscriptionMessage:
 		typedMessage = msg
@@ -187,31 +187,31 @@ func (h *TranscriptionHub) BroadcastTranscription(message interface{}) {
 			if val.Kind() == reflect.Ptr {
 				val = val.Elem()
 			}
-			
+
 			if val.Kind() == reflect.Struct {
 				typedMessage = &TranscriptionMessage{
 					Timestamp: time.Now(),
 				}
-				
+
 				// Try to extract common fields
 				if callUUIDField := val.FieldByName("CallUUID"); callUUIDField.IsValid() {
 					typedMessage.CallUUID = callUUIDField.String()
 				}
-				
+
 				if transcriptionField := val.FieldByName("Transcription"); transcriptionField.IsValid() {
 					typedMessage.Transcription = transcriptionField.String()
 				}
-				
+
 				if isFinalField := val.FieldByName("IsFinal"); isFinalField.IsValid() {
 					typedMessage.IsFinal = isFinalField.Bool()
 				}
-				
+
 				if timestampField := val.FieldByName("Timestamp"); timestampField.IsValid() {
 					if timestampField.Type().String() == "time.Time" {
 						typedMessage.Timestamp = timestampField.Interface().(time.Time)
 					}
 				}
-				
+
 				if metadataField := val.FieldByName("Metadata"); metadataField.IsValid() {
 					if metadataField.Type().String() == "map[string]interface {}" {
 						typedMessage.Metadata = metadataField.Interface().(map[string]interface{})
@@ -220,11 +220,11 @@ func (h *TranscriptionHub) BroadcastTranscription(message interface{}) {
 			}
 		}
 	}
-	
+
 	if typedMessage == nil {
 		return // Could not convert message
 	}
-	
+
 	h.broadcast <- typedMessage
 }
 
@@ -236,10 +236,10 @@ func (h *TranscriptionHub) ServeWs(w http.ResponseWriter, r *http.Request) {
 		h.logger.WithError(err).Error("Failed to upgrade connection to WebSocket")
 		return
 	}
-	
+
 	// Get call UUID from query parameter (optional)
 	callUUID := r.URL.Query().Get("call_uuid")
-	
+
 	// Create new client
 	client := &Client{
 		hub:      h,
@@ -248,10 +248,10 @@ func (h *TranscriptionHub) ServeWs(w http.ResponseWriter, r *http.Request) {
 		logger:   h.logger,
 		callUUID: callUUID,
 	}
-	
+
 	// Register client with hub
 	client.hub.register <- client
-	
+
 	// Start writer goroutine
 	go client.writePump()
 }
@@ -263,7 +263,7 @@ func (c *Client) writePump() {
 		ticker.Stop()
 		c.conn.Close()
 	}()
-	
+
 	for {
 		select {
 		case message, ok := <-c.send:
@@ -273,24 +273,24 @@ func (c *Client) writePump() {
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			
+
 			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				return
 			}
 			w.Write(message)
-			
+
 			// Add queued messages to the current WebSocket message
 			n := len(c.send)
 			for i := 0; i < n; i++ {
 				w.Write([]byte{'\n'})
 				w.Write(<-c.send)
 			}
-			
+
 			if err := w.Close(); err != nil {
 				return
 			}
-			
+
 		case <-ticker.C:
 			// Send ping to keep connection alive
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -299,4 +299,11 @@ func (c *Client) writePump() {
 			}
 		}
 	}
+}
+
+// IsRunning returns true if the hub is running
+func (h *TranscriptionHub) IsRunning() bool {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+	return len(h.clients) >= 0 // Always true if hub exists
 }

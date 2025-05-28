@@ -11,11 +11,29 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// AMQPMessage represents a message sent via AMQP
+type AMQPMessage struct {
+	CallUUID      string                 `json:"call_uuid"`
+	Transcription string                 `json:"transcription"`
+	Timestamp     time.Time              `json:"timestamp"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	DeadLetter    bool                   `json:"dead_letter,omitempty"`
+}
+
+// AMQPConfig holds AMQP client configuration
+type AMQPConfig struct {
+	URL          string
+	QueueName    string
+	ExchangeName string
+	RoutingKey   string
+	Durable      bool
+	AutoDelete   bool
+}
+
 // AMQPClient handles AMQP connections and message publishing
 type AMQPClient struct {
 	logger    *logrus.Logger
-	url       string
-	queueName string
+	config    AMQPConfig
 	conn      *amqp.Connection
 	channel   *amqp.Channel
 	connected bool
@@ -24,13 +42,35 @@ type AMQPClient struct {
 }
 
 // NewAMQPClient creates a new AMQP client
-func NewAMQPClient(logger *logrus.Logger, url, queueName string) *AMQPClient {
-	return &AMQPClient{
-		logger:    logger,
-		url:       url,
-		queueName: queueName,
-		stopChan:  make(chan struct{}),
+func NewAMQPClient(logger *logrus.Logger, config AMQPConfig) *AMQPClient {
+	// Set defaults if not provided
+	if config.ExchangeName == "" {
+		config.ExchangeName = ""
 	}
+	if config.RoutingKey == "" {
+		config.RoutingKey = config.QueueName
+	}
+	config.Durable = true    // Default to durable queues
+	config.AutoDelete = false // Default to persistent queues
+
+	return &AMQPClient{
+		logger:   logger,
+		config:   config,
+		stopChan: make(chan struct{}),
+	}
+}
+
+// NewAMQPClientLegacy creates a new AMQP client (legacy constructor for backward compatibility)
+func NewAMQPClientLegacy(logger *logrus.Logger, url, queueName string) *AMQPClient {
+	config := AMQPConfig{
+		URL:          url,
+		QueueName:    queueName,
+		ExchangeName: "",
+		RoutingKey:   queueName,
+		Durable:      true,
+		AutoDelete:   false,
+	}
+	return NewAMQPClient(logger, config)
 }
 
 // Connect establishes a connection to the AMQP server
@@ -44,7 +84,7 @@ func (c *AMQPClient) Connect() error {
 	}
 
 	// Initialize AMQP connection
-	if c.url == "" || c.queueName == "" {
+	if c.config.URL == "" || c.config.QueueName == "" {
 		c.logger.Warn("AMQP_URL or AMQP_QUEUE_NAME not set, AMQP functionality will be disabled")
 		return fmt.Errorf("AMQP URL or queue name not configured")
 	}
@@ -60,7 +100,7 @@ func (c *AMQPClient) Connect() error {
 	}, 1)
 
 	go func() {
-		conn, err := amqp.Dial(c.url)
+		conn, err := amqp.Dial(c.config.URL)
 		select {
 		case <-ctx.Done():
 			// Context already timed out, clean up and return
@@ -90,7 +130,7 @@ func (c *AMQPClient) Connect() error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to AMQP server: %w", err)
 	}
-	
+
 	// Store the connection
 	c.conn = conn
 
@@ -123,7 +163,7 @@ func (c *AMQPClient) Connect() error {
 		conn.Close()
 		return fmt.Errorf("failed to open AMQP channel: %w", err)
 	}
-	
+
 	// Store the channel
 	c.channel = channel
 
@@ -135,9 +175,9 @@ func (c *AMQPClient) Connect() error {
 
 	go func() {
 		queue, err := channel.QueueDeclare(
-			c.queueName,
-			true,  // Durable
-			false, // Delete when unused
+			c.config.QueueName,
+			c.config.Durable,   // Durable
+			c.config.AutoDelete, // Delete when unused
 			false, // Exclusive
 			false, // No-wait
 			nil,   // Arguments
@@ -177,13 +217,13 @@ func (c *AMQPClient) Connect() error {
 	// Set connection status
 	c.connected = true
 	c.logger.WithFields(logrus.Fields{
-		"url":   c.url,
-		"queue": c.queueName,
+		"url":   c.config.URL,
+		"queue": c.config.QueueName,
 	}).Info("Connected to AMQP server")
 
 	// Create a new stop channel (in case this is a reconnect)
 	c.stopChan = make(chan struct{})
-	
+
 	// Start monitoring for connection closing
 	go c.monitorConnection()
 
@@ -251,22 +291,17 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 		return fmt.Errorf("not connected to AMQP server")
 	}
 
-	// Create message body
-	body := map[string]interface{}{
-		"call_uuid":     callUUID,
-		"transcription": transcription,
-		"timestamp":     time.Now().Format(time.RFC3339),
-	}
-
-	// Add metadata if provided
-	if metadata != nil {
-		for k, v := range metadata {
-			body[k] = v
-		}
+	// Create AMQP message
+	message := AMQPMessage{
+		CallUUID:      callUUID,
+		Transcription: transcription,
+		Timestamp:     time.Now(),
+		Metadata:      metadata,
+		DeadLetter:    false,
 	}
 
 	// Marshal to JSON
-	bodyBytes, err := json.Marshal(body)
+	bodyBytes, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("failed to marshal transcription to JSON: %w", err)
 	}
@@ -296,8 +331,8 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 
 		// Try publishing with deadline from context
 		err := c.channel.Publish(
-			"",          // Exchange
-			c.queueName, // Routing key (queue name)
+			c.config.ExchangeName, // Exchange
+			c.config.RoutingKey,   // Routing key
 			false,       // Mandatory
 			false,       // Immediate
 			amqp.Publishing{
@@ -331,6 +366,91 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 
 	// Return success
 	c.logger.WithField("call_uuid", callUUID).Debug("Successfully published transcription to AMQP")
+	return nil
+}
+
+// PublishToDeadLetterQueue publishes a failed message to the dead letter queue
+func (c *AMQPClient) PublishToDeadLetterQueue(content, callUUID string, metadata map[string]interface{}) error {
+	// Recover from any panics
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"recover":   r,
+			}).Error("Recovered from panic in AMQP PublishToDeadLetterQueue")
+		}
+	}()
+
+	if !c.IsConnected() {
+		return fmt.Errorf("AMQP client is not connected")
+	}
+
+	c.connMutex.RLock()
+	channel := c.channel
+	c.connMutex.RUnlock()
+
+	if channel == nil {
+		return fmt.Errorf("AMQP channel is not available")
+	}
+
+	// Create dead letter message structure
+	deadLetterMessage := AMQPMessage{
+		CallUUID:      callUUID,
+		Transcription: content,
+		Timestamp:     time.Now(),
+		Metadata:      metadata,
+		DeadLetter:    true,
+	}
+
+	// Marshal to JSON
+	body, err := json.Marshal(deadLetterMessage)
+	if err != nil {
+		return fmt.Errorf("failed to marshal dead letter message: %w", err)
+	}
+
+	// Define dead letter queue name
+	deadLetterQueueName := c.config.QueueName + ".dead_letter"
+
+	// Declare dead letter queue if it doesn't exist
+	_, err = channel.QueueDeclare(
+		deadLetterQueueName, // name
+		true,                // durable
+		false,               // delete when unused
+		false,               // exclusive
+		false,               // no-wait
+		nil,                 // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare dead letter queue: %w", err)
+	}
+
+	// Publish to dead letter queue
+	err = channel.Publish(
+		c.config.ExchangeName, // exchange
+		deadLetterQueueName,   // routing key
+		false,                 // mandatory
+		false,                 // immediate
+		amqp.Publishing{
+			ContentType:  "application/json",
+			Body:         body,
+			DeliveryMode: amqp.Persistent,
+			Timestamp:    time.Now(),
+			Headers: amqp.Table{
+				"x-dead-letter-reason": "max-retries-exceeded",
+				"x-call-uuid":          callUUID,
+			},
+		},
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to publish to dead letter queue: %w", err)
+	}
+
+	c.logger.WithFields(logrus.Fields{
+		"call_uuid":         callUUID,
+		"dead_letter_queue": deadLetterQueueName,
+	}).Info("Message published to dead letter queue")
+
 	return nil
 }
 
