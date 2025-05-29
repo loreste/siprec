@@ -1,7 +1,7 @@
 # SIPREC Server
 
 [![Go Version](https://img.shields.io/badge/Go-1.21%2B-blue.svg)](https://golang.org)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/Docs-Available-brightgreen.svg)](docs/README.md)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](.)
 [![NAT Support](https://img.shields.io/badge/NAT-Supported-blue.svg)](docs/configuration/README.md)
@@ -325,7 +325,7 @@ go build -o siprec ./cmd/siprec
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🆘 Support
 
