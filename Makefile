@@ -158,17 +158,17 @@ benchmark: ## Run benchmark tests
 
 docker-build: ## Build Docker image
 	@echo "Building Docker image..."
-	docker build -f Dockerfile.new --target production -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	docker build -f Dockerfile --target production -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 	@echo "Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 
 docker-build-dev: ## Build development Docker image
 	@echo "Building development Docker image..."
-	docker build -f Dockerfile.new --target development -t $(DOCKER_IMAGE):dev .
+	docker build -f Dockerfile --target development -t $(DOCKER_IMAGE):dev .
 	@echo "Development Docker image built: $(DOCKER_IMAGE):dev"
 
 docker-test: ## Run tests in Docker
 	@echo "Running tests in Docker..."
-	docker build -f Dockerfile.new --target tester -t $(DOCKER_IMAGE):test .
+	docker build -f Dockerfile --target tester -t $(DOCKER_IMAGE):test .
 	docker run --rm -v $(PWD)/test-results:/build/test-results $(DOCKER_IMAGE):test
 	@echo "Docker tests completed"
 
