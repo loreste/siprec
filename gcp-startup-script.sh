@@ -11,7 +11,7 @@
 # - VM metadata: startup-script="$(cat gcp-startup-script.sh)"
 #
 # Author: SIPREC Server Project
-# License: MIT
+# License: GPL v3
 
 set -e
 

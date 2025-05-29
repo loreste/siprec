@@ -14,7 +14,7 @@
 # Usage: sudo ./deploy_gcp_linux.sh
 # 
 # Author: SIPREC Server Project
-# License: MIT
+# License: GPL v3
 
 set -e
 
