@@ -13,7 +13,7 @@
 # Usage: ./deploy-quick.sh
 #
 # Author: SIPREC Server Project
-# License: MIT
+# License: GPL v3
 
 set -e
 
