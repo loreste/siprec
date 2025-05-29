@@ -1,8 +1,8 @@
 OPTIONS sip:127.0.0.1:5060 SIP/2.0
-Via: SIP/2.0/UDP 192.168.1.100:5080;branch=z9hG4bK-test-1747936318
+Via: SIP/2.0/UDP 192.168.1.100:5080;branch=z9hG4bK-test-1748529596
 From: <sip:tester@example.com>;tag=test-tag
 To: <sip:127.0.0.1>
-Call-ID: test-options-1747936318
+Call-ID: test-options-1748529596
 CSeq: 1 OPTIONS
 Max-Forwards: 70
 Content-Length: 0
