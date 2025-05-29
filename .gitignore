@@ -8,12 +8,20 @@
 *.so
 *.dylib
 /test_tls/test_tls
+/test_tls/mock_invite_tls
 
 # Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool
 *.out
+coverage.html
+
+# Build artifacts
+/build/
+/dist/
+siprec
+testenv
 
 # Dependency directories
 /vendor/
@@ -27,14 +35,21 @@ go.work
 .env.online
 !.env.example
 
-# Recordings directory
+# Recordings and sessions
 /recordings/
+/sessions/
+/test-recordings/
 *.wav
+*.mp3
+*.raw
 
-# Certificates
+# Certificates and keys
 /certs/*.pem
 /certs/*.crt
 /certs/*.key
+/keys/*.key
+/keys/*.keydata
+!keys/.gitkeep
 
 # IDE files
 .idea/
@@ -44,6 +59,7 @@ go.work
 
 # Logs
 *.log
+*.log.*
 
 # OS specific
 .DS_Store
@@ -54,7 +70,14 @@ Thumbs.db
 *.pid
 server.pid
 
-test-results/.gocache/
-build/
-siprec
-testenv
+# Test results and coverage
+test-results/
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Runtime data
+/data/
+/tmp/
