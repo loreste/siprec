@@ -1,0 +1,75 @@
+INVITE sip:recorder@35.222.226.67:5060 SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.167:5060;branch=z9hG4bK1748528060
+Max-Forwards: 70
+To: <sip:recorder@35.222.226.67:5060>
+From: SRS <sip:srs@testclient.local>;tag=tag1748528060
+Call-ID: siprec-metadata-test-1748528060@testclient
+CSeq: 1 INVITE
+Contact: <sip:srs@192.168.1.167:5060>
+User-Agent: SIPREC-SRS-TestClient/1.0
+Content-Type: multipart/mixed;boundary=boundary123
+Content-Length: 1500
+
+--boundary123
+Content-Type: application/sdp
+
+v=0
+o=srs 123456789 987654321 IN IP4 192.168.1.167
+s=SIPREC Recording Session
+c=IN IP4 192.168.1.167
+t=0 0
+a=group:BUNDLE audio1 audio2
+m=audio 10000 RTP/AVP 0 8
+a=sendonly
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=label:1
+m=audio 10002 RTP/AVP 0 8
+a=sendonly
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=label:2
+
+--boundary123
+Content-Type: application/rs-metadata+xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1">
+  <datamode>complete</datamode>
+  <session id="sess_1748528060">
+    <associate-time>2025-05-29T14:14:20Z</associate-time>
+  </session>
+  <participant id="part1">
+    <nameID aor="sip:alice@example.com">
+      <name>Alice Smith</name>
+    </nameID>
+  </participant>
+  <participant id="part2">
+    <nameID aor="sip:bob@example.com">
+      <name>Bob Johnson</name>
+    </nameID>
+  </participant>
+  <stream id="stream1" session="sess_1748528060">
+    <label>1</label>
+    <associate-time>2025-05-29T14:14:20Z</associate-time>
+  </stream>
+  <stream id="stream2" session="sess_1748528060">
+    <label>2</label>
+    <associate-time>2025-05-29T14:14:20Z</associate-time>
+  </stream>
+  <participantstreamassoc id="psa1">
+    <participant>part1</participant>
+    <stream>stream1</stream>
+  </participantstreamassoc>
+  <participantstreamassoc id="psa2">
+    <participant>part2</participant>
+    <stream>stream2</stream>
+  </participantstreamassoc>
+  <recordingsession id="rs_1748528060">
+    <associate-time>2025-05-29T14:14:20Z</associate-time>
+    <reason>compliance</reason>
+  </recordingsession>
+</recording>
+
+--boundary123--
+

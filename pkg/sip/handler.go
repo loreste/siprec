@@ -1,7 +1,5 @@
 package sip
 
-// First, we'll paste the updated content
-
 import (
 	"context"
 	"encoding/json"
