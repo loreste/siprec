@@ -50,6 +50,21 @@ var (
 )
 
 func main() {
+	// Check for special commands
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "envcheck", "env-check", "--env-check":
+			runEnvironmentCheck()
+			return
+		case "version", "--version", "-v":
+			fmt.Printf("SIPREC Server %s\n", getVersion())
+			return
+		case "help", "--help", "-h":
+			printUsage()
+			return
+		}
+	}
+
 	// Set up logger with basic configuration (will be updated after config is loaded)
 	logger.SetFormatter(&logrus.JSONFormatter{
 		TimestampFormat: time.RFC3339Nano,
@@ -688,4 +703,62 @@ func initializeEncryption() error {
 	}).Info("Encryption subsystem initialized")
 
 	return nil
+}
+
+// runEnvironmentCheck performs environment validation
+func runEnvironmentCheck() {
+	fmt.Println("SIPREC Server Environment Check")
+	fmt.Println("==============================")
+	
+	// Check if config can be loaded
+	cfg, err := config.Load(logger)
+	if err != nil {
+		fmt.Printf("❌ Configuration: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✅ Configuration: Valid")
+	
+	// Check network ports
+	for _, port := range cfg.Network.Ports {
+		addr := fmt.Sprintf(":%d", port)
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			fmt.Printf("❌ Port %d: %v\n", port, err)
+		} else {
+			ln.Close()
+			fmt.Printf("✅ Port %d: Available\n", port)
+		}
+	}
+	
+	fmt.Println("Environment check completed")
+}
+
+// getVersion returns the current version
+func getVersion() string {
+	// Try to read VERSION file
+	if data, err := os.ReadFile("VERSION"); err == nil {
+		return string(data)
+	}
+	return "development"
+}
+
+// printUsage prints usage information
+func printUsage() {
+	fmt.Printf(`SIPREC Server - SIP Recording Server
+
+Usage:
+  %s [command]
+
+Commands:
+  envcheck    Check environment and configuration
+  version     Show version information
+  help        Show this help message
+
+If no command is provided, the server will start normally.
+
+Environment Variables:
+  SIPREC_CONFIG_FILE    Path to configuration file
+  
+For more information, see the documentation.
+`, os.Args[0])
 }
