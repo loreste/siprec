@@ -109,6 +109,40 @@ git push origin feature/your-feature-name
 # Create pull request on GitHub
 ```
 
+## Architecture Overview
+
+### SIP Layer Architecture
+
+The SIPREC server uses a custom SIP implementation with two main components:
+
+#### CustomSIPServer
+- **Location**: `pkg/sip/custom_server.go`
+- **Purpose**: Transport layer handling (TCP/UDP/TLS)
+- **Key Features**:
+  - Multi-transport SIP server
+  - Optimized TCP message parsing with proper CRLF handling
+  - Connection lifecycle management
+  - Support for large multipart SIPREC messages
+
+#### Handler
+- **Location**: `pkg/sip/handler.go` 
+- **Purpose**: SIP business logic and call management
+- **Key Features**:
+  - SIPREC message processing
+  - Call state management using sharded maps
+  - Session redundancy and recovery
+  - Integration with STT providers
+
+### Development Guidelines for SIP Components
+
+When working on SIP-related code:
+
+1. **Message Parsing**: Always handle CRLF (`\r\n`) line endings properly
+2. **TCP Optimization**: Consider message size and connection reuse
+3. **Error Handling**: Provide appropriate SIP response codes
+4. **Logging**: Use structured logging with connection and session context
+5. **Testing**: Test with both small and large SIPREC payloads
+
 ## Contribution Guidelines
 
 ### Code Style

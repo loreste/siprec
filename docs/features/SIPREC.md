@@ -1,6 +1,6 @@
 # SIPREC Protocol Implementation
 
-Complete implementation of Session Recording Protocol (SIPREC) as defined in RFC 7865 and RFC 7866.
+Complete implementation of Session Recording Protocol (SIPREC) as defined in RFC 7865 and RFC 7866, with optimized TCP transport for large metadata processing.
 
 ## Overview
 
@@ -100,6 +100,38 @@ The RS-Metadata XML provides recording context:
   - **session**: Associated session ID
   - **label**: SDP label reference
   - **mode**: "separate" or "mixed"
+
+## Transport Optimization
+
+### TCP Transport for Large Metadata
+
+The SIPREC implementation includes specific optimizations for handling large metadata payloads over TCP:
+
+**Enhanced Message Parsing**:
+- Proper CRLF (`\r\n`) line ending handling
+- Line-by-line header parsing using `bufio.Reader`
+- Content-Length based body reading for multipart messages
+- Support for metadata payloads exceeding 1KB
+
+**Connection Management**:
+- Persistent TCP connections for multiple SIPREC sessions
+- Connection timeout and activity tracking
+- Graceful handling of connection lifecycle
+- Concurrent processing of multiple connections
+
+**Large Payload Support**:
+- Streaming multipart message parsing
+- Memory-efficient handling of large XML metadata
+- Proper boundary detection in multipart MIME
+- Robust error handling for malformed messages
+
+### Protocol Transport Support
+
+| Transport | Status | Use Case |
+|-----------|--------|----------|
+| UDP | ✅ Supported | Small metadata, legacy compatibility |
+| TCP | ✅ Optimized | Large metadata, reliable transport |
+| TLS | ✅ Supported | Secure environments, encrypted metadata |
 
 ## Implementation Details
 
