@@ -163,6 +163,44 @@ Response:
 }
 ```
 
+## Transport Layer Architecture
+
+### Custom SIP Server Implementation
+
+The SIPREC server features a custom SIP implementation optimized for production environments:
+
+#### TCP Transport Optimization
+- **Large Metadata Support**: Handles SIPREC messages with large XML metadata (>1KB)
+- **Connection Management**: Persistent TCP connections with proper lifecycle management
+- **CRLF Parsing**: Robust line-ending handling for reliable message parsing
+- **Concurrent Processing**: Each connection handled in separate goroutines
+
+#### Multi-Transport Support
+- **UDP**: Traditional SIP transport with fragmentation support
+- **TCP**: Reliable transport for large messages, recommended for SIPREC
+- **TLS**: Encrypted transport for secure environments
+
+#### Production Benefits
+- **Reduced Memory Usage**: Streaming message parsing instead of full buffering
+- **Better Reliability**: Proper error handling and connection recovery
+- **Scalability**: Designed for high concurrent connection counts
+- **RFC Compliance**: Full RFC 7865/7866 SIPREC implementation
+
+### Transport Configuration
+
+For production deployments with large SIPREC metadata:
+
+```bash
+# Prefer TCP for reliable large message handling
+ENABLE_TCP=true
+ENABLE_TLS=true  # For secure environments
+
+# Configure appropriate timeouts
+TCP_READ_TIMEOUT=30s
+TCP_WRITE_TIMEOUT=30s
+CONNECTION_IDLE_TIMEOUT=5m
+```
+
 ## Performance Tuning
 
 ### System Limits
@@ -177,14 +215,24 @@ siprec hard nofile 65536
 
 ### Kernel Parameters
 
-Optimize for high traffic:
+Optimize for high traffic and TCP connections:
 
 ```bash
 # /etc/sysctl.conf
+# Network buffer sizes
 net.core.rmem_max = 134217728
 net.core.wmem_max = 134217728
 net.ipv4.udp_mem = 2097152 4194304 8388608
 net.core.netdev_max_backlog = 5000
+
+# TCP optimization for SIPREC
+net.ipv4.tcp_rmem = 4096 65536 134217728
+net.ipv4.tcp_wmem = 4096 65536 134217728
+net.ipv4.tcp_max_syn_backlog = 8192
+net.core.somaxconn = 8192
+
+# Connection tracking for high concurrency
+net.netfilter.nf_conntrack_max = 524288
 ```
 
 ### Resource Allocation
