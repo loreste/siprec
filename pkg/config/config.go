@@ -36,8 +36,14 @@ type NetworkConfig struct {
 	// Internal IP address for binding (auto = auto-detect)
 	InternalIP string `json:"internal_ip" env:"INTERNAL_IP" default:"auto"`
 
-	// SIP ports to listen on
+	// SIP ports to listen on (both UDP and TCP)
 	Ports []int `json:"ports" env:"PORTS" default:"5060,5061"`
+
+	// UDP-specific SIP ports (overrides Ports for UDP if set)
+	UDPPorts []int `json:"udp_ports" env:"UDP_PORTS"`
+
+	// TCP-specific SIP ports (overrides Ports for TCP if set) 
+	TCPPorts []int `json:"tcp_ports" env:"TCP_PORTS"`
 
 	// Whether SRTP is enabled
 	EnableSRTP bool `json:"enable_srtp" env:"ENABLE_SRTP" default:"false"`
@@ -314,26 +320,29 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	}
 
 	// Load SIP ports
-	portsStr := getEnv("PORTS", "5060,5061")
-	logger.WithField("ports_env", portsStr).Debug("Loaded PORTS environment variable")
-	portsSlice := strings.Split(portsStr, ",")
+	var err error
+	config.Ports, err = parsePorts(getEnv("PORTS", "5060,5061"), "PORTS")
+	if err != nil {
+		return err
+	}
+	logger.WithField("sip_ports", config.Ports).Info("Configured SIP ports")
 
-	for _, portStr := range portsSlice {
-		portStr = strings.TrimSpace(portStr)
-		if portStr == "" {
-			continue
-		}
-
-		port, err := strconv.Atoi(portStr)
+	// Load UDP-specific ports (optional)
+	if udpPortsStr := getEnv("UDP_PORTS", ""); udpPortsStr != "" {
+		config.UDPPorts, err = parsePorts(udpPortsStr, "UDP_PORTS")
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("invalid port in PORTS: %s", portStr))
+			return err
 		}
+		logger.WithField("udp_ports", config.UDPPorts).Info("Configured UDP-specific ports")
+	}
 
-		if port < 1 || port > 65535 {
-			return errors.New(fmt.Sprintf("port out of range in PORTS: %d", port))
+	// Load TCP-specific ports (optional)
+	if tcpPortsStr := getEnv("TCP_PORTS", ""); tcpPortsStr != "" {
+		config.TCPPorts, err = parsePorts(tcpPortsStr, "TCP_PORTS")
+		if err != nil {
+			return err
 		}
-
-		config.Ports = append(config.Ports, port)
+		logger.WithField("tcp_ports", config.TCPPorts).Info("Configured TCP-specific ports")
 	}
 
 	// If no valid ports were specified, use defaults
@@ -813,6 +822,53 @@ func (c *Config) ApplyLogging(logger *logrus.Logger) error {
 	}
 
 	return nil
+}
+
+// Helper function to parse comma-separated port list
+func parsePorts(portsStr, envName string) ([]int, error) {
+	portsStr = strings.TrimSpace(portsStr)
+	if portsStr == "" {
+		return nil, nil
+	}
+
+	portsSlice := strings.Split(portsStr, ",")
+	var ports []int
+
+	for _, portStr := range portsSlice {
+		portStr = strings.TrimSpace(portStr)
+		if portStr == "" {
+			continue
+		}
+
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return nil, errors.Wrap(err, fmt.Sprintf("invalid port in %s: %s", envName, portStr))
+		}
+
+		if port < 1 || port > 65535 {
+			return nil, errors.New(fmt.Sprintf("port out of range in %s: %d", envName, port))
+		}
+
+		ports = append(ports, port)
+	}
+
+	return ports, nil
+}
+
+// GetUDPPorts returns the ports to use for UDP listeners
+func (n *NetworkConfig) GetUDPPorts() []int {
+	if len(n.UDPPorts) > 0 {
+		return n.UDPPorts
+	}
+	return n.Ports
+}
+
+// GetTCPPorts returns the ports to use for TCP listeners  
+func (n *NetworkConfig) GetTCPPorts() []int {
+	if len(n.TCPPorts) > 0 {
+		return n.TCPPorts
+	}
+	return n.Ports
 }
 
 // Helper function to get an environment variable with a default value
