@@ -33,8 +33,6 @@ func TestNewHandler(t *testing.T) {
 
 	assert.NoError(t, err, "NewHandler should not return an error")
 	assert.NotNil(t, handler, "Handler should not be nil")
-	assert.NotNil(t, handler.Server, "Server should be initialized")
-	assert.NotNil(t, handler.UA, "UserAgent should be initialized")
 	assert.Equal(t, config, handler.Config, "Config should be set")
 	assert.NotNil(t, handler.ActiveCalls, "ActiveCalls map should be initialized")
 }

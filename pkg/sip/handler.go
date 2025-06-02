@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
 	"github.com/pion/sdp/v3"
@@ -56,12 +55,9 @@ type Config struct {
 	ShardCount int
 }
 
-// Handler for SIP requests
+// Handler for SIP requests - now works with CustomSIPServer
 type Handler struct {
 	Logger *logrus.Logger
-	Server *sipgo.Server
-	UA     *sipgo.UserAgent
-	// Router is removed since sipgo no longer exposes it directly
 	Config      *Config
 	ActiveCalls *ShardedMap // Sharded map of call UUID to CallData for better concurrency
 
@@ -135,29 +131,13 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	// Create a new sharded map for active calls
 	activeCalls := NewShardedMap(shardCount)
 
-	// Create the handler
+	// Create the handler - no longer needs sipgo dependencies
 	handler := &Handler{
 		Logger:      logger,
 		Config:      config,
 		STTCallback: sttCallback,
 		ActiveCalls: activeCalls,
 	}
-
-	// Create a new SIP stack
-	ua, err := sipgo.NewUA()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create SIP user agent")
-	}
-
-	// Create a new server using the user agent
-	server, err := sipgo.NewServer(ua)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create SIP server")
-	}
-
-	// Store for later use
-	handler.UA = ua
-	handler.Server = server
 
 	// Initialize the session store if redundancy is enabled
 	if config.RedundancyEnabled {
@@ -182,38 +162,63 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	return handler, nil
 }
 
-// SetupHandlers configures the SIP request handlers
+// SetupHandlers configures the SIP request handlers - now handled by CustomSIPServer
 func (h *Handler) SetupHandlers() {
-	// Register method handlers using the Server's handler registration methods
-	h.Server.OnInvite(h.handleInvite)
-	h.Server.OnBye(h.handleBye)
-	h.Server.OnOptions(h.handleOptions)
-	
-	// Add handlers for other common SIP methods for debugging
-	h.Server.OnRegister(func(req *sip.Request, tx sip.ServerTransaction) {
-		h.Logger.WithField("method", "REGISTER").Info("Received REGISTER request")
-		resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-		tx.Respond(resp)
-	})
-	
-	h.Server.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
-		h.Logger.WithField("method", "ACK").Debug("Received ACK")
-	})
-	
-	// Note: sipgo doesn't have a catch-all handler, specific methods only
+	// Handler setup is now done by CustomSIPServer directly
+	// The custom server calls appropriate handler methods based on SIP method
 
 	h.Logger.Info("SIP request handlers configured")
 }
 
+// getTransportFromRequest extracts transport information from a SIP request
+func getTransportFromRequest(req *sip.Request) string {
+	if req == nil {
+		return "unknown"
+	}
+	
+	// Check Via header for transport information
+	if via := req.GetHeader("Via"); via != nil {
+		viaValue := via.Value()
+		if strings.Contains(viaValue, "TCP") {
+			return "TCP"
+		} else if strings.Contains(viaValue, "UDP") {
+			return "UDP"
+		} else if strings.Contains(viaValue, "TLS") {
+			return "TLS"
+		}
+	}
+	
+	// Fallback to source information
+	return "unknown"
+}
 
 // handleInvite handles INVITE requests
 func (h *Handler) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	callUUID := req.CallID().String()
+	
+	// Enhanced error handling for TCP connections
+	defer func() {
+		if r := recover(); r != nil {
+			h.Logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"error":     r,
+				"transport": getTransportFromRequest(req),
+			}).Error("Recovered from panic in INVITE handler")
+			
+			// Send error response if transaction is still active
+			if tx != nil {
+				resp := sip.NewResponseFromRequest(req, 500, "Internal Server Error", nil)
+				tx.Respond(resp)
+			}
+		}
+	}()
+	
 	logger := h.Logger.WithFields(logrus.Fields{
 		"call_uuid": callUUID,
 		"from":      req.From().String(),
 		"to":        req.To().String(),
 		"source":    req.Source(),
+		"transport": getTransportFromRequest(req),
 	})
 	logger.Info("Received INVITE request")
 
@@ -465,13 +470,19 @@ func (h *Handler) processNewInvite(req *sip.Request, tx sip.ServerTransaction, c
 	ctx := context.Background()
 	media.StartRTPForwarding(ctx, callData.Forwarder, callUUID, h.Config.MediaConfig, h.STTCallback)
 
-	// Send response
+	// Send response with enhanced error handling for TCP
 	if err := tx.Respond(resp); err != nil {
-		logger.WithError(err).Error("Failed to send INVITE response")
+		logger.WithError(err).WithFields(logrus.Fields{
+			"transport": getTransportFromRequest(req),
+			"response_code": resp.StatusCode,
+		}).Error("Failed to send INVITE response")
 		return
 	}
 
-	logger.Info("Successfully responded to INVITE")
+	logger.WithFields(logrus.Fields{
+		"transport": getTransportFromRequest(req),
+		"response_code": resp.StatusCode,
+	}).Info("Successfully responded to INVITE")
 }
 
 // validateSIPRequest performs basic validation on SIP requests
@@ -1333,18 +1344,8 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Close any server-level resources
-	// Use context timeout for any remote connections
-	if err := h.UA.Close(); err != nil {
-		logger.WithError(err).Warn("Error closing SIP User Agent")
-	}
-
-	// Close the server
-	if h.Server != nil {
-		// Check if the Server has a Close method, if not already available
-		// For future implementation or different SIP library versions
-		logger.Info("SIP Server resources released")
-	}
+	// SIP server resources are now managed by CustomSIPServer
+	logger.Info("SIP Handler shutdown - server resources managed by CustomSIPServer")
 
 	// Close session store if needed
 	if closer, ok := h.SessionStore.(io.Closer); ok {
