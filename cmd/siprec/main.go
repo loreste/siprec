@@ -114,8 +114,8 @@ func main() {
 		logger.Info("HTTP server is disabled by configuration")
 	}
 
-	// Start SIP server
-	go startSIPServer(&wg)
+	// Start custom SIP server
+	go startCustomSIPServer(&wg)
 
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
@@ -433,13 +433,16 @@ func initialize() error {
 	return nil
 }
 
-// startSIPServer initializes and starts the SIP server
-func startSIPServer(wg *sync.WaitGroup) {
+// startCustomSIPServer initializes and starts the custom SIP server
+func startCustomSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	ip := "0.0.0.0" // Listen on all interfaces
 	ctx, cancel := context.WithCancel(rootCtx)
 	defer cancel()
+
+	// Create custom SIP server
+	customServer := sip.NewCustomSIPServer(logger, sipHandler)
 
 	// Create error channel to communicate errors from listener goroutines
 	errChan := make(chan error, 10)
@@ -455,9 +458,9 @@ func startSIPServer(wg *sync.WaitGroup) {
 		go func(address string, port int) {
 			defer wgListeners.Done()
 
-			logger.WithField("address", address).Info("Starting SIP server on UDP")
-			if err := sipHandler.Server.ListenAndServe(ctx, "udp", address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on UDP")
+			logger.WithField("address", address).Info("Starting custom SIP server on UDP")
+			if err := customServer.ListenAndServeUDP(ctx, address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start custom SIP server on UDP")
 				errChan <- fmt.Errorf("UDP listener error: %w", err)
 				return
 			}
@@ -472,9 +475,9 @@ func startSIPServer(wg *sync.WaitGroup) {
 		go func(address string, port int) {
 			defer wgListeners.Done()
 
-			logger.WithField("address", address).Info("Starting SIP server on TCP")
-			if err := sipHandler.Server.ListenAndServe(ctx, "tcp", address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on TCP")
+			logger.WithField("address", address).Info("Starting custom SIP server on TCP")
+			if err := customServer.ListenAndServeTCP(ctx, address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start custom SIP server on TCP")
 				errChan <- fmt.Errorf("TCP listener error: %w", err)
 				return
 			}
@@ -534,19 +537,18 @@ func startSIPServer(wg *sync.WaitGroup) {
 		go func() {
 			defer wgListeners.Done()
 
-			// According to sipgo docs, use "tls" as the network type, not "tcp"
-			if err := sipHandler.Server.ListenAndServeTLS(
+			// Start custom TLS server
+			if err := customServer.ListenAndServeTLS(
 				ctx,
-				"tls", // Use TLS as the network type (not TCP)
 				tlsAddress,
 				tlsConfig,
 			); err != nil {
-				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
+				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start custom SIP server on TLS")
 				errChan <- fmt.Errorf("TLS listener error: %w", err)
 				return
 			}
 
-			logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
+			logger.WithField("port", appConfig.Network.TLSPort).Info("Custom SIP server started on TLS successfully")
 		}()
 
 		// Verify TLS server started successfully by checking if the port is listening
@@ -575,6 +577,11 @@ func startSIPServer(wg *sync.WaitGroup) {
 		cancel()
 	case <-ctx.Done():
 		logger.Info("SIP server context cancelled, shutting down")
+	}
+
+	// Shutdown custom server
+	if err := customServer.Shutdown(ctx); err != nil {
+		logger.WithError(err).Error("Error shutting down custom SIP server")
 	}
 
 	// Wait for all listener goroutines to exit
