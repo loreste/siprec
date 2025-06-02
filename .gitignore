@@ -81,3 +81,21 @@ coverage/
 # Runtime data
 /data/
 /tmp/
+
+# Development planning and roadmap files
+ROADMAP.md
+roadmap.md
+ROADMAP*.md
+roadmap*.md
+TODO.md
+todo.md
+PLANNING.md
+planning.md
+DEVELOPMENT.md
+development.md
+NOTES.md
+notes.md
+*.roadmap
+*.todo
+*.planning
+*.notes
