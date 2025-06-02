@@ -131,7 +131,7 @@ LOG_LEVEL=info
 LOG_FORMAT=json
 
 # Network configuration
-SIP_PORTS=5060
+PORTS=5060,5061
 RTP_PORT_MIN=16384
 RTP_PORT_MAX=32768
 EXTERNAL_IP=auto
@@ -259,18 +259,25 @@ EOF
 configure_firewall() {
     if command -v ufw &> /dev/null; then
         echo "Configuring UFW firewall..."
-        sudo ufw allow 5060/udp comment "SIPREC SIP"
+        sudo ufw allow 5060/udp comment "SIPREC SIP UDP"
+        sudo ufw allow 5060/tcp comment "SIPREC SIP TCP"
+        sudo ufw allow 5061/udp comment "SIPREC SIP UDP"
+        sudo ufw allow 5061/tcp comment "SIPREC SIP TCP"
         sudo ufw allow 8080/tcp comment "SIPREC HTTP"
         sudo ufw allow 16384:32768/udp comment "SIPREC RTP"
     elif command -v firewall-cmd &> /dev/null; then
         echo "Configuring firewalld..."
         sudo firewall-cmd --permanent --add-port=5060/udp
+        sudo firewall-cmd --permanent --add-port=5060/tcp
+        sudo firewall-cmd --permanent --add-port=5061/udp
+        sudo firewall-cmd --permanent --add-port=5061/tcp
         sudo firewall-cmd --permanent --add-port=8080/tcp
         sudo firewall-cmd --permanent --add-port=16384-32768/udp
         sudo firewall-cmd --reload
     else
         echo "No firewall management tool found. Please manually open ports:"
-        echo "  - 5060/udp (SIP)"
+        echo "  - 5060/udp,tcp (SIP)"
+        echo "  - 5061/udp,tcp (SIP)"
         echo "  - 8080/tcp (HTTP)"
         echo "  - 16384-32768/udp (RTP)"
     fi
@@ -296,7 +303,7 @@ echo "=== Installation Complete ==="
 echo "✓ SIPREC server installed to: $INSTALL_DIR"
 echo "✓ Service: siprec.service"
 echo "✓ Configuration: $INSTALL_DIR/.env"
-echo "✓ Version: Production-ready with sipgo v0.32.1"
+echo "✓ Version: Production-ready with custom SIP server and enhanced port configuration"
 echo ""
 echo "Service Management:"
 echo "  Status:  sudo systemctl status siprec"
@@ -305,7 +312,7 @@ echo "  Restart: sudo systemctl restart siprec"
 echo "  Stop:    sudo systemctl stop siprec"
 echo ""
 echo "Endpoints:"
-echo "  SIP:     udp://0.0.0.0:5060 (TCP also available)"
+echo "  SIP:     udp://0.0.0.0:5060,5061 (TCP also available)"
 echo "  HTTP:    http://localhost:8080"
 echo "  Health:  http://localhost:8080/health"
 echo "  Metrics: http://localhost:8080/metrics"
@@ -314,6 +321,12 @@ echo "Configuration:"
 echo "  Main config:        $INSTALL_DIR/.env"
 echo "  Production sample:  $INSTALL_DIR/.env.production"
 echo "  Validation script:  $INSTALL_DIR/validate_production.sh"
+echo ""
+echo "Port Configuration:"
+echo "  Default ports:      5060,5061 (both UDP and TCP)"
+echo "  Custom UDP ports:   Set UDP_PORTS in .env"
+echo "  Custom TCP ports:   Set TCP_PORTS in .env"
+echo "  See examples:       .env.ports-example"
 echo ""
 echo "Recordings stored in: /opt/siprec/recordings"
 echo ""
