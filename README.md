@@ -5,8 +5,9 @@
 [![Documentation](https://img.shields.io/badge/Docs-Available-brightgreen.svg)](docs/README.md)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](.)
 [![NAT Support](https://img.shields.io/badge/NAT-Supported-blue.svg)](docs/configuration/README.md)
+[![TCP Optimized](https://img.shields.io/badge/TCP-Optimized-orange.svg)](docs/architecture/SIP_ARCHITECTURE.md)
 
-A high-performance, enterprise-grade SIP recording (SIPREC) server that implements RFC 7865/7866 with advanced real-time transcription capabilities and comprehensive NAT support for cloud deployments.
+A high-performance, enterprise-grade SIP recording (SIPREC) server that implements RFC 7865/7866 with custom TCP-optimized transport, advanced real-time transcription capabilities, and comprehensive NAT support for cloud deployments.
 
 ## ✨ Key Features
 
@@ -14,7 +15,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **📞 RFC Compliance** - Complete RFC 7865/7866 implementation for SIP session recording
 - **🔄 Session Management** - Advanced session lifecycle management with failover support
 - **🎯 NAT Traversal** - Comprehensive NAT support with STUN integration for cloud deployments
-- **🔗 SIP Integration** - Full SIP protocol support using diago (emiago/sipgo) library
+- **🔗 SIP Integration** - Custom SIP server implementation optimized for TCP transport and large metadata
 
 ### Transcription & Processing
 - **🎙️ Real-time Transcription** - Multi-provider STT integration (Google, Deepgram, OpenAI, Azure)
