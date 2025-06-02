@@ -451,7 +451,7 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 	var wgListeners sync.WaitGroup
 
 	// Start UDP listeners
-	for _, port := range appConfig.Network.Ports {
+	for _, port := range appConfig.Network.GetUDPPorts() {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		wgListeners.Add(1)
 
@@ -468,7 +468,7 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 	}
 
 	// Start TCP listeners
-	for _, port := range appConfig.Network.Ports {
+	for _, port := range appConfig.Network.GetTCPPorts() {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		wgListeners.Add(1)
 
