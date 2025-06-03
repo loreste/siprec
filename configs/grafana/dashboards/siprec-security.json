@@ -1,0 +1,317 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SIPREC Security Dashboard",
+    "tags": ["siprec", "security"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Authentication Success Rate",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "rate(siprec_authentication_attempts_total{status=\"success\"}[5m]) / rate(siprec_authentication_attempts_total[5m]) * 100",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "unit": "percent",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "red", "value": 80},
+            {"color": "yellow", "value": 90},
+            {"color": "green", "value": 95}
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "title": "Failed Authentications (Last Hour)",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "increase(siprec_authentication_failures_total[1h])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "green", "value": 0},
+            {"color": "yellow", "value": 10},
+            {"color": "red", "value": 50}
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "title": "Rate Limit Violations",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "increase(siprec_rate_limit_exceeded_total[1h])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "green", "value": 0},
+            {"color": "yellow", "value": 5},
+            {"color": "red", "value": 20}
+          ]
+        }
+      },
+      {
+        "id": 4,
+        "title": "Security Events",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "increase(siprec_security_events_total{severity=\"critical\"}[1h])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "green", "value": 0},
+            {"color": "red", "value": 1}
+          ]
+        }
+      },
+      {
+        "id": 5,
+        "title": "Authentication Attempts by Type",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_authentication_attempts_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{type}} - {{status}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Attempts/sec"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Failed Authentication Reasons",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "increase(siprec_authentication_failures_total[1h])",
+            "refId": "A",
+            "legendFormat": "{{reason}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 7,
+        "title": "API Key Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_api_key_usage_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Rate Limiting by Endpoint",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_rate_limit_exceeded_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Violations/sec"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Security Events Timeline",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_security_events_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{event_type}} - {{severity}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Events/sec"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Top Failed IPs",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "topk(10, increase(siprec_rate_limit_exceeded_total[1h]))",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 32
+        },
+        "columns": [
+          {
+            "text": "Client IP",
+            "value": "client_ip"
+          },
+          {
+            "text": "Violations",
+            "value": "Value"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "SRTP Encryption Status",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_srtp_packets_processed_total[5m])",
+            "refId": "A",
+            "legendFormat": "Processed - {{direction}}"
+          },
+          {
+            "expr": "rate(siprec_srtp_encryption_errors_total[5m])",
+            "refId": "B",
+            "legendFormat": "Encryption Errors"
+          },
+          {
+            "expr": "rate(siprec_srtp_decryption_errors_total[5m])",
+            "refId": "C",
+            "legendFormat": "Decryption Errors"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 32
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Packets/sec"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1
+  }
+}

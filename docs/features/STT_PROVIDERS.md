@@ -1,311 +1,380 @@
 # Speech-to-Text Provider Integration
 
-Comprehensive guide to STT provider integration and configuration.
+Comprehensive guide to STT provider integration and configuration with advanced streaming capabilities.
+
+## Overview
+
+The SIPREC server supports multiple speech-to-text providers with both basic and enhanced implementations. Enhanced providers include real-time streaming, speaker diarization, circuit breaker patterns, and advanced error handling.
+
+## Provider Architecture
+
+### Basic vs Enhanced Providers
+
+| Feature | Basic Providers | Enhanced Providers |
+|---------|----------------|-------------------|
+| Streaming Protocol | HTTP API | WebSocket/gRPC |
+| Speaker Diarization | ❌ | ✅ |
+| Circuit Breaker | ❌ | ✅ |
+| Retry Logic | ❌ | ✅ |
+| Connection Management | ❌ | ✅ |
+| Performance Metrics | ❌ | ✅ |
+| Memory Optimization | ❌ | ✅ |
 
 ## Supported Providers
+
+### Google Cloud Speech-to-Text (Enhanced)
+
+**Features:**
+- Real-time gRPC streaming with interim results
+- Advanced speaker diarization with word-level speaker tags
+- Multiple model variants optimized for different use cases
+- Custom vocabulary and phrase hints
+- Multi-language support with automatic detection
+- Word-level timestamps and confidence scores
+- Circuit breaker pattern for service resilience
+- Automatic retry with exponential backoff
+
+**Configuration:**
+```bash
+STT_PROVIDER=google-enhanced
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GOOGLE_PROJECT_ID=your-gcp-project-id
+```
+
+**Enhanced Features:**
+```go
+config := &stt.GoogleConfig{
+    Model:                    "latest_long",     // Best for accuracy
+    LanguageCode:            "en-US",
+    EnableSpeakerDiarization: true,              // Multi-speaker support
+    EnableWordTimeOffsets:    true,              // Word-level timing
+    EnableWordConfidence:     true,              // Per-word confidence
+    InterimResults:           true,              // Real-time streaming
+    UseEnhanced:              true,              // Premium models
+    MaxSpeakerCount:          6,                 // Up to 6 speakers
+    PhraseHints:             []string{"SIPREC", "VoIP"}, // Custom terms
+}
+```
+
+**Available Models:**
+- `latest_long` - Highest accuracy for longer audio segments
+- `latest_short` - Optimized for short audio clips and low latency
+- `command_and_search` - Voice commands and search queries
+- `phone_call` - Optimized for telephony audio (8kHz)
+- `video` - Multi-speaker video content
+- `enhanced` - Premium enhanced models (billing required)
+
+**Best for:**
+- Real-time call transcription
+- Multi-speaker conversations
+- High-accuracy requirements
+- Production environments requiring reliability
+
+### Deepgram (Enhanced)
+
+**Features:**
+- WebSocket streaming with real-time transcription
+- Advanced speaker diarization and speaker switching
+- Voice activity detection and automatic endpointing
+- Custom vocabulary and keyword boosting
+- PII redaction and data privacy features
+- Circuit breaker and failover to HTTP API
+- Memory-efficient buffer pooling
+
+**Configuration:**
+```bash
+STT_PROVIDER=deepgram-enhanced
+DEEPGRAM_API_KEY=your-api-key
+```
+
+**Enhanced Features:**
+```go
+config := &stt.DeepgramConfig{
+    Model:           "nova-2",                   // Latest model
+    Language:        "en",
+    Diarize:         true,                       // Speaker identification
+    SmartFormat:     true,                       // Intelligent formatting
+    InterimResults:  true,                       // Real-time results
+    VAD:             true,                       // Voice activity detection
+    Endpointing:     true,                       // Automatic segmentation
+    Confidence:      true,                       // Confidence scores
+    Timestamps:      true,                       // Word timestamps
+    Keywords:        []string{"SIPREC", "VoIP"}, // Custom keywords
+    ProfanityFilter: false,                      // Content filtering
+    Redact:          []string{"pii"},            // PII redaction
+}
+```
+
+**Available Models:**
+- `nova-2` - Latest and most accurate model
+- `nova` - Previous generation nova model
+- `enhanced` - Enhanced accuracy model
+- `base` - Standard accuracy model
+- `general` - General purpose model
+
+**Best for:**
+- Real-time voice applications
+- Privacy-sensitive environments (PII redaction)
+- Cost-effective high-accuracy transcription
+- Applications requiring low latency
 
 ### OpenAI Whisper
 
 **Features:**
-- High accuracy across languages
+- State-of-the-art accuracy across 99 languages
 - Automatic language detection
-- Punctuation and formatting
-- Speaker diarization (beta)
+- Robust noise handling
+- Punctuation and capitalization
+- Local or API-based processing
 
 **Configuration:**
 ```bash
 STT_PROVIDER=openai
 OPENAI_API_KEY=sk-your-api-key
 OPENAI_MODEL=whisper-1
-OPENAI_LANGUAGE=en  # Optional
+OPENAI_LANGUAGE=en  # Optional, auto-detected if not specified
 ```
 
 **Best for:**
-- General purpose transcription
-- Multi-language support
-- High accuracy requirements
-
-### Google Cloud Speech-to-Text
-
-**Features:**
-- Real-time streaming
-- Custom vocabulary
-- Multiple model variants
-- Profanity filtering
-
-**Configuration:**
-```bash
-STT_PROVIDER=google
-GOOGLE_CREDENTIALS_PATH=/path/to/credentials.json
-GOOGLE_LANGUAGE_CODE=en-US
-GOOGLE_MODEL=latest_long
-```
-
-**Models:**
-- `latest_long` - Best for long audio
-- `latest_short` - Optimized for short audio
-- `phone_call` - Optimized for telephony
-- `video` - Multiple speaker scenarios
-
-**Best for:**
-- Real-time transcription
-- Phone call audio
-- Custom vocabulary needs
+- Multi-language environments
+- Noisy audio conditions
+- Offline processing requirements
+- High accuracy needs
 
 ### Amazon Transcribe
 
 **Features:**
+- Real-time streaming
 - Custom vocabulary
-- Speaker identification
+- Automatic language identification
 - Channel identification
-- Medical/Call center models
+- Content redaction
 
 **Configuration:**
 ```bash
-STT_PROVIDER=aws
-AWS_REGION=us-east-1
+STT_PROVIDER=amazon
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
-AWS_LANGUAGE_CODE=en-US
+AWS_REGION=us-east-1
+TRANSCRIBE_LANGUAGE_CODE=en-US
 ```
 
 **Best for:**
 - AWS ecosystem integration
-- Call center applications
-- Medical transcription
+- Streaming applications
+- Custom vocabulary requirements
 
 ### Azure Speech Services
 
 **Features:**
-- Real-time and batch
-- Custom models
-- Phrase lists
-- Profanity masking
+- Real-time speech recognition
+- Custom speech models
+- Pronunciation assessment
+- Intent recognition
+- Translation capabilities
 
 **Configuration:**
 ```bash
 STT_PROVIDER=azure
-AZURE_SPEECH_KEY=your-key
+AZURE_SPEECH_KEY=your-speech-key
 AZURE_SPEECH_REGION=eastus
 AZURE_LANGUAGE=en-US
 ```
 
 **Best for:**
-- Microsoft ecosystem
+- Microsoft ecosystem integration
 - Custom model training
-- Enterprise deployments
+- Multi-modal AI applications
 
-### Deepgram
+## Provider Manager
 
-**Features:**
-- Low latency streaming
-- Diarization
-- Sentiment analysis
-- Topic detection
+### Configuration
 
-**Configuration:**
-```bash
-STT_PROVIDER=deepgram
-DEEPGRAM_API_KEY=your-api-key
-DEEPGRAM_MODEL=general
-DEEPGRAM_LANGUAGE=en
-```
-
-**Models:**
-- `general` - General purpose
-- `phone_call` - Optimized for calls
-- `meeting` - Meeting transcription
-- `voicemail` - Voicemail optimization
-
-**Best for:**
-- Ultra-low latency
-- Real-time applications
-- Advanced analytics
-
-## Provider Selection Guide
-
-### Accuracy Comparison
-
-| Provider | General | Phone | Medical | Languages |
-|----------|---------|-------|---------|-----------|
-| OpenAI   | ★★★★★   | ★★★★  | ★★★★    | ★★★★★     |
-| Google   | ★★★★☆   | ★★★★★ | ★★★☆    | ★★★★☆     |
-| AWS      | ★★★★☆   | ★★★★★ | ★★★★★   | ★★★☆☆     |
-| Azure    | ★★★★☆   | ★★★★☆ | ★★★★    | ★★★★☆     |
-| Deepgram | ★★★★☆   | ★★★★☆ | ★★★☆    | ★★★☆☆     |
-
-### Latency Comparison
-
-| Provider | Streaming | Batch | Start Time |
-|----------|-----------|-------|------------|
-| OpenAI   | ✗         | ★★★☆  | ~2s        |
-| Google   | ★★★★★     | ★★★★  | <500ms     |
-| AWS      | ★★★★☆     | ★★★★  | ~1s        |
-| Azure    | ★★★★☆     | ★★★★  | ~1s        |
-| Deepgram | ★★★★★     | ★★★★★ | <300ms     |
-
-### Cost Comparison (per minute)
-
-| Provider | Standard | Premium | Volume Discount |
-|----------|----------|---------|-----------------|
-| OpenAI   | $0.006   | N/A     | No              |
-| Google   | $0.004   | $0.009  | Yes             |
-| AWS      | $0.004   | $0.005  | Yes             |
-| Azure    | $0.004   | $0.008  | Yes             |
-| Deepgram | $0.0035  | $0.008  | Yes             |
-
-## Implementation Details
-
-### Provider Interface
-
-All providers implement a common interface:
+The provider manager allows dynamic switching between providers and load balancing:
 
 ```go
-type STTProvider interface {
-    StartTranscription(ctx context.Context, config TranscriptionConfig) error
-    ProcessAudio(audio []byte) error
-    GetTranscript() (*Transcript, error)
-    Stop() error
-}
+manager := stt.NewProviderManager(logger, "google-enhanced")
+
+// Register multiple providers
+googleProvider := stt.NewGoogleProviderEnhanced(logger)
+deepgramProvider := stt.NewDeepgramProviderEnhanced(logger)
+
+manager.RegisterProvider(googleProvider)
+manager.RegisterProvider(deepgramProvider)
+
+// Use specific provider
+err := manager.StreamToProvider(ctx, "google-enhanced", audioStream, callUUID)
 ```
 
-### Audio Format Requirements
-
-All providers expect:
-- Format: PCM
-- Encoding: 16-bit signed
-- Sample Rate: 8kHz or 16kHz
-- Channels: Mono
-
-The server automatically converts incoming audio to the required format.
-
-### Error Handling
-
-Providers implement automatic retry with exponential backoff:
+### Failover Configuration
 
 ```go
-retryConfig := RetryConfig{
-    MaxRetries:     3,
-    InitialBackoff: 100 * time.Millisecond,
-    MaxBackoff:     5 * time.Second,
-    Multiplier:     2.0,
+// Primary provider with fallback
+config := ProviderConfig{
+    Primary:   "google-enhanced",
+    Fallback:  []string{"deepgram-enhanced", "openai"},
+    Timeout:   30 * time.Second,
+    RetryCount: 3,
 }
 ```
 
-### Failover Support
+## Performance Optimization
 
-Configure multiple providers for automatic failover:
+### Memory Efficiency
 
-```bash
-STT_PROVIDER=openai
-STT_FALLBACK_PROVIDER=google
-GOOGLE_CREDENTIALS_PATH=/path/to/credentials.json
+Enhanced providers implement memory optimization features:
+
+- **Buffer Pooling**: Reuse audio buffers to reduce garbage collection
+- **Connection Pooling**: Efficient connection reuse for HTTP clients
+- **Resource Cleanup**: Proper goroutine and channel cleanup
+
+### CPU Efficiency
+
+- **Circuit Breaker**: Avoid wasted CPU on failing services
+- **Connection Management**: Persistent connections with keep-alive
+- **Batch Processing**: Efficient audio chunk processing
+
+### Thread Safety
+
+- **Mutex Protection**: All shared state properly synchronized
+- **Atomic Operations**: Lock-free counters and metrics
+- **Goroutine Management**: Proper cancellation and cleanup
+
+## Monitoring and Metrics
+
+### Provider Metrics
+
+```go
+metrics := provider.GetMetrics()
+fmt.Printf("Total Requests: %d\n", metrics.TotalRequests)
+fmt.Printf("Success Rate: %.2f%%\n", 
+    float64(metrics.SuccessfulRequests)/float64(metrics.TotalRequests)*100)
+fmt.Printf("Average Latency: %v\n", metrics.AverageLatency)
+fmt.Printf("Active Connections: %d\n", metrics.ActiveConnections)
 ```
 
-## Advanced Features
+### Health Monitoring
 
-### Custom Vocabulary
+```go
+// Check provider health
+health := provider.HealthCheck()
+if !health.Healthy {
+    log.Printf("Provider unhealthy: %s", health.Error)
+}
 
-Supported by Google, AWS, and Azure:
-
-```json
-{
-  "phrases": [
-    "SIPREC",
-    "RTP",
-    "SIP"
-  ],
-  "boost": 20
+// Monitor circuit breaker state
+if !provider.CircuitBreaker.CanExecute() {
+    log.Println("Circuit breaker is open")
 }
 ```
 
-### Speaker Diarization
+## Error Handling
 
-Enable speaker separation:
+### Circuit Breaker Pattern
 
-```bash
-# Google
-GOOGLE_ENABLE_DIARIZATION=true
-GOOGLE_MAX_SPEAKERS=4
+Enhanced providers implement circuit breaker pattern for resilience:
 
-# AWS
-AWS_ENABLE_SPEAKER_IDENTIFICATION=true
-AWS_MAX_SPEAKERS=4
+- **Closed State**: Normal operation
+- **Open State**: Service failure detected, requests blocked
+- **Half-Open State**: Testing service recovery
+
+### Retry Logic
+
+Configurable retry policies with exponential backoff:
+
+```go
+retryConfig := &stt.RetryConfig{
+    MaxRetries:      5,
+    InitialDelay:    100 * time.Millisecond,
+    MaxDelay:        5 * time.Second,
+    BackoffFactor:   2.0,
+    RetryableErrors: []string{"unavailable", "timeout", "rate_limit"},
+}
 ```
 
-### Language Detection
+### Graceful Degradation
 
-Automatic language detection:
-
-```bash
-# OpenAI
-OPENAI_LANGUAGE=auto
-
-# Google
-GOOGLE_LANGUAGE_CODE=auto
-GOOGLE_ALTERNATIVE_LANGUAGES=es,fr,de
-```
-
-## Monitoring
-
-### Metrics
-
-Each provider exposes metrics:
-
-- `stt_transcription_duration` - Processing time
-- `stt_transcription_errors` - Error count
-- `stt_transcription_cost` - Estimated cost
-- `stt_audio_processed_bytes` - Audio volume
-
-### Logging
-
-Detailed logging for debugging:
-
-```
-INFO: Starting transcription provider=openai session=abc123
-DEBUG: Audio chunk received size=8192 session=abc123
-INFO: Transcript received words=42 confidence=0.95 session=abc123
-ERROR: Provider error provider=openai error="rate limit exceeded"
-INFO: Failing over to provider=google session=abc123
-```
+- Automatic failover between providers
+- Quality-based provider selection
+- Fallback to simpler processing modes
 
 ## Best Practices
 
-1. **Provider Selection**
-   - Consider accuracy requirements
-   - Evaluate latency constraints
-   - Calculate cost projections
-   - Test with your audio
+### Provider Selection
 
-2. **Configuration**
-   - Use appropriate models
-   - Configure language correctly
-   - Enable relevant features
-   - Set reasonable timeouts
+1. **Google Enhanced**: Best for production environments requiring high accuracy and real-time processing
+2. **Deepgram Enhanced**: Optimal for cost-effective real-time transcription with advanced features
+3. **OpenAI Whisper**: Ideal for multi-language support and offline processing
+4. **Amazon Transcribe**: Suitable for AWS-integrated environments
+5. **Azure Speech**: Best for Microsoft ecosystem integration
 
-3. **Error Handling**
-   - Implement failover
-   - Monitor error rates
-   - Log detailed errors
-   - Alert on failures
+### Configuration Guidelines
 
-4. **Optimization**
-   - Use VAD to reduce costs
-   - Batch when possible
-   - Cache results
-   - Monitor usage
+1. **Authentication**: Use environment variables for API keys
+2. **Timeouts**: Configure appropriate timeouts for your use case
+3. **Languages**: Specify language codes for better accuracy
+4. **Models**: Choose models based on audio characteristics
+5. **Features**: Enable only required features to optimize performance
 
-## Testing Providers
+### Production Deployment
 
-Test different providers:
+1. **Monitoring**: Implement comprehensive metrics and alerting
+2. **Scaling**: Use horizontal scaling for high-volume deployments
+3. **Caching**: Implement result caching for duplicate content
+4. **Backup**: Configure multiple providers for redundancy
+5. **Testing**: Perform load testing with realistic audio data
 
-```bash
-# Test with sample audio
-./test_stt_provider.sh -provider openai -audio sample.wav
+## Migration Guide
 
-# Compare providers
-./compare_providers.sh -audio sample.wav
+### From Basic to Enhanced Providers
 
-# Benchmark latency
-./benchmark_stt.sh -provider all -iterations 100
+1. **Update Configuration**: Change provider name to enhanced version
+2. **Add Features**: Configure enhanced features as needed
+3. **Update Callbacks**: Handle additional metadata fields
+4. **Test Performance**: Validate improved performance and reliability
+
+### Example Migration
+
+```go
+// Before: Basic Google provider
+provider := stt.NewGoogleProvider(logger, transcriptionSvc)
+
+// After: Enhanced Google provider
+provider := stt.NewGoogleProviderEnhanced(logger)
+config := stt.DefaultGoogleConfig()
+config.EnableSpeakerDiarization = true
+config.UseEnhanced = true
+provider = stt.NewGoogleProviderEnhancedWithConfig(logger, config)
 ```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Authentication Failures**: Verify API keys and credentials
+2. **Network Timeouts**: Check connectivity and firewall rules
+3. **Poor Accuracy**: Verify audio quality and language settings
+4. **Rate Limiting**: Implement proper rate limiting and backoff
+5. **Memory Issues**: Monitor memory usage and connection pooling
+
+### Debug Mode
+
+Enable debug logging for troubleshooting:
+
+```go
+logger.SetLevel(logrus.DebugLevel)
+provider := stt.NewGoogleProviderEnhanced(logger)
+```
+
+### Performance Monitoring
+
+Monitor key metrics for performance optimization:
+
+- Request latency and throughput
+- Error rates and retry counts
+- Memory usage and connection counts
+- Audio quality metrics
+
+For detailed provider-specific documentation, see:
+- [Deepgram Enhanced Guide](DEEPGRAM_ENHANCED.md)
+- [Google Enhanced Guide](GOOGLE_ENHANCED.md)

@@ -16,6 +16,9 @@ type GoogleProvider struct {
 	logger           *logrus.Logger
 	client           *speech.Client
 	transcriptionSvc *TranscriptionService
+
+	// Callback function for transcription results
+	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
 }
 
 // NewGoogleProvider creates a new Google Speech-to-Text provider
@@ -146,11 +149,39 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 								"final":         true,
 							}).Info("Received final transcription")
 
-							// Create metadata
+							// Create enhanced metadata
 							metadata := map[string]interface{}{
-								"provider":   p.Name(),
-								"confidence": alt.Confidence,
-								"word_count": len(strings.Fields(transcription)),
+								"provider":        p.Name(),
+								"confidence":      alt.Confidence,
+								"word_count":      len(strings.Fields(transcription)),
+								"language_code":   result.LanguageCode,
+								"result_end_time": result.ResultEndTime,
+								// "speaker_tag":      result.SpeakerTag, // Not available in basic result
+							}
+
+							// Add word-level information if available
+							if len(alt.Words) > 0 {
+								words := make([]map[string]interface{}, len(alt.Words))
+								for i, word := range alt.Words {
+									wordInfo := map[string]interface{}{
+										"word":       word.Word,
+										"confidence": word.Confidence,
+										// "speaker_tag": word.SpeakerTag, // Not available in basic word info
+									}
+									if word.StartTime != nil {
+										wordInfo["start_time"] = word.StartTime.AsDuration()
+									}
+									if word.EndTime != nil {
+										wordInfo["end_time"] = word.EndTime.AsDuration()
+									}
+									words[i] = wordInfo
+								}
+								metadata["words"] = words
+							}
+
+							// Call callback if available
+							if p.callback != nil {
+								p.callback(callUUID, transcription, true, metadata)
 							}
 
 							// Publish to transcription service for real-time streaming
@@ -166,8 +197,16 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 
 							// Create metadata for interim result
 							metadata := map[string]interface{}{
-								"provider": p.Name(),
-								"interim":  true,
+								"provider":      p.Name(),
+								"interim":       true,
+								"confidence":    alt.Confidence,
+								"language_code": result.LanguageCode,
+								// "speaker_tag":   result.SpeakerTag, // Not available in basic result
+							}
+
+							// Call callback for interim result
+							if p.callback != nil {
+								p.callback(callUUID, transcription, false, metadata)
 							}
 
 							// Publish interim results for real-time streaming
@@ -190,4 +229,9 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 	case <-doneChan:
 		return nil
 	}
+}
+
+// SetCallback sets the callback function for transcription results
+func (p *GoogleProvider) SetCallback(callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})) {
+	p.callback = callback
 }

@@ -62,8 +62,8 @@ var (
 	wsHandler        *http_server.WebSocketHandler
 
 	// Encryption components
-	encryptionManager   encryption.EncryptionManager
-	keyRotationService  *encryption.RotationService
+	encryptionManager  encryption.EncryptionManager
+	keyRotationService *encryption.RotationService
 )
 
 func main() {
@@ -672,14 +672,14 @@ func initializeEncryption() error {
 		EnableMetadataEncryption:  appConfig.Encryption.EnableMetadataEncryption,
 		Algorithm:                 appConfig.Encryption.Algorithm,
 		KeyDerivationMethod:       appConfig.Encryption.KeyDerivationMethod,
-		MasterKeyPath:            appConfig.Encryption.MasterKeyPath,
-		KeyRotationInterval:      appConfig.Encryption.KeyRotationInterval,
-		KeyBackupEnabled:         appConfig.Encryption.KeyBackupEnabled,
-		KeySize:                  appConfig.Encryption.KeySize,
-		NonceSize:                appConfig.Encryption.NonceSize,
-		SaltSize:                 appConfig.Encryption.SaltSize,
-		PBKDF2Iterations:         appConfig.Encryption.PBKDF2Iterations,
-		EncryptionKeyStore:       appConfig.Encryption.EncryptionKeyStore,
+		MasterKeyPath:             appConfig.Encryption.MasterKeyPath,
+		KeyRotationInterval:       appConfig.Encryption.KeyRotationInterval,
+		KeyBackupEnabled:          appConfig.Encryption.KeyBackupEnabled,
+		KeySize:                   appConfig.Encryption.KeySize,
+		NonceSize:                 appConfig.Encryption.NonceSize,
+		SaltSize:                  appConfig.Encryption.SaltSize,
+		PBKDF2Iterations:          appConfig.Encryption.PBKDF2Iterations,
+		EncryptionKeyStore:        appConfig.Encryption.EncryptionKeyStore,
 	}
 
 	// Create key store
@@ -707,7 +707,7 @@ func initializeEncryption() error {
 	// Create key rotation service if encryption is enabled
 	if encConfig.EnableRecordingEncryption || encConfig.EnableMetadataEncryption {
 		keyRotationService = encryption.NewRotationService(encryptionManager, encConfig, logger)
-		
+
 		// Start key rotation service
 		if err := keyRotationService.Start(); err != nil {
 			return fmt.Errorf("failed to start key rotation service: %w", err)
@@ -721,9 +721,9 @@ func initializeEncryption() error {
 	logger.WithFields(logrus.Fields{
 		"recording_encryption": encConfig.EnableRecordingEncryption,
 		"metadata_encryption":  encConfig.EnableMetadataEncryption,
-		"algorithm":           encConfig.Algorithm,
-		"key_store":           encConfig.EncryptionKeyStore,
-		"rotation_enabled":    keyRotationService != nil,
+		"algorithm":            encConfig.Algorithm,
+		"key_store":            encConfig.EncryptionKeyStore,
+		"rotation_enabled":     keyRotationService != nil,
 	}).Info("Encryption subsystem initialized")
 
 	return nil
@@ -733,7 +733,7 @@ func initializeEncryption() error {
 func runEnvironmentCheck() {
 	fmt.Println("SIPREC Server Environment Check")
 	fmt.Println("==============================")
-	
+
 	// Check if config can be loaded
 	cfg, err := config.Load(logger)
 	if err != nil {
@@ -741,7 +741,7 @@ func runEnvironmentCheck() {
 		os.Exit(1)
 	}
 	fmt.Println("✅ Configuration: Valid")
-	
+
 	// Check network ports
 	for _, port := range cfg.Network.Ports {
 		addr := fmt.Sprintf(":%d", port)
@@ -753,7 +753,7 @@ func runEnvironmentCheck() {
 			fmt.Printf("✅ Port %d: Available\n", port)
 		}
 	}
-	
+
 	fmt.Println("Environment check completed")
 }
 

@@ -1,0 +1,290 @@
+# SIPREC Server Alert Rules Configuration
+# This file defines alert rules for monitoring the SIPREC server
+
+alerting:
+  enabled: true
+  evaluation_interval: 30s
+  
+  # Alert Rules
+  rules:
+    # High CPU Usage Alert
+    - name: "HighCPUUsage"
+      description: "CPU usage is above 80%"
+      query: "siprec_system_cpu_usage_percent"
+      condition: "gt"
+      threshold: 80.0
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-alerts", "pagerduty-critical"]
+      enabled: true
+      labels:
+        component: "system"
+        type: "resource"
+      annotations:
+        summary: "High CPU usage detected"
+        description: "CPU usage has been above 80% for more than 5 minutes"
+        runbook_url: "https://docs.example.com/runbooks/high-cpu"
+
+    # Critical CPU Usage Alert
+    - name: "CriticalCPUUsage"
+      description: "CPU usage is above 95%"
+      query: "siprec_system_cpu_usage_percent"
+      condition: "gt"
+      threshold: 95.0
+      duration: "2m"
+      severity: "critical"
+      channels: ["slack-alerts", "pagerduty-critical", "email-oncall"]
+      enabled: true
+      labels:
+        component: "system"
+        type: "resource"
+      annotations:
+        summary: "Critical CPU usage detected"
+        description: "CPU usage has been above 95% for more than 2 minutes"
+
+    # High Memory Usage Alert
+    - name: "HighMemoryUsage"
+      description: "Memory usage is above 1GB"
+      query: "siprec_system_memory_usage_bytes"
+      condition: "gt"
+      threshold: 1073741824  # 1GB in bytes
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-alerts"]
+      enabled: true
+      labels:
+        component: "system"
+        type: "resource"
+
+    # Too Many Active Sessions
+    - name: "HighSessionLoad"
+      description: "Too many active sessions"
+      query: "siprec_sip_sessions_active"
+      condition: "gt"
+      threshold: 100.0
+      duration: "10m"
+      severity: "warning"
+      channels: ["slack-alerts", "pagerduty-critical"]
+      enabled: true
+      labels:
+        component: "sip"
+        type: "capacity"
+
+    # Critical Session Load
+    - name: "CriticalSessionLoad"
+      description: "Critical number of active sessions"
+      query: "siprec_sip_sessions_active"
+      condition: "gt"
+      threshold: 500.0
+      duration: "5m"
+      severity: "critical"
+      channels: ["slack-alerts", "pagerduty-critical", "email-oncall"]
+      enabled: true
+      labels:
+        component: "sip"
+        type: "capacity"
+
+    # High Session Failure Rate
+    - name: "HighSessionFailureRate"
+      description: "Session failure rate is too high"
+      query: "rate(siprec_session_failures_total[5m])"
+      condition: "gt"
+      threshold: 0.1  # 10% failure rate
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-alerts", "pagerduty-critical"]
+      enabled: true
+      labels:
+        component: "sip"
+        type: "reliability"
+
+    # High Recording Error Rate
+    - name: "HighRecordingErrorRate"
+      description: "Recording error rate is too high"
+      query: "rate(siprec_recording_errors_total[5m])"
+      condition: "gt"
+      threshold: 0.05  # 5% error rate
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-alerts"]
+      enabled: true
+      labels:
+        component: "recording"
+        type: "reliability"
+
+    # Storage Usage Warning
+    - name: "HighStorageUsage"
+      description: "Recording storage usage is high"
+      query: "siprec_recording_storage_usage_bytes"
+      condition: "gt"
+      threshold: 107374182400  # 100GB in bytes
+      duration: "10m"
+      severity: "warning"
+      channels: ["slack-alerts", "email-oncall"]
+      enabled: true
+      labels:
+        component: "storage"
+        type: "capacity"
+
+    # Critical Storage Usage
+    - name: "CriticalStorageUsage"
+      description: "Recording storage usage is critical"
+      query: "siprec_recording_storage_usage_bytes"
+      condition: "gt"
+      threshold: 161061273600  # 150GB in bytes
+      duration: "5m"
+      severity: "critical"
+      channels: ["slack-alerts", "pagerduty-critical", "email-oncall"]
+      enabled: true
+      labels:
+        component: "storage"
+        type: "capacity"
+
+    # Authentication Failure Rate
+    - name: "HighAuthFailureRate"
+      description: "Authentication failure rate is too high"
+      query: "rate(siprec_authentication_failures_total[5m])"
+      condition: "gt"
+      threshold: 0.2  # 20% failure rate
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-security", "email-security"]
+      enabled: true
+      labels:
+        component: "security"
+        type: "authentication"
+
+    # Database Connection Issues
+    - name: "LowDatabaseConnections"
+      description: "Database connection count is low"
+      query: "siprec_database_connections"
+      condition: "lt"
+      threshold: 5.0
+      duration: "2m"
+      severity: "warning"
+      channels: ["slack-alerts", "pagerduty-critical"]
+      enabled: true
+      labels:
+        component: "database"
+        type: "connectivity"
+
+    # Database Error Rate
+    - name: "HighDatabaseErrorRate"
+      description: "Database error rate is too high"
+      query: "rate(siprec_database_query_errors_total[5m])"
+      condition: "gt"
+      threshold: 0.05  # 5% error rate
+      duration: "5m"
+      severity: "warning"
+      channels: ["slack-alerts", "pagerduty-critical"]
+      enabled: true
+      labels:
+        component: "database"
+        type: "reliability"
+
+    # Redis Cluster Health
+    - name: "RedisClusterNodeDown"
+      description: "Redis cluster node is down"
+      query: "siprec_redis_cluster_nodes"
+      condition: "lt"
+      threshold: 3.0
+      duration: "1m"
+      severity: "critical"
+      channels: ["slack-alerts", "pagerduty-critical", "email-oncall"]
+      enabled: true
+      labels:
+        component: "redis"
+        type: "availability"
+
+    # Service Down Alert
+    - name: "ServiceDown"
+      description: "SIPREC service is down"
+      query: "up{job=\"siprec\"}"
+      condition: "eq"
+      threshold: 0.0
+      duration: "1m"
+      severity: "critical"
+      channels: ["slack-alerts", "pagerduty-critical", "email-oncall"]
+      enabled: true
+      labels:
+        component: "service"
+        type: "availability"
+
+    # Disk Space Warning
+    - name: "LowDiskSpace"
+      description: "Disk space is running low"
+      query: "siprec_system_disk_usage_bytes{type=\"free\"}"
+      condition: "lt"
+      threshold: 10737418240  # 10GB free space
+      duration: "10m"
+      severity: "warning"
+      channels: ["slack-alerts", "email-oncall"]
+      enabled: true
+      labels:
+        component: "system"
+        type: "storage"
+
+  # Notification Channels
+  channels:
+    # Slack Channel for General Alerts
+    - name: "slack-alerts"
+      type: "slack"
+      enabled: true
+      settings:
+        webhook_url: "${SLACK_WEBHOOK_URL}"
+        channel: "#siprec-alerts"
+        username: "SIPREC Monitor"
+
+    # Slack Channel for Security Alerts
+    - name: "slack-security"
+      type: "slack"
+      enabled: true
+      settings:
+        webhook_url: "${SLACK_SECURITY_WEBHOOK_URL}"
+        channel: "#security-alerts"
+        username: "SIPREC Security"
+
+    # PagerDuty for Critical Alerts
+    - name: "pagerduty-critical"
+      type: "pagerduty"
+      enabled: true
+      settings:
+        integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+
+    # Email for On-Call Team
+    - name: "email-oncall"
+      type: "email"
+      enabled: true
+      settings:
+        smtp_host: "${SMTP_HOST}"
+        smtp_port: 587
+        username: "${SMTP_USERNAME}"
+        password: "${SMTP_PASSWORD}"
+        from: "siprec-alerts@example.com"
+        to:
+          - "oncall@example.com"
+          - "devops@example.com"
+
+    # Email for Security Team
+    - name: "email-security"
+      type: "email"
+      enabled: true
+      settings:
+        smtp_host: "${SMTP_HOST}"
+        smtp_port: 587
+        username: "${SMTP_USERNAME}"
+        password: "${SMTP_PASSWORD}"
+        from: "siprec-security@example.com"
+        to:
+          - "security@example.com"
+
+    # Generic Webhook
+    - name: "webhook-external"
+      type: "webhook"
+      enabled: false
+      settings:
+        url: "${EXTERNAL_WEBHOOK_URL}"
+        method: "POST"
+        headers:
+          Authorization: "Bearer ${WEBHOOK_TOKEN}"
+          Content-Type: "application/json"

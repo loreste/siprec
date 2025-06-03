@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Use Config from config.go instead of defining it here

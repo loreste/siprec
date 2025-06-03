@@ -26,16 +26,16 @@ type AmazonTranscribeProvider struct {
 
 // AmazonTranscribeConfig holds configuration for Amazon Transcribe
 type AmazonTranscribeConfig struct {
-	Region                string
-	LanguageCode          string
-	SampleRate            int32
-	MediaEncoding         types.MediaEncoding
-	VocabularyName        string
-	VocabularyFilterName  string
-	EnableChannelID       bool
-	EnablePartialResults  bool
-	ContentRedactionType  types.ContentRedactionType
-	LanguageModelName     string
+	Region               string
+	LanguageCode         string
+	SampleRate           int32
+	MediaEncoding        types.MediaEncoding
+	VocabularyName       string
+	VocabularyFilterName string
+	EnableChannelID      bool
+	EnablePartialResults bool
+	ContentRedactionType types.ContentRedactionType
+	LanguageModelName    string
 }
 
 // DefaultAmazonTranscribeConfig returns default configuration for Amazon Transcribe
@@ -100,10 +100,10 @@ func (p *AmazonTranscribeProvider) Initialize() error {
 	p.client = transcribestreaming.NewFromConfig(cfg)
 
 	p.logger.WithFields(logrus.Fields{
-		"region":       region,
-		"sample_rate":  p.config.SampleRate,
-		"language":     p.config.LanguageCode,
-		"encoding":     p.config.MediaEncoding,
+		"region":      region,
+		"sample_rate": p.config.SampleRate,
+		"language":    p.config.LanguageCode,
+		"encoding":    p.config.MediaEncoding,
 	}).Info("Amazon Transcribe provider initialized successfully")
 
 	return nil
@@ -299,8 +299,8 @@ func (p *AmazonTranscribeProvider) processTranscriptEvent(event types.Transcript
 				items := make([]map[string]interface{}, 0, len(alternative.Items))
 				for _, item := range alternative.Items {
 					itemData := map[string]interface{}{
-						"start_time":               item.StartTime,
-						"end_time":                 item.EndTime,
+						"start_time":              item.StartTime,
+						"end_time":                item.EndTime,
 						"vocabulary_filter_match": item.VocabularyFilterMatch,
 					}
 

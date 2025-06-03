@@ -50,12 +50,12 @@ type AzureRecognitionResponse struct {
 	Offset            int64  `json:"Offset"`
 	Duration          int64  `json:"Duration"`
 	NBest             []struct {
-		Confidence     float64 `json:"Confidence"`
-		Lexical        string  `json:"Lexical"`
-		ITN            string  `json:"ITN"`
-		MaskedITN      string  `json:"MaskedITN"`
-		Display        string  `json:"Display"`
-		Words          []struct {
+		Confidence float64 `json:"Confidence"`
+		Lexical    string  `json:"Lexical"`
+		ITN        string  `json:"ITN"`
+		MaskedITN  string  `json:"MaskedITN"`
+		Display    string  `json:"Display"`
+		Words      []struct {
 			Word       string  `json:"Word"`
 			Offset     int64   `json:"Offset"`
 			Duration   int64   `json:"Duration"`
@@ -164,7 +164,7 @@ func (p *AzureSpeechProvider) Initialize() error {
 // refreshAccessToken obtains a new access token from Azure
 func (p *AzureSpeechProvider) refreshAccessToken() error {
 	authURL := fmt.Sprintf("https://%s.api.cognitive.microsoft.com/sts/v1.0/issueToken", p.config.Region)
-	
+
 	req, err := http.NewRequest("POST", authURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create auth request: %w", err)
@@ -364,8 +364,8 @@ func (p *AzureSpeechProvider) processRecognitionResponse(response AzureRecogniti
 			words := make([]map[string]interface{}, 0, len(best.Words))
 			for _, word := range best.Words {
 				wordData := map[string]interface{}{
-					"word":       word.Word,
-					"offset_ms":  word.Offset / 10000,
+					"word":        word.Word,
+					"offset_ms":   word.Offset / 10000,
 					"duration_ms": word.Duration / 10000,
 				}
 				if word.Confidence > 0 {
