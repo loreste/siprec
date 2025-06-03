@@ -18,10 +18,11 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🔗 SIP Integration** - Custom SIP server implementation optimized for TCP transport and large metadata
 
 ### Transcription & Processing
-- **🎙️ Real-time Transcription** - Multi-provider STT integration (Google, Deepgram, OpenAI, Azure)
+- **🎙️ Real-time Transcription** - Enhanced multi-provider STT with streaming capabilities (Google, Deepgram, OpenAI, Azure)
+- **👥 Speaker Diarization** - Multi-speaker identification and word-level speaker tagging
 - **🎵 Audio Processing** - Advanced VAD, noise reduction, and multi-channel mixing
-- **🌐 WebSocket Streaming** - Real-time transcription delivery with low latency
-- **📊 Quality Metrics** - Audio quality monitoring and adaptive processing
+- **🌐 WebSocket Streaming** - Real-time transcription delivery with circuit breaker patterns
+- **📊 Quality Metrics** - Audio quality monitoring and adaptive processing with performance optimization
 
 ### Enterprise Features
 - **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
@@ -117,7 +118,9 @@ RECORDING_MAX_DURATION=4h
 ENABLE_RECORDING_ENCRYPTION=false
 
 # STT Provider
-STT_VENDORS=mock  # or google, deepgram, openai, etc.
+STT_PROVIDERS=google-enhanced  # Enhanced providers: google-enhanced, deepgram-enhanced, openai, azure
+STT_ENABLE_DIARIZATION=true    # Enable speaker diarization
+STT_ENABLE_WORD_TIMESTAMPS=true # Enable word-level timestamps
 
 # Audio Processing
 VAD_ENABLED=true
@@ -133,6 +136,7 @@ Comprehensive documentation is available in the [docs](docs/README.md) directory
 - 📚 [Getting Started Guide](docs/getting-started/QUICK_START.md)
 - 🔧 [Installation Guide](docs/installation/README.md)
 - ⚙️ [Configuration Reference](docs/configuration/README.md)
+- 🎙️ [STT Providers Guide](docs/features/STT_PROVIDERS.md)
 - 🚀 [Production Deployment](docs/operations/PRODUCTION_DEPLOYMENT.md)
 - 🔒 [Security Guide](docs/security/README.md)
 

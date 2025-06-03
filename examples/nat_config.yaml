@@ -1,0 +1,76 @@
+# Example NAT Configuration for SIPREC Server
+# This configuration shows how to enable SIP NAT traversal
+
+# Media Configuration with NAT Support
+media:
+  # RTP port range
+  rtp_port_min: 10000
+  rtp_port_max: 20000
+  enable_srtp: true
+  
+  # Recording directory
+  recording_dir: "/var/lib/siprec/recordings"
+  
+  # NAT Configuration
+  behind_nat: true
+  internal_ip: "192.168.1.100"     # Private IP of the SIPREC server
+  external_ip: "203.0.113.10"      # Public IP (leave empty for auto-detection)
+  
+  # SIP port mapping (optional - defaults to 5060)
+  sip_internal_port: 5060
+  sip_external_port: 5060
+  
+  # Speech-to-text
+  default_vendor: "google"
+
+# Alternative: Explicit NAT Configuration
+# You can also provide explicit NAT configuration instead of using media config
+nat:
+  behind_nat: true
+  internal_ip: "192.168.1.100"
+  external_ip: "203.0.113.10"      # Leave empty for auto-detection via STUN
+  internal_port: 5060
+  external_port: 5060
+  
+  # Header rewriting options
+  rewrite_via: true
+  rewrite_contact: true
+  rewrite_record_route: true
+  
+  # External IP detection
+  auto_detect_external_ip: false   # Set to true if external_ip is empty
+  stun_server: "stun.l.google.com:19302"
+  
+  # Force rewriting even for seemingly correct headers
+  force_rewrite: false
+
+# SIP Handler Configuration
+sip:
+  max_concurrent_calls: 1000
+  
+  # Redundancy settings
+  redundancy_enabled: true
+  session_timeout: "5m"
+  session_check_interval: "30s"
+  redundancy_storage_type: "memory"
+  
+  # Concurrency settings
+  shard_count: 64
+
+# Example scenarios:
+
+# Scenario 1: Auto-detect external IP
+# Set behind_nat: true, provide internal_ip, leave external_ip empty
+# The system will use STUN to detect the external IP
+
+# Scenario 2: Known external IP
+# Set behind_nat: true, provide both internal_ip and external_ip
+# The system will rewrite headers with the provided external IP
+
+# Scenario 3: No NAT
+# Set behind_nat: false or omit NAT configuration entirely
+# No header rewriting will be performed
+
+# Scenario 4: Force rewriting
+# Set force_rewrite: true to rewrite all private IP addresses
+# even if they don't match the configured internal_ip

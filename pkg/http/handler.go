@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
+
+	"github.com/sirupsen/logrus"
 )
 
 // SessionHandler handles HTTP requests related to recording sessions

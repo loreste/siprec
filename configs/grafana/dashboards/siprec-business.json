@@ -1,0 +1,324 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SIPREC Business Metrics",
+    "tags": ["siprec", "business"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Daily Call Volume",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "increase(siprec_sessions_created_total[24h])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 2,
+        "title": "Peak Concurrent Calls",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "siprec_peak_concurrent_calls",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Average Call Duration",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "siprec_average_call_duration_seconds{period=\"daily\"} / 60",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "unit": "minutes",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 4,
+        "title": "Storage Used Today",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "sum(increase(siprec_recording_size_bytes[24h])) / 1024 / 1024 / 1024",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "unit": "GB",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 5,
+        "title": "Call Volume by Hour",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "siprec_call_volume_by_hour",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        },
+        "xBucketSize": "1h",
+        "yBucketSize": "1"
+      },
+      {
+        "id": 6,
+        "title": "Call Success Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_sessions_created_total[5m]) / (rate(siprec_sessions_created_total[5m]) + rate(siprec_session_failures_total[5m])) * 100",
+            "refId": "A",
+            "legendFormat": "Success Rate %"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "max": 100,
+            "min": 90
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Recording Completion Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_recordings_completed_total{status=\"success\"}[5m]) / rate(siprec_recordings_started_total[5m]) * 100",
+            "refId": "A",
+            "legendFormat": "Completion Rate %"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "max": 100,
+            "min": 90
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Call Quality Distribution",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "rate(siprec_call_quality_score_bucket[5m])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 9,
+        "title": "Transport Usage",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "increase(siprec_sessions_created_total[24h])",
+            "refId": "A",
+            "legendFormat": "{{transport}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      },
+      {
+        "id": 10,
+        "title": "Weekly Trends",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "increase(siprec_sessions_created_total[24h])",
+            "refId": "A",
+            "legendFormat": "Daily Sessions"
+          },
+          {
+            "expr": "sum(increase(siprec_recording_size_bytes[24h])) / 1024 / 1024 / 1024",
+            "refId": "B",
+            "legendFormat": "Daily Storage (GB)"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 32
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Sessions"
+          },
+          {
+            "label": "Storage (GB)",
+            "side": "right"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Cost Analysis",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "sum by (transport) (increase(siprec_sessions_created_total[24h]))",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 40
+        },
+        "columns": [
+          {
+            "text": "Transport",
+            "value": "transport"
+          },
+          {
+            "text": "Sessions",
+            "value": "Value"
+          },
+          {
+            "text": "Cost ($)",
+            "value": "calc_cost"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Capacity Planning",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "siprec_active_calls",
+            "refId": "A",
+            "legendFormat": "Current Load"
+          },
+          {
+            "expr": "1000",
+            "refId": "B",
+            "legendFormat": "Capacity Limit"
+          },
+          {
+            "expr": "predict_linear(siprec_active_calls[1h], 3600*24)",
+            "refId": "C",
+            "legendFormat": "24h Prediction"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 40
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Active Calls"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "refresh": "5m",
+    "schemaVersion": 30,
+    "version": 1
+  }
+}

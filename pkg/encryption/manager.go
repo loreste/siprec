@@ -22,11 +22,11 @@ type Manager struct {
 	config   *EncryptionConfig
 	keyStore KeyStore
 	logger   *logrus.Logger
-	
+
 	// Key cache for performance
 	keyCache map[string]*EncryptionKey
 	cacheMu  sync.RWMutex
-	
+
 	// Session encryption info
 	sessionInfo map[string]*EncryptionInfo
 	sessionMu   sync.RWMutex
@@ -183,7 +183,7 @@ func (m *Manager) BackupKeys() error {
 	}
 
 	m.logger.Info("Starting key backup")
-	
+
 	keys, err := m.keyStore.ListKeys()
 	if err != nil {
 		return fmt.Errorf("failed to list keys for backup: %w", err)

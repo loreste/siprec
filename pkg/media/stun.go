@@ -39,13 +39,13 @@ type NATMapping struct {
 
 // NATType constants
 const (
-	NATTypeUnknown           = "unknown"
-	NATTypeOpenInternet      = "open_internet"
-	NATTypeFullCone          = "full_cone"
-	NATTypeRestrictedCone    = "restricted_cone"
-	NATTypePortRestricted    = "port_restricted"
-	NATTypeSymmetric         = "symmetric"
-	NATTypeBlocked           = "blocked"
+	NATTypeUnknown        = "unknown"
+	NATTypeOpenInternet   = "open_internet"
+	NATTypeFullCone       = "full_cone"
+	NATTypeRestrictedCone = "restricted_cone"
+	NATTypePortRestricted = "port_restricted"
+	NATTypeSymmetric      = "symmetric"
+	NATTypeBlocked        = "blocked"
 )
 
 // BasicSTUNDiscovery performs basic STUN discovery to determine external IP
@@ -62,14 +62,14 @@ func BasicSTUNDiscovery(stunServers []string, logger *logrus.Logger) (*NATMappin
 			logger.WithError(err).WithField("stun_server", server).Warn("STUN discovery failed, trying next server")
 			continue
 		}
-		
+
 		logger.WithFields(logrus.Fields{
 			"stun_server":   server,
 			"external_ip":   mapping.ExternalIP,
 			"external_port": mapping.ExternalPort,
 			"nat_type":      mapping.NATType,
 		}).Info("STUN discovery successful")
-		
+
 		return mapping, nil
 	}
 
@@ -105,7 +105,7 @@ func stunDiscoveryFromServer(stunServer string, logger *logrus.Logger) (*NATMapp
 
 	// Create basic STUN binding request
 	stunRequest := createSTUNBindingRequest()
-	
+
 	// Send STUN request
 	_, err = localConn.Write(stunRequest)
 	if err != nil {
@@ -144,29 +144,29 @@ func createSTUNBindingRequest() []byte {
 	// Message Length: 0 (no attributes)
 	// Magic Cookie: 0x2112A442
 	// Transaction ID: 12 random bytes (simplified to zeros for basic implementation)
-	
+
 	stunPacket := make([]byte, 20)
-	
+
 	// Message Type: Binding Request (0x0001)
 	stunPacket[0] = 0x00
 	stunPacket[1] = 0x01
-	
+
 	// Message Length: 0
 	stunPacket[2] = 0x00
 	stunPacket[3] = 0x00
-	
+
 	// Magic Cookie: 0x2112A442
 	stunPacket[4] = 0x21
 	stunPacket[5] = 0x12
 	stunPacket[6] = 0xA4
 	stunPacket[7] = 0x42
-	
+
 	// Transaction ID (12 bytes) - simplified to zeros for basic implementation
 	// In production, this should be random
 	for i := 8; i < 20; i++ {
 		stunPacket[i] = 0x00
 	}
-	
+
 	return stunPacket
 }
 
@@ -189,37 +189,37 @@ func parseSTUNResponse(response []byte) (string, int, error) {
 	// Parse attributes (simplified - look for XOR-MAPPED-ADDRESS)
 	offset := 20
 	msgLength := int(response[2])<<8 | int(response[3])
-	
+
 	for offset < 20+msgLength {
 		if offset+4 > len(response) {
 			break
 		}
-		
+
 		attrType := int(response[offset])<<8 | int(response[offset+1])
 		attrLength := int(response[offset+2])<<8 | int(response[offset+3])
-		
+
 		if attrType == 0x0020 { // XOR-MAPPED-ADDRESS
 			if offset+4+attrLength > len(response) || attrLength < 8 {
 				break
 			}
-			
+
 			// Parse XOR-MAPPED-ADDRESS
 			family := response[offset+5]
 			if family == 0x01 { // IPv4
 				// XOR port with magic cookie high 16 bits
 				port := (int(response[offset+6])<<8 | int(response[offset+7])) ^ 0x2112
-				
+
 				// XOR IP with magic cookie
 				ip := make([]byte, 4)
 				magicCookie := []byte{0x21, 0x12, 0xA4, 0x42}
 				for i := 0; i < 4; i++ {
 					ip[i] = response[offset+8+i] ^ magicCookie[i]
 				}
-				
+
 				return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]), port, nil
 			}
 		}
-		
+
 		offset += 4 + attrLength
 		// Pad to 4-byte boundary
 		for offset%4 != 0 {
@@ -239,12 +239,12 @@ func determineBasicNATType(localIP string, localPort int, externalIP string, ext
 		}
 		return NATTypeUnknown
 	}
-	
+
 	// Behind NAT
 	if localPort == externalPort {
 		return NATTypeFullCone
 	}
-	
+
 	// Different ports - could be Port Restricted or Symmetric
 	// More sophisticated testing would be needed to distinguish
 	return NATTypePortRestricted
@@ -258,7 +258,7 @@ func ValidateNATConfiguration(config *Config, stunServers []string, logger *logr
 	}
 
 	logger.Info("Validating NAT configuration with STUN discovery")
-	
+
 	mapping, err := BasicSTUNDiscovery(stunServers, logger)
 	if err != nil {
 		logger.WithError(err).Warn("STUN discovery failed, cannot validate NAT configuration")

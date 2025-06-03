@@ -6,9 +6,10 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
+
+	"github.com/sirupsen/logrus"
 )
 
 // HealthStatus represents the health status of the service
@@ -29,17 +30,17 @@ type CheckResult struct {
 
 // SystemInfo contains system resource information
 type SystemInfo struct {
-	GoRoutines   int    `json:"goroutines"`
-	MemoryMB     uint64 `json:"memory_mb"`
-	CPUCount     int    `json:"cpu_count"`
-	ActiveCalls  int    `json:"active_calls"`
-	PortsInUse   int    `json:"ports_in_use"`
+	GoRoutines  int    `json:"goroutines"`
+	MemoryMB    uint64 `json:"memory_mb"`
+	CPUCount    int    `json:"cpu_count"`
+	ActiveCalls int    `json:"active_calls"`
+	PortsInUse  int    `json:"ports_in_use"`
 }
 
 // HealthHandler handles health check requests
 func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
-	
+
 	health := HealthStatus{
 		Status:    "healthy",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -51,12 +52,12 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	// Check SIP service
 	if s.sipHandler != nil {
 		health.Checks["sip"] = CheckResult{
-			Status: "healthy",
+			Status:  "healthy",
 			Message: "SIP service is running",
 		}
 	} else {
 		health.Checks["sip"] = CheckResult{
-			Status: "unhealthy",
+			Status:  "unhealthy",
 			Message: "SIP handler not initialized",
 		}
 		health.Status = "unhealthy"
@@ -65,12 +66,12 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	// Check WebSocket service
 	if s.wsHub != nil && s.wsHub.IsRunning() {
 		health.Checks["websocket"] = CheckResult{
-			Status: "healthy",
+			Status:  "healthy",
 			Message: "WebSocket hub is running",
 		}
 	} else {
 		health.Checks["websocket"] = CheckResult{
-			Status: "degraded",
+			Status:  "degraded",
 			Message: "WebSocket hub not running",
 		}
 	}
@@ -80,13 +81,13 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	if sessionMgr != nil {
 		activeSessions := sessionMgr.GetActiveSessionCount()
 		health.Checks["sessions"] = CheckResult{
-			Status: "healthy",
+			Status:  "healthy",
 			Message: "Session storage operational",
 		}
 		health.System.ActiveCalls = activeSessions
 	} else {
 		health.Checks["sessions"] = CheckResult{
-			Status: "unhealthy",
+			Status:  "unhealthy",
 			Message: "Session manager not available",
 		}
 		health.Status = "unhealthy"
@@ -96,13 +97,13 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	availablePorts, totalPorts := media.GetPortManagerStats()
 	if availablePorts > 0 {
 		health.Checks["rtp_ports"] = CheckResult{
-			Status: "healthy",
+			Status:  "healthy",
 			Message: "RTP ports available",
 		}
 		health.System.PortsInUse = totalPorts - availablePorts
 	} else {
 		health.Checks["rtp_ports"] = CheckResult{
-			Status: "unhealthy",
+			Status:  "unhealthy",
 			Message: "No RTP ports available",
 		}
 		health.Status = "degraded"
@@ -114,12 +115,12 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		if amqpClient, ok := s.amqpClient.(interface{ IsConnected() bool }); ok {
 			if amqpClient.IsConnected() {
 				health.Checks["amqp"] = CheckResult{
-					Status: "healthy",
+					Status:  "healthy",
 					Message: "AMQP connected",
 				}
 			} else {
 				health.Checks["amqp"] = CheckResult{
-					Status: "degraded",
+					Status:  "degraded",
 					Message: "AMQP disconnected",
 				}
 			}
@@ -136,10 +137,10 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 	// Log health check if it's detailed
 	if r.URL.Query().Get("detailed") == "true" {
 		s.logger.WithFields(logrus.Fields{
-			"status":     health.Status,
-			"checks":     health.Checks,
-			"system":     health.System,
-			"duration":   time.Since(startTime),
+			"status":   health.Status,
+			"checks":   health.Checks,
+			"system":   health.System,
+			"duration": time.Since(startTime),
 		}).Debug("Health check performed")
 	}
 
@@ -165,16 +166,16 @@ func (s *Server) LivenessHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ReadinessHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if essential services are ready
 	ready := true
-	
+
 	if s.sipHandler == nil {
 		ready = false
 	}
-	
+
 	sessionMgr := siprec.GetGlobalSessionManager()
 	if sessionMgr == nil {
 		ready = false
 	}
-	
+
 	if ready {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ready"))

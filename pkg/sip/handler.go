@@ -3,20 +3,15 @@ package sip
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"mime"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/emiago/sipgo/sip"
-	"github.com/google/uuid"
-	"github.com/pion/sdp/v3"
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
+
+	"github.com/sirupsen/logrus"
 )
 
 type SessionStore interface {
@@ -41,6 +36,9 @@ type Config struct {
 	// Media configuration
 	MediaConfig *media.Config
 
+	// NAT configuration for SIP header rewriting
+	NATConfig *NATConfig
+
 	// Redundancy-related configuration
 	RedundancyEnabled    bool
 	SessionTimeout       time.Duration
@@ -57,7 +55,7 @@ type Config struct {
 
 // Handler for SIP requests - now works with CustomSIPServer
 type Handler struct {
-	Logger *logrus.Logger
+	Logger      *logrus.Logger
 	Config      *Config
 	ActiveCalls *ShardedMap // Sharded map of call UUID to CallData for better concurrency
 
@@ -71,6 +69,9 @@ type Handler struct {
 	monitorCtx       context.Context
 	monitorCancel    context.CancelFunc
 	sessionMonitorWG sync.WaitGroup
+
+	// NAT rewriter for SIP header modification
+	NATRewriter *NATRewriter
 }
 
 // CallData holds information about an active call
@@ -131,12 +132,34 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	// Create a new sharded map for active calls
 	activeCalls := NewShardedMap(shardCount)
 
-	// Create the handler - no longer needs sipgo dependencies
+	// Create the handler
 	handler := &Handler{
 		Logger:      logger,
 		Config:      config,
 		STTCallback: sttCallback,
 		ActiveCalls: activeCalls,
+	}
+
+	// Initialize NAT rewriter if NAT configuration is provided
+	if config.NATConfig != nil {
+		natRewriter, err := NewNATRewriter(config.NATConfig, logger)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to initialize NAT rewriter")
+		}
+		handler.NATRewriter = natRewriter
+		logger.Info("NAT rewriter initialized for SIP header rewriting")
+	} else if config.MediaConfig != nil {
+		// Try to create NAT config from media config
+		natConfig := NewNATConfigFromMediaConfig(config.MediaConfig)
+		if natConfig != nil {
+			natRewriter, err := NewNATRewriter(natConfig, logger)
+			if err != nil {
+				logger.WithError(err).Warn("Failed to initialize NAT rewriter from media config")
+			} else {
+				handler.NATRewriter = natRewriter
+				logger.Info("NAT rewriter initialized from media configuration")
+			}
+		}
 	}
 
 	// Initialize the session store if redundancy is enabled
@@ -162,434 +185,11 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	return handler, nil
 }
 
-// SetupHandlers configures the SIP request handlers - now handled by CustomSIPServer
+// SetupHandlers is a compatibility method - actual handlers are set up by CustomSIPServer
 func (h *Handler) SetupHandlers() {
 	// Handler setup is now done by CustomSIPServer directly
 	// The custom server calls appropriate handler methods based on SIP method
-
-	h.Logger.Info("SIP request handlers configured")
-}
-
-// getTransportFromRequest extracts transport information from a SIP request
-func getTransportFromRequest(req *sip.Request) string {
-	if req == nil {
-		return "unknown"
-	}
-	
-	// Check Via header for transport information
-	if via := req.GetHeader("Via"); via != nil {
-		viaValue := via.Value()
-		if strings.Contains(viaValue, "TCP") {
-			return "TCP"
-		} else if strings.Contains(viaValue, "UDP") {
-			return "UDP"
-		} else if strings.Contains(viaValue, "TLS") {
-			return "TLS"
-		}
-	}
-	
-	// Fallback to source information
-	return "unknown"
-}
-
-// handleInvite handles INVITE requests
-func (h *Handler) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
-	callUUID := req.CallID().String()
-	
-	// Enhanced error handling for TCP connections
-	defer func() {
-		if r := recover(); r != nil {
-			h.Logger.WithFields(logrus.Fields{
-				"call_uuid": callUUID,
-				"error":     r,
-				"transport": getTransportFromRequest(req),
-			}).Error("Recovered from panic in INVITE handler")
-			
-			// Send error response if transaction is still active
-			if tx != nil {
-				resp := sip.NewResponseFromRequest(req, 500, "Internal Server Error", nil)
-				tx.Respond(resp)
-			}
-		}
-	}()
-	
-	logger := h.Logger.WithFields(logrus.Fields{
-		"call_uuid": callUUID,
-		"from":      req.From().String(),
-		"to":        req.To().String(),
-		"source":    req.Source(),
-		"transport": getTransportFromRequest(req),
-	})
-	logger.Info("Received INVITE request")
-
-	// Check if this is a re-INVITE for an existing call
-	callDataValue, exists := h.ActiveCalls.Load(callUUID)
-
-	// Check if this is a session recovery attempt
-	replaces := req.GetHeader("Replaces")
-	hasReplaces := replaces != nil
-
-	if !exists && hasReplaces && h.Config.RedundancyEnabled {
-		// This might be a session recovery attempt
-		replacesValue := replaces.Value()
-		replacesCallID, _, _ := parseReplacesHeader(replacesValue)
-		if replacesCallID != "" {
-			// Try to recover the session
-			logger.WithField("replaces_call_id", replacesCallID).Info("Attempting session recovery")
-			h.recoverSession(req, tx, replacesCallID)
-			return
-		}
-	} else if exists {
-		// Normal re-INVITE for an existing session
-		callData := callDataValue.(*CallData)
-
-		// Update activity timestamp
-		callData.UpdateActivity()
-
-		// Update dialog information if needed
-		if callData.DialogInfo == nil {
-			callData.DialogInfo = extractDialogInfo(req)
-		}
-
-		// Store updated remote address for potential reconnection
-		callData.RemoteAddress = getSourceAddress(req)
-
-		// Check for SIPREC metadata state changes
-		contentType := req.GetHeader("Content-Type")
-		body := req.Body()
-
-		// Handle SIPREC re-INVITE if this is a SIPREC session
-		if callData.RecordingSession != nil && len(body) > 0 && contentType != nil {
-			mediaType, _, err := mime.ParseMediaType(contentType.Value())
-			if err == nil && strings.HasPrefix(mediaType, "multipart/") {
-				// This might be a SIPREC re-INVITE with state changes
-				rsMetadata, err := siprec.ExtractRSMetadataFromRequest(req)
-				if err == nil && rsMetadata != nil {
-					logger.WithFields(logrus.Fields{
-						"current_state":   callData.RecordingSession.RecordingState,
-						"requested_state": rsMetadata.State,
-						"reason":          rsMetadata.Reason,
-					}).Info("Processing SIPREC state change request")
-
-					// Update recording state
-					if rsMetadata.State != "" && rsMetadata.State != callData.RecordingSession.RecordingState {
-						// Apply the state change
-						err := siprec.HandleSiprecStateChange(callData.RecordingSession, rsMetadata.State, rsMetadata.Reason)
-						if err != nil {
-							logger.WithError(err).Warn("Failed to apply SIPREC state change")
-						} else {
-							// Update the forwarder state
-							if rsMetadata.State == "paused" || rsMetadata.State == "inactive" || rsMetadata.State == "terminated" {
-								callData.Forwarder.RecordingPaused = true
-							} else if rsMetadata.State == "active" {
-								callData.Forwarder.RecordingPaused = false
-							}
-
-							// If terminating, schedule call cleanup
-							if rsMetadata.State == "terminated" {
-								defer func() {
-									time.AfterFunc(1*time.Second, func() {
-										// Close the forwarder
-										close(callData.Forwarder.StopChan)
-
-										// Remove from active calls
-										h.ActiveCalls.Delete(callUUID)
-
-										// Remove from session store if redundancy is enabled
-										if h.Config.RedundancyEnabled {
-											h.SessionStore.Delete(callUUID)
-										}
-
-										logger.Info("Terminated SIPREC session cleaned up")
-									})
-								}()
-							}
-						}
-					}
-
-					// Update participant information if provided
-					if len(rsMetadata.Participants) > 0 {
-						siprec.UpdateRecordingSession(callData.RecordingSession, rsMetadata)
-						logger.Info("Updated recording session participants")
-					}
-				}
-			}
-		} else if len(body) > 0 && contentType != nil && contentType.Value() == "application/sdp" {
-			// Process standard SDP re-INVITE
-			logger.Debug("Processing SDP update in re-INVITE")
-		}
-
-		// Update the session store
-		if h.Config.RedundancyEnabled {
-			h.SessionStore.Save(callUUID, callData)
-		}
-
-		// Respond with 200 OK
-		resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-		tx.Respond(resp)
-		logger.Info("Processed re-INVITE for existing session")
-	} else {
-		// New call - check if we exceed concurrent call limit
-		callCount := h.GetActiveCallCount()
-		if h.Config.MaxConcurrentCalls > 0 && callCount >= h.Config.MaxConcurrentCalls {
-			logger.WithField("current_calls", callCount).Error("Maximum concurrent calls limit reached")
-			resp := sip.NewResponseFromRequest(req, 503, "Service Unavailable - Maximum calls reached", nil)
-			tx.Respond(resp)
-			return
-		}
-
-		// Process the new call
-		h.processNewInvite(req, tx, callUUID)
-	}
-}
-
-// processNewInvite handles new INVITE requests
-func (h *Handler) processNewInvite(req *sip.Request, tx sip.ServerTransaction, callUUID string) {
-	logger := h.Logger.WithField("call_uuid", callUUID)
-
-	// Perform validation
-	if err := h.validateSIPRequest(req); err != nil {
-		logger.WithError(err).Error("Invalid INVITE request")
-		resp := sip.NewResponseFromRequest(req, 400, "Bad Request - "+err.Error(), nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Determine if this is a SIPREC request
-	issiprec, rsMetadata := h.isSIPREC(req)
-
-	// Extract SDP information
-	logger.WithFields(logrus.Fields{
-		"content_type": req.GetHeader("Content-Type").Value(),
-		"body_length":  len(req.Body()),
-		"is_siprec":    issiprec,
-	}).Debug("Processing INVITE body")
-	
-	sdp, err := extractSDP(req)
-	if err != nil {
-		logger.WithError(err).Error("Failed to extract SDP")
-		resp := sip.NewResponseFromRequest(req, 400, "Bad Request - Invalid SDP", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Allocate RTP port
-	rtpPort := media.AllocateRTPPort(h.Config.MediaConfig.RTPPortMin, h.Config.MediaConfig.RTPPortMax, h.Logger)
-
-	// Prepare SDP response
-	sdpResp, err := h.prepareSdpResponse(sdp, rtpPort)
-	if err != nil {
-		logger.WithError(err).Error("Failed to prepare SDP response")
-		resp := sip.NewResponseFromRequest(req, 500, "Server Error - Failed to prepare SDP response", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Create response with SDP
-	resp := sip.NewResponseFromRequest(req, 200, "OK", sdpResp)
-
-	// Set necessary headers
-	contact := req.GetHeader("Contact")
-	if contact != nil {
-		resp.AppendHeader(sip.NewHeader("Contact", contact.Value()))
-	}
-
-	// Initialize call data
-	callData := &CallData{
-		DialogInfo:    extractDialogInfo(req),
-		LastActivity:  time.Now(),
-		RemoteAddress: getSourceAddress(req),
-	}
-
-	// Handle SIPREC case
-	if issiprec {
-		logger.Info("Processing SIPREC INVITE")
-
-		// Create recording session
-		recordingSession := &siprec.RecordingSession{
-			ID:              uuid.New().String(),
-			SIPID:           callUUID,
-			RecordingState:  "active",
-			StartTime:       time.Now(),
-			Direction:       "unknown", // Will be determined later
-			Participants:    []siprec.Participant{},
-			OriginalRequest: req,
-		}
-
-		// Extract participants if available
-		if rsMetadata != nil {
-			recordingSession.Direction = rsMetadata.Direction
-
-			for _, p := range rsMetadata.Participants {
-				recordingSession.Participants = append(
-					recordingSession.Participants,
-					siprec.ConvertRSParticipantToParticipant(p),
-				)
-			}
-		}
-
-		// Create RTP forwarder
-		forwarder, err := media.NewRTPForwarder(60*time.Second, recordingSession, h.Logger)
-		if err != nil {
-			logger.WithError(err).Error("Failed to create RTP forwarder")
-			resp := sip.NewResponseFromRequest(req, 503, "Service Unavailable - No RTP ports available", nil)
-			tx.Respond(resp)
-			return
-		}
-		forwarder.RecordingPaused = rsMetadata.State == "paused"
-
-		// Store in call data
-		callData.Forwarder = forwarder
-		callData.RecordingSession = recordingSession
-	} else {
-		// Regular call, not SIPREC
-		logger.Info("Received regular INVITE with SDP")
-
-		// Create forwarder without recording session
-		forwarder, err := media.NewRTPForwarder(60*time.Second, nil, h.Logger)
-		if err != nil {
-			logger.WithError(err).Error("Failed to create RTP forwarder")
-			resp := sip.NewResponseFromRequest(req, 503, "Service Unavailable - No RTP ports available", nil)
-			tx.Respond(resp)
-			return
-		}
-		callData.Forwarder = forwarder
-	}
-
-	// Store the call state
-	h.ActiveCalls.Store(callUUID, callData)
-
-	// Save to persistent store if redundancy is enabled
-	if h.Config.RedundancyEnabled {
-		if err := h.SessionStore.Save(callUUID, callData); err != nil {
-			logger.WithError(err).Warn("Failed to save session to persistent store")
-		}
-	}
-
-	// Start RTP forwarding
-	ctx := context.Background()
-	media.StartRTPForwarding(ctx, callData.Forwarder, callUUID, h.Config.MediaConfig, h.STTCallback)
-
-	// Send response with enhanced error handling for TCP
-	if err := tx.Respond(resp); err != nil {
-		logger.WithError(err).WithFields(logrus.Fields{
-			"transport": getTransportFromRequest(req),
-			"response_code": resp.StatusCode,
-		}).Error("Failed to send INVITE response")
-		return
-	}
-
-	logger.WithFields(logrus.Fields{
-		"transport": getTransportFromRequest(req),
-		"response_code": resp.StatusCode,
-	}).Info("Successfully responded to INVITE")
-}
-
-// validateSIPRequest performs basic validation on SIP requests
-func (h *Handler) validateSIPRequest(req *sip.Request) error {
-	// Ensure required headers are present
-	if req.From() == nil {
-		return errors.New("missing From header")
-	}
-
-	if req.To() == nil {
-		return errors.New("missing To header")
-	}
-
-	if req.CallID() == nil {
-		return errors.New("missing Call-ID header")
-	}
-
-	// Optional - check for Contact header for dialog establishment
-	contact := req.GetHeader("Contact")
-	if contact == nil {
-		return errors.New("missing Contact header")
-	}
-
-	return nil
-}
-
-// handleBye handles BYE requests
-func (h *Handler) handleBye(req *sip.Request, tx sip.ServerTransaction) {
-	callUUID := req.CallID().String()
-	logger := h.Logger.WithField("call_uuid", callUUID)
-
-	// Check if the call exists
-	callDataValue, exists := h.ActiveCalls.Load(callUUID)
-	if !exists {
-		logger.Warn("Received BYE for unknown call")
-		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Get call data
-	callData := callDataValue.(*CallData)
-
-	// Update activity timestamp
-	callData.UpdateActivity()
-
-	// Stop forwarding and clean up
-	if callData.Forwarder != nil {
-		logger.Info("Stopping RTP forwarding for call")
-		close(callData.Forwarder.StopChan)
-	}
-
-	// Update recording state if this is a SIPREC session
-	if callData.RecordingSession != nil {
-		callData.RecordingSession.RecordingState = "stopped"
-		callData.RecordingSession.EndTime = time.Now()
-
-		logger.WithFields(logrus.Fields{
-			"recording_id": callData.RecordingSession.ID,
-			"duration":     callData.RecordingSession.EndTime.Sub(callData.RecordingSession.StartTime).String(),
-		}).Info("Recording session stopped")
-
-		// If we're keeping session info for redundancy, update it
-		if h.Config.RedundancyEnabled {
-			h.SessionStore.Save(callUUID, callData)
-		}
-	}
-
-	// Remove from active calls if we're not preserving for redundancy
-	// or if redundancy is disabled
-	if !h.Config.RedundancyEnabled {
-		h.ActiveCalls.Delete(callUUID)
-	}
-
-	// Send 200 OK
-	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-	tx.Respond(resp)
-
-	logger.Info("Call terminated")
-}
-
-// handleOptions handles OPTIONS requests
-func (h *Handler) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
-	logger := h.Logger.WithFields(logrus.Fields{
-		"call_uuid": req.CallID().String(),
-		"from":      req.From().String(),
-		"to":        req.To().String(),
-		"source":    req.Source(),
-	})
-	logger.Info("Received OPTIONS request")
-
-	// Create response
-	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-
-	// Add Allow header
-	resp.AppendHeader(sip.NewHeader("Allow", "INVITE, ACK, BYE, CANCEL, OPTIONS"))
-
-	// Add Supported header to indicate SIPREC support
-	resp.AppendHeader(sip.NewHeader("Supported", "replaces, siprec"))
-
-	// Send response
-	if err := tx.Respond(resp); err != nil {
-		logger.WithError(err).Error("Failed to send OPTIONS response")
-		return
-	}
-
-	logger.Info("Successfully responded to OPTIONS request")
+	h.Logger.Info("SIP request handlers configured via CustomSIPServer")
 }
 
 // UpdateActivity updates the last activity timestamp for a call
@@ -600,429 +200,6 @@ func (c *CallData) UpdateActivity() {
 // IsStale checks if a session is stale based on last activity
 func (c *CallData) IsStale(timeout time.Duration) bool {
 	return time.Since(c.LastActivity) > timeout
-}
-
-// isSIPREC determines if a request is a SIPREC INVITE
-// based on Content-Type and body content
-func (h *Handler) isSIPREC(req *sip.Request) (bool, *siprec.RSMetadata) {
-	contentType := req.GetHeader("Content-Type")
-	if contentType == nil {
-		return false, nil
-	}
-
-	// Check for multipart content with RS-Metadata
-	if strings.Contains(contentType.Value(), "multipart/mixed") {
-		body := req.Body()
-		if body == nil || len(body) == 0 {
-			return false, nil
-		}
-
-		// Simple check for RS-Metadata
-		if strings.Contains(string(body), "application/rs-metadata+xml") {
-			// Extract RS-Metadata if possible
-			metadata, err := siprec.ExtractRSMetadata(contentType.Value(), body)
-			if err != nil {
-				h.Logger.WithError(err).Warn("Failed to extract RS-Metadata from multipart body")
-				return true, nil // Still recognize as SIPREC despite parsing failure
-			}
-			return true, metadata
-		}
-	}
-
-	return false, nil
-}
-
-// extractSDP extracts the SDP content from a SIP request
-func extractSDP(req *sip.Request) ([]byte, error) {
-	contentType := req.GetHeader("Content-Type")
-	if contentType == nil {
-		return nil, errors.New("missing Content-Type header")
-	}
-
-	body := req.Body()
-	if body == nil || len(body) == 0 {
-		return nil, errors.New("empty request body")
-	}
-
-	// Check content type
-	if strings.Contains(contentType.Value(), "application/sdp") {
-		// Validate the SDP content
-		if err := ValidateSDP(body); err != nil {
-			return nil, errors.Wrap(err, "invalid SDP content")
-		}
-		return body, nil
-	} else if strings.Contains(contentType.Value(), "multipart/mixed") {
-		// For multipart content, extract the SDP part
-		boundary, found := getBoundary(contentType.Value())
-		if !found {
-			return nil, errors.New("missing boundary in multipart content")
-		}
-
-		// Split by boundary
-		parts := splitMultipart(string(body), boundary)
-		for _, part := range parts {
-			if strings.Contains(part, "Content-Type: application/sdp") {
-				// Extract SDP content
-				sdpContent := extractMultipartContent(part)
-				
-				// Important: SDP must end with CRLF for proper parsing
-				if !strings.HasSuffix(sdpContent, "\r\n") {
-					sdpContent += "\r\n"
-				}
-				
-				sdpBytes := []byte(sdpContent)
-
-				// Validate the SDP content
-				if err := ValidateSDP(sdpBytes); err != nil {
-					return nil, errors.Wrap(err, "invalid SDP content in multipart body")
-				}
-
-				return sdpBytes, nil
-			}
-		}
-
-		return nil, errors.New("no SDP content found in multipart body")
-	}
-
-	return nil, fmt.Errorf("unsupported Content-Type: %s", contentType.Value())
-}
-
-// getBoundary extracts the boundary from a Content-Type header
-func getBoundary(contentType string) (string, bool) {
-	boundaryPrefix := "boundary="
-
-	index := strings.Index(contentType, boundaryPrefix)
-	if index == -1 {
-		return "", false
-	}
-
-	boundary := contentType[index+len(boundaryPrefix):]
-
-	// If boundary is quoted, remove quotes
-	if strings.HasPrefix(boundary, "\"") && strings.HasSuffix(boundary, "\"") {
-		boundary = boundary[1 : len(boundary)-1]
-	}
-
-	return boundary, true
-}
-
-// splitMultipart splits a multipart body into parts based on the boundary
-func splitMultipart(body, boundary string) []string {
-	parts := []string{}
-
-	// Boundary is prefixed with -- in the content
-	boundary = "--" + boundary
-
-	// Split by boundary
-	segments := strings.Split(body, boundary)
-
-	// First segment is usually empty or contains preamble
-	// Last segment is usually empty or contains epilogue with trailing --
-	for i := 1; i < len(segments)-1; i++ {
-		parts = append(parts, segments[i])
-	}
-
-	// Check if the last segment is a valid part (not just "--\r\n")
-	lastSegment := segments[len(segments)-1]
-	if len(lastSegment) > 4 && !strings.HasPrefix(strings.TrimSpace(lastSegment), "--") {
-		parts = append(parts, lastSegment)
-	}
-
-	return parts
-}
-
-// extractMultipartContent extracts the content from a multipart part
-// by skipping the headers and any blank lines
-func extractMultipartContent(part string) string {
-	// Split by double newline to separate headers from content
-	segments := strings.Split(part, "\r\n\r\n")
-	if len(segments) < 2 {
-		// Try with just \n\n
-		segments = strings.Split(part, "\n\n")
-	}
-
-	if len(segments) < 2 {
-		return "" // No content found
-	}
-
-	// Return the content part without trimming trailing CRLF
-	// SDP parser needs the final CRLF
-	content := segments[1]
-	return content
-}
-
-// prepareSdpResponse prepares an SDP response
-func (h *Handler) prepareSdpResponse(receivedSDP []byte, rtpPort int) ([]byte, error) {
-	var parsed *sdp.SessionDescription
-
-	// Handle the case where no SDP is provided
-	if receivedSDP == nil || len(receivedSDP) == 0 {
-		h.Logger.Debug("No SDP provided, generating default SDP")
-		parsed = nil
-	} else {
-		// Parse received SDP using pion/sdp directly
-		parsed = &sdp.SessionDescription{}
-		err := parsed.Unmarshal(receivedSDP)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse SDP")
-		}
-	}
-
-	// Prepare our SDP options
-	sdpOptions := &media.SDPOptions{
-		IPAddress:  h.Config.MediaConfig.InternalIP,
-		BehindNAT:  h.Config.MediaConfig.BehindNAT,
-		InternalIP: h.Config.MediaConfig.InternalIP,
-		ExternalIP: h.Config.MediaConfig.ExternalIP,
-		RTPPort:    rtpPort,
-		EnableSRTP: h.Config.MediaConfig.EnableSRTP,
-	}
-
-	// Set up SRTP if enabled
-	if h.Config.MediaConfig.EnableSRTP {
-		// Generate SRTP keys that will be used in the crypto lines
-		// These would be generated securely and provided to the media handler
-		masterKey := make([]byte, 16)  // 16 bytes for AES-128
-		masterSalt := make([]byte, 14) // 14 bytes for the salt
-
-		// For production, use crypto/rand to generate these
-		// rand.Read(masterKey)
-		// rand.Read(masterSalt)
-
-		// For now, just use a fixed test key (NOT FOR PRODUCTION)
-		for i := range masterKey {
-			masterKey[i] = byte(i + 1)
-		}
-		for i := range masterSalt {
-			masterSalt[i] = byte(i + 100)
-		}
-
-		sdpOptions.SRTPKeyInfo = &media.SRTPKeyInfo{
-			MasterKey:   masterKey,
-			MasterSalt:  masterSalt,
-			Profile:     "AES_CM_128_HMAC_SHA1_80",
-			KeyLifetime: 31, // 2^31 packets
-		}
-	}
-
-	// Generate SDP response
-	responseSDP := h.generateSDPAdvanced(parsed, sdpOptions)
-
-	// Marshal the SDP object back to bytes using pion/sdp directly
-	return responseSDP.Marshal()
-}
-
-// getSourceAddress gets the source address of a SIP request
-func getSourceAddress(req *sip.Request) string {
-	if req == nil {
-		return ""
-	}
-
-	// In sipgo v0.30.0, Source() is a method that returns a string
-	return req.Source()
-}
-
-// extractDialogInfo extracts dialog information from a SIP request
-func extractDialogInfo(req *sip.Request) *DialogInfo {
-	if req == nil {
-		return nil
-	}
-
-	dialogInfo := &DialogInfo{
-		CallID:    req.CallID().String(),
-		LocalTag:  getTagParam(req.To()),
-		RemoteTag: getTagParam(req.From()),
-		LocalURI:  req.To().Address.String(),
-		RemoteURI: req.From().Address.String(),
-		LocalSeq:  0, // Will be populated from response
-		RemoteSeq: getCSeqValue(req),
-	}
-
-	// Extract Contact header
-	if contact := req.GetHeader("Contact"); contact != nil {
-		dialogInfo.Contact = contact.Value()
-	}
-
-	// Extract Route headers if any
-	routeSet := []string{}
-	for _, header := range req.GetHeaders("Route") {
-		routeSet = append(routeSet, header.Value())
-	}
-	dialogInfo.RouteSet = routeSet
-
-	return dialogInfo
-}
-
-// getTagParam extracts tag parameter from address header
-// Works with both FromHeader and ToHeader
-func getTagParam(addr interface{}) string {
-	if addr == nil {
-		return ""
-	}
-
-	// Check if it's a FromHeader or ToHeader type
-	if fromHeader, ok := addr.(*sip.FromHeader); ok {
-		tag, _ := fromHeader.Params.Get("tag")
-		return tag
-	}
-
-	if toHeader, ok := addr.(*sip.ToHeader); ok {
-		tag, _ := toHeader.Params.Get("tag")
-		return tag
-	}
-
-	// Fallback to string method
-	if strAddr, ok := addr.(fmt.Stringer); ok {
-		addrStr := strAddr.String()
-		tagIndex := strings.Index(addrStr, ";tag=")
-		if tagIndex < 0 {
-			return ""
-		}
-		return addrStr[tagIndex+5:]
-	}
-
-	return ""
-}
-
-// getCSeqValue extracts CSeq number from a request
-func getCSeqValue(req *sip.Request) int {
-	if req == nil {
-		return 0
-	}
-
-	cseq := req.CSeq()
-	if cseq == nil {
-		return 0
-	}
-
-	return int(cseq.SeqNo)
-}
-
-// parseReplacesHeader parses a Replaces header into callID, toTag, fromTag
-func parseReplacesHeader(replacesValue string) (string, string, string) {
-	// Basic format: callid;to-tag=tag1;from-tag=tag2
-	if replacesValue == "" {
-		return "", "", ""
-	}
-
-	parts := strings.Split(replacesValue, ";")
-	if len(parts) < 3 {
-		return "", "", ""
-	}
-
-	callID := parts[0]
-	toTag := ""
-	fromTag := ""
-
-	// Extract tags
-	for _, part := range parts[1:] {
-		if strings.HasPrefix(part, "to-tag=") {
-			toTag = strings.TrimPrefix(part, "to-tag=")
-		} else if strings.HasPrefix(part, "from-tag=") {
-			fromTag = strings.TrimPrefix(part, "from-tag=")
-		}
-	}
-
-	return callID, toTag, fromTag
-}
-
-// recoverSession attempts to recover a session based on a previous Call-ID
-func (h *Handler) recoverSession(req *sip.Request, tx sip.ServerTransaction, oldCallID string) {
-	logger := h.Logger.WithField("replaces_call_id", oldCallID)
-
-	// Get the new call UUID
-	newCallID := req.CallID().String()
-
-	// Check if redundancy is enabled and session store is available
-	if !h.Config.RedundancyEnabled || h.SessionStore == nil {
-		logger.Warn("Session recovery requested but redundancy is not enabled")
-		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Try to load the old session
-	oldSession, err := h.SessionStore.Load(oldCallID)
-	if err != nil {
-		logger.WithError(err).Error("Failed to load session for recovery")
-		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	logger.Info("Found session for recovery")
-
-	// Create new call data for the recovered session
-	newCallData := &CallData{
-		RecordingSession: oldSession.RecordingSession,
-		DialogInfo:       extractDialogInfo(req),
-		LastActivity:     time.Now(),
-		RemoteAddress:    getSourceAddress(req),
-	}
-
-	// Set up media for the recovered session
-	rtpPort := media.AllocateRTPPort(h.Config.MediaConfig.RTPPortMin, h.Config.MediaConfig.RTPPortMax, h.Logger)
-
-	// Create a new forwarder with the same recording session
-	forwarder, err := media.NewRTPForwarder(60*time.Second, oldSession.RecordingSession, h.Logger)
-	if err != nil {
-		logger.WithError(err).Error("Failed to create RTP forwarder for recovered session")
-		resp := sip.NewResponseFromRequest(req, 503, "Service Unavailable - No RTP ports available", nil)
-		tx.Respond(resp)
-		return
-	}
-	if oldSession.RecordingSession != nil {
-		forwarder.RecordingPaused = oldSession.RecordingSession.RecordingState == "paused"
-	}
-
-	newCallData.Forwarder = forwarder
-
-	// Extract SDP information
-	sdp, err := extractSDP(req)
-	if err != nil {
-		logger.WithError(err).Error("Failed to extract SDP for session recovery")
-		resp := sip.NewResponseFromRequest(req, 400, "Bad Request - Invalid SDP", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Prepare SDP response
-	sdpResp, err := h.prepareSdpResponse(sdp, rtpPort)
-	if err != nil {
-		logger.WithError(err).Error("Failed to prepare SDP response for session recovery")
-		resp := sip.NewResponseFromRequest(req, 500, "Server Error - Failed to prepare SDP response", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Create response with SDP
-	resp := sip.NewResponseFromRequest(req, 200, "OK", sdpResp)
-
-	// Set necessary headers
-	contact := req.GetHeader("Contact")
-	if contact != nil {
-		resp.AppendHeader(sip.NewHeader("Contact", contact.Value()))
-	}
-
-	// Store the new call state and remove the old one
-	h.ActiveCalls.Store(newCallID, newCallData)
-	h.ActiveCalls.Delete(oldCallID)
-
-	// Update the session store
-	h.SessionStore.Save(newCallID, newCallData)
-	h.SessionStore.Delete(oldCallID)
-
-	// Start RTP forwarding
-	ctx := context.Background()
-	media.StartRTPForwarding(ctx, newCallData.Forwarder, newCallID, h.Config.MediaConfig, h.STTCallback)
-
-	// Send response
-	if err := tx.Respond(resp); err != nil {
-		logger.WithError(err).Error("Failed to send response for session recovery")
-		return
-	}
-
-	logger.Info("Session successfully recovered with new Call-ID")
 }
 
 // monitorSessions periodically checks for stale sessions
@@ -1114,152 +291,6 @@ func (h *Handler) cleanupStaleSessions() {
 	}
 }
 
-// handleSiprecInvite handles SIPREC INVITE requests
-func (h *Handler) handleSiprecInvite(req *sip.Request, tx sip.ServerTransaction) {
-	callUUID := req.CallID().String()
-	logger := h.Logger.WithField("call_uuid", callUUID)
-
-	// Add basic request validation
-	if err := h.validateSIPRequest(req); err != nil {
-		logger.WithError(err).Error("Request validation failed")
-		resp := sip.NewResponseFromRequest(req, 400, "Bad Request - "+err.Error(), nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Extract metadata from the SIPREC request
-	rsMetadata, err := siprec.ExtractRSMetadataFromRequest(req)
-	if err != nil {
-		logger.WithError(err).Warn("Failed to extract RS-Metadata from request")
-		// Continue processing despite metadata extraction failure
-	}
-
-	// Extract SDP information
-	sdp, err := extractSDP(req)
-	if err != nil {
-		logger.WithError(err).Error("Failed to extract SDP from SIPREC request")
-		resp := sip.NewResponseFromRequest(req, 400, "Bad Request - Invalid SDP", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Allocate RTP port
-	rtpPort := media.AllocateRTPPort(h.Config.MediaConfig.RTPPortMin, h.Config.MediaConfig.RTPPortMax, h.Logger)
-
-	// Prepare SDP response
-	sdpResp, err := h.prepareSdpResponse(sdp, rtpPort)
-	if err != nil {
-		logger.WithError(err).Error("Failed to prepare SDP response")
-		resp := sip.NewResponseFromRequest(req, 500, "Server Error - Failed to prepare SDP response", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Create response with SDP
-	resp := sip.NewResponseFromRequest(req, 200, "OK", sdpResp)
-
-	// Set necessary headers
-	contact := req.GetHeader("Contact")
-	if contact != nil {
-		resp.AppendHeader(sip.NewHeader("Contact", contact.Value()))
-	}
-
-	// Initialize call data
-	callData := &CallData{
-		DialogInfo:    extractDialogInfo(req),
-		LastActivity:  time.Now(),
-		RemoteAddress: getSourceAddress(req),
-	}
-
-	// Create recording session
-	recordingSession := &siprec.RecordingSession{
-		ID:              uuid.New().String(),
-		SIPID:           callUUID,
-		RecordingState:  "active",
-		StartTime:       time.Now(),
-		Direction:       "unknown", // Default
-		Participants:    []siprec.Participant{},
-		OriginalRequest: req,
-	}
-
-	// Update with metadata if available
-	if rsMetadata != nil {
-		recordingSession.Direction = rsMetadata.Direction
-		recordingSession.Participants = make([]siprec.Participant, len(rsMetadata.Participants))
-
-		for i, p := range rsMetadata.Participants {
-			recordingSession.Participants[i] = siprec.ConvertRSParticipantToParticipant(p)
-		}
-	}
-
-	// Create RTP forwarder
-	forwarder, err := media.NewRTPForwarder(60*time.Second, recordingSession, h.Logger)
-	if err != nil {
-		logger.WithError(err).Error("Failed to create RTP forwarder")
-		resp := sip.NewResponseFromRequest(req, 503, "Service Unavailable - No RTP ports available", nil)
-		tx.Respond(resp)
-		return
-	}
-
-	// Set pause state if specified in metadata
-	if rsMetadata != nil {
-		// Handle recording state
-		switch rsMetadata.State {
-		case "paused":
-			forwarder.RecordingPaused = true
-			recordingSession.RecordingState = "paused"
-			logger.Info("Recording session initialized in paused state")
-		case "inactive":
-			forwarder.RecordingPaused = true
-			recordingSession.RecordingState = "inactive"
-			logger.Info("Recording session initialized in inactive state")
-		case "terminated":
-			// This is unusual, but we'll handle it
-			logger.Warn("Recording session requested in terminated state - initializing but will terminate soon")
-			forwarder.RecordingPaused = true
-			recordingSession.RecordingState = "terminated"
-			// Schedule termination after responding
-			defer func() {
-				time.AfterFunc(500*time.Millisecond, func() {
-					close(forwarder.StopChan)
-					h.ActiveCalls.Delete(callUUID)
-				})
-			}()
-		default:
-			// Default to active
-			forwarder.RecordingPaused = false
-			recordingSession.RecordingState = "active"
-			logger.Info("Recording session initialized in active state")
-		}
-	}
-
-	// Store in call data
-	callData.Forwarder = forwarder
-	callData.RecordingSession = recordingSession
-
-	// Store the call state
-	h.ActiveCalls.Store(callUUID, callData)
-
-	// Save to persistent store if redundancy is enabled
-	if h.Config.RedundancyEnabled {
-		if err := h.SessionStore.Save(callUUID, callData); err != nil {
-			logger.WithError(err).Warn("Failed to save session to persistent store")
-		}
-	}
-
-	// Start RTP forwarding
-	ctx := context.Background()
-	media.StartRTPForwarding(ctx, forwarder, callUUID, h.Config.MediaConfig, h.STTCallback)
-
-	// Send response
-	if err := tx.Respond(resp); err != nil {
-		logger.WithError(err).Error("Failed to send SIPREC INVITE response")
-		return
-	}
-
-	logger.Info("Successfully responded to SIPREC INVITE")
-}
-
 // CleanupActiveCalls cleans up all active calls
 func (h *Handler) CleanupActiveCalls() {
 	logger := h.Logger.WithField("component", "cleanup")
@@ -1342,6 +373,12 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 		case <-ctx.Done():
 			logger.Warn("Timed out waiting for session monitor to stop")
 		}
+	}
+
+	// Shutdown NAT rewriter background processes
+	if h.NATRewriter != nil {
+		h.NATRewriter.Shutdown()
+		logger.Debug("NAT rewriter background processes stopped")
 	}
 
 	// SIP server resources are now managed by CustomSIPServer

@@ -9,47 +9,48 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/encryption"
+
+	"github.com/sirupsen/logrus"
 )
 
 // EncryptedRecordingManager handles encrypted audio recording operations
 type EncryptedRecordingManager struct {
 	encryptionManager encryption.EncryptionManager
-	logger           *logrus.Logger
-	recordingDir     string
-	mu               sync.RWMutex
-	
+	logger            *logrus.Logger
+	recordingDir      string
+	mu                sync.RWMutex
+
 	// Active recording sessions
 	sessions map[string]*EncryptedRecordingSession
 }
 
 // EncryptedRecordingSession represents an active encrypted recording session
 type EncryptedRecordingSession struct {
-	SessionID    string                   `json:"session_id"`
-	StartTime    time.Time               `json:"start_time"`
-	FilePath     string                  `json:"file_path"`
-	MetadataPath string                  `json:"metadata_path"`
-	Writer       io.WriteCloser          `json:"-"`
+	SessionID    string                     `json:"session_id"`
+	StartTime    time.Time                  `json:"start_time"`
+	FilePath     string                     `json:"file_path"`
+	MetadataPath string                     `json:"metadata_path"`
+	Writer       io.WriteCloser             `json:"-"`
 	Encryption   *encryption.EncryptionInfo `json:"encryption"`
-	TotalBytes   int64                   `json:"total_bytes"`
+	TotalBytes   int64                      `json:"total_bytes"`
 	mu           sync.Mutex
 }
 
 // RecordingMetadata contains metadata for encrypted recordings
 type RecordingMetadata struct {
-	SessionID       string                   `json:"session_id"`
-	StartTime       time.Time               `json:"start_time"`
-	EndTime         *time.Time              `json:"end_time,omitempty"`
-	Duration        time.Duration           `json:"duration"`
-	Participants    []string                `json:"participants"`
-	Codec           string                  `json:"codec"`
-	SampleRate      int                     `json:"sample_rate"`
-	Channels        int                     `json:"channels"`
-	TotalBytes      int64                   `json:"total_bytes"`
-	EncryptionInfo  *encryption.EncryptionInfo `json:"encryption_info"`
-	FileFormat      string                  `json:"file_format"`
-	Checksum        string                  `json:"checksum,omitempty"`
+	SessionID      string                     `json:"session_id"`
+	StartTime      time.Time                  `json:"start_time"`
+	EndTime        *time.Time                 `json:"end_time,omitempty"`
+	Duration       time.Duration              `json:"duration"`
+	Participants   []string                   `json:"participants"`
+	Codec          string                     `json:"codec"`
+	SampleRate     int                        `json:"sample_rate"`
+	Channels       int                        `json:"channels"`
+	TotalBytes     int64                      `json:"total_bytes"`
+	EncryptionInfo *encryption.EncryptionInfo `json:"encryption_info"`
+	FileFormat     string                     `json:"file_format"`
+	Checksum       string                     `json:"checksum,omitempty"`
 }
 
 // NewEncryptedRecordingManager creates a new encrypted recording manager
@@ -60,9 +61,9 @@ func NewEncryptedRecordingManager(encMgr encryption.EncryptionManager, recording
 
 	return &EncryptedRecordingManager{
 		encryptionManager: encMgr,
-		logger:           logger,
-		recordingDir:     recordingDir,
-		sessions:         make(map[string]*EncryptedRecordingSession),
+		logger:            logger,
+		recordingDir:      recordingDir,
+		sessions:          make(map[string]*EncryptedRecordingSession),
 	}, nil
 }
 
@@ -80,7 +81,7 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 	timestamp := time.Now().Format("20060102_150405")
 	fileName := fmt.Sprintf("%s_%s.siprec", sessionID, timestamp)
 	metadataFileName := fmt.Sprintf("%s_%s.metadata", sessionID, timestamp)
-	
+
 	filePath := filepath.Join(erm.recordingDir, fileName)
 	metadataPath := filepath.Join(erm.recordingDir, metadataFileName)
 
@@ -103,7 +104,7 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 		file:              file,
 		encryptionManager: erm.encryptionManager,
 		sessionID:         sessionID,
-		logger:           erm.logger,
+		logger:            erm.logger,
 	}
 
 	// Write file header if encryption is enabled
@@ -130,7 +131,7 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 		metadata.SessionID = sessionID
 		metadata.StartTime = session.StartTime
 		metadata.EncryptionInfo = encInfo
-		
+
 		if err := erm.storeMetadata(session, metadata); err != nil {
 			session.Writer.Close()
 			os.Remove(filePath)
@@ -141,10 +142,10 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 	erm.sessions[sessionID] = session
 
 	erm.logger.WithFields(logrus.Fields{
-		"session_id":  sessionID,
-		"file_path":   filePath,
-		"encrypted":   erm.encryptionManager.IsEncryptionEnabled(),
-		"algorithm":   encInfo.Algorithm,
+		"session_id": sessionID,
+		"file_path":  filePath,
+		"encrypted":  erm.encryptionManager.IsEncryptionEnabled(),
+		"algorithm":  encInfo.Algorithm,
 	}).Info("Started encrypted recording session")
 
 	return session, nil
@@ -291,7 +292,7 @@ type EncryptedWriter struct {
 	file              *os.File
 	encryptionManager encryption.EncryptionManager
 	sessionID         string
-	logger           *logrus.Logger
+	logger            *logrus.Logger
 	headerWritten     bool
 }
 
