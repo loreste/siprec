@@ -16,35 +16,35 @@ type StreamingTranscriptionService struct {
 	logger               *logrus.Logger
 	transcriptionService *TranscriptionService
 	buffers              map[string]*StreamBuffer
-	bufferMutex         sync.RWMutex
-	config              StreamingConfig
-	metrics             *StreamingMetrics
+	bufferMutex          sync.RWMutex
+	config               StreamingConfig
+	metrics              *StreamingMetrics
 }
 
 // StreamingConfig holds configuration for streaming enhancements
 type StreamingConfig struct {
-	BufferSize              int           // Maximum number of transcriptions to buffer per call
-	InterimResultTimeout    time.Duration // Timeout for interim results before considering them final
-	ChunkProcessingDelay    time.Duration // Delay between processing audio chunks
-	EnableSmoothing         bool          // Enable text smoothing for interim results
-	EnableConfidenceFiltering bool        // Filter low-confidence results
-	MinConfidenceThreshold  float64       // Minimum confidence threshold (0.0-1.0)
-	EnableDuplicateDetection bool         // Detect and filter duplicate transcriptions
-	SimilarityThreshold     float64       // Similarity threshold for duplicate detection
-	MaxRetries              int           // Maximum retries for failed streaming operations
-	RetryDelay              time.Duration // Delay between retries
+	BufferSize                int           // Maximum number of transcriptions to buffer per call
+	InterimResultTimeout      time.Duration // Timeout for interim results before considering them final
+	ChunkProcessingDelay      time.Duration // Delay between processing audio chunks
+	EnableSmoothing           bool          // Enable text smoothing for interim results
+	EnableConfidenceFiltering bool          // Filter low-confidence results
+	MinConfidenceThreshold    float64       // Minimum confidence threshold (0.0-1.0)
+	EnableDuplicateDetection  bool          // Detect and filter duplicate transcriptions
+	SimilarityThreshold       float64       // Similarity threshold for duplicate detection
+	MaxRetries                int           // Maximum retries for failed streaming operations
+	RetryDelay                time.Duration // Delay between retries
 }
 
 // StreamBuffer holds buffered transcriptions for a call
 type StreamBuffer struct {
-	CallUUID         string
-	InterimResults   []InterimResult
-	FinalResults     []FinalResult
-	LastActivity     time.Time
-	Mutex           sync.RWMutex
-	TotalDuration   time.Duration
-	WordCount       int
-	ProviderStats   map[string]*ProviderStatistics
+	CallUUID       string
+	InterimResults []InterimResult
+	FinalResults   []FinalResult
+	LastActivity   time.Time
+	Mutex          sync.RWMutex
+	TotalDuration  time.Duration
+	WordCount      int
+	ProviderStats  map[string]*ProviderStatistics
 }
 
 // InterimResult represents an interim transcription result
@@ -60,14 +60,14 @@ type InterimResult struct {
 
 // FinalResult represents a final transcription result
 type FinalResult struct {
-	Text        string                 `json:"text"`
-	Confidence  float64                `json:"confidence"`
-	StartTime   time.Time              `json:"start_time"`
-	EndTime     time.Time              `json:"end_time"`
-	Provider    string                 `json:"provider"`
-	Metadata    map[string]interface{} `json:"metadata"`
-	WordTiming  []WordTiming           `json:"word_timing,omitempty"`
-	SpeakerID   string                 `json:"speaker_id,omitempty"`
+	Text       string                 `json:"text"`
+	Confidence float64                `json:"confidence"`
+	StartTime  time.Time              `json:"start_time"`
+	EndTime    time.Time              `json:"end_time"`
+	Provider   string                 `json:"provider"`
+	Metadata   map[string]interface{} `json:"metadata"`
+	WordTiming []WordTiming           `json:"word_timing,omitempty"`
+	SpeakerID  string                 `json:"speaker_id,omitempty"`
 }
 
 // WordTiming represents word-level timing information
@@ -80,14 +80,14 @@ type WordTiming struct {
 
 // ProviderStatistics tracks statistics for each provider
 type ProviderStatistics struct {
-	TotalResults     int           `json:"total_results"`
-	InterimResults   int           `json:"interim_results"`
-	FinalResults     int           `json:"final_results"`
-	AverageConfidence float64      `json:"average_confidence"`
-	TotalLatency     time.Duration `json:"total_latency"`
-	AverageLatency   time.Duration `json:"average_latency"`
-	ErrorCount       int           `json:"error_count"`
-	LastActivity     time.Time     `json:"last_activity"`
+	TotalResults      int           `json:"total_results"`
+	InterimResults    int           `json:"interim_results"`
+	FinalResults      int           `json:"final_results"`
+	AverageConfidence float64       `json:"average_confidence"`
+	TotalLatency      time.Duration `json:"total_latency"`
+	AverageLatency    time.Duration `json:"average_latency"`
+	ErrorCount        int           `json:"error_count"`
+	LastActivity      time.Time     `json:"last_activity"`
 }
 
 // StreamingMetrics tracks overall streaming metrics
@@ -106,16 +106,16 @@ type StreamingMetrics struct {
 // DefaultStreamingConfig returns default configuration for streaming enhancements
 func DefaultStreamingConfig() StreamingConfig {
 	return StreamingConfig{
-		BufferSize:               1000,
-		InterimResultTimeout:     2 * time.Second,
-		ChunkProcessingDelay:     50 * time.Millisecond,
-		EnableSmoothing:          true,
+		BufferSize:                1000,
+		InterimResultTimeout:      2 * time.Second,
+		ChunkProcessingDelay:      50 * time.Millisecond,
+		EnableSmoothing:           true,
 		EnableConfidenceFiltering: true,
-		MinConfidenceThreshold:   0.3,
-		EnableDuplicateDetection: true,
-		SimilarityThreshold:      0.85,
-		MaxRetries:               3,
-		RetryDelay:               100 * time.Millisecond,
+		MinConfidenceThreshold:    0.3,
+		EnableDuplicateDetection:  true,
+		SimilarityThreshold:       0.85,
+		MaxRetries:                3,
+		RetryDelay:                100 * time.Millisecond,
 	}
 }
 
@@ -129,9 +129,9 @@ func NewStreamingTranscriptionService(logger *logrus.Logger, transcriptionSvc *T
 	return &StreamingTranscriptionService{
 		logger:               logger,
 		transcriptionService: transcriptionSvc,
-		buffers:             make(map[string]*StreamBuffer),
-		config:              *cfg,
-		metrics:             &StreamingMetrics{},
+		buffers:              make(map[string]*StreamBuffer),
+		config:               *cfg,
+		metrics:              &StreamingMetrics{},
 	}
 }
 
@@ -158,7 +158,7 @@ func (s *StreamingTranscriptionService) OnTranscription(callUUID string, transcr
 
 	// Get or create buffer for this call
 	buffer := s.getOrCreateBuffer(callUUID)
-	
+
 	// Process the transcription with enhancements
 	s.processTranscription(buffer, transcription, isFinal, metadata)
 }
@@ -225,12 +225,12 @@ func (s *StreamingTranscriptionService) processTranscription(buffer *StreamBuffe
 // processFinalResult handles final transcription results
 func (s *StreamingTranscriptionService) processFinalResult(buffer *StreamBuffer, text string, confidence float64, provider string, metadata map[string]interface{}) {
 	result := FinalResult{
-		Text:        text,
-		Confidence:  confidence,
-		StartTime:   time.Now(),
-		EndTime:     time.Now(),
-		Provider:    provider,
-		Metadata:    metadata,
+		Text:       text,
+		Confidence: confidence,
+		StartTime:  time.Now(),
+		EndTime:    time.Now(),
+		Provider:   provider,
+		Metadata:   metadata,
 	}
 
 	// Extract timing information if available
@@ -471,11 +471,11 @@ func (s *StreamingTranscriptionService) getOrCreateBuffer(callUUID string) *Stre
 	}
 
 	buffer := &StreamBuffer{
-		CallUUID:      callUUID,
+		CallUUID:       callUUID,
 		InterimResults: make([]InterimResult, 0),
-		FinalResults:  make([]FinalResult, 0),
-		LastActivity:  time.Now(),
-		ProviderStats: make(map[string]*ProviderStatistics),
+		FinalResults:   make([]FinalResult, 0),
+		LastActivity:   time.Now(),
+		ProviderStats:  make(map[string]*ProviderStatistics),
 	}
 
 	s.buffers[callUUID] = buffer
@@ -519,7 +519,7 @@ func (s *StreamingTranscriptionService) runCleanupRoutine(ctx context.Context) {
 // cleanupOldBuffers removes buffers that haven't been active for a while
 func (s *StreamingTranscriptionService) cleanupOldBuffers() {
 	cutoff := time.Now().Add(-30 * time.Minute)
-	
+
 	s.bufferMutex.Lock()
 	defer s.bufferMutex.Unlock()
 
@@ -586,7 +586,18 @@ func (s *StreamingTranscriptionService) GetStreamBuffer(callUUID string) (*Strea
 func (s *StreamingTranscriptionService) GetMetrics() StreamingMetrics {
 	s.metrics.mutex.RLock()
 	defer s.metrics.mutex.RUnlock()
-	return *s.metrics
+	
+	// Return a copy without the mutex to avoid copying the lock
+	return StreamingMetrics{
+		TotalCalls:          s.metrics.TotalCalls,
+		ActiveCalls:         s.metrics.ActiveCalls,
+		TotalTranscriptions: s.metrics.TotalTranscriptions,
+		InterimCount:        s.metrics.InterimCount,
+		FinalCount:          s.metrics.FinalCount,
+		AverageLatency:      s.metrics.AverageLatency,
+		ErrorRate:           s.metrics.ErrorRate,
+		ThroughputPerSecond: s.metrics.ThroughputPerSecond,
+	}
 }
 
 // ExportBuffer exports a stream buffer as JSON for analysis
@@ -616,7 +627,7 @@ type StreamingWriter struct {
 // NewStreamingWriter creates a new streaming writer for real-time audio processing
 func (s *StreamingTranscriptionService) NewStreamingWriter(callUUID string, provider Provider) *StreamingWriter {
 	pr, pw := io.Pipe()
-	
+
 	writer := &StreamingWriter{
 		service:    s,
 		callUUID:   callUUID,

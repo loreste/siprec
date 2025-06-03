@@ -54,7 +54,7 @@ func (fs *FileKeyStore) StoreKey(key *EncryptionKey) error {
 
 	// Store to file
 	keyFile := filepath.Join(fs.basePath, fmt.Sprintf("%s.key", key.ID))
-	
+
 	// Create a safe version without the actual key data for persistence
 	safeKey := &struct {
 		ID        string    `json:"id"`
@@ -175,7 +175,7 @@ func (fs *FileKeyStore) RotateKey(oldKeyID string, newKey *EncryptionKey) error 
 	// Mark old key as inactive
 	if oldKey, exists := fs.keys[oldKeyID]; exists {
 		oldKey.Active = false
-		
+
 		// Update the file
 		keyFile := filepath.Join(fs.basePath, fmt.Sprintf("%s.key", oldKeyID))
 		safeKey := &struct {
@@ -222,7 +222,7 @@ func (fs *FileKeyStore) loadKeys() error {
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".key" {
 			keyID := entry.Name()[:len(entry.Name())-4] // Remove .key extension
-			
+
 			if err := fs.loadKey(keyID); err != nil {
 				fs.logger.WithError(err).WithField("key_id", keyID).Warn("Failed to load key")
 				continue
@@ -281,7 +281,7 @@ func (fs *FileKeyStore) storeKeyData(filename string, keyData []byte) error {
 	// In a production implementation, this should encrypt the key data
 	// with a master key or use hardware security modules
 	// For this implementation, we'll use simple obfuscation
-	
+
 	obfuscated := make([]byte, len(keyData))
 	for i, b := range keyData {
 		obfuscated[i] = b ^ 0xAA // Simple XOR obfuscation

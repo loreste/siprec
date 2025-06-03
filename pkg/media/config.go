@@ -15,6 +15,10 @@ type Config struct {
 	InternalIP string
 	ExternalIP string
 
+	// SIP NAT port configuration
+	SIPInternalPort int
+	SIPExternalPort int
+
 	// Speech-to-text configuration
 	DefaultVendor string
 

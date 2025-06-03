@@ -109,12 +109,12 @@ func (suite *STTProviderTestSuite) createSyntheticAudioData() []byte {
 		// fmt chunk
 		0x66, 0x6D, 0x74, 0x20, // "fmt "
 		0x10, 0x00, 0x00, 0x00, // Subchunk1Size (16 for PCM)
-		0x01, 0x00,             // AudioFormat (PCM)
-		0x01, 0x00,             // NumChannels (Mono)
+		0x01, 0x00, // AudioFormat (PCM)
+		0x01, 0x00, // NumChannels (Mono)
 		0x40, 0x1F, 0x00, 0x00, // SampleRate (8000 Hz)
 		0x80, 0x3E, 0x00, 0x00, // ByteRate
-		0x02, 0x00,             // BlockAlign
-		0x10, 0x00,             // BitsPerSample (16)
+		0x02, 0x00, // BlockAlign
+		0x10, 0x00, // BitsPerSample (16)
 		// data chunk
 		0x64, 0x61, 0x74, 0x61, // "data"
 		0x00, 0x00, 0x00, 0x00, // Subchunk2Size
@@ -373,7 +373,7 @@ func (suite *STTProviderTestSuite) TestContextCancellation() {
 	for name, provider := range suite.providers {
 		suite.Run(name, func() {
 			ctx, cancel := context.WithCancel(context.Background())
-			
+
 			// Cancel context immediately
 			cancel()
 
@@ -386,7 +386,7 @@ func (suite *STTProviderTestSuite) TestContextCancellation() {
 
 			// Should return quickly with context cancellation
 			suite.Assert().Less(duration, 5*time.Second, "Should return quickly when context is cancelled")
-			
+
 			if err != nil {
 				suite.Assert().ErrorIs(err, context.Canceled, "Should return context cancellation error")
 			}

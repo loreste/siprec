@@ -1,8 +1,9 @@
 package http
 
 import (
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
+
+	"github.com/sirupsen/logrus"
 )
 
 // SIPHandlerAdapter adapts the SIP handler to provide metrics and session information

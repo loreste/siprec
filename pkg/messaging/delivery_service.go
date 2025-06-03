@@ -28,36 +28,36 @@ type GuaranteedDeliveryService struct {
 
 // DeliveryConfig holds configuration for guaranteed delivery
 type DeliveryConfig struct {
-	MaxRetries              int           // Maximum number of retry attempts
-	InitialRetryDelay       time.Duration // Initial delay between retries
-	MaxRetryDelay           time.Duration // Maximum delay between retries
-	BackoffMultiplier       float64       // Exponential backoff multiplier
-	MessageTimeout          time.Duration // Time after which messages are considered failed
-	BatchSize               int           // Number of messages to process in a batch
-	WorkerCount             int           // Number of concurrent workers
-	PersistenceEnabled      bool          // Enable message persistence
-	DeduplicationEnabled    bool          // Enable message deduplication
-	DeduplicationWindow     time.Duration // Time window for deduplication
-	CompressionEnabled      bool          // Enable message compression
-	PriorityQueueEnabled    bool          // Enable priority-based message handling
-	DeadLetterQueueEnabled  bool          // Enable dead letter queue for failed messages
-	AckTimeoutDuration      time.Duration // Timeout for message acknowledgments
+	MaxRetries             int           // Maximum number of retry attempts
+	InitialRetryDelay      time.Duration // Initial delay between retries
+	MaxRetryDelay          time.Duration // Maximum delay between retries
+	BackoffMultiplier      float64       // Exponential backoff multiplier
+	MessageTimeout         time.Duration // Time after which messages are considered failed
+	BatchSize              int           // Number of messages to process in a batch
+	WorkerCount            int           // Number of concurrent workers
+	PersistenceEnabled     bool          // Enable message persistence
+	DeduplicationEnabled   bool          // Enable message deduplication
+	DeduplicationWindow    time.Duration // Time window for deduplication
+	CompressionEnabled     bool          // Enable message compression
+	PriorityQueueEnabled   bool          // Enable priority-based message handling
+	DeadLetterQueueEnabled bool          // Enable dead letter queue for failed messages
+	AckTimeoutDuration     time.Duration // Timeout for message acknowledgments
 }
 
 // PendingMessage represents a message pending delivery
 type PendingMessage struct {
-	ID            string                 `json:"id"`
-	CallUUID      string                 `json:"call_uuid"`
-	Content       string                 `json:"content"`
-	Metadata      map[string]interface{} `json:"metadata"`
-	CreatedAt     time.Time              `json:"created_at"`
-	LastAttempt   time.Time              `json:"last_attempt"`
-	AttemptCount  int                    `json:"attempt_count"`
-	NextRetryAt   time.Time              `json:"next_retry_at"`
-	Priority      MessagePriority        `json:"priority"`
-	IsFinal       bool                   `json:"is_final"`
-	Checksum      string                 `json:"checksum"`
-	CompressedSize int                   `json:"compressed_size"`
+	ID             string                 `json:"id"`
+	CallUUID       string                 `json:"call_uuid"`
+	Content        string                 `json:"content"`
+	Metadata       map[string]interface{} `json:"metadata"`
+	CreatedAt      time.Time              `json:"created_at"`
+	LastAttempt    time.Time              `json:"last_attempt"`
+	AttemptCount   int                    `json:"attempt_count"`
+	NextRetryAt    time.Time              `json:"next_retry_at"`
+	Priority       MessagePriority        `json:"priority"`
+	IsFinal        bool                   `json:"is_final"`
+	Checksum       string                 `json:"checksum"`
+	CompressedSize int                    `json:"compressed_size"`
 }
 
 // MessagePriority defines priority levels for messages
@@ -83,36 +83,36 @@ type MessageStorage interface {
 
 // DeliveryMetrics tracks delivery performance
 type DeliveryMetrics struct {
-	TotalMessages       int64         `json:"total_messages"`
-	SuccessfulDeliveries int64        `json:"successful_deliveries"`
-	FailedDeliveries    int64         `json:"failed_deliveries"`
-	RetriedMessages     int64         `json:"retried_messages"`
-	AverageRetryCount   float64       `json:"average_retry_count"`
-	AverageDeliveryTime time.Duration `json:"average_delivery_time"`
-	DeadLetterCount     int64         `json:"dead_letter_count"`
-	PendingCount        int64         `json:"pending_count"`
-	LastDeliveryTime    time.Time     `json:"last_delivery_time"`
-	ThroughputPerSecond float64       `json:"throughput_per_second"`
-	mutex               sync.RWMutex
+	TotalMessages        int64         `json:"total_messages"`
+	SuccessfulDeliveries int64         `json:"successful_deliveries"`
+	FailedDeliveries     int64         `json:"failed_deliveries"`
+	RetriedMessages      int64         `json:"retried_messages"`
+	AverageRetryCount    float64       `json:"average_retry_count"`
+	AverageDeliveryTime  time.Duration `json:"average_delivery_time"`
+	DeadLetterCount      int64         `json:"dead_letter_count"`
+	PendingCount         int64         `json:"pending_count"`
+	LastDeliveryTime     time.Time     `json:"last_delivery_time"`
+	ThroughputPerSecond  float64       `json:"throughput_per_second"`
+	mutex                sync.RWMutex
 }
 
 // DefaultDeliveryConfig returns default configuration for guaranteed delivery
 func DefaultDeliveryConfig() DeliveryConfig {
 	return DeliveryConfig{
-		MaxRetries:              5,
-		InitialRetryDelay:       1 * time.Second,
-		MaxRetryDelay:           30 * time.Second,
-		BackoffMultiplier:       2.0,
-		MessageTimeout:          5 * time.Minute,
-		BatchSize:               100,
-		WorkerCount:             3,
-		PersistenceEnabled:      true,
-		DeduplicationEnabled:    true,
-		DeduplicationWindow:     1 * time.Minute,
-		CompressionEnabled:      false,
-		PriorityQueueEnabled:    true,
-		DeadLetterQueueEnabled:  true,
-		AckTimeoutDuration:      30 * time.Second,
+		MaxRetries:             5,
+		InitialRetryDelay:      1 * time.Second,
+		MaxRetryDelay:          30 * time.Second,
+		BackoffMultiplier:      2.0,
+		MessageTimeout:         5 * time.Minute,
+		BatchSize:              100,
+		WorkerCount:            3,
+		PersistenceEnabled:     true,
+		DeduplicationEnabled:   true,
+		DeduplicationWindow:    1 * time.Minute,
+		CompressionEnabled:     false,
+		PriorityQueueEnabled:   true,
+		DeadLetterQueueEnabled: true,
+		AckTimeoutDuration:     30 * time.Second,
 	}
 }
 
@@ -165,11 +165,11 @@ func (d *GuaranteedDeliveryService) Start() error {
 	}
 
 	d.logger.WithFields(logrus.Fields{
-		"worker_count":     d.config.WorkerCount,
-		"max_retries":      d.config.MaxRetries,
-		"persistence":      d.config.PersistenceEnabled,
-		"deduplication":    d.config.DeduplicationEnabled,
-		"priority_queue":   d.config.PriorityQueueEnabled,
+		"worker_count":      d.config.WorkerCount,
+		"max_retries":       d.config.MaxRetries,
+		"persistence":       d.config.PersistenceEnabled,
+		"deduplication":     d.config.DeduplicationEnabled,
+		"priority_queue":    d.config.PriorityQueueEnabled,
 		"dead_letter_queue": d.config.DeadLetterQueueEnabled,
 	}).Info("Guaranteed delivery service started")
 
@@ -408,7 +408,7 @@ func (d *GuaranteedDeliveryService) scheduleRetry(msg *PendingMessage, err error
 // calculateRetryDelay calculates the retry delay using exponential backoff
 func (d *GuaranteedDeliveryService) calculateRetryDelay(attemptCount int) time.Duration {
 	delay := float64(d.config.InitialRetryDelay) * (d.config.BackoffMultiplier * float64(attemptCount))
-	
+
 	if delay > float64(d.config.MaxRetryDelay) {
 		delay = float64(d.config.MaxRetryDelay)
 	}
@@ -467,10 +467,10 @@ func (d *GuaranteedDeliveryService) handleFailedMessage(msg *PendingMessage, err
 // sendToDeadLetterQueue sends a failed message to the dead letter queue
 func (d *GuaranteedDeliveryService) sendToDeadLetterQueue(msg *PendingMessage, originalErr error, logger *logrus.Entry) {
 	deadLetterMetadata := map[string]interface{}{
-		"original_error":   originalErr.Error(),
-		"attempt_count":    msg.AttemptCount,
-		"created_at":       msg.CreatedAt,
-		"failed_at":        time.Now(),
+		"original_error":    originalErr.Error(),
+		"attempt_count":     msg.AttemptCount,
+		"created_at":        msg.CreatedAt,
+		"failed_at":         time.Now(),
 		"original_metadata": msg.Metadata,
 	}
 
@@ -585,16 +585,16 @@ func (d *GuaranteedDeliveryService) isDuplicate(msg *PendingMessage) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	// Compare with recent messages
 	for _, existing := range recent {
-		if existing.CallUUID == msg.CallUUID && 
-		   existing.Content == msg.Content &&
-		   time.Since(existing.CreatedAt) < 5*time.Minute {
+		if existing.CallUUID == msg.CallUUID &&
+			existing.Content == msg.Content &&
+			time.Since(existing.CreatedAt) < 5*time.Minute {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -604,18 +604,18 @@ func (d *GuaranteedDeliveryService) compressContent(content string) (string, err
 	if len(content) < 1024 {
 		return content, nil
 	}
-	
+
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
-	
+
 	if _, err := gz.Write([]byte(content)); err != nil {
 		return "", err
 	}
-	
+
 	if err := gz.Close(); err != nil {
 		return "", err
 	}
-	
+
 	// Base64 encode for safe string storage
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
@@ -627,18 +627,18 @@ func (d *GuaranteedDeliveryService) decompressContent(content string) (string, e
 	if err != nil {
 		return content, nil // Return as-is if not base64
 	}
-	
+
 	gz, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return content, nil // Return as-is if not gzipped
 	}
 	defer gz.Close()
-	
+
 	decompressed, err := io.ReadAll(gz)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return string(decompressed), nil
 }
 
@@ -737,7 +737,20 @@ func (d *GuaranteedDeliveryService) cleanupExpiredMessages() {
 func (d *GuaranteedDeliveryService) GetMetrics() DeliveryMetrics {
 	d.metrics.mutex.RLock()
 	defer d.metrics.mutex.RUnlock()
-	return *d.metrics
+	
+	// Return a copy without the mutex to avoid copying the lock
+	return DeliveryMetrics{
+		TotalMessages:        d.metrics.TotalMessages,
+		SuccessfulDeliveries: d.metrics.SuccessfulDeliveries,
+		FailedDeliveries:     d.metrics.FailedDeliveries,
+		RetriedMessages:      d.metrics.RetriedMessages,
+		AverageRetryCount:    d.metrics.AverageRetryCount,
+		AverageDeliveryTime:  d.metrics.AverageDeliveryTime,
+		DeadLetterCount:      d.metrics.DeadLetterCount,
+		PendingCount:         d.metrics.PendingCount,
+		LastDeliveryTime:     d.metrics.LastDeliveryTime,
+		ThroughputPerSecond:  d.metrics.ThroughputPerSecond,
+	}
 }
 
 // GetPendingCount returns the current number of pending messages

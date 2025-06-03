@@ -1,0 +1,276 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SIPREC Server Overview",
+    "tags": ["siprec", "overview"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Sessions",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "siprec_sip_sessions_active",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "green", "value": 0},
+            {"color": "yellow", "value": 100},
+            {"color": "red", "value": 500}
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "title": "Total Calls Today",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "increase(siprec_sessions_created_total[24h])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 3,
+        "title": "System Health",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "up{job=\"siprec\"}",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "colorMode": "background",
+          "thresholds": [
+            {"color": "red", "value": 0},
+            {"color": "green", "value": 1}
+          ]
+        }
+      },
+      {
+        "id": 4,
+        "title": "Recording Storage",
+        "type": "singlestat",
+        "targets": [
+          {
+            "expr": "siprec_recording_storage_usage_bytes / 1024 / 1024 / 1024",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "options": {
+          "valueName": "current",
+          "unit": "GB",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 5,
+        "title": "Session Creation Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_sessions_created_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{transport}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Sessions/sec"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "SIP Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_sip_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{method}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "RTP Packet Processing",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_rtp_packets_received_total[5m])",
+            "refId": "A",
+            "legendFormat": "Received"
+          },
+          {
+            "expr": "rate(siprec_rtp_dropped_packets_total[5m])",
+            "refId": "B",
+            "legendFormat": "Dropped"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Packets/sec"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "System Resources",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "siprec_system_memory_usage_bytes / 1024 / 1024",
+            "refId": "A",
+            "legendFormat": "Memory (MB)"
+          },
+          {
+            "expr": "siprec_system_cpu_usage_percent",
+            "refId": "B",
+            "legendFormat": "CPU (%)"
+          },
+          {
+            "expr": "siprec_system_goroutines",
+            "refId": "C",
+            "legendFormat": "Goroutines"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 16
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Value"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Error Rates",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_session_failures_total[5m])",
+            "refId": "A",
+            "legendFormat": "Session Failures"
+          },
+          {
+            "expr": "rate(siprec_recording_errors_total[5m])",
+            "refId": "B",
+            "legendFormat": "Recording Errors"
+          },
+          {
+            "expr": "rate(siprec_database_query_errors_total[5m])",
+            "refId": "C",
+            "legendFormat": "Database Errors"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Errors/sec"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1
+  }
+}

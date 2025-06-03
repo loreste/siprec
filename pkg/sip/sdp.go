@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pion/sdp/v3"
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
+
+	"github.com/pion/sdp/v3"
+	"github.com/sirupsen/logrus"
 )
 
 // ValidateSDP performs validation on SDP content
@@ -134,7 +135,7 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 }
 
 // Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
+func containsString(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 

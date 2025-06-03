@@ -373,7 +373,7 @@ func TestConcurrentKeyStoreAccess(t *testing.T) {
 
 			for j := 0; j < numOperations; j++ {
 				keyID := fmt.Sprintf("concurrent-key-%d-%d", id, j)
-				
+
 				key := &EncryptionKey{
 					ID:        keyID,
 					Algorithm: "AES-256-GCM",

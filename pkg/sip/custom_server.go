@@ -17,44 +17,44 @@ import (
 
 // CustomSIPServer is our own SIP server implementation
 type CustomSIPServer struct {
-	logger        *logrus.Logger
-	handler       *Handler
-	listeners     []net.Listener
-	tlsListeners  []net.Listener
-	wg            sync.WaitGroup
-	shutdownCtx   context.Context
-	shutdownFunc  context.CancelFunc
-	
+	logger       *logrus.Logger
+	handler      *Handler
+	listeners    []net.Listener
+	tlsListeners []net.Listener
+	wg           sync.WaitGroup
+	shutdownCtx  context.Context
+	shutdownFunc context.CancelFunc
+
 	// Connection tracking
 	connections map[string]*SIPConnection
 	connMutex   sync.RWMutex
-	
+
 	// Call state tracking
-	callStates  map[string]*CallState
-	callMutex   sync.RWMutex
+	callStates map[string]*CallState
+	callMutex  sync.RWMutex
 }
 
 // SIPConnection represents an active TCP/TLS connection
 type SIPConnection struct {
-	conn        net.Conn
-	reader      *bufio.Reader
-	writer      *bufio.Writer
-	remoteAddr  string
-	transport   string
+	conn         net.Conn
+	reader       *bufio.Reader
+	writer       *bufio.Writer
+	remoteAddr   string
+	transport    string
 	lastActivity time.Time
-	mutex       sync.Mutex
+	mutex        sync.Mutex
 }
 
 // SIPMessage represents a parsed SIP message
 type SIPMessage struct {
-	Method      string
-	RequestURI  string
-	Version     string
-	Headers     map[string][]string
-	Body        []byte
-	RawMessage  []byte
-	Connection  *SIPConnection
-	
+	Method     string
+	RequestURI string
+	Version    string
+	Headers    map[string][]string
+	Body       []byte
+	RawMessage []byte
+	Connection *SIPConnection
+
 	// Parsed SIP fields for easier access
 	CallID      string
 	FromTag     string
@@ -81,7 +81,7 @@ type CallState struct {
 // NewCustomSIPServer creates a new custom SIP server
 func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServer {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &CustomSIPServer{
 		logger:       logger,
 		handler:      handler,
@@ -111,7 +111,7 @@ func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string)
 
 	// Handle UDP packets
 	buffer := make([]byte, 65536) // Large buffer for UDP
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -120,7 +120,7 @@ func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string)
 		default:
 			// Set read timeout
 			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-			
+
 			n, clientAddr, err := conn.ReadFromUDP(buffer)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -226,9 +226,9 @@ func (s *CustomSIPServer) handleUDPMessage(conn *net.UDPConn, clientAddr *net.UD
 	}
 
 	message.Connection = &SIPConnection{
-		conn:        &udpConn{conn: conn, addr: clientAddr},
-		remoteAddr:  clientAddr.String(),
-		transport:   "udp",
+		conn:         &udpConn{conn: conn, addr: clientAddr},
+		remoteAddr:   clientAddr.String(),
+		transport:    "udp",
 		lastActivity: time.Now(),
 	}
 
@@ -239,15 +239,15 @@ func (s *CustomSIPServer) handleUDPMessage(conn *net.UDPConn, clientAddr *net.UD
 // handleTCPConnection handles TCP/TLS connections
 func (s *CustomSIPServer) handleTCPConnection(ctx context.Context, conn net.Conn, transport string) {
 	defer conn.Close()
-	
+
 	connID := fmt.Sprintf("%s-%s", transport, conn.RemoteAddr().String())
-	
+
 	sipConn := &SIPConnection{
-		conn:        conn,
-		reader:      bufio.NewReader(conn),
-		writer:      bufio.NewWriter(conn),
-		remoteAddr:  conn.RemoteAddr().String(),
-		transport:   transport,
+		conn:         conn,
+		reader:       bufio.NewReader(conn),
+		writer:       bufio.NewWriter(conn),
+		remoteAddr:   conn.RemoteAddr().String(),
+		transport:    transport,
 		lastActivity: time.Now(),
 	}
 
@@ -261,7 +261,7 @@ func (s *CustomSIPServer) handleTCPConnection(ctx context.Context, conn net.Conn
 		s.connMutex.Lock()
 		delete(s.connections, connID)
 		s.connMutex.Unlock()
-		
+
 		if r := recover(); r != nil {
 			s.logger.WithField("recover", r).Error("Recovered from panic in TCP connection handler")
 		}
@@ -331,7 +331,7 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 		// Convert to string for processing - handle both \r\n and \n endings
 		lineStr := string(line)
 		lineStr = strings.TrimRight(lineStr, "\r\n")
-		
+
 		// Debug log for message reading - only log short lines and important headers
 		if len(lineStr) <= 50 || strings.Contains(strings.ToLower(lineStr), "content-length") {
 			s.logger.WithField("line", lineStr).Debug("Read SIP header line")
@@ -341,7 +341,7 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 		if lineStr == "" {
 			headerComplete = true
 			s.logger.WithFields(logrus.Fields{
-				"headers_size": len(buffer),
+				"headers_size":   len(buffer),
 				"content_length": contentLength,
 			}).Debug("Headers complete, reading body")
 			break
@@ -362,20 +362,20 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 	// Read body if Content-Length is specified
 	if headerComplete && contentLength > 0 {
 		s.logger.WithField("content_length", contentLength).Debug("Reading message body")
-		
+
 		body := make([]byte, contentLength)
 		bytesRead, err := io.ReadFull(conn.reader, body)
 		if err != nil {
 			s.logger.WithError(err).WithFields(logrus.Fields{
 				"expected": contentLength,
-				"read": bytesRead,
+				"read":     bytesRead,
 			}).Error("Error reading message body")
 			return nil, err
 		}
-		
+
 		buffer = append(buffer, body...)
 		s.logger.WithFields(logrus.Fields{
-			"body_size": len(body),
+			"body_size":          len(body),
 			"total_message_size": len(buffer),
 		}).Debug("Successfully read complete SIP message")
 	}
@@ -388,8 +388,8 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"method": message.Method,
-		"message_size": len(buffer),
+		"method":         message.Method,
+		"message_size":   len(buffer),
 		"content_length": contentLength,
 	}).Debug("Successfully parsed SIP message")
 
@@ -458,18 +458,18 @@ func (s *CustomSIPServer) parseSIPMessage(data []byte, conn *SIPConnection) (*SI
 	message.CallID = s.getHeaderValue(message, "call-id")
 	message.CSeq = s.getHeaderValue(message, "cseq")
 	message.ContentType = s.getHeaderValue(message, "content-type")
-	
+
 	// Extract tags from From and To headers
 	fromHeader := s.getHeaderValue(message, "from")
 	if fromHeader != "" {
 		message.FromTag = extractTag(fromHeader)
 	}
-	
+
 	toHeader := s.getHeaderValue(message, "to")
 	if toHeader != "" {
 		message.ToTag = extractTag(toHeader)
 	}
-	
+
 	// Extract branch from Via header
 	viaHeader := s.getHeaderValue(message, "via")
 	if viaHeader != "" {
@@ -488,10 +488,10 @@ func (s *CustomSIPServer) processSIPMessage(message *SIPMessage) {
 	}()
 
 	logger := s.logger.WithFields(logrus.Fields{
-		"method":      message.Method,
-		"request_uri": message.RequestURI,
-		"transport":   message.Connection.transport,
-		"remote_addr": message.Connection.remoteAddr,
+		"method":       message.Method,
+		"request_uri":  message.RequestURI,
+		"transport":    message.Connection.transport,
+		"remote_addr":  message.Connection.remoteAddr,
 		"message_size": len(message.RawMessage),
 	})
 
@@ -546,14 +546,14 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 // handleSiprecInvite handles SIPREC INVITE requests
 func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	logger := s.logger.WithField("siprec", true)
-	
+
 	// Log message details
 	logger.WithFields(logrus.Fields{
-		"call_id": message.CallID,
+		"call_id":   message.CallID,
 		"body_size": len(message.Body),
 		"transport": message.Connection.transport,
-		"from_tag": message.FromTag,
-		"branch": message.Branch,
+		"from_tag":  message.FromTag,
+		"branch":    message.Branch,
 	}).Info("Processing SIPREC INVITE with large metadata")
 
 	// Create or update call state
@@ -591,14 +591,14 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Generate proper SDP response for SIPREC
 	responseSDP := s.generateSiprecSDP()
-	
+
 	// Update call state to connected
 	callState.State = "connected"
 	callState.LastActivity = time.Now()
 
 	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	logger.WithFields(logrus.Fields{
-		"call_id": message.CallID,
+		"call_id":   message.CallID,
 		"local_tag": callState.LocalTag,
 	}).Info("Successfully responded to SIPREC INVITE")
 }
@@ -631,33 +631,42 @@ func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 
 // sendResponse sends a SIP response
 func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reasonPhrase string, headers map[string]string, body []byte) {
-	var response strings.Builder
-
-	// Status line
-	response.WriteString(fmt.Sprintf("%s %d %s\r\n", message.Version, statusCode, reasonPhrase))
+	// Create a response message for NAT rewriting
+	responseMessage := &SIPMessage{
+		Method:     "RESPONSE",
+		RequestURI: "",
+		Version:    message.Version,
+		Headers:    make(map[string][]string),
+		Body:       body,
+		Connection: message.Connection,
+		CallID:     message.CallID,
+	}
 
 	// Copy Via headers
 	if viaHeaders, exists := message.Headers["via"]; exists {
-		for _, via := range viaHeaders {
-			response.WriteString(fmt.Sprintf("Via: %s\r\n", via))
-		}
+		responseMessage.Headers["via"] = make([]string, len(viaHeaders))
+		copy(responseMessage.Headers["via"], viaHeaders)
 	}
 
 	// Copy other essential headers
 	essentialHeaders := []string{"from", "to", "call-id", "cseq"}
 	for _, headerName := range essentialHeaders {
 		if headerValues, exists := message.Headers[headerName]; exists {
-			for _, value := range headerValues {
-				// Add tag to To header if it's a 200 OK response and no tag exists
-				if headerName == "to" && statusCode == 200 && !strings.Contains(value, "tag=") {
-					// Check if we have a call state with a local tag
-					if callState := s.getCallState(message.CallID); callState != nil && callState.LocalTag != "" {
-						value += fmt.Sprintf(";tag=%s", callState.LocalTag)
-					} else {
-						value += fmt.Sprintf(";tag=%s", generateTag())
+			responseMessage.Headers[headerName] = make([]string, len(headerValues))
+			copy(responseMessage.Headers[headerName], headerValues)
+
+			// Add tag to To header if it's a 200 OK response and no tag exists
+			if headerName == "to" && statusCode == 200 {
+				for i, value := range responseMessage.Headers[headerName] {
+					if !strings.Contains(value, "tag=") {
+						// Check if we have a call state with a local tag
+						if callState := s.getCallState(message.CallID); callState != nil && callState.LocalTag != "" {
+							responseMessage.Headers[headerName][i] = value + fmt.Sprintf(";tag=%s", callState.LocalTag)
+						} else {
+							responseMessage.Headers[headerName][i] = value + fmt.Sprintf(";tag=%s", generateTag())
+						}
 					}
 				}
-				response.WriteString(fmt.Sprintf("%s: %s\r\n", strings.Title(headerName), value))
 			}
 		}
 	}
@@ -665,14 +674,67 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 	// Add custom headers
 	for name, value := range headers {
 		if value != "" {
-			response.WriteString(fmt.Sprintf("%s: %s\r\n", name, value))
+			headerName := strings.ToLower(name)
+			if _, exists := responseMessage.Headers[headerName]; !exists {
+				responseMessage.Headers[headerName] = make([]string, 0)
+			}
+			responseMessage.Headers[headerName] = append(responseMessage.Headers[headerName], value)
+		}
+	}
+
+	// Set Content-Type if body exists
+	if body != nil {
+		responseMessage.Headers["content-type"] = []string{"application/sdp"}
+	}
+
+	// Apply NAT rewriting if handler has NAT rewriter configured
+	if s.handler != nil && s.handler.NATRewriter != nil {
+		if err := s.handler.NATRewriter.RewriteOutgoingMessage(responseMessage); err != nil {
+			s.logger.WithError(err).Debug("Failed to apply NAT rewriting to outgoing response")
+		}
+	}
+
+	// Build the response string from the (possibly rewritten) response message
+	var response strings.Builder
+
+	// Status line
+	response.WriteString(fmt.Sprintf("%s %d %s\r\n", responseMessage.Version, statusCode, reasonPhrase))
+
+	// Write Via headers
+	if viaHeaders, exists := responseMessage.Headers["via"]; exists {
+		for _, via := range viaHeaders {
+			response.WriteString(fmt.Sprintf("Via: %s\r\n", via))
+		}
+	}
+
+	// Write other essential headers
+	for _, headerName := range essentialHeaders {
+		if headerValues, exists := responseMessage.Headers[headerName]; exists {
+			for _, value := range headerValues {
+				response.WriteString(fmt.Sprintf("%s: %s\r\n", strings.Title(headerName), value))
+			}
+		}
+	}
+
+	// Write custom headers
+	for headerName, headerValues := range responseMessage.Headers {
+		// Skip headers we've already written
+		if headerName == "via" || contains(essentialHeaders, headerName) || headerName == "content-type" || headerName == "content-length" {
+			continue
+		}
+		for _, value := range headerValues {
+			response.WriteString(fmt.Sprintf("%s: %s\r\n", strings.Title(headerName), value))
 		}
 	}
 
 	// Content headers
-	if body != nil {
-		response.WriteString(fmt.Sprintf("Content-Type: application/sdp\r\n"))
-		response.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
+	if responseMessage.Body != nil {
+		if contentType, exists := responseMessage.Headers["content-type"]; exists && len(contentType) > 0 {
+			response.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType[0]))
+		} else {
+			response.WriteString("Content-Type: application/sdp\r\n")
+		}
+		response.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(responseMessage.Body)))
 	} else {
 		response.WriteString("Content-Length: 0\r\n")
 	}
@@ -681,13 +743,13 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 	response.WriteString("\r\n")
 
 	// Body
-	if body != nil {
-		response.Write(body)
+	if responseMessage.Body != nil {
+		response.Write(responseMessage.Body)
 	}
 
 	// Send response
 	responseBytes := []byte(response.String())
-	
+
 	if err := s.writeToConnection(message.Connection, responseBytes); err != nil {
 		s.logger.WithError(err).Error("Failed to send SIP response")
 	}
@@ -724,6 +786,16 @@ func (s *CustomSIPServer) getHeaderValue(message *SIPMessage, name string) strin
 // getHeader gets a header value from the message (backwards compatibility)
 func (s *CustomSIPServer) getHeader(message *SIPMessage, name string) string {
 	return s.getHeaderValue(message, name)
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 // extractTag extracts tag parameter from SIP header
@@ -771,7 +843,7 @@ func generateTag() string {
 // extractSiprecContent extracts SDP and rs-metadata from multipart SIPREC body
 func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) ([]byte, []byte) {
 	bodyStr := string(body)
-	
+
 	// Extract boundary from Content-Type
 	boundary := ""
 	if strings.Contains(contentType, "boundary=") {
@@ -781,34 +853,34 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 			boundary = strings.Trim(boundary, "\"")
 		}
 	}
-	
+
 	if boundary == "" {
 		s.logger.Debug("No boundary found in Content-Type")
 		return nil, nil
 	}
-	
+
 	// Split by boundary
 	parts := strings.Split(bodyStr, "--"+boundary)
-	
+
 	var sdpData []byte
 	var rsMetadata []byte
-	
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" || part == "--" {
 			continue
 		}
-		
+
 		// Split headers and content
 		sections := strings.Split(part, "\r\n\r\n")
 		if len(sections) < 2 {
 			sections = strings.Split(part, "\n\n")
 		}
-		
+
 		if len(sections) >= 2 {
 			headers := sections[0]
 			content := strings.Join(sections[1:], "\r\n\r\n")
-			
+
 			if strings.Contains(headers, "application/sdp") {
 				sdpData = []byte(content)
 				s.logger.WithField("sdp_size", len(sdpData)).Debug("Found SDP part")
@@ -818,7 +890,7 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 			}
 		}
 	}
-	
+
 	return sdpData, rsMetadata
 }
 
@@ -826,7 +898,7 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 func (s *CustomSIPServer) generateSiprecSDP() []byte {
 	// Generate SDP with proper session info
 	timestamp := time.Now().Unix()
-	
+
 	sdp := fmt.Sprintf(`v=0
 o=- %d %d IN IP4 127.0.0.1
 s=SIPREC Recording Session
@@ -845,7 +917,7 @@ a=recvonly
 func (s *CustomSIPServer) updateCallState(callID string, state string) {
 	s.callMutex.Lock()
 	defer s.callMutex.Unlock()
-	
+
 	if callState, exists := s.callStates[callID]; exists {
 		callState.State = state
 		callState.LastActivity = time.Now()
@@ -856,14 +928,14 @@ func (s *CustomSIPServer) updateCallState(callID string, state string) {
 func (s *CustomSIPServer) getCallState(callID string) *CallState {
 	s.callMutex.RLock()
 	defer s.callMutex.RUnlock()
-	
+
 	return s.callStates[callID]
 }
 
 // Shutdown gracefully shuts down the server
 func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down custom SIP server")
-	
+
 	// Cancel server context
 	s.shutdownFunc()
 
