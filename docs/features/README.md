@@ -57,18 +57,22 @@ Comprehensive overview of SIPREC Server features and capabilities.
 
 ## STT Provider Integration
 
-Supported providers:
-- OpenAI Whisper
-- Google Cloud Speech-to-Text
-- Amazon Transcribe
-- Azure Speech Services
-- Deepgram
+### Supported Providers
+- **OpenAI Whisper** - Local processing with high accuracy
+- **Google Cloud Speech-to-Text** - Enhanced streaming with speaker diarization
+- **Amazon Transcribe** - Real-time streaming with custom vocabulary
+- **Azure Speech Services** - Multi-language support with confidence scoring
+- **Deepgram** - WebSocket streaming with advanced features
 
-Features:
-- Automatic failover
-- Provider-specific optimizations
-- Language detection
-- Custom vocabulary support
+### Advanced STT Features
+- **Real-time Streaming**: Live transcription with WebSocket and gRPC protocols
+- **Speaker Diarization**: Multi-speaker identification and separation
+- **Circuit Breaker Pattern**: Automatic failover and service resilience
+- **Retry Logic**: Exponential backoff with configurable retry policies
+- **Custom Vocabulary**: Domain-specific term recognition and phrase hints
+- **Multi-language Support**: Automatic language detection and switching
+- **Performance Optimization**: Connection pooling and memory-efficient processing
+- **Enhanced Metadata**: Word-level timestamps, confidence scores, and speaker tags
 
 ## Real-time Streaming
 

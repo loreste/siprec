@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"siprec-server/pkg/errors"
+
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
-	"siprec-server/pkg/errors"
 )
 
 // Config represents the complete application configuration
@@ -42,7 +43,7 @@ type NetworkConfig struct {
 	// UDP-specific SIP ports (overrides Ports for UDP if set)
 	UDPPorts []int `json:"udp_ports" env:"UDP_PORTS"`
 
-	// TCP-specific SIP ports (overrides Ports for TCP if set) 
+	// TCP-specific SIP ports (overrides Ports for TCP if set)
 	TCPPorts []int `json:"tcp_ports" env:"TCP_PORTS"`
 
 	// Whether SRTP is enabled
@@ -179,9 +180,9 @@ type EncryptionConfig struct {
 	KeyBackupEnabled    bool          `json:"key_backup_enabled" env:"KEY_BACKUP_ENABLED" default:"true"`
 
 	// Security parameters
-	KeySize         int `json:"key_size" env:"ENCRYPTION_KEY_SIZE" default:"32"`
-	NonceSize       int `json:"nonce_size" env:"ENCRYPTION_NONCE_SIZE" default:"12"`
-	SaltSize        int `json:"salt_size" env:"ENCRYPTION_SALT_SIZE" default:"32"`
+	KeySize          int `json:"key_size" env:"ENCRYPTION_KEY_SIZE" default:"32"`
+	NonceSize        int `json:"nonce_size" env:"ENCRYPTION_NONCE_SIZE" default:"12"`
+	SaltSize         int `json:"salt_size" env:"ENCRYPTION_SALT_SIZE" default:"32"`
 	PBKDF2Iterations int `json:"pbkdf2_iterations" env:"PBKDF2_ITERATIONS" default:"100000"`
 
 	// Storage encryption
@@ -702,8 +703,8 @@ func loadEncryptionConfig(logger *logrus.Logger, config *EncryptionConfig) error
 		logger.WithFields(logrus.Fields{
 			"recording_encryption": config.EnableRecordingEncryption,
 			"metadata_encryption":  config.EnableMetadataEncryption,
-			"algorithm":           config.Algorithm,
-			"key_store":           config.EncryptionKeyStore,
+			"algorithm":            config.Algorithm,
+			"key_store":            config.EncryptionKeyStore,
 		}).Info("Encryption enabled")
 	} else {
 		logger.Debug("Encryption disabled")
@@ -863,7 +864,7 @@ func (n *NetworkConfig) GetUDPPorts() []int {
 	return n.Ports
 }
 
-// GetTCPPorts returns the ports to use for TCP listeners  
+// GetTCPPorts returns the ports to use for TCP listeners
 func (n *NetworkConfig) GetTCPPorts() []int {
 	if len(n.TCPPorts) > 0 {
 		return n.TCPPorts

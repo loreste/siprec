@@ -21,9 +21,9 @@ type EncryptionConfig struct {
 	KeyBackupEnabled    bool          `json:"key_backup_enabled" mapstructure:"key_backup_enabled"`
 
 	// Security parameters
-	KeySize         int `json:"key_size" mapstructure:"key_size"`                   // 256 for AES-256
-	NonceSize       int `json:"nonce_size" mapstructure:"nonce_size"`               // 12 for GCM, 24 for ChaCha20
-	SaltSize        int `json:"salt_size" mapstructure:"salt_size"`                 // 32 for key derivation
+	KeySize          int `json:"key_size" mapstructure:"key_size"`                   // 256 for AES-256
+	NonceSize        int `json:"nonce_size" mapstructure:"nonce_size"`               // 12 for GCM, 24 for ChaCha20
+	SaltSize         int `json:"salt_size" mapstructure:"salt_size"`                 // 32 for key derivation
 	PBKDF2Iterations int `json:"pbkdf2_iterations" mapstructure:"pbkdf2_iterations"` // 100000 minimum
 
 	// Storage encryption
@@ -65,7 +65,7 @@ type EncryptionManager interface {
 	// Encryption operations
 	EncryptRecording(sessionID string, audioData []byte) (*EncryptedData, error)
 	DecryptRecording(sessionID string, encData *EncryptedData) ([]byte, error)
-	
+
 	EncryptMetadata(sessionID string, metadata map[string]interface{}) (*EncryptedData, error)
 	DecryptMetadata(sessionID string, encData *EncryptedData) (map[string]interface{}, error)
 
@@ -80,13 +80,13 @@ type EncryptionManager interface {
 
 // EncryptionInfo provides information about encryption for a session
 type EncryptionInfo struct {
-	SessionID            string    `json:"session_id"`
-	RecordingEncrypted   bool      `json:"recording_encrypted"`
-	MetadataEncrypted    bool      `json:"metadata_encrypted"`
-	Algorithm            string    `json:"algorithm"`
-	KeyID                string    `json:"key_id"`
-	KeyVersion           int       `json:"key_version"`
-	EncryptionStartedAt  time.Time `json:"encryption_started_at"`
+	SessionID           string    `json:"session_id"`
+	RecordingEncrypted  bool      `json:"recording_encrypted"`
+	MetadataEncrypted   bool      `json:"metadata_encrypted"`
+	Algorithm           string    `json:"algorithm"`
+	KeyID               string    `json:"key_id"`
+	KeyVersion          int       `json:"key_version"`
+	EncryptionStartedAt time.Time `json:"encryption_started_at"`
 }
 
 // KeyStore interface for different key storage backends
@@ -116,9 +116,9 @@ type FileHeader struct {
 const (
 	DefaultAlgorithm           = "AES-256-GCM"
 	DefaultKeyDerivationMethod = "PBKDF2"
-	DefaultKeySize             = 32  // 256 bits
-	DefaultNonceSize           = 12  // 96 bits for GCM
-	DefaultSaltSize            = 32  // 256 bits
+	DefaultKeySize             = 32 // 256 bits
+	DefaultNonceSize           = 12 // 96 bits for GCM
+	DefaultSaltSize            = 32 // 256 bits
 	DefaultPBKDF2Iterations    = 100000
 	DefaultKeyRotationInterval = 24 * time.Hour
 	DefaultEncryptionKeyStore  = "file"

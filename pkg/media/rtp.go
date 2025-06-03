@@ -12,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pion/srtp/v2"
-	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/audio"
 	"siprec-server/pkg/metrics"
+
+	"github.com/pion/srtp/v2"
+	"github.com/sirupsen/logrus"
 )
 
 func init() {
@@ -30,7 +31,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		defer func() {
 			if r := recover(); r != nil {
 				forwarder.Logger.WithFields(logrus.Fields{
-					"panic": r,
+					"panic":     r,
 					"call_uuid": callUUID,
 				}).Error("Panic in RTP forwarding goroutine")
 			}

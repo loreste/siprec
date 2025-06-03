@@ -99,9 +99,9 @@ type CircuitBreakerMetrics struct {
 
 // Common circuit breaker errors
 var (
-	ErrCircuitBreakerOpen     = errors.New("circuit breaker is open")
-	ErrCircuitBreakerTimeout  = errors.New("circuit breaker operation timeout")
-	ErrMaxRetriesExceeded     = errors.New("circuit breaker max retries exceeded")
+	ErrCircuitBreakerOpen    = errors.New("circuit breaker is open")
+	ErrCircuitBreakerTimeout = errors.New("circuit breaker operation timeout")
+	ErrMaxRetriesExceeded    = errors.New("circuit breaker max retries exceeded")
 )
 
 // NewCircuitBreaker creates a new circuit breaker
@@ -291,7 +291,7 @@ func (cb *CircuitBreaker) GetMetrics() CircuitBreakerMetrics {
 	defer cb.mutex.RUnlock()
 
 	windowStats := cb.slidingWindow.GetStats(cb.config.SlidingWindowTime)
-	
+
 	var failureRate float64
 	if windowStats.TotalRequests > 0 {
 		failureRate = float64(windowStats.TotalFailures) / float64(windowStats.TotalRequests)
@@ -397,7 +397,7 @@ type CircuitBreakerAMQPClient struct {
 // NewCircuitBreakerAMQPClient creates a new AMQP client with circuit breaker
 func NewCircuitBreakerAMQPClient(client AMQPClientInterface, logger *logrus.Logger, config CircuitBreakerConfig) *CircuitBreakerAMQPClient {
 	cb := NewCircuitBreaker(logger, config)
-	
+
 	// Set up state change callback
 	cb.SetStateChangeCallback(func(state CircuitBreakerState) {
 		logger.WithField("state", state).Info("AMQP circuit breaker state changed")

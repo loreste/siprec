@@ -77,7 +77,7 @@ func (suite *MessagingTestSuite) TestMemoryMessageStorage() {
 // TestMemoryStorageConcurrency tests concurrent access to memory storage
 func (suite *MessagingTestSuite) TestMemoryStorageConcurrency() {
 	storage := messaging.NewMemoryMessageStorage()
-	
+
 	const numGoroutines = 10
 	const messagesPerGoroutine = 20
 
@@ -119,7 +119,7 @@ func (suite *MessagingTestSuite) TestMemoryStorageConcurrency() {
 		go func(index int) {
 			for j := 0; j < messagesPerGoroutine; j++ {
 				msgID := fmt.Sprintf("msg-%d-%d", index, j)
-				
+
 				// Read
 				retrieved, err := storage.Retrieve(msgID)
 				if err != nil || retrieved == nil {
@@ -208,13 +208,13 @@ func (suite *MessagingTestSuite) TestCircuitBreakerMetrics() {
 	cb := messaging.NewCircuitBreaker(suite.logger, config)
 
 	// Execute some operations
-	cb.Execute(func() error { return nil })                        // Success
-	cb.Execute(func() error { return fmt.Errorf("failure 1") })    // Failure
-	cb.Execute(func() error { return nil })                        // Success
-	cb.Execute(func() error { return fmt.Errorf("failure 2") })    // Failure
+	cb.Execute(func() error { return nil })                     // Success
+	cb.Execute(func() error { return fmt.Errorf("failure 1") }) // Failure
+	cb.Execute(func() error { return nil })                     // Success
+	cb.Execute(func() error { return fmt.Errorf("failure 2") }) // Failure
 
 	metrics := cb.GetMetrics()
-	
+
 	suite.Assert().Equal(messaging.StateClosed, metrics.State)
 	suite.Assert().Equal(int64(4), metrics.TotalRequests)
 	suite.Assert().Equal(int64(2), metrics.TotalFailures)
@@ -231,7 +231,7 @@ func (suite *MessagingTestSuite) TestGuaranteedDeliveryService() {
 	}
 
 	storage := messaging.NewMemoryMessageStorage()
-	
+
 	config := messaging.DefaultDeliveryConfig()
 	config.WorkerCount = 1
 	config.MaxRetries = 2
@@ -253,7 +253,7 @@ func (suite *MessagingTestSuite) TestGuaranteedDeliveryService() {
 	// Check metrics
 	metrics := service.GetMetrics()
 	suite.Assert().True(metrics.TotalMessages >= 1, "Should have at least 1 message")
-	
+
 	// Stop the service
 	err = service.Stop()
 	suite.Assert().NoError(err)
@@ -269,7 +269,7 @@ func (suite *MessagingTestSuite) TestGuaranteedDeliveryRetries() {
 	}
 
 	storage := messaging.NewMemoryMessageStorage()
-	
+
 	config := messaging.DefaultDeliveryConfig()
 	config.WorkerCount = 1
 	config.MaxRetries = 3
@@ -306,15 +306,15 @@ type MockAMQPClient struct {
 
 func (m *MockAMQPClient) PublishTranscription(transcription, callUUID string, metadata map[string]interface{}) error {
 	m.attempts++
-	
+
 	if m.failureCount > 0 && m.attempts <= m.failureCount {
 		return fmt.Errorf("mock failure %d", m.attempts)
 	}
-	
+
 	if m.failures[callUUID] {
 		return fmt.Errorf("mock failure for call %s", callUUID)
 	}
-	
+
 	return nil
 }
 
@@ -351,7 +351,7 @@ func (suite *MessagingTestSuite) TestDeliveryServiceIntegrationWithCircuitBreake
 	cbClient := messaging.NewCircuitBreakerAMQPClient(mockClient, suite.logger, cbConfig)
 
 	storage := messaging.NewMemoryMessageStorage()
-	
+
 	config := messaging.DefaultDeliveryConfig()
 	config.WorkerCount = 1
 	config.MaxRetries = 1
@@ -495,7 +495,7 @@ func TestMessagingComponents(t *testing.T) {
 // Benchmark tests for messaging components
 func BenchmarkMemoryStorage(b *testing.B) {
 	storage := messaging.NewMemoryMessageStorage()
-	
+
 	// Prepare test messages
 	messages := make([]*messaging.PendingMessage, 1000)
 	for i := 0; i < 1000; i++ {

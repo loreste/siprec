@@ -50,7 +50,7 @@ func NewAMQPClient(logger *logrus.Logger, config AMQPConfig) *AMQPClient {
 	if config.RoutingKey == "" {
 		config.RoutingKey = config.QueueName
 	}
-	config.Durable = true    // Default to durable queues
+	config.Durable = true     // Default to durable queues
 	config.AutoDelete = false // Default to persistent queues
 
 	return &AMQPClient{
@@ -176,11 +176,11 @@ func (c *AMQPClient) Connect() error {
 	go func() {
 		queue, err := channel.QueueDeclare(
 			c.config.QueueName,
-			c.config.Durable,   // Durable
+			c.config.Durable,    // Durable
 			c.config.AutoDelete, // Delete when unused
-			false, // Exclusive
-			false, // No-wait
-			nil,   // Arguments
+			false,               // Exclusive
+			false,               // No-wait
+			nil,                 // Arguments
 		)
 		queueChan <- struct {
 			queue amqp.Queue
@@ -333,8 +333,8 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 		err := c.channel.Publish(
 			c.config.ExchangeName, // Exchange
 			c.config.RoutingKey,   // Routing key
-			false,       // Mandatory
-			false,       // Immediate
+			false,                 // Mandatory
+			false,                 // Immediate
 			amqp.Publishing{
 				ContentType:  "application/json",
 				Body:         bodyBytes,

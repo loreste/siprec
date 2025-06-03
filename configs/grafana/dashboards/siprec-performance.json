@@ -1,0 +1,279 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SIPREC Performance Monitoring",
+    "tags": ["siprec", "performance"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "RTP Processing Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(siprec_rtp_processing_time_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.90, rate(siprec_rtp_processing_time_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "90th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(siprec_rtp_processing_time_seconds_bucket[5m]))",
+            "refId": "C",
+            "legendFormat": "50th percentile"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency (seconds)",
+            "logBase": 10
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Database Query Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(siprec_database_query_duration_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "95th percentile - {{operation}}"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(siprec_database_query_duration_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "50th percentile - {{operation}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Duration (seconds)"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Audio Processing Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(siprec_audio_processing_latency_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "95th percentile - {{processing_type}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency (seconds)"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "STT Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(siprec_stt_latency_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "95th percentile - {{vendor}}"
+          },
+          {
+            "expr": "rate(siprec_stt_requests_total[5m])",
+            "refId": "B",
+            "legendFormat": "Request rate - {{vendor}}"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Latency (seconds)"
+          },
+          {
+            "label": "Requests/sec",
+            "side": "right"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Session Duration Distribution",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(siprec_session_duration_total_seconds_bucket[5m])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "xBucketSize": "60s",
+        "yBucketSize": "auto"
+      },
+      {
+        "id": 6,
+        "title": "Memory Usage Pattern",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "siprec_system_memory_usage_bytes",
+            "refId": "A",
+            "legendFormat": "Memory Usage"
+          },
+          {
+            "expr": "siprec_memory_buffers_active",
+            "refId": "B",
+            "legendFormat": "Active Buffers"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Network Throughput",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(siprec_rtp_bytes_received_total[5m]) * 8",
+            "refId": "A",
+            "legendFormat": "RTP Throughput (bps)"
+          },
+          {
+            "expr": "rate(siprec_system_network_bytes_total[5m]) * 8",
+            "refId": "B",
+            "legendFormat": "Network {{direction}} (bps)"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bits per second"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Resource Utilization Trends",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "siprec_ports_in_use / 16384 * 100",
+            "refId": "A",
+            "legendFormat": "Port Utilization %"
+          },
+          {
+            "expr": "siprec_active_calls / 1000 * 100",
+            "refId": "B",
+            "legendFormat": "Call Capacity %"
+          },
+          {
+            "expr": "siprec_system_cpu_usage_percent",
+            "refId": "C",
+            "legendFormat": "CPU Usage %"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 32
+        },
+        "xAxes": [
+          {
+            "type": "time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "max": 100,
+            "min": 0
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 30,
+    "version": 1
+  }
+}

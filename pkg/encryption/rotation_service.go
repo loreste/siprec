@@ -11,23 +11,23 @@ import (
 // RotationService handles automatic key rotation
 type RotationService struct {
 	encryptionManager EncryptionManager
-	config           *EncryptionConfig
-	logger           *logrus.Logger
-	
-	ticker    *time.Ticker
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	running   bool
-	mu        sync.Mutex
+	config            *EncryptionConfig
+	logger            *logrus.Logger
+
+	ticker  *time.Ticker
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	running bool
+	mu      sync.Mutex
 }
 
 // NewRotationService creates a new key rotation service
 func NewRotationService(encMgr EncryptionManager, config *EncryptionConfig, logger *logrus.Logger) *RotationService {
 	return &RotationService{
 		encryptionManager: encMgr,
-		config:           config,
-		logger:           logger,
+		config:            config,
+		logger:            logger,
 	}
 }
 
@@ -95,7 +95,7 @@ func (rs *RotationService) rotationLoop() {
 // performRotation performs the actual key rotation
 func (rs *RotationService) performRotation() error {
 	start := time.Now()
-	
+
 	rs.logger.Info("Starting key rotation")
 
 	// Rotate keys
@@ -127,7 +127,7 @@ func (rs *RotationService) IsRunning() bool {
 func (rs *RotationService) GetNextRotationTime() time.Time {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	
+
 	if !rs.running {
 		return time.Time{}
 	}
