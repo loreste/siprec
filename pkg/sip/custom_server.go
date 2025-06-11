@@ -65,6 +65,13 @@ type SIPMessage struct {
 	CSeq        string
 	Branch      string
 	ContentType string
+
+	// Vendor-specific fields for enterprise compatibility
+	UserAgent       string
+	VendorType      string // "avaya", "cisco", "generic"
+	VendorHeaders   map[string]string
+	UCIDHeaders     []string // Avaya Universal Call ID variations
+	SessionIDHeader string   // Cisco Session-ID header
 }
 
 // CallState tracks the state of SIP calls
@@ -492,6 +499,9 @@ func (s *CustomSIPServer) parseSIPMessage(data []byte, conn *SIPConnection) (*SI
 	if viaHeader != "" {
 		message.Branch = extractBranch(viaHeader)
 	}
+
+	// Extract vendor-specific information for enterprise compatibility
+	s.extractVendorInformation(message)
 
 	return message, nil
 }
@@ -1507,4 +1517,137 @@ func (u *udpConn) SetReadDeadline(t time.Time) error {
 
 func (u *udpConn) SetWriteDeadline(t time.Time) error {
 	return u.conn.SetWriteDeadline(t)
+}
+
+// extractVendorInformation detects and extracts vendor-specific headers for enterprise compatibility
+func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
+	// Initialize vendor fields
+	message.VendorHeaders = make(map[string]string)
+	message.UCIDHeaders = []string{}
+	
+	// Extract User-Agent for vendor detection
+	message.UserAgent = s.getHeaderValue(message, "user-agent")
+	message.VendorType = s.detectVendor(message)
+	
+	// Extract vendor-specific headers based on detected vendor
+	switch message.VendorType {
+	case "avaya":
+		s.extractAvayaHeaders(message)
+	case "cisco":
+		s.extractCiscoHeaders(message)
+	default:
+		s.extractGenericHeaders(message)
+	}
+}
+
+// detectVendor identifies the vendor type based on headers
+func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
+	userAgent := strings.ToLower(message.UserAgent)
+	
+	// Detect Avaya systems
+	if strings.Contains(userAgent, "avaya") ||
+		strings.Contains(userAgent, "aura") ||
+		strings.Contains(userAgent, "session manager") {
+		return "avaya"
+	}
+	
+	// Detect Cisco systems  
+	if strings.Contains(userAgent, "cisco") ||
+		strings.Contains(userAgent, "cube") ||
+		strings.Contains(userAgent, "ccm") ||
+		strings.Contains(userAgent, "cucm") {
+		return "cisco"
+	}
+	
+	// Check for vendor-specific headers as fallback
+	if s.getHeaderValue(message, "x-avaya-conf-id") != "" ||
+		s.getHeaderValue(message, "x-avaya-ucid") != "" ||
+		s.getHeaderValue(message, "x-avaya-station-id") != "" {
+		return "avaya"
+	}
+	
+	if s.getHeaderValue(message, "session-id") != "" ||
+		s.getHeaderValue(message, "cisco-guid") != "" ||
+		s.getHeaderValue(message, "x-cisco-call-id") != "" {
+		return "cisco"
+	}
+	
+	return "generic"
+}
+
+// extractAvayaHeaders extracts Avaya-specific SIP headers
+func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
+	// Avaya-specific headers to extract
+	avayaHeaders := []string{
+		"x-avaya-conf-id",
+		"x-avaya-station-id", 
+		"x-avaya-ucid",
+		"x-avaya-trunk-group",
+		"x-avaya-user-id",
+		"x-avaya-agent-id",
+		"x-avaya-skill-group",
+		"p-asserted-identity",
+		"diversion",
+		"remote-party-id",
+	}
+	
+	for _, header := range avayaHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+	
+	// Handle Universal Call ID (UCID) variations
+	ucidHeaders := []string{"x-avaya-ucid", "call-id", "x-ucid", "x-avaya-conf-id"}
+	for _, header := range ucidHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+		}
+	}
+}
+
+// extractCiscoHeaders extracts Cisco-specific SIP headers
+func (s *CustomSIPServer) extractCiscoHeaders(message *SIPMessage) {
+	// Cisco-specific headers to extract
+	ciscoHeaders := []string{
+		"session-id",
+		"cisco-guid",
+		"x-cisco-call-id",
+		"x-cisco-trunk-license",
+		"x-cisco-media-profile",
+		"x-cisco-dial-peer",
+		"remote-party-id",
+		"p-called-party-id",
+		"p-calling-party-id",
+	}
+	
+	for _, header := range ciscoHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+	
+	// Handle Cisco Session-ID header specifically
+	if sessionID := s.getHeaderValue(message, "session-id"); sessionID != "" {
+		message.SessionIDHeader = sessionID
+	}
+}
+
+// extractGenericHeaders extracts common headers for non-vendor-specific systems
+func (s *CustomSIPServer) extractGenericHeaders(message *SIPMessage) {
+	// Common headers that might be useful for any vendor
+	commonHeaders := []string{
+		"p-asserted-identity",
+		"remote-party-id",
+		"p-preferred-identity",
+		"privacy",
+		"supported",
+		"require",
+	}
+	
+	for _, header := range commonHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
 }
