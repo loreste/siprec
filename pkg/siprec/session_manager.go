@@ -59,6 +59,17 @@ func NewSessionManager(config *SessionManagerConfig) *SessionManager {
 		config = DefaultSessionManagerConfig()
 	}
 
+	// Validate configuration and set safe defaults
+	if config.SessionTimeout <= 0 {
+		config.SessionTimeout = 30 * time.Minute
+	}
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = 5 * time.Minute
+	}
+	if config.MaxSessions <= 0 {
+		config.MaxSessions = 1000
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &SessionManager{
@@ -335,7 +346,13 @@ func (sm *SessionManager) startBackgroundTasks() {
 
 // cleanupExpiredSessions periodically removes expired sessions
 func (sm *SessionManager) cleanupExpiredSessions() {
-	ticker := time.NewTicker(sm.cleanupInterval)
+	// Validate cleanup interval and set a safe default if invalid
+	cleanupInterval := sm.cleanupInterval
+	if cleanupInterval <= 0 {
+		cleanupInterval = 5 * time.Minute // Safe default
+	}
+	
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
 	for {

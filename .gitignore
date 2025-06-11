@@ -31,8 +31,11 @@ go.work
 
 # Environment variables
 .env
+.env.*
 .env.bak
 .env.online
+.env.production
+.env.test
 !.env.example
 
 # Recordings and sessions
@@ -99,3 +102,15 @@ notes.md
 *.todo
 *.planning
 *.notes
+
+# Deployment files with sensitive data
+deploy_enhanced.sh
+manual_deploy.sh
+*deploy*.tar.gz
+deployment_package/
+siprec-deploy.tar.gz
+siprec-enhanced-deployment.tar.gz
+
+# Deployment scripts (keep public ones)
+!deploy_gcp_linux.sh
+!deploy-quick.sh

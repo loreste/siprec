@@ -252,8 +252,9 @@ func (h *TranscriptionHub) ServeWs(w http.ResponseWriter, r *http.Request) {
 	// Register client with hub
 	client.hub.register <- client
 
-	// Start writer goroutine
+	// Start both read and write pumps to handle connection properly
 	go client.writePump()
+	go client.readPump()
 }
 
 // writePump pumps messages from the hub to the WebSocket connection
@@ -298,6 +299,34 @@ func (c *Client) writePump() {
 				return
 			}
 		}
+	}
+}
+
+// readPump handles incoming messages from the WebSocket connection
+func (c *Client) readPump() {
+	defer func() {
+		c.hub.unregister <- c
+		c.conn.Close()
+	}()
+
+	// Set read limits and timeouts
+	c.conn.SetReadLimit(512)
+	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	for {
+		// Read message from client
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				c.logger.WithError(err).Error("WebSocket unexpected close error")
+			}
+			break
+		}
+		// We don't process incoming messages for now, just maintain the connection
 	}
 }
 

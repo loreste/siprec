@@ -72,6 +72,9 @@ type Handler struct {
 
 	// NAT rewriter for SIP header modification
 	NATRewriter *NATRewriter
+	
+	// Custom SIP server for handling SIPREC with metadata
+	Server *CustomSIPServer
 }
 
 // CallData holds information about an active call
@@ -181,6 +184,9 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 		// Start the session monitor
 		go handler.monitorSessions(handler.monitorCtx)
 	}
+
+	// Initialize the custom SIP server
+	handler.Server = NewCustomSIPServer(logger, handler)
 
 	return handler, nil
 }

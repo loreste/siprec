@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/config"
 )
 
 // AmazonTranscribeProvider implements the Provider interface for Amazon Transcribe
@@ -20,47 +20,17 @@ type AmazonTranscribeProvider struct {
 	logger           *logrus.Logger
 	client           *transcribestreaming.Client
 	transcriptionSvc *TranscriptionService
-	config           AmazonTranscribeConfig
+	config           *config.AmazonSTTConfig
 	mutex            sync.RWMutex
 }
 
-// AmazonTranscribeConfig holds configuration for Amazon Transcribe
-type AmazonTranscribeConfig struct {
-	Region               string
-	LanguageCode         string
-	SampleRate           int32
-	MediaEncoding        types.MediaEncoding
-	VocabularyName       string
-	VocabularyFilterName string
-	EnableChannelID      bool
-	EnablePartialResults bool
-	ContentRedactionType types.ContentRedactionType
-	LanguageModelName    string
-}
-
-// DefaultAmazonTranscribeConfig returns default configuration for Amazon Transcribe
-func DefaultAmazonTranscribeConfig() AmazonTranscribeConfig {
-	return AmazonTranscribeConfig{
-		Region:               "us-east-1",
-		LanguageCode:         "en-US",
-		SampleRate:           8000,
-		MediaEncoding:        types.MediaEncodingPcm,
-		EnableChannelID:      true,
-		EnablePartialResults: true,
-	}
-}
 
 // NewAmazonTranscribeProvider creates a new Amazon Transcribe provider
-func NewAmazonTranscribeProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *AmazonTranscribeConfig) *AmazonTranscribeProvider {
-	if cfg == nil {
-		defaultCfg := DefaultAmazonTranscribeConfig()
-		cfg = &defaultCfg
-	}
-
+func NewAmazonTranscribeProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.AmazonSTTConfig) *AmazonTranscribeProvider {
 	return &AmazonTranscribeProvider{
 		logger:           logger,
 		transcriptionSvc: transcriptionSvc,
-		config:           *cfg,
+		config:           cfg,
 	}
 }
 
@@ -74,22 +44,36 @@ func (p *AmazonTranscribeProvider) Initialize() error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	// Check for AWS credentials
-	region := p.config.Region
-	if envRegion := os.Getenv("AWS_REGION"); envRegion != "" {
-		region = envRegion
-		p.config.Region = region
+	if p.config == nil {
+		return fmt.Errorf("Amazon STT configuration is required")
 	}
+
+	if !p.config.Enabled {
+		p.logger.Info("Amazon STT is disabled, skipping initialization")
+		return nil
+	}
+
+	// Check for AWS credentials
+	if p.config.AccessKeyID == "" || p.config.SecretAccessKey == "" {
+		return fmt.Errorf("Amazon STT requires AWS access key ID and secret access key")
+	}
+
+	region := p.config.Region
 	if region == "" {
 		region = "us-east-1"
-		p.config.Region = region
 	}
 
 	// Load AWS configuration
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion(region),
-		config.WithRetryMaxAttempts(3),
-		config.WithRetryMode(aws.RetryModeStandard),
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion(region),
+		awsconfig.WithRetryMaxAttempts(3),
+		awsconfig.WithRetryMode(aws.RetryModeStandard),
+		awsconfig.WithCredentialsProvider(aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+			return aws.Credentials{
+				AccessKeyID:     p.config.AccessKeyID,
+				SecretAccessKey: p.config.SecretAccessKey,
+			}, nil
+		})),
 	)
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to load AWS configuration")
@@ -101,9 +85,12 @@ func (p *AmazonTranscribeProvider) Initialize() error {
 
 	p.logger.WithFields(logrus.Fields{
 		"region":      region,
+		"language":    p.config.Language,
+		"media_format": p.config.MediaFormat,
 		"sample_rate": p.config.SampleRate,
-		"language":    p.config.LanguageCode,
-		"encoding":    p.config.MediaEncoding,
+		"vocabulary":  p.config.VocabularyName,
+		"channel_id":  p.config.EnableChannelIdentification,
+		"speaker_id":  p.config.EnableSpeakerIdentification,
 	}).Info("Amazon Transcribe provider initialized successfully")
 
 	return nil
@@ -123,29 +110,30 @@ func (p *AmazonTranscribeProvider) StreamToText(ctx context.Context, audioStream
 
 	// Create stream transcription input
 	input := &transcribestreaming.StartStreamTranscriptionInput{
-		LanguageCode:         types.LanguageCode(p.config.LanguageCode),
-		MediaSampleRateHertz: aws.Int32(p.config.SampleRate),
-		MediaEncoding:        p.config.MediaEncoding,
+		LanguageCode:         types.LanguageCode(p.config.Language),
+		MediaSampleRateHertz: aws.Int32(int32(p.config.SampleRate)),
+		MediaEncoding:        types.MediaEncodingPcm, // Default to PCM
+	}
+
+	// Set media encoding based on format
+	switch p.config.MediaFormat {
+	case "wav":
+		input.MediaEncoding = types.MediaEncodingPcm
+	case "flac":
+		input.MediaEncoding = types.MediaEncodingFlac
+	default:
+		input.MediaEncoding = types.MediaEncodingPcm
 	}
 
 	// Add optional configuration
-	if p.config.EnableChannelID {
-		input.EnableChannelIdentification = p.config.EnableChannelID
-	}
-	if p.config.EnablePartialResults {
-		input.EnablePartialResultsStabilization = p.config.EnablePartialResults
+	if p.config.EnableChannelIdentification {
+		input.EnableChannelIdentification = p.config.EnableChannelIdentification
 	}
 	if p.config.VocabularyName != "" {
 		input.VocabularyName = aws.String(p.config.VocabularyName)
 	}
-	if p.config.VocabularyFilterName != "" {
-		input.VocabularyFilterName = aws.String(p.config.VocabularyFilterName)
-	}
-	if p.config.ContentRedactionType != "" {
-		input.ContentRedactionType = p.config.ContentRedactionType
-	}
-	if p.config.LanguageModelName != "" {
-		input.LanguageModelName = aws.String(p.config.LanguageModelName)
+	if p.config.EnableSpeakerIdentification {
+		input.ShowSpeakerLabel = p.config.EnableSpeakerIdentification
 	}
 
 	// Start the transcription stream
@@ -368,19 +356,19 @@ func (p *AmazonTranscribeProvider) processTranscriptEvent(event types.Transcript
 }
 
 // UpdateConfig allows runtime configuration updates
-func (p *AmazonTranscribeProvider) UpdateConfig(cfg AmazonTranscribeConfig) {
+func (p *AmazonTranscribeProvider) UpdateConfig(cfg *config.AmazonSTTConfig) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.config = cfg
 	p.logger.WithFields(logrus.Fields{
-		"language_code": cfg.LanguageCode,
-		"sample_rate":   cfg.SampleRate,
-		"encoding":      cfg.MediaEncoding,
+		"language":    cfg.Language,
+		"sample_rate": cfg.SampleRate,
+		"media_format": cfg.MediaFormat,
 	}).Info("Updated Amazon Transcribe configuration")
 }
 
 // GetConfig returns the current configuration
-func (p *AmazonTranscribeProvider) GetConfig() AmazonTranscribeConfig {
+func (p *AmazonTranscribeProvider) GetConfig() *config.AmazonSTTConfig {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 	return p.config
@@ -392,30 +380,6 @@ func (p *AmazonTranscribeProvider) SetVocabulary(vocabularyName string) {
 	defer p.mutex.Unlock()
 	p.config.VocabularyName = vocabularyName
 	p.logger.WithField("vocabulary", vocabularyName).Info("Set Amazon Transcribe vocabulary")
-}
-
-// SetVocabularyFilter sets the vocabulary filter for content filtering
-func (p *AmazonTranscribeProvider) SetVocabularyFilter(filterName string) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.VocabularyFilterName = filterName
-	p.logger.WithField("vocabulary_filter", filterName).Info("Set Amazon Transcribe vocabulary filter")
-}
-
-// EnableContentRedaction enables PII content redaction
-func (p *AmazonTranscribeProvider) EnableContentRedaction(redactionType types.ContentRedactionType) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.ContentRedactionType = redactionType
-	p.logger.WithField("redaction_type", redactionType).Info("Enabled Amazon Transcribe content redaction")
-}
-
-// SetLanguageModel sets a custom language model for domain-specific transcription
-func (p *AmazonTranscribeProvider) SetLanguageModel(modelName string) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.LanguageModelName = modelName
-	p.logger.WithField("language_model", modelName).Info("Set Amazon Transcribe language model")
 }
 
 // Close gracefully closes the provider and cleans up resources

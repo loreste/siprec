@@ -2,13 +2,15 @@ package stt
 
 import (
 	"context"
+	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	speech "cloud.google.com/go/speech/apiv1"
 	"cloud.google.com/go/speech/apiv1/speechpb"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/api/option"
+	"siprec-server/pkg/config"
 )
 
 // GoogleProvider implements the Provider interface for Google Speech-to-Text
@@ -16,16 +18,18 @@ type GoogleProvider struct {
 	logger           *logrus.Logger
 	client           *speech.Client
 	transcriptionSvc *TranscriptionService
+	config           *config.GoogleSTTConfig
 
 	// Callback function for transcription results
 	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
 }
 
 // NewGoogleProvider creates a new Google Speech-to-Text provider
-func NewGoogleProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService) *GoogleProvider {
+func NewGoogleProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.GoogleSTTConfig) *GoogleProvider {
 	return &GoogleProvider{
 		logger:           logger,
 		transcriptionSvc: transcriptionSvc,
+		config:           cfg,
 	}
 }
 
@@ -36,19 +40,44 @@ func (p *GoogleProvider) Name() string {
 
 // Initialize initializes the Google Speech-to-Text client
 func (p *GoogleProvider) Initialize() error {
-	// Check for credentials
-	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
-		p.logger.Warn("GOOGLE_APPLICATION_CREDENTIALS environment variable not set")
+	if p.config == nil {
+		return fmt.Errorf("Google STT configuration is required")
+	}
+
+	if !p.config.Enabled {
+		p.logger.Info("Google STT is disabled, skipping initialization")
+		return nil
+	}
+
+	var clientOptions []option.ClientOption
+
+	// Use API key if provided, otherwise use credentials file
+	if p.config.APIKey != "" {
+		clientOptions = append(clientOptions, option.WithAPIKey(p.config.APIKey))
+		p.logger.Debug("Using Google STT API key authentication")
+	} else if p.config.CredentialsFile != "" {
+		clientOptions = append(clientOptions, option.WithCredentialsFile(p.config.CredentialsFile))
+		p.logger.WithField("credentials_file", p.config.CredentialsFile).Debug("Using Google STT credentials file")
+	} else {
+		p.logger.Warn("No Google STT credentials provided (API key or credentials file)")
+		return fmt.Errorf("Google STT requires either API key or credentials file")
 	}
 
 	var err error
-	p.client, err = speech.NewClient(context.Background())
+	p.client, err = speech.NewClient(context.Background(), clientOptions...)
 	if err != nil {
 		p.logger.WithError(err).Error("Failed to create Google Speech client")
-		return err
+		return fmt.Errorf("failed to create Google Speech client: %w", err)
 	}
 
-	p.logger.Info("Google Speech-to-Text client initialized successfully")
+	p.logger.WithFields(logrus.Fields{
+		"language":            p.config.Language,
+		"sample_rate":         p.config.SampleRate,
+		"model":               p.config.Model,
+		"enhanced_models":     p.config.EnhancedModels,
+		"auto_punctuation":    p.config.EnableAutomaticPunctuation,
+		"word_time_offsets":   p.config.EnableWordTimeOffsets,
+	}).Info("Google Speech-to-Text client initialized successfully")
 	return nil
 }
 
@@ -64,12 +93,29 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 		return err
 	}
 
+	// Build recognition config from our settings
+	recognitionConfig := &speechpb.RecognitionConfig{
+		Encoding:                   speechpb.RecognitionConfig_LINEAR16,
+		SampleRateHertz:           int32(p.config.SampleRate),
+		LanguageCode:              p.config.Language,
+		EnableAutomaticPunctuation: p.config.EnableAutomaticPunctuation,
+		EnableWordTimeOffsets:     p.config.EnableWordTimeOffsets,
+		MaxAlternatives:           int32(p.config.MaxAlternatives),
+		ProfanityFilter:           p.config.ProfanityFilter,
+	}
+
+	// Set model if specified
+	if p.config.Model != "" {
+		recognitionConfig.Model = p.config.Model
+	}
+
+	// Use enhanced models if enabled
+	if p.config.EnhancedModels {
+		recognitionConfig.UseEnhanced = true
+	}
+
 	streamingConfig := &speechpb.StreamingRecognitionConfig{
-		Config: &speechpb.RecognitionConfig{
-			Encoding:        speechpb.RecognitionConfig_LINEAR16,
-			SampleRateHertz: 8000,
-			LanguageCode:    "en-US",
-		},
+		Config:         recognitionConfig,
 		InterimResults: true,
 	}
 

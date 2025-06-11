@@ -3,6 +3,7 @@ package sip
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -466,6 +467,20 @@ func appendCodecAttributes(attributes []sdp.Attribute, formats []string) []sdp.A
 				Key:   "rtpmap",
 				Value: "9 G722/8000",
 			})
+		default:
+			// Check if it's a dynamic payload type (96-127) typically used for OPUS
+			if pt, err := strconv.Atoi(format); err == nil && pt >= 96 && pt <= 127 {
+				// Add OPUS rtpmap
+				filteredAttributes = append(filteredAttributes, sdp.Attribute{
+					Key:   "rtpmap",
+					Value: fmt.Sprintf("%s opus/48000/2", format),
+				})
+				// Add OPUS fmtp parameters
+				filteredAttributes = append(filteredAttributes, sdp.Attribute{
+					Key:   "fmtp",
+					Value: fmt.Sprintf("%s maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=64000;stereo=0;useinbandfec=1;usedtx=0", format),
+				})
+			}
 		}
 	}
 

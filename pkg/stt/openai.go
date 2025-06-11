@@ -6,23 +6,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"strings"
 
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/config"
 )
 
 // OpenAIProvider implements the Provider interface for OpenAI
 type OpenAIProvider struct {
-	logger *logrus.Logger
-	apiKey string
-	apiURL string
+	logger           *logrus.Logger
+	transcriptionSvc *TranscriptionService
+	config           *config.OpenAISTTConfig
+	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
 }
 
 // NewOpenAIProvider creates a new OpenAI provider
-func NewOpenAIProvider(logger *logrus.Logger) *OpenAIProvider {
+func NewOpenAIProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.OpenAISTTConfig) *OpenAIProvider {
 	return &OpenAIProvider{
-		logger: logger,
-		apiURL: "https://api.openai.com/v1/audio/transcriptions",
+		logger:           logger,
+		transcriptionSvc: transcriptionSvc,
+		config:           cfg,
 	}
 }
 
@@ -33,23 +36,44 @@ func (p *OpenAIProvider) Name() string {
 
 // Initialize initializes the OpenAI client
 func (p *OpenAIProvider) Initialize() error {
-	p.apiKey = os.Getenv("OPENAI_API_KEY")
-	if p.apiKey == "" {
-		return fmt.Errorf("OPENAI_API_KEY is not set in the environment")
+	if p.config == nil {
+		return fmt.Errorf("OpenAI STT configuration is required")
 	}
-	p.logger.Info("OpenAI provider initialized successfully")
+
+	if !p.config.Enabled {
+		p.logger.Info("OpenAI STT is disabled, skipping initialization")
+		return nil
+	}
+
+	if p.config.APIKey == "" {
+		return fmt.Errorf("OpenAI API key is required")
+	}
+
+	p.logger.WithFields(logrus.Fields{
+		"base_url":        p.config.BaseURL,
+		"model":           p.config.Model,
+		"response_format": p.config.ResponseFormat,
+		"language":        p.config.Language,
+		"temperature":     p.config.Temperature,
+	}).Info("OpenAI provider initialized successfully")
 	return nil
 }
 
 // StreamToText streams audio data to OpenAI
 func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
 	// Construct the OpenAI Whisper API request
-	req, err := http.NewRequestWithContext(ctx, "POST", p.apiURL, audioStream)
+	apiURL := p.config.BaseURL + "/audio/transcriptions"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, audioStream)
 	if err != nil {
 		return fmt.Errorf("failed to create OpenAI request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+
+	// Add organization header if provided
+	if p.config.OrganizationID != "" {
+		req.Header.Set("OpenAI-Organization", p.config.OrganizationID)
+	}
 	req.Header.Set("Content-Type", "audio/wav")
 
 	client := &http.Client{}
@@ -68,17 +92,57 @@ func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader
 		return fmt.Errorf("failed to decode OpenAI response: %w", err)
 	}
 
-	if transcript, ok := result["text"].(string); ok {
+	if transcript, ok := result["text"].(string); ok && transcript != "" {
+		// Create metadata
+		metadata := map[string]interface{}{
+			"provider":        p.Name(),
+			"model":           p.config.Model,
+			"word_count":      len(strings.Fields(transcript)),
+			"response_format": p.config.ResponseFormat,
+			"language":        p.config.Language,
+			"temperature":     p.config.Temperature,
+		}
+
+		// Add additional metadata from verbose response
+		if p.config.ResponseFormat == "verbose_json" {
+			if duration, ok := result["duration"].(float64); ok {
+				metadata["duration"] = duration
+			}
+			if language, ok := result["language"].(string); ok {
+				metadata["detected_language"] = language
+			}
+			if segments, ok := result["segments"].([]interface{}); ok {
+				metadata["segments"] = segments
+			}
+			if words, ok := result["words"].([]interface{}); ok {
+				metadata["words"] = words
+			}
+		}
+
 		p.logger.WithFields(logrus.Fields{
 			"call_uuid":     callUUID,
 			"transcription": transcript,
+			"duration":      metadata["duration"],
+			"language":      metadata["detected_language"],
 		}).Info("OpenAI transcription received")
 
-		// Send transcription to message queue or callback
-		// Implementation will be added later
+		// Call callback if available
+		if p.callback != nil {
+			p.callback(callUUID, transcript, true, metadata)
+		}
+
+		// Publish to transcription service for real-time streaming
+		if p.transcriptionSvc != nil {
+			p.transcriptionSvc.PublishTranscription(callUUID, transcript, true, metadata)
+		}
 	} else {
 		return fmt.Errorf("no transcription found in OpenAI response")
 	}
 
 	return nil
+}
+
+// SetCallback sets the callback function for transcription results
+func (p *OpenAIProvider) SetCallback(callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})) {
+	p.callback = callback
 }
