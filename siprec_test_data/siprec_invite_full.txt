@@ -1,7 +1,7 @@
-INVITE sip:recorder@35.222.226.67:5060 SIP/2.0
+INVITE sip:recorder@localhost:5060 SIP/2.0
 Via: SIP/2.0/UDP 192.168.1.167:5060;branch=z9hG4bK1748528060
 Max-Forwards: 70
-To: <sip:recorder@35.222.226.67:5060>
+To: <sip:recorder@localhost:5060>
 From: SRS <sip:srs@testclient.local>;tag=tag1748528060
 Call-ID: siprec-metadata-test-1748528060@testclient
 CSeq: 1 INVITE

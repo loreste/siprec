@@ -1,0 +1,54 @@
+INVITE sip:recording-server@recorder.com:5060 SIP/2.0
+Via: SIP/2.0/TCP 10.1.1.100:5060;branch=z9hG4bK-cisco-cube-456
+From: <sip:+19995551234@cube.company.com>;tag=cisco-from-tag-789
+To: <sip:recording-server@recorder.com>
+Call-ID: cisco-call-54321@cube.company.com
+CSeq: 1 INVITE
+User-Agent: Cisco-SIP-CUBE/IOS-15.6(3)M9 (Cisco Unified Border Element)
+Contact: <sip:cube@10.1.1.100:5060>
+Session-ID: 9876543210abcdef;remote=fedcba0123456789
+Cisco-GUID: {12345678-1234-5678-9ABC-123456789ABC}
+X-Cisco-Call-ID: cisco-internal-98765
+X-Cisco-Trunk-License: CUBE-TRUNK-LICENSE-001
+X-Cisco-Media-Profile: recorder-profile-101
+X-Cisco-Dial-Peer: 9001
+Remote-Party-ID: <sip:+19995551234@company.com>;party=calling;privacy=off;screen=yes
+P-Called-Party-ID: <sip:agent5678@ucm.company.com>
+P-Calling-Party-ID: <sip:+19995551234@company.com>
+Max-Forwards: 70
+Content-Type: multipart/mixed;boundary=cisco-boundary-456
+Content-Length: 2087
+
+--cisco-boundary-456
+Content-Type: application/sdp
+Content-Disposition: session;handling=required
+
+v=0
+o=CiscoSystemsCCM-SIP 2000 1 IN IP4 10.1.1.100
+s=Cisco CUBE SIPREC Session
+c=IN IP4 10.1.1.100
+t=0 0
+m=audio 30000 RTP/AVP 0 8
+a=sendonly
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=label:1
+
+--cisco-boundary-456
+Content-Type: application/rs-metadata+xml
+Content-Disposition: recording-session
+
+<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="cisco-session-54321" state="active" sequence="1">
+  <participant id="caller">
+    <name>External Caller</name>
+    <aor>sip:+19995551234@cube.company.com</aor>
+  </participant>
+  <participant id="agent">
+    <name>Agent 5678</name>
+    <aor>sip:agent5678@ucm.company.com</aor>
+  </participant>
+  <stream label="1" streamid="audio-stream-1" mode="separate" type="audio"/>
+  <sessionrecordingassoc sessionid="cisco-session-54321" callid="cisco-call-54321@cube.company.com"/>
+</recording>
+--cisco-boundary-456--
