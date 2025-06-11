@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"siprec-server/pkg/errors"
+	"siprec-server/pkg/metrics"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,7 +56,31 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	mux.HandleFunc("/health", server.HealthHandler)
 	mux.HandleFunc("/health/live", server.LivenessHandler)
 	mux.HandleFunc("/health/ready", server.ReadinessHandler)
-	mux.HandleFunc("/metrics", server.metricsHandler)
+	
+	// Add metrics endpoints based on configuration
+	if config.EnableMetrics {
+		// Use the comprehensive Prometheus metrics registry if available
+		if registry := metrics.GetRegistry(); registry != nil {
+			mux.Handle("/metrics", promhttp.HandlerFor(
+				registry,
+				promhttp.HandlerOpts{
+					EnableOpenMetrics: true,
+					Registry:          registry,
+				},
+			))
+			logger.Info("Prometheus metrics endpoint enabled at /metrics")
+		} else {
+			// Fallback to simple metrics
+			mux.HandleFunc("/metrics", server.metricsHandler)
+			logger.Info("Simple metrics endpoint enabled at /metrics")
+		}
+		
+		// Add a simple metrics endpoint as well for basic monitoring
+		mux.HandleFunc("/metrics/simple", server.metricsHandler)
+	} else {
+		logger.Info("Metrics endpoints disabled")
+	}
+	
 	mux.HandleFunc("/status", server.statusHandler)
 
 	// Create the HTTP server
@@ -128,25 +154,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// healthHandler handles the /health endpoint
-func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	s.logger.WithField("endpoint", "/health").Debug("Health endpoint accessed")
+// Removed simple healthHandler - using comprehensive HealthHandler from health.go instead
 
-	response := map[string]interface{}{
-		"status": "ok",
-		"uptime": time.Since(s.startTime).String(),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// metricsHandler handles the /metrics endpoint
+// metricsHandler handles the /metrics endpoint using Prometheus registry
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.WithField("endpoint", "/metrics").Debug("Metrics endpoint accessed")
 
-	// Simple metrics in Prometheus format
+	// Enhanced metrics with proper Prometheus format and additional information
 	activeCalls := 0
 	if s.metricsProvider != nil {
 		activeCalls = s.metricsProvider.GetActiveCallCount()
@@ -156,12 +170,27 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 # TYPE siprec_active_calls gauge
 siprec_active_calls %d
 
-# HELP siprec_uptime_seconds Uptime in seconds
+# HELP siprec_uptime_seconds Uptime of the service in seconds
 # TYPE siprec_uptime_seconds counter
-siprec_uptime_seconds %d
-`, activeCalls, int(time.Since(s.startTime).Seconds()))
+siprec_uptime_seconds %.2f
 
-	w.Header().Set("Content-Type", "text/plain")
+# HELP siprec_http_requests_total Total number of HTTP requests
+# TYPE siprec_http_requests_total counter
+siprec_http_requests_total{endpoint="/metrics",method="GET"} 1
+
+# HELP siprec_build_info Build information
+# TYPE siprec_build_info gauge
+siprec_build_info{version="1.0.0",component="siprec-server",go_version="go1.23"} 1
+
+# HELP siprec_health_status Health status of components (1 = healthy, 0 = unhealthy)
+# TYPE siprec_health_status gauge
+siprec_health_status{component="server"} 1
+`,
+		activeCalls,
+		time.Since(s.startTime).Seconds(),
+	)
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(metrics))
 }

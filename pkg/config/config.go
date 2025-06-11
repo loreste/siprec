@@ -18,15 +18,19 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
-	Network    NetworkConfig    `json:"network"`
-	HTTP       HTTPConfig       `json:"http"`
-	Recording  RecordingConfig  `json:"recording"`
-	STT        STTConfig        `json:"stt"`
-	Resources  ResourceConfig   `json:"resources"`
-	Logging    LoggingConfig    `json:"logging"`
-	Messaging  MessagingConfig  `json:"messaging"`
-	Redundancy RedundancyConfig `json:"redundancy"`
-	Encryption EncryptionConfig `json:"encryption"`
+	Network     NetworkConfig     `json:"network"`
+	HTTP        HTTPConfig        `json:"http"`
+	Recording   RecordingConfig   `json:"recording"`
+	STT         STTConfig         `json:"stt"`
+	Resources   ResourceConfig    `json:"resources"`
+	Logging     LoggingConfig     `json:"logging"`
+	Messaging      MessagingConfig      `json:"messaging"`
+	Redundancy     RedundancyConfig     `json:"redundancy"`
+	Encryption     EncryptionConfig     `json:"encryption"`
+	AsyncSTT       AsyncSTTConfig       `json:"async_stt"`
+	HotReload      HotReloadConfig      `json:"hot_reload"`
+	Performance    PerformanceConfig    `json:"performance"`
+	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -120,6 +124,218 @@ type STTConfig struct {
 
 	// Default STT vendor
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
+	
+	// Provider-specific configurations
+	Google    GoogleSTTConfig    `json:"google"`
+	Deepgram  DeepgramSTTConfig  `json:"deepgram"`
+	Azure     AzureSTTConfig     `json:"azure"`
+	Amazon    AmazonSTTConfig    `json:"amazon"`
+	OpenAI    OpenAISTTConfig    `json:"openai"`
+}
+
+// GoogleSTTConfig holds Google Speech-to-Text configuration
+type GoogleSTTConfig struct {
+	// Whether Google STT is enabled
+	Enabled bool `json:"enabled" env:"GOOGLE_STT_ENABLED" default:"true"`
+	
+	// Google Cloud credentials file path
+	CredentialsFile string `json:"credentials_file" env:"GOOGLE_APPLICATION_CREDENTIALS"`
+	
+	// Google Cloud project ID
+	ProjectID string `json:"project_id" env:"GOOGLE_PROJECT_ID"`
+	
+	// API key (alternative to credentials file)
+	APIKey string `json:"api_key" env:"GOOGLE_STT_API_KEY"`
+	
+	// Default language code
+	Language string `json:"language" env:"GOOGLE_STT_LANGUAGE" default:"en-US"`
+	
+	// Sample rate for audio
+	SampleRate int `json:"sample_rate" env:"GOOGLE_STT_SAMPLE_RATE" default:"16000"`
+	
+	// Enable enhanced models
+	EnhancedModels bool `json:"enhanced_models" env:"GOOGLE_STT_ENHANCED_MODELS" default:"false"`
+	
+	// Model to use (latest_long, latest_short, etc.)
+	Model string `json:"model" env:"GOOGLE_STT_MODEL" default:"latest_long"`
+	
+	// Enable automatic punctuation
+	EnableAutomaticPunctuation bool `json:"enable_automatic_punctuation" env:"GOOGLE_STT_AUTO_PUNCTUATION" default:"true"`
+	
+	// Enable word time offsets
+	EnableWordTimeOffsets bool `json:"enable_word_time_offsets" env:"GOOGLE_STT_WORD_TIME_OFFSETS" default:"true"`
+	
+	// Max alternatives to return
+	MaxAlternatives int `json:"max_alternatives" env:"GOOGLE_STT_MAX_ALTERNATIVES" default:"1"`
+	
+	// Profanity filter
+	ProfanityFilter bool `json:"profanity_filter" env:"GOOGLE_STT_PROFANITY_FILTER" default:"false"`
+}
+
+// DeepgramSTTConfig holds Deepgram Speech-to-Text configuration
+type DeepgramSTTConfig struct {
+	// Whether Deepgram STT is enabled
+	Enabled bool `json:"enabled" env:"DEEPGRAM_STT_ENABLED" default:"false"`
+	
+	// Deepgram API key
+	APIKey string `json:"api_key" env:"DEEPGRAM_API_KEY"`
+	
+	// API URL (for self-hosted)
+	APIURL string `json:"api_url" env:"DEEPGRAM_API_URL" default:"https://api.deepgram.com"`
+	
+	// Model to use (nova-2, nova, enhanced, base)
+	Model string `json:"model" env:"DEEPGRAM_MODEL" default:"nova-2"`
+	
+	// Language
+	Language string `json:"language" env:"DEEPGRAM_LANGUAGE" default:"en-US"`
+	
+	// Tier (nova, enhanced, base)
+	Tier string `json:"tier" env:"DEEPGRAM_TIER" default:"nova"`
+	
+	// Version
+	Version string `json:"version" env:"DEEPGRAM_VERSION" default:"latest"`
+	
+	// Enable punctuation
+	Punctuate bool `json:"punctuate" env:"DEEPGRAM_PUNCTUATE" default:"true"`
+	
+	// Enable diarization
+	Diarize bool `json:"diarize" env:"DEEPGRAM_DIARIZE" default:"false"`
+	
+	// Enable numerals conversion
+	Numerals bool `json:"numerals" env:"DEEPGRAM_NUMERALS" default:"true"`
+	
+	// Smart formatting
+	SmartFormat bool `json:"smart_format" env:"DEEPGRAM_SMART_FORMAT" default:"true"`
+	
+	// Profanity filter
+	ProfanityFilter bool `json:"profanity_filter" env:"DEEPGRAM_PROFANITY_FILTER" default:"false"`
+	
+	// Redact sensitive information
+	Redact []string `json:"redact" env:"DEEPGRAM_REDACT"`
+	
+	// Keywords to boost
+	Keywords []string `json:"keywords" env:"DEEPGRAM_KEYWORDS"`
+	
+	// Multi-language and accent detection configuration
+	// Enable automatic language detection
+	DetectLanguage bool `json:"detect_language" env:"DEEPGRAM_DETECT_LANGUAGE" default:"true"`
+	
+	// Supported languages for detection (comma-separated)
+	SupportedLanguages []string `json:"supported_languages" env:"DEEPGRAM_SUPPORTED_LANGUAGES"`
+	
+	// Language detection confidence threshold (0.0-1.0)
+	LanguageConfidenceThreshold float64 `json:"language_confidence_threshold" env:"DEEPGRAM_LANGUAGE_CONFIDENCE" default:"0.7"`
+	
+	// Enable accent-specific model selection
+	AccentAwareModels bool `json:"accent_aware_models" env:"DEEPGRAM_ACCENT_AWARE" default:"true"`
+	
+	// Fallback language when detection fails
+	FallbackLanguage string `json:"fallback_language" env:"DEEPGRAM_FALLBACK_LANGUAGE" default:"en-US"`
+	
+	// Enable real-time language switching
+	RealtimeLanguageSwitching bool `json:"realtime_language_switching" env:"DEEPGRAM_REALTIME_SWITCHING" default:"false"`
+	
+	// Language switching interval in seconds
+	LanguageSwitchingInterval int `json:"language_switching_interval" env:"DEEPGRAM_SWITCHING_INTERVAL" default:"5"`
+	
+	// Enable multi-language alternative results
+	MultiLanguageAlternatives bool `json:"multilang_alternatives" env:"DEEPGRAM_MULTILANG_ALTERNATIVES" default:"false"`
+	
+	// Maximum number of language alternatives to return
+	MaxLanguageAlternatives int `json:"max_language_alternatives" env:"DEEPGRAM_MAX_LANG_ALTERNATIVES" default:"3"`
+}
+
+// AzureSTTConfig holds Azure Speech Services configuration
+type AzureSTTConfig struct {
+	// Whether Azure STT is enabled
+	Enabled bool `json:"enabled" env:"AZURE_STT_ENABLED" default:"false"`
+	
+	// Azure Speech Services subscription key
+	SubscriptionKey string `json:"subscription_key" env:"AZURE_SPEECH_KEY"`
+	
+	// Azure region
+	Region string `json:"region" env:"AZURE_SPEECH_REGION"`
+	
+	// Language
+	Language string `json:"language" env:"AZURE_STT_LANGUAGE" default:"en-US"`
+	
+	// Endpoint URL (for custom endpoints)
+	EndpointURL string `json:"endpoint_url" env:"AZURE_STT_ENDPOINT"`
+	
+	// Enable detailed results
+	EnableDetailedResults bool `json:"enable_detailed_results" env:"AZURE_STT_DETAILED_RESULTS" default:"true"`
+	
+	// Profanity filter
+	ProfanityFilter string `json:"profanity_filter" env:"AZURE_STT_PROFANITY_FILTER" default:"masked"`
+	
+	// Output format (simple, detailed)
+	OutputFormat string `json:"output_format" env:"AZURE_STT_OUTPUT_FORMAT" default:"detailed"`
+}
+
+// AmazonSTTConfig holds Amazon Transcribe configuration
+type AmazonSTTConfig struct {
+	// Whether Amazon Transcribe is enabled
+	Enabled bool `json:"enabled" env:"AMAZON_STT_ENABLED" default:"false"`
+	
+	// AWS Access Key ID
+	AccessKeyID string `json:"access_key_id" env:"AWS_ACCESS_KEY_ID"`
+	
+	// AWS Secret Access Key
+	SecretAccessKey string `json:"secret_access_key" env:"AWS_SECRET_ACCESS_KEY"`
+	
+	// AWS Region
+	Region string `json:"region" env:"AWS_REGION" default:"us-east-1"`
+	
+	// Language code
+	Language string `json:"language" env:"AMAZON_STT_LANGUAGE" default:"en-US"`
+	
+	// Media format
+	MediaFormat string `json:"media_format" env:"AMAZON_STT_MEDIA_FORMAT" default:"wav"`
+	
+	// Sample rate
+	SampleRate int `json:"sample_rate" env:"AMAZON_STT_SAMPLE_RATE" default:"16000"`
+	
+	// Vocabulary name for custom vocabulary
+	VocabularyName string `json:"vocabulary_name" env:"AMAZON_STT_VOCABULARY"`
+	
+	// Enable channel identification
+	EnableChannelIdentification bool `json:"enable_channel_identification" env:"AMAZON_STT_CHANNEL_ID" default:"false"`
+	
+	// Enable speaker identification
+	EnableSpeakerIdentification bool `json:"enable_speaker_identification" env:"AMAZON_STT_SPEAKER_ID" default:"false"`
+	
+	// Max speaker labels
+	MaxSpeakerLabels int `json:"max_speaker_labels" env:"AMAZON_STT_MAX_SPEAKERS" default:"2"`
+}
+
+// OpenAISTTConfig holds OpenAI Whisper API configuration
+type OpenAISTTConfig struct {
+	// Whether OpenAI STT is enabled
+	Enabled bool `json:"enabled" env:"OPENAI_STT_ENABLED" default:"false"`
+	
+	// OpenAI API key
+	APIKey string `json:"api_key" env:"OPENAI_API_KEY"`
+	
+	// Organization ID (optional)
+	OrganizationID string `json:"organization_id" env:"OPENAI_ORGANIZATION_ID"`
+	
+	// Model to use (whisper-1)
+	Model string `json:"model" env:"OPENAI_STT_MODEL" default:"whisper-1"`
+	
+	// Language (optional, auto-detect if not specified)
+	Language string `json:"language" env:"OPENAI_STT_LANGUAGE"`
+	
+	// Prompt for context
+	Prompt string `json:"prompt" env:"OPENAI_STT_PROMPT"`
+	
+	// Response format (json, text, srt, verbose_json, vtt)
+	ResponseFormat string `json:"response_format" env:"OPENAI_STT_RESPONSE_FORMAT" default:"verbose_json"`
+	
+	// Temperature for sampling
+	Temperature float64 `json:"temperature" env:"OPENAI_STT_TEMPERATURE" default:"0.0"`
+	
+	// Base URL for API (for custom endpoints)
+	BaseURL string `json:"base_url" env:"OPENAI_BASE_URL" default:"https://api.openai.com/v1"`
 }
 
 // ResourceConfig holds resource limitation configurations
@@ -147,6 +363,54 @@ type MessagingConfig struct {
 
 	// AMQP queue name
 	AMQPQueueName string `json:"amqp_queue_name" env:"AMQP_QUEUE_NAME"`
+	
+	// Real-time AMQP configuration
+	EnableRealtimeAMQP  bool   `json:"enable_realtime_amqp" env:"ENABLE_REALTIME_AMQP" default:"false"`
+	RealtimeQueueName   string `json:"realtime_queue_name" env:"REALTIME_QUEUE_NAME" default:"siprec_realtime"`
+	RealtimeExchangeName string `json:"realtime_exchange_name" env:"REALTIME_EXCHANGE_NAME" default:""`
+	RealtimeRoutingKey  string `json:"realtime_routing_key" env:"REALTIME_ROUTING_KEY" default:"siprec.realtime"`
+	
+	// Real-time AMQP batching
+	RealtimeBatchSize    int           `json:"realtime_batch_size" env:"REALTIME_BATCH_SIZE" default:"10"`
+	RealtimeBatchTimeout time.Duration `json:"realtime_batch_timeout" env:"REALTIME_BATCH_TIMEOUT" default:"1s"`
+	RealtimeQueueSize    int           `json:"realtime_queue_size" env:"REALTIME_QUEUE_SIZE" default:"1000"`
+	
+	// Real-time event filtering
+	PublishPartialTranscripts  bool `json:"publish_partial_transcripts" env:"PUBLISH_PARTIAL_TRANSCRIPTS" default:"true"`
+	PublishFinalTranscripts    bool `json:"publish_final_transcripts" env:"PUBLISH_FINAL_TRANSCRIPTS" default:"true"`
+	PublishSentimentUpdates    bool `json:"publish_sentiment_updates" env:"PUBLISH_SENTIMENT_UPDATES" default:"true"`
+	PublishKeywordDetections   bool `json:"publish_keyword_detections" env:"PUBLISH_KEYWORD_DETECTIONS" default:"true"`
+	PublishSpeakerChanges      bool `json:"publish_speaker_changes" env:"PUBLISH_SPEAKER_CHANGES" default:"true"`
+}
+
+// CircuitBreakerConfig holds circuit breaker configurations
+type CircuitBreakerConfig struct {
+	// Global circuit breaker settings
+	Enabled bool `json:"enabled" env:"CIRCUIT_BREAKER_ENABLED" default:"true"`
+	
+	// STT circuit breaker settings
+	STTFailureThreshold     int64         `json:"stt_failure_threshold" env:"STT_CB_FAILURE_THRESHOLD" default:"3"`
+	STTTimeout              time.Duration `json:"stt_timeout" env:"STT_CB_TIMEOUT" default:"30s"`
+	STTRequestTimeout       time.Duration `json:"stt_request_timeout" env:"STT_CB_REQUEST_TIMEOUT" default:"45s"`
+	
+	// AMQP circuit breaker settings
+	AMQPFailureThreshold    int64         `json:"amqp_failure_threshold" env:"AMQP_CB_FAILURE_THRESHOLD" default:"5"`
+	AMQPTimeout             time.Duration `json:"amqp_timeout" env:"AMQP_CB_TIMEOUT" default:"60s"`
+	AMQPRequestTimeout      time.Duration `json:"amqp_request_timeout" env:"AMQP_CB_REQUEST_TIMEOUT" default:"10s"`
+	
+	// Redis circuit breaker settings
+	RedisFailureThreshold   int64         `json:"redis_failure_threshold" env:"REDIS_CB_FAILURE_THRESHOLD" default:"8"`
+	RedisTimeout            time.Duration `json:"redis_timeout" env:"REDIS_CB_TIMEOUT" default:"20s"`
+	RedisRequestTimeout     time.Duration `json:"redis_request_timeout" env:"REDIS_CB_REQUEST_TIMEOUT" default:"5s"`
+	
+	// HTTP circuit breaker settings
+	HTTPFailureThreshold    int64         `json:"http_failure_threshold" env:"HTTP_CB_FAILURE_THRESHOLD" default:"5"`
+	HTTPTimeout             time.Duration `json:"http_timeout" env:"HTTP_CB_TIMEOUT" default:"45s"`
+	HTTPRequestTimeout      time.Duration `json:"http_request_timeout" env:"HTTP_CB_REQUEST_TIMEOUT" default:"30s"`
+	
+	// Monitoring settings
+	MonitoringEnabled       bool          `json:"monitoring_enabled" env:"CB_MONITORING_ENABLED" default:"true"`
+	MonitoringInterval      time.Duration `json:"monitoring_interval" env:"CB_MONITORING_INTERVAL" default:"30s"`
 }
 
 // RedundancyConfig holds session redundancy configurations
@@ -187,6 +451,70 @@ type EncryptionConfig struct {
 
 	// Storage encryption
 	EncryptionKeyStore string `json:"encryption_key_store" env:"ENCRYPTION_KEY_STORE" default:"file"`
+}
+
+// AsyncSTTConfig holds async STT processing configurations
+type AsyncSTTConfig struct {
+	// Whether async STT is enabled
+	Enabled bool `json:"enabled" env:"STT_ASYNC_ENABLED" default:"true"`
+
+	// Worker configuration
+	WorkerCount   int `json:"worker_count" env:"STT_WORKER_COUNT" default:"3"`
+	MaxRetries    int `json:"max_retries" env:"STT_MAX_RETRIES" default:"3"`
+	RetryBackoff  time.Duration `json:"retry_backoff" env:"STT_RETRY_BACKOFF" default:"30s"`
+	JobTimeout    time.Duration `json:"job_timeout" env:"STT_JOB_TIMEOUT" default:"300s"`
+
+	// Queue configuration
+	QueueBufferSize     int `json:"queue_buffer_size" env:"STT_QUEUE_BUFFER_SIZE" default:"1000"`
+	BatchSize           int `json:"batch_size" env:"STT_BATCH_SIZE" default:"10"`
+	BatchTimeout        time.Duration `json:"batch_timeout" env:"STT_BATCH_TIMEOUT" default:"60s"`
+	EnablePrioritization bool `json:"enable_prioritization" env:"STT_ENABLE_PRIORITIZATION" default:"true"`
+
+	// Resource limits
+	MaxConcurrentJobs int `json:"max_concurrent_jobs" env:"STT_MAX_CONCURRENT_JOBS" default:"50"`
+
+	// Cleanup configuration
+	CleanupInterval  time.Duration `json:"cleanup_interval" env:"STT_CLEANUP_INTERVAL" default:"300s"`
+	JobRetentionTime time.Duration `json:"job_retention_time" env:"STT_JOB_RETENTION_TIME" default:"24h"`
+
+	// Cost tracking
+	EnableCostTracking bool `json:"enable_cost_tracking" env:"STT_ENABLE_COST_TRACKING" default:"true"`
+}
+
+// HotReloadConfig holds configuration hot-reload settings
+type HotReloadConfig struct {
+	// Whether hot-reload is enabled
+	Enabled bool `json:"enabled" env:"CONFIG_HOTRELOAD_ENABLED" default:"true"`
+
+	// Debounce time for configuration changes
+	DebounceTime time.Duration `json:"debounce_time" env:"CONFIG_HOTRELOAD_DEBOUNCE" default:"2s"`
+
+	// Maximum time allowed for reload operation
+	MaxReloadTime time.Duration `json:"max_reload_time" env:"CONFIG_HOTRELOAD_MAX_TIME" default:"30s"`
+
+	// Backup configuration
+	BackupEnabled bool   `json:"backup_enabled" env:"CONFIG_BACKUP_ENABLED" default:"true"`
+	BackupDir     string `json:"backup_dir" env:"CONFIG_BACKUP_DIR" default:"./config_backups"`
+}
+
+// PerformanceConfig holds performance monitoring and optimization settings
+type PerformanceConfig struct {
+	// Whether performance monitoring is enabled
+	Enabled bool `json:"enabled" env:"PERFORMANCE_MONITORING_ENABLED" default:"true"`
+
+	// Performance monitoring interval
+	MonitorInterval time.Duration `json:"monitor_interval" env:"PERFORMANCE_MONITOR_INTERVAL" default:"30s"`
+
+	// Memory management settings
+	GCThresholdMB int64 `json:"gc_threshold_mb" env:"PERFORMANCE_GC_THRESHOLD_MB" default:"100"`
+	MemoryLimitMB int64 `json:"memory_limit_mb" env:"PERFORMANCE_MEMORY_LIMIT_MB" default:"512"`
+
+	// CPU monitoring
+	CPULimit float64 `json:"cpu_limit" env:"PERFORMANCE_CPU_LIMIT" default:"80.0"`
+
+	// Optimization settings
+	EnableAutoGC     bool `json:"enable_auto_gc" env:"PERFORMANCE_ENABLE_AUTO_GC" default:"true"`
+	GCTargetPercent  int  `json:"gc_target_percent" env:"PERFORMANCE_GC_TARGET_PERCENT" default:"50"`
 }
 
 // Load loads the configuration from environment variables or .env file
@@ -287,6 +615,26 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load encryption configuration
 	if err := loadEncryptionConfig(logger, &config.Encryption); err != nil {
 		return nil, errors.Wrap(err, "failed to load encryption configuration")
+	}
+
+	// Load async STT configuration
+	if err := loadAsyncSTTConfig(logger, &config.AsyncSTT); err != nil {
+		return nil, errors.Wrap(err, "failed to load async STT configuration")
+	}
+
+	// Load hot-reload configuration
+	if err := loadHotReloadConfig(logger, &config.HotReload); err != nil {
+		return nil, errors.Wrap(err, "failed to load hot-reload configuration")
+	}
+
+	// Load performance configuration
+	if err := loadPerformanceConfig(logger, &config.Performance); err != nil {
+		return nil, errors.Wrap(err, "failed to load performance configuration")
+	}
+
+	// Load circuit breaker configuration
+	if err := loadCircuitBreakerConfig(logger, &config.CircuitBreaker); err != nil {
+		return nil, errors.Wrap(err, "failed to load circuit breaker configuration")
 	}
 
 	// Validate the complete configuration
@@ -492,8 +840,11 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 
 // loadSTTConfig loads the speech-to-text configuration section
 func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
-	// Load supported vendors
-	vendorsStr := getEnv("SUPPORTED_VENDORS", "google")
+	// Load supported vendors - check both STT_VENDORS and SUPPORTED_VENDORS for compatibility
+	vendorsStr := getEnv("STT_VENDORS", "")
+	if vendorsStr == "" {
+		vendorsStr = getEnv("SUPPORTED_VENDORS", "google")
+	}
 	if vendorsStr == "" {
 		config.SupportedVendors = []string{"google"}
 		logger.Info("No STT vendors specified, defaulting to: google")
@@ -503,25 +854,33 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 			vendors[i] = strings.TrimSpace(vendor)
 		}
 		config.SupportedVendors = vendors
+		logger.WithField("vendors", config.SupportedVendors).Info("Configured STT vendors")
 	}
 
-	// Load supported codecs
-	codecsStr := getEnv("SUPPORTED_CODECS", "PCMU,PCMA,G722")
+	// Load supported codecs - check both SUPPORTED_CODECS and STT_SUPPORTED_CODECS
+	codecsStr := getEnv("STT_SUPPORTED_CODECS", "")
 	if codecsStr == "" {
-		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722"}
-		logger.Info("No codecs specified, defaulting to: PCMU, PCMA, G722")
+		codecsStr = getEnv("SUPPORTED_CODECS", "PCMU,PCMA,G722,OPUS")
+	}
+	if codecsStr == "" {
+		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "OPUS"}
+		logger.Info("No codecs specified, defaulting to: PCMU, PCMA, G722, OPUS")
 	} else {
 		codecs := strings.Split(codecsStr, ",")
 		for i, codec := range codecs {
 			codecs[i] = strings.TrimSpace(codec)
 		}
 		config.SupportedCodecs = codecs
+		logger.WithField("codecs", config.SupportedCodecs).Info("Configured supported codecs")
 	}
 
-	// Load default vendor
-	config.DefaultVendor = getEnv("DEFAULT_SPEECH_VENDOR", "google")
+	// Load default vendor - check both STT_DEFAULT_VENDOR and DEFAULT_SPEECH_VENDOR for compatibility
+	config.DefaultVendor = getEnv("STT_DEFAULT_VENDOR", "")
 	if config.DefaultVendor == "" {
-		logger.Warn("DEFAULT_SPEECH_VENDOR not set, using default: google")
+		config.DefaultVendor = getEnv("DEFAULT_SPEECH_VENDOR", "google")
+	}
+	if config.DefaultVendor == "" {
+		logger.Warn("STT_DEFAULT_VENDOR not set, using default: google")
 		config.DefaultVendor = "google"
 	}
 
@@ -537,6 +896,27 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 	if !found {
 		logger.Warnf("Default vendor '%s' is not in the supported vendors list, adding it", config.DefaultVendor)
 		config.SupportedVendors = append(config.SupportedVendors, config.DefaultVendor)
+	}
+
+	// Load provider-specific configurations
+	if err := loadGoogleSTTConfig(logger, &config.Google); err != nil {
+		return fmt.Errorf("failed to load Google STT config: %w", err)
+	}
+	
+	if err := loadDeepgramSTTConfig(logger, &config.Deepgram); err != nil {
+		return fmt.Errorf("failed to load Deepgram STT config: %w", err)
+	}
+	
+	if err := loadAzureSTTConfig(logger, &config.Azure); err != nil {
+		return fmt.Errorf("failed to load Azure STT config: %w", err)
+	}
+	
+	if err := loadAmazonSTTConfig(logger, &config.Amazon); err != nil {
+		return fmt.Errorf("failed to load Amazon STT config: %w", err)
+	}
+	
+	if err := loadOpenAISTTConfig(logger, &config.OpenAI); err != nil {
+		return fmt.Errorf("failed to load OpenAI STT config: %w", err)
 	}
 
 	return nil
@@ -594,6 +974,33 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	if (config.AMQPUrl != "" && config.AMQPQueueName == "") || (config.AMQPUrl == "" && config.AMQPQueueName != "") {
 		logger.Warn("Incomplete AMQP configuration: both AMQP_URL and AMQP_QUEUE_NAME must be provided")
 	}
+	
+	// Load real-time AMQP configuration
+	config.EnableRealtimeAMQP = getEnvBool("ENABLE_REALTIME_AMQP", false)
+	config.RealtimeQueueName = getEnv("REALTIME_QUEUE_NAME", "siprec_realtime")
+	config.RealtimeExchangeName = getEnv("REALTIME_EXCHANGE_NAME", "")
+	config.RealtimeRoutingKey = getEnv("REALTIME_ROUTING_KEY", "siprec.realtime")
+	
+	// Load real-time AMQP batching configuration
+	config.RealtimeBatchSize = getEnvInt("REALTIME_BATCH_SIZE", 10)
+	config.RealtimeQueueSize = getEnvInt("REALTIME_QUEUE_SIZE", 1000)
+	
+	// Load real-time batch timeout
+	realtimeBatchTimeoutStr := getEnv("REALTIME_BATCH_TIMEOUT", "1s")
+	realtimeBatchTimeout, err := time.ParseDuration(realtimeBatchTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid REALTIME_BATCH_TIMEOUT value, using default: 1s")
+		config.RealtimeBatchTimeout = 1 * time.Second
+	} else {
+		config.RealtimeBatchTimeout = realtimeBatchTimeout
+	}
+	
+	// Load real-time event filtering configuration
+	config.PublishPartialTranscripts = getEnvBool("PUBLISH_PARTIAL_TRANSCRIPTS", true)
+	config.PublishFinalTranscripts = getEnvBool("PUBLISH_FINAL_TRANSCRIPTS", true)
+	config.PublishSentimentUpdates = getEnvBool("PUBLISH_SENTIMENT_UPDATES", true)
+	config.PublishKeywordDetections = getEnvBool("PUBLISH_KEYWORD_DETECTIONS", true)
+	config.PublishSpeakerChanges = getEnvBool("PUBLISH_SPEAKER_CHANGES", true)
 
 	return nil
 }
@@ -708,6 +1115,220 @@ func loadEncryptionConfig(logger *logrus.Logger, config *EncryptionConfig) error
 		}).Info("Encryption enabled")
 	} else {
 		logger.Debug("Encryption disabled")
+	}
+
+	return nil
+}
+
+// loadAsyncSTTConfig loads the async STT configuration section
+func loadAsyncSTTConfig(logger *logrus.Logger, config *AsyncSTTConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("STT_ASYNC_ENABLED", true)
+
+	// Load worker configuration
+	config.WorkerCount = getEnvInt("STT_WORKER_COUNT", 3)
+	if config.WorkerCount < 1 || config.WorkerCount > 100 {
+		logger.Warn("Invalid STT_WORKER_COUNT value, using default: 3")
+		config.WorkerCount = 3
+	}
+
+	config.MaxRetries = getEnvInt("STT_MAX_RETRIES", 3)
+	if config.MaxRetries < 0 || config.MaxRetries > 10 {
+		logger.Warn("Invalid STT_MAX_RETRIES value, using default: 3")
+		config.MaxRetries = 3
+	}
+
+	// Load retry backoff
+	retryBackoffStr := getEnv("STT_RETRY_BACKOFF", "30s")
+	retryBackoff, err := time.ParseDuration(retryBackoffStr)
+	if err != nil {
+		logger.Warn("Invalid STT_RETRY_BACKOFF value, using default: 30s")
+		config.RetryBackoff = 30 * time.Second
+	} else {
+		config.RetryBackoff = retryBackoff
+	}
+
+	// Load job timeout
+	jobTimeoutStr := getEnv("STT_JOB_TIMEOUT", "300s")
+	jobTimeout, err := time.ParseDuration(jobTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid STT_JOB_TIMEOUT value, using default: 300s")
+		config.JobTimeout = 300 * time.Second
+	} else {
+		config.JobTimeout = jobTimeout
+	}
+
+	// Load queue configuration
+	config.QueueBufferSize = getEnvInt("STT_QUEUE_BUFFER_SIZE", 1000)
+	if config.QueueBufferSize < 10 || config.QueueBufferSize > 100000 {
+		logger.Warn("Invalid STT_QUEUE_BUFFER_SIZE value, using default: 1000")
+		config.QueueBufferSize = 1000
+	}
+
+	config.BatchSize = getEnvInt("STT_BATCH_SIZE", 10)
+	if config.BatchSize < 1 || config.BatchSize > 100 {
+		logger.Warn("Invalid STT_BATCH_SIZE value, using default: 10")
+		config.BatchSize = 10
+	}
+
+	// Load batch timeout
+	batchTimeoutStr := getEnv("STT_BATCH_TIMEOUT", "60s")
+	batchTimeout, err := time.ParseDuration(batchTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid STT_BATCH_TIMEOUT value, using default: 60s")
+		config.BatchTimeout = 60 * time.Second
+	} else {
+		config.BatchTimeout = batchTimeout
+	}
+
+	config.EnablePrioritization = getEnvBool("STT_ENABLE_PRIORITIZATION", true)
+
+	// Load resource limits
+	config.MaxConcurrentJobs = getEnvInt("STT_MAX_CONCURRENT_JOBS", 50)
+	if config.MaxConcurrentJobs < 1 || config.MaxConcurrentJobs > 1000 {
+		logger.Warn("Invalid STT_MAX_CONCURRENT_JOBS value, using default: 50")
+		config.MaxConcurrentJobs = 50
+	}
+
+	// Load cleanup configuration
+	cleanupIntervalStr := getEnv("STT_CLEANUP_INTERVAL", "300s")
+	cleanupInterval, err := time.ParseDuration(cleanupIntervalStr)
+	if err != nil {
+		logger.Warn("Invalid STT_CLEANUP_INTERVAL value, using default: 300s")
+		config.CleanupInterval = 300 * time.Second
+	} else {
+		config.CleanupInterval = cleanupInterval
+	}
+
+	jobRetentionStr := getEnv("STT_JOB_RETENTION_TIME", "24h")
+	jobRetention, err := time.ParseDuration(jobRetentionStr)
+	if err != nil {
+		logger.Warn("Invalid STT_JOB_RETENTION_TIME value, using default: 24h")
+		config.JobRetentionTime = 24 * time.Hour
+	} else {
+		config.JobRetentionTime = jobRetention
+	}
+
+	// Load cost tracking
+	config.EnableCostTracking = getEnvBool("STT_ENABLE_COST_TRACKING", true)
+
+	// Log async STT configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"workers":        config.WorkerCount,
+			"max_retries":    config.MaxRetries,
+			"queue_size":     config.QueueBufferSize,
+			"max_concurrent": config.MaxConcurrentJobs,
+			"cost_tracking":  config.EnableCostTracking,
+		}).Info("Async STT processing enabled")
+	} else {
+		logger.Debug("Async STT processing disabled")
+	}
+
+	return nil
+}
+
+// loadHotReloadConfig loads the hot-reload configuration section
+func loadHotReloadConfig(logger *logrus.Logger, config *HotReloadConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("CONFIG_HOTRELOAD_ENABLED", true)
+
+	// Load debounce time
+	debounceStr := getEnv("CONFIG_HOTRELOAD_DEBOUNCE", "2s")
+	debounce, err := time.ParseDuration(debounceStr)
+	if err != nil {
+		logger.Warn("Invalid CONFIG_HOTRELOAD_DEBOUNCE value, using default: 2s")
+		config.DebounceTime = 2 * time.Second
+	} else {
+		config.DebounceTime = debounce
+	}
+
+	// Load max reload time
+	maxReloadStr := getEnv("CONFIG_HOTRELOAD_MAX_TIME", "30s")
+	maxReload, err := time.ParseDuration(maxReloadStr)
+	if err != nil {
+		logger.Warn("Invalid CONFIG_HOTRELOAD_MAX_TIME value, using default: 30s")
+		config.MaxReloadTime = 30 * time.Second
+	} else {
+		config.MaxReloadTime = maxReload
+	}
+
+	// Load backup configuration
+	config.BackupEnabled = getEnvBool("CONFIG_BACKUP_ENABLED", true)
+	config.BackupDir = getEnv("CONFIG_BACKUP_DIR", "./config_backups")
+
+	// Log hot-reload configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"debounce_time":  config.DebounceTime,
+			"max_reload_time": config.MaxReloadTime,
+			"backup_enabled": config.BackupEnabled,
+			"backup_dir":     config.BackupDir,
+		}).Info("Configuration hot-reload enabled")
+	} else {
+		logger.Debug("Configuration hot-reload disabled")
+	}
+
+	return nil
+}
+
+// loadPerformanceConfig loads the performance configuration section
+func loadPerformanceConfig(logger *logrus.Logger, config *PerformanceConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("PERFORMANCE_MONITORING_ENABLED", true)
+
+	// Load monitor interval
+	intervalStr := getEnv("PERFORMANCE_MONITOR_INTERVAL", "30s")
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		logger.Warn("Invalid PERFORMANCE_MONITOR_INTERVAL value, using default: 30s")
+		config.MonitorInterval = 30 * time.Second
+	} else {
+		config.MonitorInterval = interval
+	}
+
+	// Load memory settings
+	config.GCThresholdMB = int64(getEnvInt("PERFORMANCE_GC_THRESHOLD_MB", 100))
+	if config.GCThresholdMB < 10 || config.GCThresholdMB > 1024 {
+		logger.Warn("Invalid PERFORMANCE_GC_THRESHOLD_MB value, using default: 100")
+		config.GCThresholdMB = 100
+	}
+
+	config.MemoryLimitMB = int64(getEnvInt("PERFORMANCE_MEMORY_LIMIT_MB", 512))
+	if config.MemoryLimitMB < 64 || config.MemoryLimitMB > 8192 {
+		logger.Warn("Invalid PERFORMANCE_MEMORY_LIMIT_MB value, using default: 512")
+		config.MemoryLimitMB = 512
+	}
+
+	// Load CPU settings
+	cpuLimitStr := getEnv("PERFORMANCE_CPU_LIMIT", "80.0")
+	if cpuLimit, err := strconv.ParseFloat(cpuLimitStr, 64); err != nil {
+		logger.Warn("Invalid PERFORMANCE_CPU_LIMIT value, using default: 80.0")
+		config.CPULimit = 80.0
+	} else {
+		config.CPULimit = cpuLimit
+	}
+
+	// Load optimization settings
+	config.EnableAutoGC = getEnvBool("PERFORMANCE_ENABLE_AUTO_GC", true)
+	config.GCTargetPercent = getEnvInt("PERFORMANCE_GC_TARGET_PERCENT", 50)
+	if config.GCTargetPercent < 10 || config.GCTargetPercent > 200 {
+		logger.Warn("Invalid PERFORMANCE_GC_TARGET_PERCENT value, using default: 50")
+		config.GCTargetPercent = 50
+	}
+
+	// Log performance configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"monitor_interval":  config.MonitorInterval,
+			"gc_threshold_mb":   config.GCThresholdMB,
+			"memory_limit_mb":   config.MemoryLimitMB,
+			"cpu_limit":         config.CPULimit,
+			"auto_gc":           config.EnableAutoGC,
+			"gc_target_percent": config.GCTargetPercent,
+		}).Info("Performance monitoring enabled")
+	} else {
+		logger.Debug("Performance monitoring disabled")
 	}
 
 	return nil
@@ -976,4 +1597,305 @@ func getInternalIP(logger *logrus.Logger) string {
 
 	logger.Warn("Could not find non-loopback interface address, using localhost as fallback")
 	return "127.0.0.1"
+}
+
+// loadCircuitBreakerConfig loads the circuit breaker configuration section
+func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfig) error {
+	// Load global circuit breaker settings
+	config.Enabled = getEnvBool("CIRCUIT_BREAKER_ENABLED", true)
+	
+	// Load STT circuit breaker settings
+	config.STTFailureThreshold = int64(getEnvInt("STT_CB_FAILURE_THRESHOLD", 3))
+	
+	sttTimeoutStr := getEnv("STT_CB_TIMEOUT", "30s")
+	sttTimeout, err := time.ParseDuration(sttTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid STT_CB_TIMEOUT value, using default: 30s")
+		config.STTTimeout = 30 * time.Second
+	} else {
+		config.STTTimeout = sttTimeout
+	}
+	
+	sttRequestTimeoutStr := getEnv("STT_CB_REQUEST_TIMEOUT", "45s")
+	sttRequestTimeout, err := time.ParseDuration(sttRequestTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid STT_CB_REQUEST_TIMEOUT value, using default: 45s")
+		config.STTRequestTimeout = 45 * time.Second
+	} else {
+		config.STTRequestTimeout = sttRequestTimeout
+	}
+	
+	// Load AMQP circuit breaker settings
+	config.AMQPFailureThreshold = int64(getEnvInt("AMQP_CB_FAILURE_THRESHOLD", 5))
+	
+	amqpTimeoutStr := getEnv("AMQP_CB_TIMEOUT", "60s")
+	amqpTimeout, err := time.ParseDuration(amqpTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_CB_TIMEOUT value, using default: 60s")
+		config.AMQPTimeout = 60 * time.Second
+	} else {
+		config.AMQPTimeout = amqpTimeout
+	}
+	
+	amqpRequestTimeoutStr := getEnv("AMQP_CB_REQUEST_TIMEOUT", "10s")
+	amqpRequestTimeout, err := time.ParseDuration(amqpRequestTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_CB_REQUEST_TIMEOUT value, using default: 10s")
+		config.AMQPRequestTimeout = 10 * time.Second
+	} else {
+		config.AMQPRequestTimeout = amqpRequestTimeout
+	}
+	
+	// Load Redis circuit breaker settings
+	config.RedisFailureThreshold = int64(getEnvInt("REDIS_CB_FAILURE_THRESHOLD", 8))
+	
+	redisTimeoutStr := getEnv("REDIS_CB_TIMEOUT", "20s")
+	redisTimeout, err := time.ParseDuration(redisTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid REDIS_CB_TIMEOUT value, using default: 20s")
+		config.RedisTimeout = 20 * time.Second
+	} else {
+		config.RedisTimeout = redisTimeout
+	}
+	
+	redisRequestTimeoutStr := getEnv("REDIS_CB_REQUEST_TIMEOUT", "5s")
+	redisRequestTimeout, err := time.ParseDuration(redisRequestTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid REDIS_CB_REQUEST_TIMEOUT value, using default: 5s")
+		config.RedisRequestTimeout = 5 * time.Second
+	} else {
+		config.RedisRequestTimeout = redisRequestTimeout
+	}
+	
+	// Load HTTP circuit breaker settings
+	config.HTTPFailureThreshold = int64(getEnvInt("HTTP_CB_FAILURE_THRESHOLD", 5))
+	
+	httpTimeoutStr := getEnv("HTTP_CB_TIMEOUT", "45s")
+	httpTimeout, err := time.ParseDuration(httpTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid HTTP_CB_TIMEOUT value, using default: 45s")
+		config.HTTPTimeout = 45 * time.Second
+	} else {
+		config.HTTPTimeout = httpTimeout
+	}
+	
+	httpRequestTimeoutStr := getEnv("HTTP_CB_REQUEST_TIMEOUT", "30s")
+	httpRequestTimeout, err := time.ParseDuration(httpRequestTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid HTTP_CB_REQUEST_TIMEOUT value, using default: 30s")
+		config.HTTPRequestTimeout = 30 * time.Second
+	} else {
+		config.HTTPRequestTimeout = httpRequestTimeout
+	}
+	
+	// Load monitoring settings
+	config.MonitoringEnabled = getEnvBool("CB_MONITORING_ENABLED", true)
+	
+	monitoringIntervalStr := getEnv("CB_MONITORING_INTERVAL", "30s")
+	monitoringInterval, err := time.ParseDuration(monitoringIntervalStr)
+	if err != nil {
+		logger.Warn("Invalid CB_MONITORING_INTERVAL value, using default: 30s")
+		config.MonitoringInterval = 30 * time.Second
+	} else {
+		config.MonitoringInterval = monitoringInterval
+	}
+	
+	return nil
+}
+
+// loadGoogleSTTConfig loads Google STT configuration
+func loadGoogleSTTConfig(logger *logrus.Logger, config *GoogleSTTConfig) error {
+	config.Enabled = getEnvBool("GOOGLE_STT_ENABLED", true)
+	config.CredentialsFile = getEnv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	config.ProjectID = getEnv("GOOGLE_PROJECT_ID", "")
+	config.APIKey = getEnv("GOOGLE_STT_API_KEY", "")
+	config.Language = getEnv("GOOGLE_STT_LANGUAGE", "en-US")
+	config.SampleRate = getEnvInt("GOOGLE_STT_SAMPLE_RATE", 16000)
+	config.EnhancedModels = getEnvBool("GOOGLE_STT_ENHANCED_MODELS", false)
+	config.Model = getEnv("GOOGLE_STT_MODEL", "latest_long")
+	config.EnableAutomaticPunctuation = getEnvBool("GOOGLE_STT_AUTO_PUNCTUATION", true)
+	config.EnableWordTimeOffsets = getEnvBool("GOOGLE_STT_WORD_TIME_OFFSETS", true)
+	config.MaxAlternatives = getEnvInt("GOOGLE_STT_MAX_ALTERNATIVES", 1)
+	config.ProfanityFilter = getEnvBool("GOOGLE_STT_PROFANITY_FILTER", false)
+	
+	if config.Enabled && config.CredentialsFile == "" && config.APIKey == "" {
+		logger.Warn("Google STT enabled but neither GOOGLE_APPLICATION_CREDENTIALS nor GOOGLE_STT_API_KEY is set")
+	}
+	
+	return nil
+}
+
+// loadDeepgramSTTConfig loads Deepgram STT configuration
+func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) error {
+	config.Enabled = getEnvBool("DEEPGRAM_ENABLED", getEnvBool("DEEPGRAM_STT_ENABLED", false))
+	config.APIKey = getEnv("DEEPGRAM_API_KEY", "")
+	config.APIURL = getEnv("DEEPGRAM_API_URL", "https://api.deepgram.com")
+	config.Model = getEnv("DEEPGRAM_MODEL", "nova-2")
+	config.Language = getEnv("DEEPGRAM_LANGUAGE", "en-US")
+	config.Tier = getEnv("DEEPGRAM_TIER", "nova")
+	config.Version = getEnv("DEEPGRAM_VERSION", "latest")
+	config.Punctuate = getEnvBool("DEEPGRAM_PUNCTUATE", true)
+	config.Diarize = getEnvBool("DEEPGRAM_DIARIZE", false)
+	config.Numerals = getEnvBool("DEEPGRAM_NUMERALS", true)
+	config.SmartFormat = getEnvBool("DEEPGRAM_SMART_FORMAT", true)
+	config.ProfanityFilter = getEnvBool("DEEPGRAM_PROFANITY_FILTER", false)
+	
+	// Parse redact list
+	redactStr := getEnv("DEEPGRAM_REDACT", "")
+	if redactStr != "" {
+		config.Redact = strings.Split(redactStr, ",")
+		for i, item := range config.Redact {
+			config.Redact[i] = strings.TrimSpace(item)
+		}
+	}
+	
+	// Parse keywords list
+	keywordsStr := getEnv("DEEPGRAM_KEYWORDS", "")
+	if keywordsStr != "" {
+		config.Keywords = strings.Split(keywordsStr, ",")
+		for i, keyword := range config.Keywords {
+			config.Keywords[i] = strings.TrimSpace(keyword)
+		}
+	}
+	
+	// Load multi-language and accent detection configuration
+	config.DetectLanguage = getEnvBool("DEEPGRAM_DETECT_LANGUAGE", true)
+	
+	// Parse supported languages list
+	supportedLangsStr := getEnv("DEEPGRAM_SUPPORTED_LANGUAGES", "en-US,es-ES,fr-FR,de-DE,it-IT,pt-BR,ru-RU,ja-JP,zh-CN,ko-KR,ar-SA,hi-IN")
+	if supportedLangsStr != "" {
+		config.SupportedLanguages = strings.Split(supportedLangsStr, ",")
+		for i, lang := range config.SupportedLanguages {
+			config.SupportedLanguages[i] = strings.TrimSpace(lang)
+		}
+	} else {
+		// Default to common languages if not specified
+		config.SupportedLanguages = []string{"en-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR"}
+	}
+	
+	// Load language confidence threshold
+	confidenceStr := getEnv("DEEPGRAM_LANGUAGE_CONFIDENCE", "0.7")
+	if confidence, err := strconv.ParseFloat(confidenceStr, 64); err != nil {
+		logger.Warn("Invalid DEEPGRAM_LANGUAGE_CONFIDENCE value, using default: 0.7")
+		config.LanguageConfidenceThreshold = 0.7
+	} else {
+		config.LanguageConfidenceThreshold = confidence
+	}
+	
+	// Load accent-aware configuration
+	config.AccentAwareModels = getEnvBool("DEEPGRAM_ACCENT_AWARE", true)
+	config.FallbackLanguage = getEnv("DEEPGRAM_FALLBACK_LANGUAGE", "en-US")
+	config.RealtimeLanguageSwitching = getEnvBool("DEEPGRAM_REALTIME_SWITCHING", false)
+	config.LanguageSwitchingInterval = getEnvInt("DEEPGRAM_SWITCHING_INTERVAL", 5)
+	config.MultiLanguageAlternatives = getEnvBool("DEEPGRAM_MULTILANG_ALTERNATIVES", false)
+	config.MaxLanguageAlternatives = getEnvInt("DEEPGRAM_MAX_LANG_ALTERNATIVES", 3)
+	
+	// Validate accent detection configuration
+	if config.DetectLanguage && len(config.SupportedLanguages) == 0 {
+		logger.Warn("Language detection enabled but no supported languages specified")
+		config.SupportedLanguages = []string{"en-US"}
+	}
+	
+	if config.LanguageConfidenceThreshold < 0.0 || config.LanguageConfidenceThreshold > 1.0 {
+		logger.Warn("Invalid language confidence threshold, using default: 0.7")
+		config.LanguageConfidenceThreshold = 0.7
+	}
+	
+	// Validate fallback language is in supported languages
+	fallbackFound := false
+	for _, lang := range config.SupportedLanguages {
+		if lang == config.FallbackLanguage {
+			fallbackFound = true
+			break
+		}
+	}
+	if !fallbackFound {
+		logger.Warnf("Fallback language '%s' not in supported languages, adding it", config.FallbackLanguage)
+		config.SupportedLanguages = append(config.SupportedLanguages, config.FallbackLanguage)
+	}
+	
+	if config.Enabled && config.APIKey == "" {
+		logger.Warn("Deepgram STT enabled but DEEPGRAM_API_KEY is not set")
+	}
+	
+	// Log accent detection configuration if enabled
+	if config.Enabled && config.DetectLanguage {
+		logger.WithFields(logrus.Fields{
+			"supported_languages":       config.SupportedLanguages,
+			"confidence_threshold":      config.LanguageConfidenceThreshold,
+			"accent_aware_models":       config.AccentAwareModels,
+			"fallback_language":         config.FallbackLanguage,
+			"realtime_switching":        config.RealtimeLanguageSwitching,
+			"multilang_alternatives":    config.MultiLanguageAlternatives,
+		}).Info("Deepgram multi-language accent detection enabled")
+	}
+	
+	return nil
+}
+
+// loadAzureSTTConfig loads Azure STT configuration
+func loadAzureSTTConfig(logger *logrus.Logger, config *AzureSTTConfig) error {
+	config.Enabled = getEnvBool("AZURE_STT_ENABLED", false)
+	config.SubscriptionKey = getEnv("AZURE_SPEECH_KEY", "")
+	config.Region = getEnv("AZURE_SPEECH_REGION", "")
+	config.Language = getEnv("AZURE_STT_LANGUAGE", "en-US")
+	config.EndpointURL = getEnv("AZURE_STT_ENDPOINT", "")
+	config.EnableDetailedResults = getEnvBool("AZURE_STT_DETAILED_RESULTS", true)
+	config.ProfanityFilter = getEnv("AZURE_STT_PROFANITY_FILTER", "masked")
+	config.OutputFormat = getEnv("AZURE_STT_OUTPUT_FORMAT", "detailed")
+	
+	if config.Enabled && (config.SubscriptionKey == "" || config.Region == "") {
+		logger.Warn("Azure STT enabled but AZURE_SPEECH_KEY or AZURE_SPEECH_REGION is not set")
+	}
+	
+	return nil
+}
+
+// loadAmazonSTTConfig loads Amazon STT configuration
+func loadAmazonSTTConfig(logger *logrus.Logger, config *AmazonSTTConfig) error {
+	config.Enabled = getEnvBool("AMAZON_STT_ENABLED", false)
+	config.AccessKeyID = getEnv("AWS_ACCESS_KEY_ID", "")
+	config.SecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", "")
+	config.Region = getEnv("AWS_REGION", "us-east-1")
+	config.Language = getEnv("AMAZON_STT_LANGUAGE", "en-US")
+	config.MediaFormat = getEnv("AMAZON_STT_MEDIA_FORMAT", "wav")
+	config.SampleRate = getEnvInt("AMAZON_STT_SAMPLE_RATE", 16000)
+	config.VocabularyName = getEnv("AMAZON_STT_VOCABULARY", "")
+	config.EnableChannelIdentification = getEnvBool("AMAZON_STT_CHANNEL_ID", false)
+	config.EnableSpeakerIdentification = getEnvBool("AMAZON_STT_SPEAKER_ID", false)
+	config.MaxSpeakerLabels = getEnvInt("AMAZON_STT_MAX_SPEAKERS", 2)
+	
+	if config.Enabled && (config.AccessKeyID == "" || config.SecretAccessKey == "") {
+		logger.Warn("Amazon STT enabled but AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is not set")
+	}
+	
+	return nil
+}
+
+// loadOpenAISTTConfig loads OpenAI STT configuration
+func loadOpenAISTTConfig(logger *logrus.Logger, config *OpenAISTTConfig) error {
+	config.Enabled = getEnvBool("OPENAI_STT_ENABLED", false)
+	config.APIKey = getEnv("OPENAI_API_KEY", "")
+	config.OrganizationID = getEnv("OPENAI_ORGANIZATION_ID", "")
+	config.Model = getEnv("OPENAI_STT_MODEL", "whisper-1")
+	config.Language = getEnv("OPENAI_STT_LANGUAGE", "")
+	config.Prompt = getEnv("OPENAI_STT_PROMPT", "")
+	config.ResponseFormat = getEnv("OPENAI_STT_RESPONSE_FORMAT", "verbose_json")
+	config.BaseURL = getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	
+	// Parse temperature
+	tempStr := getEnv("OPENAI_STT_TEMPERATURE", "0.0")
+	temp, err := strconv.ParseFloat(tempStr, 64)
+	if err != nil {
+		logger.Warn("Invalid OPENAI_STT_TEMPERATURE value, using default: 0.0")
+		config.Temperature = 0.0
+	} else {
+		config.Temperature = temp
+	}
+	
+	if config.Enabled && config.APIKey == "" {
+		logger.Warn("OpenAI STT enabled but OPENAI_API_KEY is not set")
+	}
+	
+	return nil
 }
