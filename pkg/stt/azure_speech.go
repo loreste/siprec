@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/config"
 )
 
 // AzureSpeechProvider implements the Provider interface for Microsoft Azure Speech Services using REST API
@@ -22,7 +22,7 @@ type AzureSpeechProvider struct {
 	accessToken      string
 	tokenExpiry      time.Time
 	transcriptionSvc *TranscriptionService
-	config           AzureSpeechConfig
+	config           *config.AzureSTTConfig
 	mutex            sync.RWMutex
 }
 
@@ -95,16 +95,11 @@ func DefaultAzureSpeechConfig() AzureSpeechConfig {
 }
 
 // NewAzureSpeechProvider creates a new Azure Speech Services provider
-func NewAzureSpeechProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *AzureSpeechConfig) *AzureSpeechProvider {
-	if cfg == nil {
-		defaultCfg := DefaultAzureSpeechConfig()
-		cfg = &defaultCfg
-	}
-
+func NewAzureSpeechProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.AzureSTTConfig) *AzureSpeechProvider {
 	return &AzureSpeechProvider{
 		logger:           logger,
 		transcriptionSvc: transcriptionSvc,
-		config:           *cfg,
+		config:           cfg,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -122,28 +117,12 @@ func (p *AzureSpeechProvider) Initialize() error {
 	defer p.mutex.Unlock()
 
 	// Get subscription key and region
-	subscriptionKey := p.config.SubscriptionKey
-	if subscriptionKey == "" {
-		subscriptionKey = os.Getenv("AZURE_SPEECH_KEY")
-	}
-	if subscriptionKey == "" {
-		return fmt.Errorf("Azure Speech subscription key is required (set AZURE_SPEECH_KEY environment variable)")
-	}
-	p.config.SubscriptionKey = subscriptionKey
-
-	region := p.config.Region
-	if envRegion := os.Getenv("AZURE_SPEECH_REGION"); envRegion != "" {
-		region = envRegion
-		p.config.Region = region
-	}
-	if region == "" {
-		region = "eastus"
-		p.config.Region = region
+	if p.config.SubscriptionKey == "" {
+		return fmt.Errorf("Azure Speech subscription key is required")
 	}
 
-	// Set endpoint URL if not provided
-	if p.config.EndpointURL == "" {
-		p.config.EndpointURL = fmt.Sprintf("https://%s.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1", region)
+	if p.config.Region == "" {
+		return fmt.Errorf("Azure Speech region is required")
 	}
 
 	// Get initial access token
@@ -152,10 +131,11 @@ func (p *AzureSpeechProvider) Initialize() error {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"region":      region,
-		"language":    p.config.LanguageCode,
-		"diarization": p.config.EnableDiarization,
-		"endpoint":    p.config.EndpointURL,
+		"region":               p.config.Region,
+		"language":             p.config.Language,
+		"detailed_results":     p.config.EnableDetailedResults,
+		"profanity_filter":     p.config.ProfanityFilter,
+		"output_format":        p.config.OutputFormat,
 	}).Info("Azure Speech Services provider initialized successfully")
 
 	return nil
@@ -189,7 +169,7 @@ func (p *AzureSpeechProvider) refreshAccessToken() error {
 	}
 
 	p.accessToken = string(tokenBytes)
-	p.tokenExpiry = time.Now().Add(p.config.TokenRefreshInterval)
+	p.tokenExpiry = time.Now().Add(9 * time.Minute) // Tokens expire in 10 minutes
 
 	p.logger.Debug("Azure Speech access token refreshed")
 	return nil
@@ -279,37 +259,23 @@ func (p *AzureSpeechProvider) StreamToText(ctx context.Context, audioStream io.R
 
 // buildRequestURL constructs the request URL with parameters
 func (p *AzureSpeechProvider) buildRequestURL() string {
+	// Use endpoint URL from config, or create default
 	baseURL := p.config.EndpointURL
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("https://%s.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1", p.config.Region)
+	}
+
 	params := []string{
-		"language=" + p.config.LanguageCode,
-		"format=detailed",
+		"language=" + p.config.Language,
+		"format=" + p.config.OutputFormat,
 	}
 
-	if p.config.EnableProfanityFilter {
-		params = append(params, "profanity=masked")
-	} else {
-		params = append(params, "profanity=raw")
-	}
+	// Set profanity filter
+	params = append(params, "profanity="+p.config.ProfanityFilter)
 
-	if p.config.EnableWordTimestamps {
+	// Enable detailed results if configured
+	if p.config.EnableDetailedResults {
 		params = append(params, "wordLevelTimestamps=true")
-	}
-
-	if p.config.EnableDiarization {
-		params = append(params, "diarization=true")
-		if p.config.MaxSpeakers > 0 {
-			params = append(params, fmt.Sprintf("maxSpeakers=%d", p.config.MaxSpeakers))
-		}
-	}
-
-	if p.config.EnableSentiment {
-		params = append(params, "sentiment=true")
-	}
-
-	if p.config.EnableLanguageID && len(p.config.CandidateLanguages) > 0 {
-		languages := strings.Join(p.config.CandidateLanguages, ",")
-		params = append(params, "languageDetection=true")
-		params = append(params, "candidateLanguages="+languages)
 	}
 
 	if len(params) > 0 {
@@ -424,7 +390,7 @@ func (p *AzureSpeechProvider) processRecognitionResponse(response AzureRecogniti
 }
 
 // UpdateConfig allows runtime configuration updates
-func (p *AzureSpeechProvider) UpdateConfig(cfg AzureSpeechConfig) error {
+func (p *AzureSpeechProvider) UpdateConfig(cfg *config.AzureSTTConfig) error {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
@@ -441,64 +407,21 @@ func (p *AzureSpeechProvider) UpdateConfig(cfg AzureSpeechConfig) error {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"language":    cfg.LanguageCode,
-		"region":      cfg.Region,
-		"diarization": cfg.EnableDiarization,
+		"language":        cfg.Language,
+		"region":          cfg.Region,
+		"profanity_filter": cfg.ProfanityFilter,
 	}).Info("Updated Azure Speech configuration")
 
 	return nil
 }
 
 // GetConfig returns the current configuration
-func (p *AzureSpeechProvider) GetConfig() AzureSpeechConfig {
+func (p *AzureSpeechProvider) GetConfig() *config.AzureSTTConfig {
 	p.mutex.RLock()
 	defer p.mutex.RUnlock()
 	return p.config
 }
 
-// SetLanguage updates the recognition language
-func (p *AzureSpeechProvider) SetLanguage(languageCode string) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.LanguageCode = languageCode
-	p.logger.WithField("language", languageCode).Info("Updated Azure Speech language")
-}
-
-// EnableDiarization enables speaker diarization with optional max speakers
-func (p *AzureSpeechProvider) EnableDiarization(maxSpeakers int) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.EnableDiarization = true
-	if maxSpeakers > 0 {
-		p.config.MaxSpeakers = maxSpeakers
-	}
-	p.logger.WithField("max_speakers", maxSpeakers).Info("Enabled Azure Speech diarization")
-}
-
-// AddPhraseListGrammar adds phrases to improve recognition accuracy
-func (p *AzureSpeechProvider) AddPhraseListGrammar(phrases []string) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.PhraseListGrammar = append(p.config.PhraseListGrammar, phrases...)
-	p.logger.WithField("phrase_count", len(phrases)).Info("Added phrases to Azure Speech grammar")
-}
-
-// EnableLanguageIdentification enables automatic language detection
-func (p *AzureSpeechProvider) EnableLanguageIdentification(candidateLanguages []string) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.EnableLanguageID = true
-	p.config.CandidateLanguages = candidateLanguages
-	p.logger.WithField("languages", candidateLanguages).Info("Enabled Azure Speech language identification")
-}
-
-// EnableSentimentAnalysis enables sentiment analysis in transcription
-func (p *AzureSpeechProvider) EnableSentimentAnalysis() {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-	p.config.EnableSentiment = true
-	p.logger.Info("Enabled Azure Speech sentiment analysis")
-}
 
 // Close gracefully closes the provider and cleans up resources
 func (p *AzureSpeechProvider) Close() error {

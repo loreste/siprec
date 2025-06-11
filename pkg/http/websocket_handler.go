@@ -8,8 +8,9 @@ import (
 
 // WebSocketHandler handles WebSocket connections for real-time transcription streaming
 type WebSocketHandler struct {
-	logger *logrus.Logger
-	hub    *TranscriptionHub
+	logger         *logrus.Logger
+	hub            *TranscriptionHub
+	authMiddleware *AuthMiddleware
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
@@ -18,6 +19,11 @@ func NewWebSocketHandler(logger *logrus.Logger, hub *TranscriptionHub) *WebSocke
 		logger: logger,
 		hub:    hub,
 	}
+}
+
+// SetAuthMiddleware sets the authentication middleware
+func (h *WebSocketHandler) SetAuthMiddleware(auth *AuthMiddleware) {
+	h.authMiddleware = auth
 }
 
 // RegisterHandlers registers WebSocket handlers with the HTTP server
@@ -33,6 +39,24 @@ func (h *WebSocketHandler) RegisterHandlers(server *Server) {
 // handleTranscriptionWS handles WebSocket connections for real-time transcription streaming
 func (h *WebSocketHandler) handleTranscriptionWS(w http.ResponseWriter, r *http.Request) {
 	h.logger.WithField("remote_addr", r.RemoteAddr).Info("WebSocket connection request received")
+
+	// Authenticate if auth middleware is configured
+	if h.authMiddleware != nil {
+		userInfo, err := h.authMiddleware.WebSocketAuth(r)
+		if err != nil {
+			h.logger.WithError(err).WithField("remote_addr", r.RemoteAddr).Warning("WebSocket authentication failed")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		// Log authenticated connection
+		h.logger.WithFields(logrus.Fields{
+			"remote_addr": r.RemoteAddr,
+			"user_id":     userInfo.UserID,
+			"username":    userInfo.Username,
+			"role":        userInfo.Role,
+		}).Info("Authenticated WebSocket connection")
+	}
 
 	// Let the hub serve the WebSocket connection
 	h.hub.ServeWs(w, r)
@@ -131,6 +155,7 @@ func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *h
     <div class="controls">
         <p>Connect to receive real-time transcriptions. Optionally specify a Call UUID to get transcriptions for a specific call only.</p>
         <input type="text" id="callUUID" placeholder="Call UUID (optional)">
+        <input type="text" id="authToken" placeholder="Auth Token (optional)">
         <button id="connect">Connect</button>
         <button id="disconnect" disabled>Disconnect</button>
         <div id="status" class="disconnected">Disconnected</div>
@@ -147,6 +172,7 @@ func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *h
         const connectButton = document.getElementById('connect');
         const disconnectButton = document.getElementById('disconnect');
         const callUUIDInput = document.getElementById('callUUID');
+        const authTokenInput = document.getElementById('authToken');
         const clearButton = document.getElementById('clear');
         
         function updateStatus(message, type) {
@@ -157,9 +183,19 @@ func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *h
         function connect() {
             // Get the WebSocket URL
             const callUUID = callUUIDInput.value.trim();
+            const authToken = authTokenInput.value.trim();
             let wsUrl = window.location.origin.replace('http', 'ws') + '/ws/transcriptions';
+            
+            const params = new URLSearchParams();
             if (callUUID) {
-                wsUrl += '?call_uuid=' + encodeURIComponent(callUUID);
+                params.append('call_uuid', callUUID);
+            }
+            if (authToken) {
+                params.append('token', authToken);
+            }
+            
+            if (params.toString()) {
+                wsUrl += '?' + params.toString();
             }
             
             // Create WebSocket connection
