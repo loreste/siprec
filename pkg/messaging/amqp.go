@@ -256,6 +256,9 @@ func (c *AMQPClient) Disconnect() {
 
 // IsConnected returns the connection status
 func (c *AMQPClient) IsConnected() bool {
+	if c == nil {
+		return false
+	}
 	c.connMutex.RLock()
 	defer c.connMutex.RUnlock()
 	return c.connected
