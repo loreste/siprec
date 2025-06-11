@@ -19,6 +19,7 @@ var (
 	ErrAlreadyExists      = errors.New("resource already exists")
 	ErrPermissionDenied   = errors.New("permission denied")
 	ErrUnauthenticated    = errors.New("unauthenticated")
+	ErrUnauthorized       = errors.New("unauthorized")
 	ErrResourceExhausted  = errors.New("resource exhausted")
 	ErrFailedPrecondition = errors.New("failed precondition")
 	ErrAborted            = errors.New("operation aborted")

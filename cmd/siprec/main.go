@@ -1,20 +1,3 @@
-// SIPREC Server - SIP Recording Server
-//
-// Copyright (C) 2024 SIPREC Server Project
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 package main
 
 import (
@@ -36,10 +19,9 @@ import (
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
-	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/sip"
-	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/stt"
+	"siprec-server/pkg/session"
 )
 
 var (
@@ -62,26 +44,12 @@ var (
 	wsHandler        *http_server.WebSocketHandler
 
 	// Encryption components
-	encryptionManager  encryption.EncryptionManager
-	keyRotationService *encryption.RotationService
+	encryptionManager   encryption.EncryptionManager
+	keyRotationService  *encryption.RotationService
+	redisSessionMgr *session.SessionManager
 )
 
 func main() {
-	// Check for special commands
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "envcheck", "env-check", "--env-check":
-			runEnvironmentCheck()
-			return
-		case "version", "--version", "-v":
-			fmt.Printf("SIPREC Server %s\n", getVersion())
-			return
-		case "help", "--help", "-h":
-			printUsage()
-			return
-		}
-	}
-
 	// Set up logger with basic configuration (will be updated after config is loaded)
 	logger.SetFormatter(&logrus.JSONFormatter{
 		TimestampFormat: time.RFC3339Nano,
@@ -114,8 +82,8 @@ func main() {
 		logger.Info("HTTP server is disabled by configuration")
 	}
 
-	// Start custom SIP server
-	go startCustomSIPServer(&wg)
+	// Start SIP server
+	go startSIPServer(&wg)
 
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
@@ -173,7 +141,7 @@ func main() {
 		// Shut down STT providers
 		if sttManager != nil {
 			logger.Debug("Shutting down STT providers...")
-			// STT providers are cleaned up through context cancellation
+			// TODO: Add shutdown method to STT providers if needed
 			logger.Info("STT providers shut down")
 		}
 
@@ -221,12 +189,6 @@ func initialize() error {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
-
-	// Initialize metrics
-	logger.Info("Initializing metrics...")
-	metrics.Init(logger)
-	metrics.SetMetricsEnabled(appConfig.HTTP.EnableMetrics)
-	logger.Info("Metrics initialized")
 
 	// Initialize encryption manager
 	logger.Info("About to initialize encryption...")
@@ -293,38 +255,52 @@ func initialize() error {
 	// Initialize speech-to-text providers
 	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor)
 
-	// Register Mock provider for local testing
-	mockProvider := stt.NewMockProvider(logger)
-
 	// Create transcription service before STT providers
 	transcriptionSvc = stt.NewTranscriptionService(logger)
-
-	// Set transcription service for mock provider
-	mockProvider.SetTranscriptionService(transcriptionSvc)
-
-	if err := sttManager.RegisterProvider(mockProvider); err != nil {
-		logger.WithError(err).Warn("Failed to register Mock Speech-to-Text provider")
-	}
+	
+	// Log the configured STT vendors
+	logger.WithFields(logrus.Fields{
+		"vendors": appConfig.STT.SupportedVendors,
+		"default": appConfig.STT.DefaultVendor,
+	}).Info("Initializing STT providers")
 
 	// Register providers based on configuration
 	for _, vendor := range appConfig.STT.SupportedVendors {
 		switch vendor {
 		case "google":
-			googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc)
-			if err := sttManager.RegisterProvider(googleProvider); err != nil {
-				logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
+			if appConfig.STT.Google.Enabled {
+				googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc, &appConfig.STT.Google)
+				if err := sttManager.RegisterProvider(googleProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
+				}
 			}
 		case "deepgram":
-			// For now, Deepgram doesn't support transcription service
-			deepgramProvider := stt.NewDeepgramProvider(logger)
-			if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
-				logger.WithError(err).Warn("Failed to register Deepgram provider")
+			if appConfig.STT.Deepgram.Enabled {
+				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram)
+				if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Deepgram provider")
+				}
+			}
+		case "azure":
+			if appConfig.STT.Azure.Enabled {
+				azureProvider := stt.NewAzureSpeechProvider(logger, transcriptionSvc, &appConfig.STT.Azure)
+				if err := sttManager.RegisterProvider(azureProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Azure Speech provider")
+				}
+			}
+		case "amazon":
+			if appConfig.STT.Amazon.Enabled {
+				amazonProvider := stt.NewAmazonTranscribeProvider(logger, transcriptionSvc, &appConfig.STT.Amazon)
+				if err := sttManager.RegisterProvider(amazonProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Amazon Transcribe provider")
+				}
 			}
 		case "openai":
-			// For now, OpenAI doesn't support transcription service
-			openaiProvider := stt.NewOpenAIProvider(logger)
-			if err := sttManager.RegisterProvider(openaiProvider); err != nil {
-				logger.WithError(err).Warn("Failed to register OpenAI provider")
+			if appConfig.STT.OpenAI.Enabled {
+				openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, &appConfig.STT.OpenAI)
+				if err := sttManager.RegisterProvider(openaiProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register OpenAI provider")
+				}
 			}
 		default:
 			logger.WithField("vendor", vendor).Warn("Unknown STT vendor in configuration")
@@ -391,9 +367,8 @@ func initialize() error {
 	sipAdapter := http_server.NewSIPHandlerAdapter(logger, sipHandler)
 	httpServer = http_server.NewServer(logger, httpServerConfig, sipAdapter)
 
-	// Configure HTTP server with component references for health checks
+	// Set the SIP handler reference for health checks
 	httpServer.SetSIPHandler(sipHandler)
-	httpServer.SetAMQPClient(amqpClient)
 
 	// Create session handler and register HTTP handlers
 	sessionHandler := http_server.NewSessionHandler(logger, sipAdapter)
@@ -404,8 +379,8 @@ func initialize() error {
 	// Create the WebSocket hub and start it in a goroutine
 	wsHub = http_server.NewTranscriptionHub(logger)
 	go wsHub.Run(rootCtx)
-
-	// Configure WebSocket hub in HTTP server
+	
+	// Set the WebSocket hub reference for health checks
 	httpServer.SetWebSocketHub(wsHub)
 
 	// Create a bridge between transcription service and WebSocket hub
@@ -433,16 +408,13 @@ func initialize() error {
 	return nil
 }
 
-// startCustomSIPServer initializes and starts the custom SIP server
-func startCustomSIPServer(wg *sync.WaitGroup) {
+// startSIPServer initializes and starts the SIP server
+func startSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	ip := "0.0.0.0" // Listen on all interfaces
 	ctx, cancel := context.WithCancel(rootCtx)
 	defer cancel()
-
-	// Create custom SIP server
-	customServer := sip.NewCustomSIPServer(logger, sipHandler)
 
 	// Create error channel to communicate errors from listener goroutines
 	errChan := make(chan error, 10)
@@ -451,16 +423,16 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 	var wgListeners sync.WaitGroup
 
 	// Start UDP listeners
-	for _, port := range appConfig.Network.GetUDPPorts() {
+	for _, port := range appConfig.Network.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		wgListeners.Add(1)
 
 		go func(address string, port int) {
 			defer wgListeners.Done()
 
-			logger.WithField("address", address).Info("Starting custom SIP server on UDP")
-			if err := customServer.ListenAndServeUDP(ctx, address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start custom SIP server on UDP")
+			logger.WithField("address", address).Info("Starting SIP server on UDP")
+			if err := sipHandler.Server.ListenAndServe(ctx, "udp", address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on UDP")
 				errChan <- fmt.Errorf("UDP listener error: %w", err)
 				return
 			}
@@ -468,16 +440,16 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 	}
 
 	// Start TCP listeners
-	for _, port := range appConfig.Network.GetTCPPorts() {
+	for _, port := range appConfig.Network.Ports {
 		address := fmt.Sprintf("%s:%d", ip, port)
 		wgListeners.Add(1)
 
 		go func(address string, port int) {
 			defer wgListeners.Done()
 
-			logger.WithField("address", address).Info("Starting custom SIP server on TCP")
-			if err := customServer.ListenAndServeTCP(ctx, address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start custom SIP server on TCP")
+			logger.WithField("address", address).Info("Starting SIP server on TCP")
+			if err := sipHandler.Server.ListenAndServe(ctx, "tcp", address); err != nil {
+				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on TCP")
 				errChan <- fmt.Errorf("TCP listener error: %w", err)
 				return
 			}
@@ -537,18 +509,18 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 		go func() {
 			defer wgListeners.Done()
 
-			// Start custom TLS server
-			if err := customServer.ListenAndServeTLS(
+			// Use CustomSIPServer TLS method
+			if err := sipHandler.Server.ListenAndServeTLS(
 				ctx,
 				tlsAddress,
 				tlsConfig,
 			); err != nil {
-				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start custom SIP server on TLS")
+				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
 				errChan <- fmt.Errorf("TLS listener error: %w", err)
 				return
 			}
 
-			logger.WithField("port", appConfig.Network.TLSPort).Info("Custom SIP server started on TLS successfully")
+			logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
 		}()
 
 		// Verify TLS server started successfully by checking if the port is listening
@@ -577,11 +549,6 @@ func startCustomSIPServer(wg *sync.WaitGroup) {
 		cancel()
 	case <-ctx.Done():
 		logger.Info("SIP server context cancelled, shutting down")
-	}
-
-	// Shutdown custom server
-	if err := customServer.Shutdown(ctx); err != nil {
-		logger.WithError(err).Error("Error shutting down custom SIP server")
 	}
 
 	// Wait for all listener goroutines to exit
@@ -672,14 +639,14 @@ func initializeEncryption() error {
 		EnableMetadataEncryption:  appConfig.Encryption.EnableMetadataEncryption,
 		Algorithm:                 appConfig.Encryption.Algorithm,
 		KeyDerivationMethod:       appConfig.Encryption.KeyDerivationMethod,
-		MasterKeyPath:             appConfig.Encryption.MasterKeyPath,
-		KeyRotationInterval:       appConfig.Encryption.KeyRotationInterval,
-		KeyBackupEnabled:          appConfig.Encryption.KeyBackupEnabled,
-		KeySize:                   appConfig.Encryption.KeySize,
-		NonceSize:                 appConfig.Encryption.NonceSize,
-		SaltSize:                  appConfig.Encryption.SaltSize,
-		PBKDF2Iterations:          appConfig.Encryption.PBKDF2Iterations,
-		EncryptionKeyStore:        appConfig.Encryption.EncryptionKeyStore,
+		MasterKeyPath:            appConfig.Encryption.MasterKeyPath,
+		KeyRotationInterval:      appConfig.Encryption.KeyRotationInterval,
+		KeyBackupEnabled:         appConfig.Encryption.KeyBackupEnabled,
+		KeySize:                  appConfig.Encryption.KeySize,
+		NonceSize:                appConfig.Encryption.NonceSize,
+		SaltSize:                 appConfig.Encryption.SaltSize,
+		PBKDF2Iterations:         appConfig.Encryption.PBKDF2Iterations,
+		EncryptionKeyStore:       appConfig.Encryption.EncryptionKeyStore,
 	}
 
 	// Create key store
@@ -707,82 +674,27 @@ func initializeEncryption() error {
 	// Create key rotation service if encryption is enabled
 	if encConfig.EnableRecordingEncryption || encConfig.EnableMetadataEncryption {
 		keyRotationService = encryption.NewRotationService(encryptionManager, encConfig, logger)
-
+		
 		// Start key rotation service
 		if err := keyRotationService.Start(); err != nil {
 			return fmt.Errorf("failed to start key rotation service: %w", err)
 		}
 	}
 
-	// Note: EncryptedSessionManager is not implemented yet
-	// For now, we'll use the regular session manager
-	_ = siprec.GetGlobalSessionManager()
+	// Initialize Redis session manager
+	redisSessionMgr, err = session.InitializeSessionManager(logger)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to initialize Redis session manager, continuing without Redis")
+		redisSessionMgr = nil
+	}
 
 	logger.WithFields(logrus.Fields{
 		"recording_encryption": encConfig.EnableRecordingEncryption,
 		"metadata_encryption":  encConfig.EnableMetadataEncryption,
-		"algorithm":            encConfig.Algorithm,
-		"key_store":            encConfig.EncryptionKeyStore,
-		"rotation_enabled":     keyRotationService != nil,
+		"algorithm":           encConfig.Algorithm,
+		"key_store":           encConfig.EncryptionKeyStore,
+		"rotation_enabled":    keyRotationService != nil,
 	}).Info("Encryption subsystem initialized")
 
 	return nil
-}
-
-// runEnvironmentCheck performs environment validation
-func runEnvironmentCheck() {
-	fmt.Println("SIPREC Server Environment Check")
-	fmt.Println("==============================")
-
-	// Check if config can be loaded
-	cfg, err := config.Load(logger)
-	if err != nil {
-		fmt.Printf("❌ Configuration: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("✅ Configuration: Valid")
-
-	// Check network ports
-	for _, port := range cfg.Network.Ports {
-		addr := fmt.Sprintf(":%d", port)
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			fmt.Printf("❌ Port %d: %v\n", port, err)
-		} else {
-			ln.Close()
-			fmt.Printf("✅ Port %d: Available\n", port)
-		}
-	}
-
-	fmt.Println("Environment check completed")
-}
-
-// getVersion returns the current version
-func getVersion() string {
-	// Try to read VERSION file
-	if data, err := os.ReadFile("VERSION"); err == nil {
-		return string(data)
-	}
-	return "development"
-}
-
-// printUsage prints usage information
-func printUsage() {
-	fmt.Printf(`SIPREC Server - SIP Recording Server
-
-Usage:
-  %s [command]
-
-Commands:
-  envcheck    Check environment and configuration
-  version     Show version information
-  help        Show this help message
-
-If no command is provided, the server will start normally.
-
-Environment Variables:
-  SIPREC_CONFIG_FILE    Path to configuration file
-  
-For more information, see the documentation.
-`, os.Args[0])
 }
