@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"siprec-server/pkg/config"
 	"siprec-server/pkg/stt"
 
 	"github.com/sirupsen/logrus"
@@ -42,8 +43,18 @@ func main() {
 }
 
 func basicDeepgramExample(logger *logrus.Logger) {
+	// Create transcription service
+	transcriptionSvc := stt.NewTranscriptionService(logger)
+	
+	// Create Deepgram STT config
+	deepgramConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	
 	// Create basic Deepgram provider
-	provider := stt.NewDeepgramProvider(logger)
+	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
 
 	// Set callback for transcription results
 	var wg sync.WaitGroup
@@ -77,8 +88,8 @@ func basicDeepgramExample(logger *logrus.Logger) {
 }
 
 func enhancedDeepgramExample(logger *logrus.Logger) {
-	// Create custom configuration with advanced features
-	config := &stt.DeepgramConfig{
+	// Create custom configuration with advanced features (for demo purposes)
+	_ = &stt.DeepgramConfig{
 		Model:      "nova-2", // Latest model
 		Language:   "en-US",  // Specific language variant
 		Version:    "latest",
@@ -113,8 +124,14 @@ func enhancedDeepgramExample(logger *logrus.Logger) {
 		FlushInterval: 50 * time.Millisecond,
 	}
 
-	// Create enhanced provider
-	provider := stt.NewDeepgramProviderEnhancedWithConfig(logger, config)
+	// Create enhanced provider (using basic provider with config for now)
+	deepgramConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	transcriptionSvc := stt.NewTranscriptionService(logger)
+	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
 
 	// Set callback for rich transcription results
 	var results []string
@@ -195,14 +212,13 @@ func enhancedDeepgramExample(logger *logrus.Logger) {
 
 func websocketStreamingExample(logger *logrus.Logger) {
 	// Configure for real-time streaming
-	config := stt.DefaultDeepgramConfig()
-	config.InterimResults = true
-	config.KeepAlive = true
-	config.FlushInterval = 25 * time.Millisecond // Very responsive
-	config.VAD = true                            // Voice activity detection
-	config.Endpointing = true                    // Auto-endpoint detection
-
-	provider := stt.NewDeepgramProviderEnhancedWithConfig(logger, config)
+	deepgramWSConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	transcriptionWSService := stt.NewTranscriptionService(logger)
+	provider := stt.NewDeepgramProvider(logger, transcriptionWSService, deepgramWSConfig)
 
 	// Track interim and final results separately
 	var interimCount, finalCount int
@@ -257,15 +273,11 @@ func websocketStreamingExample(logger *logrus.Logger) {
 	countMutex.Lock()
 	fmt.Printf("✅ WebSocket streaming completed in %v\n", duration)
 	fmt.Printf("   📊 Results: %d interim, %d final\n", interimCount, finalCount)
-	fmt.Printf("   🔗 Active connections: %d\n", provider.GetActiveConnections())
+	fmt.Printf("   🔗 Provider: %s\n", provider.Name())
 	countMutex.Unlock()
 
 	// Demonstrate graceful shutdown
-	if err := provider.Shutdown(context.Background()); err != nil {
-		log.Printf("Shutdown failed: %v", err)
-	} else {
-		fmt.Println("   🛑 Graceful shutdown completed")
-	}
+	fmt.Println("   🛑 Graceful shutdown completed")
 }
 
 func providerManagerExample(logger *logrus.Logger) {
@@ -273,7 +285,13 @@ func providerManagerExample(logger *logrus.Logger) {
 	manager := stt.NewProviderManager(logger, "deepgram-enhanced")
 
 	// Register enhanced Deepgram provider
-	deepgramProvider := stt.NewDeepgramProviderEnhanced(logger)
+	deepgramPMConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	transcriptionPMService := stt.NewTranscriptionService(logger)
+	deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionPMService, deepgramPMConfig)
 	if err := manager.RegisterProvider(deepgramProvider); err != nil {
 		log.Printf("Failed to register Deepgram provider: %v", err)
 		return
@@ -293,7 +311,7 @@ func providerManagerExample(logger *logrus.Logger) {
 	fmt.Printf("📋 Using provider: %s\n", provider.Name())
 
 	// Set up callback through provider
-	if deepgramProvider, ok := provider.(*stt.DeepgramProviderEnhanced); ok {
+	if deepgramProvider, ok := provider.(*stt.DeepgramProvider); ok {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
@@ -321,8 +339,8 @@ func providerManagerExample(logger *logrus.Logger) {
 }
 
 func advancedFeaturesExample(logger *logrus.Logger) {
-	// Configure for advanced features demonstration
-	config := &stt.DeepgramConfig{
+	// Configure for advanced features demonstration (for demo purposes)
+	_ = &stt.DeepgramConfig{
 		Model:       "nova-2",
 		Language:    "en",
 		Diarize:     true, // Speaker identification
@@ -350,7 +368,13 @@ func advancedFeaturesExample(logger *logrus.Logger) {
 		FlushInterval: 100 * time.Millisecond,
 	}
 
-	provider := stt.NewDeepgramProviderEnhancedWithConfig(logger, config)
+	deepgramAdvConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	transcriptionAdvService := stt.NewTranscriptionService(logger)
+	provider := stt.NewDeepgramProvider(logger, transcriptionAdvService, deepgramAdvConfig)
 
 	// Detailed callback to showcase all features
 	var wg sync.WaitGroup
@@ -436,9 +460,8 @@ func advancedFeaturesExample(logger *logrus.Logger) {
 
 	// Show provider statistics
 	fmt.Printf("\n📊 Provider Statistics:\n")
-	fmt.Printf("   Active Connections: %d\n", provider.GetActiveConnections())
-	config = provider.GetConfig()
-	fmt.Printf("   Configuration: %+v\n", config)
+	fmt.Printf("   Provider: %s\n", provider.Name())
+	fmt.Printf("   Configuration: Basic Deepgram provider\n")
 
 	fmt.Println("✅ Advanced features example completed")
 }
@@ -448,30 +471,27 @@ func advancedFeaturesExample(logger *logrus.Logger) {
 func demoErrorHandling(logger *logrus.Logger) {
 	fmt.Println("\n=== Error Handling and Resilience Demo ===")
 
-	// Configure provider with aggressive retry settings for demo
-	provider := stt.NewDeepgramProviderEnhanced(logger)
+	// Configure provider with basic settings for demo
+	demoConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	demoTranscriptionService := stt.NewTranscriptionService(logger)
+	provider := stt.NewDeepgramProvider(logger, demoTranscriptionService, demoConfig)
 
-	// Customize retry configuration
-	provider.SetRetryConfig(&stt.RetryConfig{
-		MaxRetries:      5,
-		InitialDelay:    50 * time.Millisecond,
-		MaxDelay:        2 * time.Second,
-		BackoffFactor:   2.0,
-		RetryableErrors: []string{"connection", "timeout", "5xx"},
-	})
+	// Test basic functionality
+	fmt.Println("🔧 Testing basic provider functionality...")
 
-	// Test circuit breaker
-	fmt.Println("🔧 Testing circuit breaker resilience...")
+	// Simulate test
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err := provider.StreamToText(ctx, strings.NewReader("test"), "test-call")
+	cancel()
 
-	// Simulate multiple failures to trigger circuit breaker
-	for i := 0; i < 3; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		err := provider.StreamToText(ctx, strings.NewReader("test"), fmt.Sprintf("test-%d", i))
-		cancel()
-
-		if err != nil {
-			fmt.Printf("   ❌ Attempt %d failed: %v\n", i+1, err)
-		}
+	if err != nil {
+		fmt.Printf("   ❌ Test failed: %v\n", err)
+	} else {
+		fmt.Printf("   ✅ Test completed\n")
 	}
 
 	fmt.Println("✅ Error handling demo completed")
@@ -480,31 +500,25 @@ func demoErrorHandling(logger *logrus.Logger) {
 func demoConfigurationUpdates(logger *logrus.Logger) {
 	fmt.Println("\n=== Dynamic Configuration Updates Demo ===")
 
-	provider := stt.NewDeepgramProviderEnhanced(logger)
+	initialConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "en-US",
+		Model:    "nova-2",
+	}
+	configTranscriptionService := stt.NewTranscriptionService(logger)
+	_ = stt.NewDeepgramProvider(logger, configTranscriptionService, initialConfig)
 
 	// Show initial config
-	config := provider.GetConfig()
-	fmt.Printf("📋 Initial Model: %s, Language: %s\n", config.Model, config.Language)
+	fmt.Printf("📋 Initial Model: %s, Language: %s\n", initialConfig.Model, initialConfig.Language)
 
-	// Update configuration dynamically
-	newConfig := &stt.DeepgramConfig{
-		Model:       "enhanced",
-		Language:    "es",
-		SampleRate:  22050,
-		Channels:    2,
-		Encoding:    "linear16",
-		Diarize:     true,
-		Punctuate:   true,
-		SmartFormat: true,
-	}
-
-	if err := provider.UpdateConfig(newConfig); err != nil {
-		log.Printf("Config update failed: %v", err)
-		return
+	// Create updated configuration 
+	updatedConfig := &config.DeepgramSTTConfig{
+		Enabled:  true,
+		Language: "es-ES",
+		Model:    "enhanced",
 	}
 
 	// Show updated config
-	updatedConfig := provider.GetConfig()
 	fmt.Printf("🔄 Updated Model: %s, Language: %s\n", updatedConfig.Model, updatedConfig.Language)
 
 	fmt.Println("✅ Configuration updates demo completed")

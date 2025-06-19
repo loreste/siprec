@@ -160,7 +160,7 @@ func (c *CDRService) EndSession(sessionID string, status string, errorMessage *s
 	// Finalize CDR
 	now := time.Now()
 	cdr.EndTime = &now
-	duration := now.Sub(cdr.StartTime).Seconds()
+	duration := int64(now.Sub(cdr.StartTime).Seconds())
 	cdr.Duration = &duration
 	cdr.Status = status
 	cdr.ErrorMessage = errorMessage
