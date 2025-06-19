@@ -18,11 +18,13 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🔗 SIP Integration** - Custom SIP server implementation optimized for TCP transport and large metadata
 
 ### Transcription & Processing
-- **🎙️ Real-time Transcription** - Enhanced multi-provider STT with streaming capabilities (Google, Deepgram, OpenAI, Azure)
+- **🎙️ Real-time Streaming Transcription** - Enhanced multi-provider STT with full WebSocket streaming support (Google, Deepgram, OpenAI, Azure, Amazon)
+- **⚡ Streaming Response Support** - Real-time callback-based transcription with interim and final results
 - **👥 Speaker Diarization** - Multi-speaker identification and word-level speaker tagging
 - **🎵 Audio Processing** - Advanced VAD, noise reduction, and multi-channel mixing
 - **🌐 WebSocket Streaming** - Real-time transcription delivery with circuit breaker patterns
 - **📊 Quality Metrics** - Audio quality monitoring and adaptive processing with performance optimization
+- **🔄 Provider Interface Standardization** - Unified callback interface across all STT providers
 
 ### Enterprise Features
 - **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
@@ -118,9 +120,10 @@ RECORDING_MAX_DURATION=4h
 ENABLE_RECORDING_ENCRYPTION=false
 
 # STT Provider
-STT_PROVIDERS=google-enhanced  # Enhanced providers: google-enhanced, deepgram-enhanced, openai, azure
+STT_PROVIDERS=google-enhanced  # Enhanced providers: google-enhanced, deepgram-enhanced, openai, azure, amazon
 STT_ENABLE_DIARIZATION=true    # Enable speaker diarization
 STT_ENABLE_WORD_TIMESTAMPS=true # Enable word-level timestamps
+STT_ENABLE_STREAMING=true      # Enable real-time streaming transcription
 
 # Audio Processing
 VAD_ENABLED=true
@@ -219,8 +222,10 @@ go test -v ./...
 ### Performance Characteristics
 - **Concurrent Sessions**: 100+ simultaneous recordings
 - **Audio Quality**: PCM/G.711/G.722 codec support
-- **Latency**: <100ms for real-time transcription
+- **Latency**: <100ms for real-time streaming transcription
 - **Throughput**: 1000+ RTP packets/second per session
+- **Streaming Support**: Real-time interim and final transcription results
+- **Provider Agnostic**: Unified interface across all STT vendors
 
 ### High Availability Setup
 ```bash
