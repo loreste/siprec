@@ -78,8 +78,6 @@ func (v *VoiceActivityDetector) Process(data []byte) ([]byte, error) {
 	v.avgEnergy = 0.95*v.avgEnergy + 0.05*energy
 
 	// Determine if this frame has voice activity
-	// Store previous state (might be useful for state transition logging)
-	_ = v.isVoiceActive // Avoid unused variable warning
 	v.detectVoice(energy)
 
 	// If silence suppression is enabled, return empty data when no voice is detected
