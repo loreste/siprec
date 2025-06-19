@@ -13,7 +13,8 @@ import (
 
 // RTPForwarder handles RTP packet forwarding and recording
 type RTPForwarder struct {
-	LocalPort        int
+	LocalPort        int // RTP port (even)
+	RTCPPort         int // RTCP port (RTP + 1, odd)
 	Conn             *net.UDPConn
 	StopChan         chan struct{}
 	TranscriptChan   chan string
@@ -60,6 +61,12 @@ type SDPOptions struct {
 	// RTP port to use
 	RTPPort int
 
+	// RTCP port to use (RFC 3550 - typically RTP + 1)
+	RTCPPort int
+
+	// Whether to use rtcp-mux (RFC 5761 - both RTP and RTCP on same port)
+	UseRTCPMux bool
+
 	// Whether SRTP is enabled
 	EnableSRTP bool
 
@@ -98,17 +105,18 @@ func GetPortManager() *PortManager {
 	return portManager
 }
 
-// NewRTPForwarder creates a new RTP forwarder using a port allocated from the port manager
+// NewRTPForwarder creates a new RTP forwarder using RFC 3550 compliant RTP/RTCP port pairs
 func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) (*RTPForwarder, error) {
-	// Get a port from the port manager
+	// Get an RTP/RTCP port pair from the port manager (RFC 3550 compliant)
 	pm := GetPortManager()
-	port, err := pm.AllocatePort()
+	portPair, err := pm.AllocatePortPair()
 	if err != nil {
 		return nil, err
 	}
 
 	return &RTPForwarder{
-		LocalPort:        port,
+		LocalPort:        portPair.RTPPort,  // Even port for RTP
+		RTCPPort:         portPair.RTCPPort, // Odd port for RTCP
 		StopChan:         make(chan struct{}),
 		TranscriptChan:   make(chan string, 10), // Buffer up to 10 transcriptions
 		Timeout:          timeout,
@@ -120,6 +128,33 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		AudioProcessor:   nil,                       // Will be initialized in StartRTPForwarding
 		isCleanedUp:      false,                     // Not cleaned up initially
 		MarkedForCleanup: false,                     // Not marked for cleanup initially
+	}, nil
+}
+
+// NewRTPForwarderSinglePort creates an RTP forwarder with single port (backward compatibility)
+// Note: This method is deprecated. Use NewRTPForwarder for RFC 3550 compliant port pairs
+func NewRTPForwarderSinglePort(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) (*RTPForwarder, error) {
+	// Get a single port from the port manager (legacy mode)
+	pm := GetPortManager()
+	port, err := pm.AllocatePort()
+	if err != nil {
+		return nil, err
+	}
+
+	return &RTPForwarder{
+		LocalPort:        port,
+		RTCPPort:         0, // No RTCP port in legacy mode
+		StopChan:         make(chan struct{}),
+		TranscriptChan:   make(chan string, 10),
+		Timeout:          timeout,
+		RecordingSession: recordingSession,
+		Logger:           logger,
+		SRTPEnabled:      false,
+		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80",
+		SRTPKeyLifetime:  2 ^ 31,
+		AudioProcessor:   nil,
+		isCleanedUp:      false,
+		MarkedForCleanup: false,
 	}, nil
 }
 
@@ -138,10 +173,21 @@ func (f *RTPForwarder) Cleanup() {
 	// Mark as cleaned up to prevent duplicate cleanup
 	f.isCleanedUp = true
 
-	// Get the port manager and release the port
+	// Get the port manager and release the port(s)
 	pm := GetPortManager()
-	pm.ReleasePort(f.LocalPort)
-	f.Logger.WithField("port", f.LocalPort).Debug("Released RTP port during cleanup")
+	if f.RTCPPort > 0 {
+		// Release port pair (RFC 3550 compliant mode)
+		portPair := &PortPair{RTPPort: f.LocalPort, RTCPPort: f.RTCPPort}
+		pm.ReleasePortPair(portPair)
+		f.Logger.WithFields(logrus.Fields{
+			"rtp_port":  f.LocalPort,
+			"rtcp_port": f.RTCPPort,
+		}).Debug("Released RTP/RTCP port pair during cleanup")
+	} else {
+		// Release single port (legacy mode)
+		pm.ReleasePort(f.LocalPort)
+		f.Logger.WithField("port", f.LocalPort).Debug("Released RTP port during cleanup")
+	}
 
 	// Close UDP connection if open
 	if f.Conn != nil {

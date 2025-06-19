@@ -19,6 +19,12 @@ type PortManager struct {
 	stats        PortManagerStats
 }
 
+// PortPair represents an RTP/RTCP port pair as required by RFC 3550
+type PortPair struct {
+	RTPPort  int // Even port for RTP
+	RTCPPort int // Odd port for RTCP (RTP + 1)
+}
+
 // PortManagerStats tracks port allocation statistics
 type PortManagerStats struct {
 	TotalPorts        int
@@ -105,6 +111,71 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	return 0, fmt.Errorf("no free ports available in range %d-%d", pm.minPort, pm.maxPort)
 }
 
+// AllocatePortPair allocates an RTP/RTCP port pair according to RFC 3550
+// RTP uses even port, RTCP uses RTP port + 1 (odd port)
+// Returns PortPair or error if no pairs are available
+func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
+	pm.portsMutex.Lock()
+	defer pm.portsMutex.Unlock()
+
+	// Try to reuse recently freed port pairs first
+	if cachedPorts := pm.getRecentlyFreedPorts(); len(cachedPorts) > 0 {
+		for _, rtpPort := range cachedPorts {
+			rtcpPort := rtpPort + 1
+			// Ensure RTP port is even and both ports are available
+			if rtpPort%2 == 0 && rtcpPort <= pm.maxPort &&
+				!pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] &&
+				isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
+				
+				pm.usedPorts[rtpPort] = true
+				pm.usedPorts[rtcpPort] = true
+				pm.stats.AllocationCount += 2 // Count both ports
+				pm.stats.ReuseHits++
+				pm.updateStats()
+				return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
+			}
+		}
+	}
+
+	// First try - look for consecutive even/odd port pairs
+	for port := pm.minPort; port <= pm.maxPort-1; port += 2 {
+		// Ensure port is even (RTP requirement)
+		if port%2 == 0 {
+			rtpPort := port
+			rtcpPort := port + 1
+			
+			// Check if both ports are available
+			if !pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] {
+				if isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
+					pm.usedPorts[rtpPort] = true
+					pm.usedPorts[rtcpPort] = true
+					pm.stats.AllocationCount += 2 // Count both ports
+					pm.updateStats()
+					return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
+				}
+			}
+		}
+	}
+
+	// Second try - check all even ports regardless of our usedPorts map
+	for port := pm.minPort; port <= pm.maxPort-1; port += 2 {
+		if port%2 == 0 {
+			rtpPort := port
+			rtcpPort := port + 1
+			
+			if isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
+				pm.usedPorts[rtpPort] = true
+				pm.usedPorts[rtcpPort] = true
+				pm.stats.AllocationCount += 2
+				pm.updateStats()
+				return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no free RTP/RTCP port pairs available in range %d-%d", pm.minPort, pm.maxPort)
+}
+
 // ReleasePort releases a previously allocated port with optimization
 func (pm *PortManager) ReleasePort(port int) {
 	pm.portsMutex.Lock()
@@ -119,6 +190,31 @@ func (pm *PortManager) ReleasePort(port int) {
 
 		pm.updateStats()
 	}
+}
+
+// ReleasePortPair releases a previously allocated RTP/RTCP port pair
+func (pm *PortManager) ReleasePortPair(pair *PortPair) {
+	if pair == nil {
+		return
+	}
+	
+	pm.portsMutex.Lock()
+	defer pm.portsMutex.Unlock()
+
+	// Release both RTP and RTCP ports
+	if pm.usedPorts[pair.RTPPort] {
+		delete(pm.usedPorts, pair.RTPPort)
+		pm.stats.DeallocationCount++
+		// Cache RTP port for reuse (RTCP port will be RTP + 1)
+		pm.recentlyUsed.Set(fmt.Sprintf("port_%d", pair.RTPPort), pair.RTPPort)
+	}
+	
+	if pm.usedPorts[pair.RTCPPort] {
+		delete(pm.usedPorts, pair.RTCPPort)
+		pm.stats.DeallocationCount++
+	}
+
+	pm.updateStats()
 }
 
 // GetPortRange returns the configured port range
