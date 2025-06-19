@@ -131,32 +131,6 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 	}, nil
 }
 
-// NewRTPForwarderSinglePort creates an RTP forwarder with single port (backward compatibility)
-// Note: This method is deprecated. Use NewRTPForwarder for RFC 3550 compliant port pairs
-func NewRTPForwarderSinglePort(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) (*RTPForwarder, error) {
-	// Get a single port from the port manager (legacy mode)
-	pm := GetPortManager()
-	port, err := pm.AllocatePort()
-	if err != nil {
-		return nil, err
-	}
-
-	return &RTPForwarder{
-		LocalPort:        port,
-		RTCPPort:         0, // No RTCP port in legacy mode
-		StopChan:         make(chan struct{}),
-		TranscriptChan:   make(chan string, 10),
-		Timeout:          timeout,
-		RecordingSession: recordingSession,
-		Logger:           logger,
-		SRTPEnabled:      false,
-		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80",
-		SRTPKeyLifetime:  2 ^ 31,
-		AudioProcessor:   nil,
-		isCleanedUp:      false,
-		MarkedForCleanup: false,
-	}, nil
-}
 
 // Cleanup performs a thorough cleanup of all resources used by the RTPForwarder
 // It ensures resources are only released once to prevent memory leaks
