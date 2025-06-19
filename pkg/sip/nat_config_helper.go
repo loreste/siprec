@@ -5,7 +5,8 @@ import (
 )
 
 // NewNATConfigFromMediaConfig creates a NAT configuration from media configuration
-func NewNATConfigFromMediaConfig(mediaConfig *media.Config) *NATConfig {
+// Uses the first configured SIP port as the default internal port
+func NewNATConfigFromMediaConfig(mediaConfig *media.Config, sipPorts []int) *NATConfig {
 	if mediaConfig == nil {
 		return nil
 	}
@@ -36,7 +37,12 @@ func NewNATConfigFromMediaConfig(mediaConfig *media.Config) *NATConfig {
 
 	// Set default ports if not specified
 	if natConfig.InternalPort == 0 {
-		natConfig.InternalPort = 5060 // Default SIP port
+		// Use the first configured SIP port if available, otherwise fall back to 5060
+		if len(sipPorts) > 0 {
+			natConfig.InternalPort = sipPorts[0]
+		} else {
+			natConfig.InternalPort = 5060 // Ultimate fallback
+		}
 	}
 	if natConfig.ExternalPort == 0 {
 		natConfig.ExternalPort = natConfig.InternalPort // Use same port if not specified
