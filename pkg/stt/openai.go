@@ -17,7 +17,7 @@ type OpenAIProvider struct {
 	logger           *logrus.Logger
 	transcriptionSvc *TranscriptionService
 	config           *config.OpenAISTTConfig
-	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
+	callback         TranscriptionCallback
 }
 
 // NewOpenAIProvider creates a new OpenAI provider
@@ -143,6 +143,6 @@ func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader
 }
 
 // SetCallback sets the callback function for transcription results
-func (p *OpenAIProvider) SetCallback(callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})) {
+func (p *OpenAIProvider) SetCallback(callback TranscriptionCallback) {
 	p.callback = callback
 }

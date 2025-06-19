@@ -21,6 +21,8 @@ type AmazonTranscribeProvider struct {
 	client           *transcribestreaming.Client
 	transcriptionSvc *TranscriptionService
 	config           *config.AmazonSTTConfig
+	callback         TranscriptionCallback
+	callbackMutex    sync.RWMutex
 	mutex            sync.RWMutex
 }
 
@@ -37,6 +39,13 @@ func NewAmazonTranscribeProvider(logger *logrus.Logger, transcriptionSvc *Transc
 // Name returns the provider name
 func (p *AmazonTranscribeProvider) Name() string {
 	return "amazon-transcribe"
+}
+
+// SetCallback sets the callback function for transcription results
+func (p *AmazonTranscribeProvider) SetCallback(callback TranscriptionCallback) {
+	p.callbackMutex.Lock()
+	defer p.callbackMutex.Unlock()
+	p.callback = callback
 }
 
 // Initialize initializes the Amazon Transcribe client
@@ -346,6 +355,15 @@ func (p *AmazonTranscribeProvider) processTranscriptEvent(event types.Transcript
 				"is_final":   isFinal,
 				"channel_id": metadata["channel_id"],
 			}).Info("Received transcription from Amazon Transcribe")
+
+			// Trigger callback if set
+			p.callbackMutex.RLock()
+			callback := p.callback
+			p.callbackMutex.RUnlock()
+			
+			if callback != nil {
+				callback(callUUID, transcript, isFinal, metadata)
+			}
 
 			// Publish to transcription service
 			if p.transcriptionSvc != nil {
