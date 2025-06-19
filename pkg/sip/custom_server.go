@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/pion/sdp/v3"
 	
+	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
 )
 
@@ -35,6 +37,9 @@ type CustomSIPServer struct {
 	// Call state tracking
 	callStates map[string]*CallState
 	callMutex  sync.RWMutex
+	
+	// Port manager for dynamic port allocation
+	PortManager *media.PortManager
 }
 
 // SIPConnection represents an active TCP/TLS connection
@@ -87,6 +92,7 @@ type CallState struct {
 	SDP              []byte
 	IsRecording      bool
 	RecordingSession *siprec.RecordingSession // SIPREC recording session with metadata
+	RTPForwarder     *media.RTPForwarder      // RTP forwarder for this call
 }
 
 // NewCustomSIPServer creates a new custom SIP server
@@ -102,6 +108,7 @@ func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServe
 		callStates:   make(map[string]*CallState),
 		shutdownCtx:  ctx,
 		shutdownFunc: cancel,
+		PortManager:  media.GetPortManager(),
 	}
 }
 
@@ -651,13 +658,47 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}).Info("Successfully created recording session from SIPREC metadata")
 	}
 
+	// Create RTP forwarder for this SIPREC call
+	var rtpForwarder *media.RTPForwarder
+	var responseSDP []byte
+	
+	if recordingSession != nil {
+		// Create RTP forwarder for recording session
+		forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger)
+		if err != nil {
+			logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
+			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+			return
+		}
+		rtpForwarder = forwarder
+		
+		// Store the forwarder in call state for cleanup
+		callState.RTPForwarder = rtpForwarder
+		callState.SDP = message.Body // Store original SDP for reference
+		
+		// Generate SDP response using the proper handler methods with allocated port
+		// Parse the received SDP if available
+		var receivedSDP *sdp.SessionDescription
+		if len(sdpData) > 0 {
+			receivedSDP = &sdp.SessionDescription{}
+			if err := receivedSDP.Unmarshal(sdpData); err != nil {
+				logger.WithError(err).Warn("Failed to parse received SDP, using default")
+				receivedSDP = nil
+			}
+		}
+		
+		// Use the handler's SDP generation with the allocated port
+		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", rtpForwarder.LocalPort, rtpForwarder)
+		responseSDP, _ = sdpResponse.Marshal()
+	} else {
+		// Fallback to basic SDP generation for non-SIPREC calls
+		responseSDP = s.generateSiprecSDP(0) // 0 means allocate port dynamically
+	}
+
 	// Create clean SDP response using existing media config
 	responseHeaders := map[string]string{
 		"Contact": s.getHeader(message, "contact"),
 	}
-
-	// Generate proper SDP response for SIPREC
-	responseSDP := s.generateSiprecSDP()
 
 	// If we have a recording session, generate proper SIPREC response with metadata
 	if recordingSession != nil {
@@ -747,12 +788,30 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	callState.RemoteCSeq = extractCSeqNumber(message.CSeq)
 	callState.LastActivity = time.Now()
 	
-	// Generate response
+	// Generate response using existing RTP forwarder
 	responseHeaders := map[string]string{
 		"Contact": s.getHeader(message, "contact"),
 	}
 	
-	responseSDP := s.generateSiprecSDP()
+	var responseSDP []byte
+	if callState.RTPForwarder != nil {
+		// Use existing RTP forwarder for re-INVITE
+		var receivedSDP *sdp.SessionDescription
+		if sdpData != nil && len(sdpData) > 0 {
+			receivedSDP = &sdp.SessionDescription{}
+			if err := receivedSDP.Unmarshal(sdpData); err != nil {
+				logger.WithError(err).Warn("Failed to parse received SDP in re-INVITE, using default")
+				receivedSDP = nil
+			}
+		}
+		
+		// Use the handler's SDP generation with the existing forwarder's port
+		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", callState.RTPForwarder.LocalPort, callState.RTPForwarder)
+		responseSDP, _ = sdpResponse.Marshal()
+	} else {
+		// Fallback to basic SDP generation if no forwarder exists
+		responseSDP = s.generateSiprecSDP(0) // 0 means allocate port dynamically
+	}
 	
 	// Generate SIPREC response if we have a recording session
 	if callState.RecordingSession != nil {
@@ -1416,21 +1475,57 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 	return contentType, multipartBody, nil
 }
 
-// generateSiprecSDP generates appropriate SDP response for SIPREC
-func (s *CustomSIPServer) generateSiprecSDP() []byte {
+// generateSiprecSDP generates appropriate SDP response for SIPREC with dynamic port allocation
+func (s *CustomSIPServer) generateSiprecSDP(rtpPort int) []byte {
 	// Generate SDP with proper session info
 	timestamp := time.Now().Unix()
+
+	// Use provided port or allocate one dynamically
+	if rtpPort <= 0 {
+		// Get port from port manager
+		if s.PortManager != nil {
+			port, err := s.PortManager.AllocatePort()
+			if err != nil {
+				s.logger.WithError(err).Warn("Failed to allocate port from server's port manager, trying global port manager")
+				// Try global port manager as fallback
+				globalPM := media.GetPortManager()
+				if globalPM != nil {
+					port, err = globalPM.AllocatePort()
+					if err != nil {
+						s.logger.WithError(err).Error("Failed to allocate port from global port manager")
+						rtpPort = 0 // Will trigger error handling in caller
+					} else {
+						rtpPort = port
+					}
+				}
+			} else {
+				rtpPort = port
+			}
+		} else {
+			// No port manager available, try global port manager
+			globalPM := media.GetPortManager()
+			if globalPM != nil {
+				port, err := globalPM.AllocatePort()
+				if err != nil {
+					s.logger.WithError(err).Error("Failed to allocate port from global port manager")
+					rtpPort = 0 // Will trigger error handling in caller
+				} else {
+					rtpPort = port
+				}
+			}
+		}
+	}
 
 	sdp := fmt.Sprintf(`v=0
 o=- %d %d IN IP4 127.0.0.1
 s=SIPREC Recording Session
 c=IN IP4 127.0.0.1
 t=0 0
-m=audio 16384 RTP/AVP 0 8
+m=audio %d RTP/AVP 0 8
 a=rtpmap:0 PCMU/8000
 a=rtpmap:8 PCMA/8000
 a=recvonly
-`, timestamp, timestamp)
+`, timestamp, timestamp, rtpPort)
 
 	return []byte(sdp)
 }
