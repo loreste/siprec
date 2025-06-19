@@ -166,8 +166,10 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		// Determine the RTP port to use
 		rtpPort := options.RTPPort
 		if rtpPort <= 0 {
-			// Use a dynamic port if not specified
-			rtpPort = 10000 + i
+			// Use dynamic port allocation - this should be handled by the caller
+			// or passed through options. Setting to 0 to indicate allocation needed.
+			rtpPort = 0
+			h.Logger.Warn("No RTP port specified in options - port allocation should be handled by caller")
 		}
 
 		// Create new attributes, handling direction and NAT
@@ -332,8 +334,9 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 	// Determine the RTP port to use
 	rtpPort := options.RTPPort
 	if rtpPort <= 0 {
-		// Use a default port if not specified
-		rtpPort = 10000
+		// Port allocation should be handled by caller - setting to 0 to indicate allocation needed
+		rtpPort = 0
+		h.Logger.Warn("No RTP port specified in options for default SDP - port allocation should be handled by caller")
 	}
 
 	// Create audio media description
