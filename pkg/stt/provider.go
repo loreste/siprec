@@ -8,6 +8,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// TranscriptionCallback is the callback function signature for real-time transcription results
+type TranscriptionCallback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
+
 // Provider defines the interface for speech-to-text providers
 type Provider interface {
 	// Initialize initializes the provider with any required configuration
@@ -18,6 +21,25 @@ type Provider interface {
 
 	// StreamToText streams audio data to the provider and returns text
 	StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error
+}
+
+// StreamingProvider extends Provider with real-time streaming capabilities
+type StreamingProvider interface {
+	Provider
+	
+	// SetCallback sets the callback function for real-time transcription results
+	SetCallback(callback TranscriptionCallback)
+}
+
+// EnhancedStreamingProvider extends StreamingProvider with advanced capabilities  
+type EnhancedStreamingProvider interface {
+	StreamingProvider
+	
+	// GetActiveConnections returns the number of active streaming connections
+	GetActiveConnections() int
+	
+	// Shutdown gracefully shuts down all active connections
+	Shutdown(ctx context.Context) error
 }
 
 // ProviderManager manages all speech-to-text providers

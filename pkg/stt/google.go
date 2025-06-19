@@ -21,7 +21,7 @@ type GoogleProvider struct {
 	config           *config.GoogleSTTConfig
 
 	// Callback function for transcription results
-	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
+	callback TranscriptionCallback
 }
 
 // NewGoogleProvider creates a new Google Speech-to-Text provider
@@ -278,6 +278,6 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 }
 
 // SetCallback sets the callback function for transcription results
-func (p *GoogleProvider) SetCallback(callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})) {
+func (p *GoogleProvider) SetCallback(callback TranscriptionCallback) {
 	p.callback = callback
 }

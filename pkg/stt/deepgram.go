@@ -21,7 +21,7 @@ type DeepgramProvider struct {
 	languageSwitcher     *LanguageSwitcher
 	transitionSmoother   *LanguageTransitionSmoother
 	persistenceService   *LanguagePersistenceService
-	callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
+	callback TranscriptionCallback
 }
 
 // NewDeepgramProvider creates a new Deepgram provider
@@ -420,7 +420,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 }
 
 // SetCallback sets the callback function for transcription results
-func (p *DeepgramProvider) SetCallback(callback func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})) {
+func (p *DeepgramProvider) SetCallback(callback TranscriptionCallback) {
 	p.callback = callback
 }
 
