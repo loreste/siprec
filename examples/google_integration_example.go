@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"siprec-server/pkg/config"
 	"siprec-server/pkg/stt"
 
 	"cloud.google.com/go/speech/apiv1/speechpb"
@@ -47,8 +48,18 @@ func main() {
 }
 
 func basicGoogleExample(logger *logrus.Logger) {
+	// Create transcription service
+	transcriptionSvc := stt.NewTranscriptionService(logger)
+	
+	// Create Google STT config
+	googleConfig := &config.GoogleSTTConfig{
+		Enabled:    true,
+		Language:   "en-US",
+		SampleRate: 16000,
+	}
+	
 	// Create basic Google provider
-	provider := stt.NewGoogleProvider(logger, nil)
+	provider := stt.NewGoogleProvider(logger, transcriptionSvc, googleConfig)
 
 	// Set callback for transcription results
 	var wg sync.WaitGroup
@@ -607,23 +618,14 @@ func multiLanguageExample(logger *logrus.Logger) {
 func demoErrorHandlingAndResilience(logger *logrus.Logger) {
 	fmt.Println("\n=== Error Handling and Resilience Demo ===")
 
-	// Configure provider with aggressive retry settings
+	// Configure provider with enhanced features
 	provider := stt.NewGoogleProviderEnhanced(logger)
 
-	// Customize retry configuration
-	provider.SetRetryConfig(&stt.RetryConfig{
-		MaxRetries:      5,
-		InitialDelay:    100 * time.Millisecond,
-		MaxDelay:        5 * time.Second,
-		BackoffFactor:   2.0,
-		RetryableErrors: []string{"unavailable", "deadline", "resource exhausted"},
-	})
+	fmt.Println("🔧 Testing enhanced Google STT provider...")
 
-	fmt.Println("🔧 Testing circuit breaker and retry resilience...")
-
-	// The circuit breaker will automatically handle failures and recovery
-	fmt.Printf("   Circuit breaker threshold: %d failures\n", 5)
-	fmt.Printf("   Retry configuration: %+v\n", provider.retryConfig)
+	// The provider has built-in circuit breaker and retry capabilities
+	fmt.Printf("   Provider: %s\n", provider.Name())
+	fmt.Printf("   Active connections: %d\n", provider.GetActiveConnections())
 
 	fmt.Println("✅ Error handling demo completed")
 }
@@ -644,6 +646,7 @@ func demoPerformanceOptimization(logger *logrus.Logger) {
 	provider := stt.NewGoogleProviderEnhancedWithConfig(logger, config)
 
 	fmt.Printf("⚡ High-performance configuration:\n")
+	fmt.Printf("   Provider: %s\n", provider.Name())
 	fmt.Printf("   Model: %s (optimized for speed)\n", config.Model)
 	fmt.Printf("   Buffer Size: %d bytes\n", config.BufferSize)
 	fmt.Printf("   Flush Interval: %v\n", config.FlushInterval)
