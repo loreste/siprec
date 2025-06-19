@@ -32,7 +32,6 @@ var (
 	sttManager   *stt.ProviderManager
 	sipHandler   *sip.Handler
 	httpServer   *http_server.Server
-	startTime    = time.Now() // For tracking uptime
 
 	// Context for graceful shutdown
 	rootCtx    context.Context
@@ -44,9 +43,8 @@ var (
 	wsHandler        *http_server.WebSocketHandler
 
 	// Encryption components
-	encryptionManager   encryption.EncryptionManager
-	keyRotationService  *encryption.RotationService
-	redisSessionMgr *session.SessionManager
+	encryptionManager  encryption.EncryptionManager
+	keyRotationService *encryption.RotationService
 )
 
 func main() {
@@ -683,10 +681,9 @@ func initializeEncryption() error {
 	}
 
 	// Initialize Redis session manager
-	redisSessionMgr, err = session.InitializeSessionManager(logger)
+	_, err = session.InitializeSessionManager(logger)
 	if err != nil {
 		logger.WithError(err).Warn("Failed to initialize Redis session manager, continuing without Redis")
-		redisSessionMgr = nil
 	}
 
 	logger.WithFields(logrus.Fields{
