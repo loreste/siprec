@@ -36,6 +36,9 @@ type Config struct {
 	// Media configuration
 	MediaConfig *media.Config
 
+	// SIP ports for proper NAT configuration
+	SIPPorts []int
+
 	// NAT configuration for SIP header rewriting
 	NATConfig *NATConfig
 
@@ -152,8 +155,8 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 		handler.NATRewriter = natRewriter
 		logger.Info("NAT rewriter initialized for SIP header rewriting")
 	} else if config.MediaConfig != nil {
-		// Try to create NAT config from media config
-		natConfig := NewNATConfigFromMediaConfig(config.MediaConfig)
+		// Try to create NAT config from media config with SIP ports
+		natConfig := NewNATConfigFromMediaConfig(config.MediaConfig, config.SIPPorts)
 		if natConfig != nil {
 			natRewriter, err := NewNATRewriter(natConfig, logger)
 			if err != nil {
