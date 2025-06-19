@@ -111,6 +111,15 @@ func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToU
 // generateSDPResponseWithPort generates an SDP response with a specific port (for re-INVITEs)
 // This is a wrapper around the central generateSDP function
 func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescription, ipToUse string, rtpPort int, rtpForwarder *media.RTPForwarder) *sdp.SessionDescription {
+	// Determine RTCP configuration
+	rtcpPort := 0
+	useRTCPMux := false
+	if rtpForwarder != nil && rtpForwarder.RTCPPort > 0 {
+		rtcpPort = rtpForwarder.RTCPPort
+		// Use rtcp-mux if behind NAT for better NAT traversal, otherwise use separate ports
+		useRTCPMux = h.Config.MediaConfig.BehindNAT
+	}
+
 	options := &media.SDPOptions{
 		IPAddress:  ipToUse,
 		BehindNAT:  h.Config.MediaConfig.BehindNAT,
@@ -118,6 +127,8 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 		ExternalIP: h.Config.MediaConfig.ExternalIP,
 		IncludeICE: false, // Usually not needed for re-INVITEs
 		RTPPort:    rtpPort,
+		RTCPPort:   rtcpPort,
+		UseRTCPMux: useRTCPMux,
 		EnableSRTP: h.Config.MediaConfig.EnableSRTP && rtpForwarder != nil && rtpForwarder.SRTPEnabled,
 	}
 
@@ -206,10 +217,27 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "recvonly"})
 		}
 
+		// Add RTCP-related attributes
+		if options.UseRTCPMux {
+			// RFC 5761 - Use rtcp-mux for NAT traversal (both RTP and RTCP on same port)
+			newAttributes = append(newAttributes, sdp.Attribute{Key: "rtcp-mux", Value: ""})
+		} else if options.RTCPPort > 0 && options.RTCPPort != rtpPort {
+			// RFC 3550 - Add explicit RTCP port attribute
+			connectionAddr := options.IPAddress
+			if options.BehindNAT {
+				connectionAddr = options.ExternalIP
+			}
+			newAttributes = append(newAttributes, sdp.Attribute{
+				Key:   "rtcp",
+				Value: fmt.Sprintf("%d IN IP4 %s", options.RTCPPort, connectionAddr),
+			})
+		}
+
 		// Add NAT-specific attributes if needed
 		if options.BehindNAT && options.IncludeICE {
 			// Add ICE attributes for NAT traversal
-			newAttributes = append(newAttributes, sdp.Attribute{Key: "rtcp-mux", Value: ""})
+			newAttributes = append(newAttributes, sdp.Attribute{Key: "ice-ufrag", Value: "randomufrag"})
+			newAttributes = append(newAttributes, sdp.Attribute{Key: "ice-pwd", Value: "randomicepwd"})
 		}
 
 		// Add SRTP crypto attributes if SRTP is enabled
