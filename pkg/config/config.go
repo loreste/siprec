@@ -31,6 +31,7 @@ type Config struct {
 	HotReload      HotReloadConfig      `json:"hot_reload"`
 	Performance    PerformanceConfig    `json:"performance"`
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker"`
+	PauseResume    PauseResumeConfig    `json:"pause_resume"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -517,6 +518,36 @@ type PerformanceConfig struct {
 	GCTargetPercent  int  `json:"gc_target_percent" env:"PERFORMANCE_GC_TARGET_PERCENT" default:"50"`
 }
 
+// PauseResumeConfig holds configuration for pause/resume functionality
+type PauseResumeConfig struct {
+	// Whether pause/resume API is enabled
+	Enabled bool `json:"enabled" env:"PAUSE_RESUME_ENABLED" default:"false"`
+
+	// Whether to pause recording when API is called
+	PauseRecording bool `json:"pause_recording" env:"PAUSE_RECORDING" default:"true"`
+
+	// Whether to pause transcription when API is called
+	PauseTranscription bool `json:"pause_transcription" env:"PAUSE_TRANSCRIPTION" default:"true"`
+
+	// Whether to send notification events when paused/resumed
+	SendNotifications bool `json:"send_notifications" env:"PAUSE_RESUME_NOTIFICATIONS" default:"true"`
+
+	// Maximum pause duration (0 = unlimited)
+	MaxPauseDuration time.Duration `json:"max_pause_duration" env:"MAX_PAUSE_DURATION" default:"0"`
+
+	// Whether to auto-resume after max duration
+	AutoResume bool `json:"auto_resume" env:"PAUSE_AUTO_RESUME" default:"false"`
+
+	// Whether to allow pause/resume per session or globally
+	PerSession bool `json:"per_session" env:"PAUSE_RESUME_PER_SESSION" default:"true"`
+
+	// API authentication required
+	RequireAuth bool `json:"require_auth" env:"PAUSE_RESUME_REQUIRE_AUTH" default:"true"`
+
+	// API key for authentication (if RequireAuth is true)
+	APIKey string `json:"api_key" env:"PAUSE_RESUME_API_KEY"`
+}
+
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
 	// Get current working directory
@@ -635,6 +666,11 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load circuit breaker configuration
 	if err := loadCircuitBreakerConfig(logger, &config.CircuitBreaker); err != nil {
 		return nil, errors.Wrap(err, "failed to load circuit breaker configuration")
+	}
+
+	// Load pause/resume configuration
+	if err := loadPauseResumeConfig(logger, &config.PauseResume); err != nil {
+		return nil, errors.Wrap(err, "failed to load pause/resume configuration")
 	}
 
 	// Validate the complete configuration
@@ -1329,6 +1365,65 @@ func loadPerformanceConfig(logger *logrus.Logger, config *PerformanceConfig) err
 		}).Info("Performance monitoring enabled")
 	} else {
 		logger.Debug("Performance monitoring disabled")
+	}
+
+	return nil
+}
+
+// loadPauseResumeConfig loads the pause/resume configuration
+func loadPauseResumeConfig(logger *logrus.Logger, config *PauseResumeConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("PAUSE_RESUME_ENABLED", false)
+
+	// Load pause options
+	config.PauseRecording = getEnvBool("PAUSE_RECORDING", true)
+	config.PauseTranscription = getEnvBool("PAUSE_TRANSCRIPTION", true)
+
+	// Load notification settings
+	config.SendNotifications = getEnvBool("PAUSE_RESUME_NOTIFICATIONS", true)
+
+	// Load pause duration settings
+	maxPauseDurationStr := getEnv("MAX_PAUSE_DURATION", "0")
+	if maxPauseDurationStr != "0" {
+		maxPauseDuration, err := time.ParseDuration(maxPauseDurationStr)
+		if err != nil {
+			logger.Warn("Invalid MAX_PAUSE_DURATION value, using default: 0 (unlimited)")
+			config.MaxPauseDuration = 0
+		} else {
+			config.MaxPauseDuration = maxPauseDuration
+		}
+	} else {
+		config.MaxPauseDuration = 0
+	}
+
+	// Load auto-resume settings
+	config.AutoResume = getEnvBool("PAUSE_AUTO_RESUME", false)
+
+	// Load session settings
+	config.PerSession = getEnvBool("PAUSE_RESUME_PER_SESSION", true)
+
+	// Load authentication settings
+	config.RequireAuth = getEnvBool("PAUSE_RESUME_REQUIRE_AUTH", true)
+	config.APIKey = getEnv("PAUSE_RESUME_API_KEY", "")
+
+	// Validate API key if auth is required
+	if config.RequireAuth && config.APIKey == "" {
+		logger.Warn("Pause/Resume API authentication is required but no API key is set")
+	}
+
+	// Log configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"pause_recording":    config.PauseRecording,
+			"pause_transcription": config.PauseTranscription,
+			"send_notifications": config.SendNotifications,
+			"max_pause_duration": config.MaxPauseDuration,
+			"auto_resume":        config.AutoResume,
+			"per_session":        config.PerSession,
+			"require_auth":       config.RequireAuth,
+		}).Info("Pause/Resume API enabled")
+	} else {
+		logger.Debug("Pause/Resume API disabled")
 	}
 
 	return nil
