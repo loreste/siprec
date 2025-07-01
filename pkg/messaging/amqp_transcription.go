@@ -10,11 +10,11 @@ import (
 // for sending transcriptions to an AMQP message queue
 type AMQPTranscriptionListener struct {
 	logger *logrus.Logger
-	client *AMQPClient
+	client AMQPClientInterface
 }
 
 // NewAMQPTranscriptionListener creates a new AMQP transcription listener
-func NewAMQPTranscriptionListener(logger *logrus.Logger, client *AMQPClient) *AMQPTranscriptionListener {
+func NewAMQPTranscriptionListener(logger *logrus.Logger, client AMQPClientInterface) *AMQPTranscriptionListener {
 	return &AMQPTranscriptionListener{
 		logger: logger,
 		client: client,

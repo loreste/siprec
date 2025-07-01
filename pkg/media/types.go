@@ -45,6 +45,9 @@ type RTPForwarder struct {
 	// Audio processing
 	AudioProcessor interface{} // Audio processing manager (will be *audio.ProcessingManager)
 
+	// PII audio tracking
+	PIIAudioMarker *PIIAudioMarker // Tracks PII detection events for audio redaction
+
 	// Cleanup tracking
 	MarkedForCleanup bool // Flag indicating if this forwarder has been marked for cleanup
 }
@@ -114,12 +117,18 @@ func GetPortManager() *PortManager {
 }
 
 // NewRTPForwarder creates a new RTP forwarder using RFC 3550 compliant RTP/RTCP port pairs
-func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger) (*RTPForwarder, error) {
+func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger, piiAudioEnabled bool) (*RTPForwarder, error) {
 	// Get an RTP/RTCP port pair from the port manager (RFC 3550 compliant)
 	pm := GetPortManager()
 	portPair, err := pm.AllocatePortPair()
 	if err != nil {
 		return nil, err
+	}
+
+	// Initialize PII audio marker if enabled
+	var piiAudioMarker *PIIAudioMarker
+	if piiAudioEnabled && recordingSession != nil {
+		piiAudioMarker = NewPIIAudioMarker(logger, recordingSession.ID, true)
 	}
 
 	return &RTPForwarder{
@@ -134,6 +143,7 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
 		SRTPKeyLifetime:  2 ^ 31,                    // Default lifetime from RFC 3711
 		AudioProcessor:   nil,                       // Will be initialized in StartRTPForwarding
+		PIIAudioMarker:   piiAudioMarker,            // PII audio tracking
 		isCleanedUp:      false,                     // Not cleaned up initially
 		MarkedForCleanup: false,                     // Not marked for cleanup initially
 	}, nil

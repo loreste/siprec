@@ -254,7 +254,7 @@ func (p *AMQPRealtimePublisher) shouldPublishEvent(eventType realtime.EventType)
 // convertToAMQPMessage converts a transcription event to AMQP message
 func (p *AMQPRealtimePublisher) convertToAMQPMessage(event realtime.TranscriptionEvent) *RealtimeAMQPMessage {
 	message := &RealtimeAMQPMessage{
-		MessageID:     generateMessageID(),
+		MessageID:     generateRealtimeMessageID(),
 		Timestamp:     event.Timestamp,
 		EventType:     string(event.Type),
 		SessionID:     event.SessionID,
@@ -352,7 +352,7 @@ func (p *AMQPRealtimePublisher) publishBatch(messages []*RealtimeAMQPMessage) {
 	
 	// Create batch message
 	batchMessage := map[string]interface{}{
-		"batch_id":     generateMessageID(),
+		"batch_id":     generateRealtimeMessageID(),
 		"timestamp":    time.Now(),
 		"message_count": len(messages),
 		"messages":     messages,
@@ -470,7 +470,7 @@ func (p *AMQPRealtimePublisher) publishToAMQP(data []byte, eventType string) err
 		}
 		
 		// Use legacy publish method
-		err := p.client.PublishTranscription(string(data), generateMessageID(), metadata)
+		err := p.client.PublishTranscription(string(data), generateRealtimeMessageID(), metadata)
 		if err == nil {
 			return nil
 		}
@@ -510,9 +510,9 @@ func (p *AMQPRealtimePublisher) IsStarted() bool {
 	return p.started
 }
 
-// generateMessageID generates a unique message ID
-func generateMessageID() string {
-	return fmt.Sprintf("msg_%d_%d", time.Now().UnixNano(), rand.Int63())
+// generateRealtimeMessageID generates a unique message ID for realtime messages
+func generateRealtimeMessageID() string {
+	return fmt.Sprintf("realtime_msg_%d_%d", time.Now().UnixNano(), rand.Int63())
 }
 
 // AMQPRealtimeConfigFromMessaging creates an AMQPRealtimeConfig from MessagingConfig

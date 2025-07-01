@@ -22,6 +22,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🎙️ Real-time Streaming Transcription** - Enhanced multi-provider STT with full WebSocket streaming support (Google, Deepgram, OpenAI, Azure, Amazon)
 - **⚡ Streaming Response Support** - Real-time callback-based transcription with interim and final results
 - **👥 Speaker Diarization** - Multi-speaker identification and word-level speaker tagging
+- **🛡️ PII Detection & Redaction** - Automatic detection and redaction of SSNs, credit cards, and other sensitive data from transcriptions and audio
 - **🎵 Audio Processing** - Advanced VAD, noise reduction, and multi-channel mixing
 - **🌐 WebSocket Streaming** - Real-time transcription delivery with circuit breaker patterns
 - **📊 Quality Metrics** - Audio quality monitoring and adaptive processing with performance optimization
@@ -135,6 +136,15 @@ PAUSE_RESUME_ENABLED=true          # Enable pause/resume API
 PAUSE_RESUME_REQUIRE_AUTH=true     # Require API key authentication
 PAUSE_RESUME_API_KEY=your-api-key  # API key for authentication
 PAUSE_RESUME_PER_SESSION=true      # Allow per-session control
+
+# PII Detection & Redaction
+PII_DETECTION_ENABLED=true         # Enable PII detection
+PII_ENABLED_TYPES=ssn,credit_card  # Types to detect: ssn, credit_card, phone, email
+PII_REDACTION_CHAR=*               # Character used for redaction
+PII_APPLY_TO_TRANSCRIPTIONS=true   # Apply PII filtering to transcriptions
+PII_APPLY_TO_RECORDINGS=true       # Apply PII marking to audio recordings
+PII_PRESERVE_FORMAT=true           # Preserve original format when redacting
+PII_CONTEXT_LENGTH=10              # Context characters around detected PII
 ```
 
 For detailed configuration, see [Configuration Guide](docs/configuration/README.md).

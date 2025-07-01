@@ -7,6 +7,7 @@ Comprehensive overview of SIPREC Server features and capabilities.
 - [SIPREC Protocol Support](SIPREC.md) - Full RFC 7865/7866 compliance
 - [Audio Processing](AUDIO_PROCESSING.md) - Advanced audio processing pipeline
 - [Speech-to-Text Integration](STT_PROVIDERS.md) - Multiple STT provider support
+- [PII Detection & Redaction](PII_DETECTION.md) - Automatic PII detection and redaction for transcriptions and audio
 - [WebSocket API](WEBSOCKET_API.md) - Real-time streaming transcriptions
 - [Message Queue Integration](AMQP_GUIDE.md) - AMQP/RabbitMQ integration
 - [Pause/Resume Control](PAUSE_RESUME_API.md) - Real-time session control via REST API
@@ -106,6 +107,7 @@ Comprehensive overview of SIPREC Server features and capabilities.
 - API authentication
 - Encryption at rest
 - Key rotation
+- **PII Detection & Redaction** - Automatic detection and redaction of sensitive data (SSN, credit cards, phone numbers, emails)
 
 ## Integration Features
 

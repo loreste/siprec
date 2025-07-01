@@ -25,15 +25,15 @@ func NewPausableWriter(w io.Writer) *PausableWriter {
 // Write implements io.Writer, only writing when not paused
 func (pw *PausableWriter) Write(p []byte) (n int, err error) {
 	pw.pauseMu.RLock()
-	isPaused := pw.paused
-	pw.pauseMu.RUnlock()
+	defer pw.pauseMu.RUnlock()
 
 	// If paused, pretend we wrote the data but don't actually write
-	if isPaused {
+	if pw.paused {
 		return len(p), nil
 	}
 
-	// Write to the underlying writer
+	// Write to the underlying writer while holding the read lock
+	// This ensures pause state cannot change during the write
 	return pw.writer.Write(p)
 }
 
