@@ -208,11 +208,19 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			recordingReader = processingManager.WrapReader(mainPr)
 		}
 
-		// Use TeeReader to duplicate the stream to recording file
-		recordingReader = io.TeeReader(recordingReader, forwarder.RecordingFile)
+		// Create pausable writers for recording and transcription
+		recordingWriter := NewPausableWriter(forwarder.RecordingFile)
+		transcriptionReader := NewPausableReader(recordingReader)
+		
+		// Store references in forwarder for external control
+		forwarder.recordingWriter = recordingWriter
+		forwarder.transcriptionReader = transcriptionReader
 
-		// Start transcription based on the selected provider
-		go sttProvider(ctx, config.DefaultVendor, recordingReader, callUUID)
+		// Use TeeReader to duplicate the stream to recording file (through pausable writer)
+		recordingReader = io.TeeReader(recordingReader, recordingWriter)
+
+		// Start transcription based on the selected provider (through pausable reader)
+		go sttProvider(ctx, config.DefaultVendor, transcriptionReader, callUUID)
 
 		// Start the timeout monitoring routine
 		go MonitorRTPTimeout(forwarder, callUUID)
