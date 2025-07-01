@@ -345,7 +345,7 @@ func (bcm *BusinessContinuityManager) checkDatabaseReplication(service *StandbyS
 	port := 3306                   // default MySQL port
 	username := "replication_user" // This should come from config
 	password := "replication_pass" // This should come from config
-	database := "siprec"           // This should come from config
+	_ = "siprec"                   // database - This should come from config
 
 	// Check MySQL replication status
 	status, err := dbOps.CheckMySQLReplication(host, port, username, password)

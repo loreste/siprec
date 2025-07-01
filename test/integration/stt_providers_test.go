@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"siprec-server/pkg/config"
 	"siprec-server/pkg/stt"
 
 	"github.com/sirupsen/logrus"
@@ -172,7 +173,17 @@ func (suite *STTProviderTestSuite) initializeProviders() {
 
 	// Initialize Google Speech if credentials are available
 	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
-		provider := stt.NewGoogleProvider(suite.logger, suite.transcriptionSvc)
+		googleConfig := &config.GoogleSTTConfig{
+			Enabled:               true,
+			CredentialsPath:       os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+			Model:                 "latest_long",
+			Language:              "en-US",
+			EnableWordTimeOffsets: true,
+			EnableWordConfidence:  true,
+			MaxAlternatives:       3,
+			UseEnhanced:           true,
+		}
+		provider := stt.NewGoogleProvider(suite.logger, suite.transcriptionSvc, googleConfig)
 		if err := provider.Initialize(); err != nil {
 			suite.logger.WithError(err).Warn("Failed to initialize Google Speech provider")
 		} else {

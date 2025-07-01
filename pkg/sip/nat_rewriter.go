@@ -533,9 +533,36 @@ func (nr *NATRewriter) setExternalIPUnsafe(ip string) {
 
 // detectExternalIPBackground performs non-blocking external IP detection
 func (nr *NATRewriter) detectExternalIPBackground() error {
-	// TODO: Implement actual STUN client or HTTP-based detection
-	// For now, this is a placeholder that doesn't block operations
-	return fmt.Errorf("external IP detection not implemented")
+	// Create STUN client
+	stunClient := NewSTUNClient(nil, nr.logger)
+	
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	// Try STUN detection
+	externalIP, err := stunClient.GetExternalIP(ctx)
+	if err != nil {
+		nr.logger.WithError(err).Warn("STUN-based external IP detection failed")
+		
+		// Try HTTP fallback
+		httpClient := NewHTTPFallbackClient(nr.logger)
+		externalIP, err = httpClient.GetExternalIP(ctx)
+		if err != nil {
+			return fmt.Errorf("all external IP detection methods failed: %w", err)
+		}
+	}
+	
+	// Validate the detected IP
+	if net.ParseIP(externalIP) == nil {
+		return fmt.Errorf("invalid external IP detected: %s", externalIP)
+	}
+	
+	// Update the external IP
+	nr.SetExternalIP(externalIP)
+	
+	nr.logger.WithField("external_ip", externalIP).Info("Successfully detected external IP")
+	return nil
 }
 
 // getHeaderValue gets the first value of a header from the message

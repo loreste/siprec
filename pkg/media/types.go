@@ -25,7 +25,8 @@ type RTPForwarder struct {
 	RecordingPaused  bool                     // Flag to indicate if recording is paused
 	Logger           *logrus.Logger
 	isCleanedUp      bool       // Flag to track if resources have been cleaned up
-	cleanupMutex     sync.Mutex // Mutex to protect cleanup operations
+	CleanupMutex     sync.Mutex // Mutex to protect cleanup operations (exported for external access)
+	stopOnce         sync.Once  // Ensures StopChan is closed only once
 
 	// SRTP-related fields
 	SRTPEnabled     bool   // Whether SRTP is enabled for this forwarder
@@ -131,13 +132,19 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 	}, nil
 }
 
+// Stop safely stops the RTP forwarder by closing the stop channel
+func (f *RTPForwarder) Stop() {
+	f.stopOnce.Do(func() {
+		close(f.StopChan)
+	})
+}
 
 // Cleanup performs a thorough cleanup of all resources used by the RTPForwarder
 // It ensures resources are only released once to prevent memory leaks
 func (f *RTPForwarder) Cleanup() {
 	// Use mutex to ensure thread safety
-	f.cleanupMutex.Lock()
-	defer f.cleanupMutex.Unlock()
+	f.CleanupMutex.Lock()
+	defer f.CleanupMutex.Unlock()
 
 	// Check if already cleaned up
 	if f.isCleanedUp {
