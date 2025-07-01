@@ -161,6 +161,27 @@ func (sm *ShardedMap) Count() int {
 	return count
 }
 
+// Keys returns all keys in the map
+func (sm *ShardedMap) Keys() []string {
+	keys := make([]string, 0, sm.Count())
+
+	// Process each shard sequentially
+	for _, shard := range sm.shards {
+		// Lock the shard for reading
+		shard.mu.RLock()
+
+		// Collect all keys from this shard
+		for k := range shard.items {
+			keys = append(keys, k)
+		}
+
+		// Release the lock for this shard
+		shard.mu.RUnlock()
+	}
+
+	return keys
+}
+
 // toString converts an interface to a string
 // This is used to handle non-string keys
 func toString(key interface{}) string {
