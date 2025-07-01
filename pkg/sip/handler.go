@@ -275,40 +275,50 @@ func (h *Handler) cleanupStaleSessions() {
 	// Define stale criterion
 	staleDuration := h.Config.SessionTimeout
 
-	// Check active calls for stale sessions
+	// Collect stale sessions first to avoid modifying map during iteration
+	var staleCallUUIDs []string
+	var staleCallData []*CallData
+	
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		callUUID := key.(string)
 		callData := value.(*CallData)
 
 		// Check if the session is stale
 		if callData.IsStale(staleDuration) {
-			logger.WithField("call_uuid", callUUID).Info("Cleaning up stale session")
-
-			// Stop RTP forwarding and properly clean up resources
-			if callData.Forwarder != nil {
-				// Use mutex to ensure thread-safe access to MarkedForCleanup
-				callData.Forwarder.CleanupMutex.Lock()
-				callData.Forwarder.MarkedForCleanup = true
-				callData.Forwarder.CleanupMutex.Unlock()
-
-				// Safely signal forwarding to stop
-				callData.Forwarder.Stop()
-
-				// Perform thorough cleanup of all RTP forwarder resources
-				callData.Forwarder.Cleanup()
-			}
-
-			// Remove from active calls
-			h.ActiveCalls.Delete(callUUID)
-
-			// Clean up from session store if redundancy is enabled
-			if h.Config.RedundancyEnabled {
-				h.SessionStore.Delete(callUUID)
-			}
+			staleCallUUIDs = append(staleCallUUIDs, callUUID)
+			staleCallData = append(staleCallData, callData)
 		}
 
 		return true // Continue iteration
 	})
+	
+	// Process stale sessions outside of the iteration
+	for i, callUUID := range staleCallUUIDs {
+		callData := staleCallData[i]
+		logger.WithField("call_uuid", callUUID).Info("Cleaning up stale session")
+
+		// Stop RTP forwarding and properly clean up resources
+		if callData.Forwarder != nil {
+			// Use mutex to ensure thread-safe access to MarkedForCleanup
+			callData.Forwarder.CleanupMutex.Lock()
+			callData.Forwarder.MarkedForCleanup = true
+			callData.Forwarder.CleanupMutex.Unlock()
+
+			// Safely signal forwarding to stop
+			callData.Forwarder.Stop()
+
+			// Perform thorough cleanup of all RTP forwarder resources
+			callData.Forwarder.Cleanup()
+		}
+
+		// Remove from active calls
+		h.ActiveCalls.Delete(callUUID)
+
+		// Clean up from session store if redundancy is enabled
+		if h.Config.RedundancyEnabled {
+			h.SessionStore.Delete(callUUID)
+		}
+	}
 
 	// Clean up stale sessions from the store if redundancy is enabled
 	if h.Config.RedundancyEnabled {
@@ -344,10 +354,21 @@ func (h *Handler) CleanupActiveCalls() {
 	// Track if redundancy is enabled
 	isRedundancyEnabled := h.Config.RedundancyEnabled
 
-	// Iterate through all active calls and clean them up
+	// Collect all active calls first to avoid modifying map during iteration
+	var activeCallUUIDs []string
+	var activeCallData []*CallData
+	
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		callUUID := key.(string)
 		callData := value.(*CallData)
+		activeCallUUIDs = append(activeCallUUIDs, callUUID)
+		activeCallData = append(activeCallData, callData)
+		return true // Continue iteration
+	})
+	
+	// Process all active calls outside of the iteration
+	for i, callUUID := range activeCallUUIDs {
+		callData := activeCallData[i]
 
 		// Stop RTP forwarding
 		if callData.Forwarder != nil {
@@ -368,9 +389,7 @@ func (h *Handler) CleanupActiveCalls() {
 
 		// Remove from the active calls map
 		h.ActiveCalls.Delete(callUUID)
-
-		return true // Continue iteration
-	})
+	}
 
 	// Log status of persistent sessions
 	if isRedundancyEnabled {

@@ -70,7 +70,15 @@ func (s *TranscriptionService) PublishTranscription(callUUID string, transcripti
 	}).Debug("Publishing transcription to listeners")
 
 	for _, listener := range s.listeners {
-		listener.OnTranscription(callUUID, transcription, isFinal, metadata)
+		// Create a copy of metadata for each listener to prevent race conditions
+		var metadataCopy map[string]interface{}
+		if metadata != nil {
+			metadataCopy = make(map[string]interface{})
+			for k, v := range metadata {
+				metadataCopy[k] = v
+			}
+		}
+		listener.OnTranscription(callUUID, transcription, isFinal, metadataCopy)
 	}
 }
 
