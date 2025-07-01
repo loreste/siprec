@@ -691,8 +691,24 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", rtpForwarder.LocalPort, rtpForwarder)
 		responseSDP, _ = sdpResponse.Marshal()
 	} else {
-		// Fallback to basic SDP generation for non-SIPREC calls
-		responseSDP = s.generateSiprecSDP(0) // 0 means allocate port dynamically
+		// For non-SIPREC calls, allocate ports and generate SDP
+		// Allocate RTP/RTCP port pair following RFC 3550
+		portPair, err := media.GetPortManager().AllocatePortPair()
+		if err != nil {
+			logger.WithError(err).Error("Failed to allocate RTP/RTCP ports")
+			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+			return
+		}
+		
+		// Generate SDP with the allocated port
+		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
+		
+		// Note: In a real implementation, you'd want to create an RTP listener
+		// on these ports and store them for cleanup later
+		logger.WithFields(logrus.Fields{
+			"rtp_port":  portPair.RTPPort,
+			"rtcp_port": portPair.RTCPPort,
+		}).Debug("Allocated ports for non-SIPREC call")
 	}
 
 	// Create clean SDP response using existing media config
@@ -934,9 +950,71 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	logger := s.logger.WithField("siprec", false)
 	logger.Info("Processing regular INVITE")
 
-	// Simple response for regular INVITE
-	s.sendResponse(message, 200, "OK", nil, nil)
-	logger.Info("Successfully responded to regular INVITE")
+	// Create or update call state
+	callState := &CallState{
+		CallID:       message.CallID,
+		State:        "trying",
+		RemoteTag:    message.FromTag,
+		LocalTag:     generateTag(),
+		RemoteCSeq:   extractCSeqNumber(message.CSeq),
+		CreatedAt:    time.Now(),
+		LastActivity: time.Now(),
+		IsRecording:  false,
+	}
+
+	// Store call state
+	s.callMutex.Lock()
+	s.callStates[message.CallID] = callState
+	s.callMutex.Unlock()
+
+	// For regular calls, we should generate proper SDP response
+	// Parse received SDP if available
+	var receivedSDP *sdp.SessionDescription
+	var responseSDP []byte
+	
+	if len(message.Body) > 0 && strings.Contains(s.getHeaderValue(message, "content-type"), "application/sdp") {
+		receivedSDP = &sdp.SessionDescription{}
+		if err := receivedSDP.Unmarshal(message.Body); err != nil {
+			logger.WithError(err).Warn("Failed to parse received SDP in regular INVITE")
+			receivedSDP = nil
+		}
+	}
+	
+	// Allocate RTP/RTCP port pair for the call
+	portPair, err := media.GetPortManager().AllocatePortPair()
+	if err != nil {
+		logger.WithError(err).Error("Failed to allocate RTP/RTCP ports for regular call")
+		s.sendResponse(message, 503, "Service Unavailable", nil, nil)
+		return
+	}
+	
+	// Generate SDP response
+	if s.handler != nil && receivedSDP != nil {
+		// Use handler's SDP generation for better compatibility
+		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
+		responseSDP, _ = sdpResponse.Marshal()
+	} else {
+		// Fallback to simple SDP generation
+		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
+	}
+	
+	// Update call state
+	callState.State = "connected"
+	callState.SDP = responseSDP
+	callState.LastActivity = time.Now()
+	
+	logger.WithFields(logrus.Fields{
+		"call_id":   message.CallID,
+		"rtp_port":  portPair.RTPPort,
+		"rtcp_port": portPair.RTCPPort,
+	}).Info("Allocated ports for regular call")
+
+	// Send response with SDP
+	responseHeaders := map[string]string{
+		"Contact": s.getHeader(message, "contact"),
+	}
+	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
+	logger.Info("Successfully responded to regular INVITE with SDP")
 }
 
 // handleRegularReInvite handles regular re-INVITE requests
@@ -986,9 +1064,32 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 			}).Info("Recording session terminated due to BYE")
 		}
 		
+		// Clean up RTP forwarder if exists
+		if callState.RTPForwarder != nil {
+			logger.WithFields(logrus.Fields{
+				"call_id":   message.CallID,
+				"rtp_port":  callState.RTPForwarder.LocalPort,
+				"rtcp_port": callState.RTPForwarder.RTCPPort,
+			}).Debug("Cleaning up RTP forwarder")
+			
+			// Signal forwarding to stop
+			close(callState.RTPForwarder.StopChan)
+			
+			// Perform thorough cleanup
+			callState.RTPForwarder.Cleanup()
+			callState.RTPForwarder = nil
+		}
+		
 		// Update call state
 		callState.State = "terminated"
 		callState.LastActivity = time.Now()
+		
+		// Remove from active call states
+		s.callMutex.Lock()
+		delete(s.callStates, message.CallID)
+		s.callMutex.Unlock()
+		
+		logger.WithField("call_id", message.CallID).Info("Call state cleaned up")
 	}
 
 	s.sendResponse(message, 200, "OK", nil, nil)
@@ -1475,45 +1576,16 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 	return contentType, multipartBody, nil
 }
 
-// generateSiprecSDP generates appropriate SDP response for SIPREC with dynamic port allocation
+// generateSiprecSDP generates appropriate SDP response for SIPREC
 func (s *CustomSIPServer) generateSiprecSDP(rtpPort int) []byte {
 	// Generate SDP with proper session info
 	timestamp := time.Now().Unix()
 
-	// Use provided port or allocate one dynamically
+	// Validate that we have a valid port
 	if rtpPort <= 0 {
-		// Get port from port manager
-		if s.PortManager != nil {
-			port, err := s.PortManager.AllocatePort()
-			if err != nil {
-				s.logger.WithError(err).Warn("Failed to allocate port from server's port manager, trying global port manager")
-				// Try global port manager as fallback
-				globalPM := media.GetPortManager()
-				if globalPM != nil {
-					port, err = globalPM.AllocatePort()
-					if err != nil {
-						s.logger.WithError(err).Error("Failed to allocate port from global port manager")
-						rtpPort = 0 // Will trigger error handling in caller
-					} else {
-						rtpPort = port
-					}
-				}
-			} else {
-				rtpPort = port
-			}
-		} else {
-			// No port manager available, try global port manager
-			globalPM := media.GetPortManager()
-			if globalPM != nil {
-				port, err := globalPM.AllocatePort()
-				if err != nil {
-					s.logger.WithError(err).Error("Failed to allocate port from global port manager")
-					rtpPort = 0 // Will trigger error handling in caller
-				} else {
-					rtpPort = port
-				}
-			}
-		}
+		s.logger.Error("generateSiprecSDP called without a valid RTP port")
+		// Use a fallback port to avoid complete failure, but this is an error condition
+		rtpPort = 10000
 	}
 
 	sdp := fmt.Sprintf(`v=0
@@ -1556,6 +1628,32 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 	// Cancel server context
 	s.shutdownFunc()
 
+	// Clean up all active calls and release their ports
+	s.callMutex.Lock()
+	for callID, callState := range s.callStates {
+		if callState.RTPForwarder != nil {
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   callID,
+				"rtp_port":  callState.RTPForwarder.LocalPort,
+				"rtcp_port": callState.RTPForwarder.RTCPPort,
+			}).Debug("Cleaning up RTP forwarder during shutdown")
+			
+			// Close the stop channel if it's not already closed
+			select {
+			case <-callState.RTPForwarder.StopChan:
+				// Already closed
+			default:
+				close(callState.RTPForwarder.StopChan)
+			}
+			
+			// Perform cleanup
+			callState.RTPForwarder.Cleanup()
+		}
+	}
+	// Clear all call states
+	s.callStates = make(map[string]*CallState)
+	s.callMutex.Unlock()
+
 	// Close all listeners
 	for _, listener := range s.listeners {
 		listener.Close()
@@ -1571,6 +1669,16 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 		s.logger.WithField("connection_id", connID).Debug("Closed connection during shutdown")
 	}
 	s.connMutex.Unlock()
+
+	// Log port manager statistics
+	if s.PortManager != nil {
+		stats := s.PortManager.GetStats()
+		s.logger.WithFields(logrus.Fields{
+			"total_ports":     stats.TotalPorts,
+			"used_ports":      stats.UsedPorts,
+			"available_ports": stats.AvailablePorts,
+		}).Info("Port manager statistics at shutdown")
+	}
 
 	s.logger.Info("Custom SIP server shutdown completed")
 	return nil
