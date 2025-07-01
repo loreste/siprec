@@ -1,6 +1,8 @@
 package encryption
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,50 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockKMSProvider is a simple mock KMS provider for testing
+type mockKMSProvider struct {
+	masterKey []byte
+}
+
+func newMockKMSProvider() *mockKMSProvider {
+	// Generate a fixed master key for testing
+	masterKey := make([]byte, 32)
+	rand.Read(masterKey)
+	return &mockKMSProvider{masterKey: masterKey}
+}
+
+func (m *mockKMSProvider) GenerateDataKey(ctx context.Context) ([]byte, []byte, error) {
+	// Generate new data key
+	dataKey := make([]byte, 32)
+	if _, err := rand.Read(dataKey); err != nil {
+		return nil, nil, err
+	}
+	
+	// For testing, just return the data key as both plaintext and "encrypted"
+	// In a real implementation, this would encrypt dataKey with masterKey
+	encrypted, err := encryptWithKey(m.masterKey, dataKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	
+	return dataKey, encrypted, nil
+}
+
+func (m *mockKMSProvider) DecryptDataKey(ctx context.Context, encryptedKey []byte) ([]byte, error) {
+	// For testing, decrypt the data key
+	return decryptWithKey(m.masterKey, encryptedKey)
+}
+
+func (m *mockKMSProvider) RotateMasterKey(ctx context.Context) error {
+	// Generate new master key
+	newKey := make([]byte, 32)
+	if _, err := rand.Read(newKey); err != nil {
+		return err
+	}
+	m.masterKey = newKey
+	return nil
+}
 
 func TestMemoryKeyStore(t *testing.T) {
 	store := NewMemoryKeyStore()
@@ -122,8 +168,9 @@ func TestFileKeyStore(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	// Create file key store
-	store, err := NewFileKeyStore(tempDir, logger)
+	// Create file key store with mock KMS provider
+	kmsProvider := newMockKMSProvider()
+	store, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	require.NoError(t, err)
 
 	// Test empty store
@@ -161,7 +208,7 @@ func TestFileKeyStore(t *testing.T) {
 	assert.Equal(t, key.Active, retrievedKey.Active)
 
 	// Test persistence by creating a new store instance
-	store2, err := NewFileKeyStore(tempDir, logger)
+	store2, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	require.NoError(t, err)
 
 	// Key should be loaded automatically
@@ -188,7 +235,8 @@ func TestFileKeyStoreRotation(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	store, err := NewFileKeyStore(tempDir, logger)
+	kmsProvider := newMockKMSProvider()
+	store, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	require.NoError(t, err)
 
 	// Create old key
@@ -221,7 +269,7 @@ func TestFileKeyStoreRotation(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify rotation by creating new store instance
-	store2, err := NewFileKeyStore(tempDir, logger)
+	store2, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	require.NoError(t, err)
 
 	// Old key should be inactive
@@ -248,7 +296,8 @@ func TestFileKeyStoreMultipleAlgorithms(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	store, err := NewFileKeyStore(tempDir, logger)
+	kmsProvider := newMockKMSProvider()
+	store, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	require.NoError(t, err)
 
 	// Create keys for different algorithms
@@ -349,7 +398,8 @@ func TestFileKeyStoreCorruption(t *testing.T) {
 	require.NoError(t, err)
 
 	// Store should handle corrupted files gracefully
-	store, err := NewFileKeyStore(tempDir, logger)
+	kmsProvider := newMockKMSProvider()
+	store, err := NewFileKeyStore(tempDir, kmsProvider, logger)
 	assert.NoError(t, err) // Should not fail on corrupted files
 
 	// Should have no keys loaded

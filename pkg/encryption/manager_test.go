@@ -179,7 +179,17 @@ func TestEncryptDecryptMetadata(t *testing.T) {
 	// Test decryption
 	decryptedMetadata, err := manager.DecryptMetadata(sessionID, encryptedData)
 	assert.NoError(t, err)
-	assert.Equal(t, testMetadata, decryptedMetadata)
+	
+	// JSON unmarshaling converts types, so we need to check individual fields
+	assert.Equal(t, testMetadata["session_id"], decryptedMetadata["session_id"])
+	assert.Equal(t, testMetadata["codec"], decryptedMetadata["codec"])
+	assert.Equal(t, float64(testMetadata["sample_rate"].(int)), decryptedMetadata["sample_rate"])
+	
+	// Check participants array
+	participants := decryptedMetadata["participants"].([]interface{})
+	assert.Len(t, participants, 2)
+	assert.Equal(t, "Alice", participants[0])
+	assert.Equal(t, "Bob", participants[1])
 }
 
 func TestKeyRotation(t *testing.T) {

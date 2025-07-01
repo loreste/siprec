@@ -1,10 +1,16 @@
 package encryption
 
 import (
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,14 +19,17 @@ import (
 
 // FileKeyStore implements KeyStore interface using file system
 type FileKeyStore struct {
-	basePath string
-	logger   *logrus.Logger
-	keys     map[string]*EncryptionKey
-	mu       sync.RWMutex
+	basePath    string
+	logger      *logrus.Logger
+	keys        map[string]*EncryptionKey
+	mu          sync.RWMutex
+	kmsProvider KMSProvider // KMS provider for key encryption
+	dataKey     []byte      // Current data encryption key
+	encDataKey  []byte      // Encrypted data key for storage
 }
 
 // NewFileKeyStore creates a new file-based key store
-func NewFileKeyStore(basePath string, logger *logrus.Logger) (*FileKeyStore, error) {
+func NewFileKeyStore(basePath string, kmsProvider KMSProvider, logger *logrus.Logger) (*FileKeyStore, error) {
 	if basePath == "" {
 		basePath = "./keys"
 	}
@@ -31,9 +40,15 @@ func NewFileKeyStore(basePath string, logger *logrus.Logger) (*FileKeyStore, err
 	}
 
 	store := &FileKeyStore{
-		basePath: basePath,
-		logger:   logger,
-		keys:     make(map[string]*EncryptionKey),
+		basePath:    basePath,
+		logger:      logger,
+		keys:        make(map[string]*EncryptionKey),
+		kmsProvider: kmsProvider,
+	}
+
+	// Initialize data encryption key
+	if err := store.initializeDataKey(); err != nil {
+		return nil, fmt.Errorf("failed to initialize data key: %w", err)
 	}
 
 	// Load existing keys
@@ -170,8 +185,7 @@ func (fs *FileKeyStore) DeleteKey(keyID string) error {
 // RotateKey replaces an old key with a new one
 func (fs *FileKeyStore) RotateKey(oldKeyID string, newKey *EncryptionKey) error {
 	fs.mu.Lock()
-	defer fs.mu.Unlock()
-
+	
 	// Mark old key as inactive
 	if oldKey, exists := fs.keys[oldKeyID]; exists {
 		oldKey.Active = false
@@ -196,6 +210,7 @@ func (fs *FileKeyStore) RotateKey(oldKeyID string, newKey *EncryptionKey) error 
 
 		keyData, err := json.MarshalIndent(safeKey, "", "  ")
 		if err != nil {
+			fs.mu.Unlock()
 			return fmt.Errorf("failed to marshal old key metadata: %w", err)
 		}
 
@@ -203,6 +218,9 @@ func (fs *FileKeyStore) RotateKey(oldKeyID string, newKey *EncryptionKey) error 
 			fs.logger.WithError(err).WithField("key_id", oldKeyID).Warn("Failed to update old key file")
 		}
 	}
+	
+	// Unlock before calling StoreKey to avoid deadlock
+	fs.mu.Unlock()
 
 	// Store new key
 	return fs.StoreKey(newKey)
@@ -221,6 +239,11 @@ func (fs *FileKeyStore) loadKeys() error {
 
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".key" {
+			// Skip hidden files (like .data.key)
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			
 			keyID := entry.Name()[:len(entry.Name())-4] // Remove .key extension
 
 			if err := fs.loadKey(keyID); err != nil {
@@ -278,31 +301,185 @@ func (fs *FileKeyStore) loadKey(keyID string) error {
 }
 
 func (fs *FileKeyStore) storeKeyData(filename string, keyData []byte) error {
-	// In a production implementation, this should encrypt the key data
-	// with a master key or use hardware security modules
-	// For this implementation, we'll use simple obfuscation
-
-	obfuscated := make([]byte, len(keyData))
-	for i, b := range keyData {
-		obfuscated[i] = b ^ 0xAA // Simple XOR obfuscation
+	// Use AES-GCM encryption with a derived key from the master key
+	// Generate a random nonce for this encryption
+	nonce := make([]byte, 12) // GCM standard nonce size
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	return os.WriteFile(filename, obfuscated, 0600)
+	// Use the data encryption key directly (already derived from KMS)
+	dataKey := fs.getDataKey()
+	if dataKey == nil {
+		return fmt.Errorf("data encryption key not initialized")
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(dataKey)
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	// Create GCM
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Encrypt the data
+	ciphertext := gcm.Seal(nil, nonce, keyData, nil)
+	
+	// Combine nonce and ciphertext
+	result := make([]byte, len(nonce)+len(ciphertext))
+	copy(result, nonce)
+	copy(result[len(nonce):], ciphertext)
+
+	// Note: dataKey is not cleared here as it's a long-lived key
+	// It will be cleared when the keystore is closed or rotated
+
+	return os.WriteFile(filename, result, 0600)
 }
 
 func (fs *FileKeyStore) loadKeyData(filename string) ([]byte, error) {
-	obfuscated, err := os.ReadFile(filename)
+	encryptedData, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key data file: %w", err)
 	}
 
-	// Reverse the obfuscation
-	keyData := make([]byte, len(obfuscated))
-	for i, b := range obfuscated {
-		keyData[i] = b ^ 0xAA
+	// Check minimum size (nonce + tag)
+	if len(encryptedData) < 12+16 {
+		return nil, fmt.Errorf("invalid encrypted data: too short")
 	}
 
+	// Extract nonce and ciphertext
+	nonce := encryptedData[:12]
+	ciphertext := encryptedData[12:]
+
+	// Use the data encryption key directly
+	dataKey := fs.getDataKey()
+	if dataKey == nil {
+		return nil, fmt.Errorf("data encryption key not initialized")
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(dataKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	// Create GCM
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Decrypt the data
+	keyData, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt key data: %w", err)
+	}
+
+	// Note: dataKey is not cleared here as it's a long-lived key
+	// It will be cleared when the keystore is closed or rotated
+
 	return keyData, nil
+}
+
+// initializeDataKey initializes or loads the data encryption key
+func (fs *FileKeyStore) initializeDataKey() error {
+	ctx := context.Background()
+	dataKeyPath := filepath.Join(fs.basePath, ".data.key")
+	
+	// Try to load existing encrypted data key
+	if encData, err := os.ReadFile(dataKeyPath); err == nil && len(encData) > 0 {
+		// Decrypt the data key using KMS
+		dataKey, err := fs.kmsProvider.DecryptDataKey(ctx, encData)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt existing data key: %w", err)
+		}
+		
+		fs.dataKey = dataKey
+		fs.encDataKey = encData
+		fs.logger.Debug("Loaded and decrypted existing data key")
+		return nil
+	}
+	
+	// Generate new data key using KMS
+	plaintext, encrypted, err := fs.kmsProvider.GenerateDataKey(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to generate data key: %w", err)
+	}
+	
+	fs.dataKey = plaintext
+	fs.encDataKey = encrypted
+	
+	// Store encrypted data key
+	if err := os.WriteFile(dataKeyPath, encrypted, 0600); err != nil {
+		return fmt.Errorf("failed to store encrypted data key: %w", err)
+	}
+	
+	fs.logger.Info("Generated new data encryption key")
+	return nil
+}
+
+// getDataKey returns the current data encryption key
+func (fs *FileKeyStore) getDataKey() []byte {
+	return fs.dataKey
+}
+
+// rotateDataKey rotates the data encryption key
+func (fs *FileKeyStore) rotateDataKey() error {
+	ctx := context.Background()
+	
+	// Generate new data key
+	newPlaintext, newEncrypted, err := fs.kmsProvider.GenerateDataKey(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to generate new data key: %w", err)
+	}
+	
+	// Re-encrypt all existing keys with new data key
+	for keyID := range fs.keys {
+		// Decrypt with old key
+		keyDataPath := filepath.Join(fs.basePath, keyID+".key")
+		
+		// Decrypt with old data key
+		keyData, err := fs.loadKeyData(keyDataPath)
+		if err != nil {
+			fs.logger.WithError(err).WithField("key_id", keyID).Error("Failed to decrypt key during rotation")
+			continue
+		}
+		
+		// Update data key temporarily for encryption
+		oldDataKey := fs.dataKey
+		fs.dataKey = newPlaintext
+		
+		// Re-encrypt with new data key
+		if err := fs.storeKeyData(keyDataPath, keyData); err != nil {
+			fs.logger.WithError(err).WithField("key_id", keyID).Error("Failed to re-encrypt key during rotation")
+			fs.dataKey = oldDataKey // Restore old key on error
+			return err
+		}
+		
+		// Clear decrypted key data
+		SecureZeroMemory(keyData)
+	}
+	
+	// Update data keys
+	oldDataKey := fs.dataKey
+	fs.dataKey = newPlaintext
+	fs.encDataKey = newEncrypted
+	
+	// Store new encrypted data key
+	dataKeyPath := filepath.Join(fs.basePath, ".data.key")
+	if err := os.WriteFile(dataKeyPath, newEncrypted, 0600); err != nil {
+		return fmt.Errorf("failed to store new encrypted data key: %w", err)
+	}
+	
+	// Clear old key from memory
+	SecureZeroMemory(oldDataKey)
+	
+	fs.logger.Info("Data encryption key rotated successfully")
+	return nil
 }
 
 // MemoryKeyStore implements KeyStore interface using in-memory storage

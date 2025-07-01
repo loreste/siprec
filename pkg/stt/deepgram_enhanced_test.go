@@ -258,6 +258,13 @@ func TestDeepgramProviderEnhanced_HTTPStreaming(t *testing.T) {
 				Channels       int                    `json:"channels"`
 				Models         []string               `json:"models"`
 				ModelInfo      map[string]interface{} `json:"model_info"`
+				// Language detection fields for enhanced accent detection
+				Language           string  `json:"language,omitempty"`
+				LanguageConfidence float64 `json:"language_confidence,omitempty"`
+				DetectedLanguages  []struct {
+					Language   string  `json:"language"`
+					Confidence float64 `json:"confidence"`
+				} `json:"detected_languages,omitempty"`
 			}{
 				RequestID: "test-request-123",
 				Duration:  2.5,

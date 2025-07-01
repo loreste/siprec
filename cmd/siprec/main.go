@@ -654,7 +654,12 @@ func initializeEncryption() error {
 
 	switch encConfig.EncryptionKeyStore {
 	case "file":
-		keyStore, err = encryption.NewFileKeyStore(encConfig.MasterKeyPath, logger)
+		// Create KMS provider first
+		kmsProvider, err := encryption.NewLocalKMSProvider(encConfig.MasterKeyPath, logger)
+		if err != nil {
+			return fmt.Errorf("failed to create KMS provider: %w", err)
+		}
+		keyStore, err = encryption.NewFileKeyStore(encConfig.MasterKeyPath, kmsProvider, logger)
 		if err != nil {
 			return fmt.Errorf("failed to create file key store: %w", err)
 		}
