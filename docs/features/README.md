@@ -9,6 +9,7 @@ Comprehensive overview of SIPREC Server features and capabilities.
 - [Speech-to-Text Integration](STT_PROVIDERS.md) - Multiple STT provider support
 - [WebSocket API](WEBSOCKET_API.md) - Real-time streaming transcriptions
 - [Message Queue Integration](AMQP_GUIDE.md) - AMQP/RabbitMQ integration
+- [Pause/Resume Control](PAUSE_RESUME_API.md) - Real-time session control via REST API
 
 ## Protocol Support
 
@@ -113,3 +114,12 @@ Comprehensive overview of SIPREC Server features and capabilities.
 - AMQP message queue
 - Webhook notifications
 - Custom middleware support
+
+## Session Control Features
+
+- **Real-time Pause/Resume** - API-driven control of recording and transcription
+- **Granular Control** - Independent pause/resume for recording and transcription
+- **Per-session Management** - Individual session control with status monitoring
+- **Global Operations** - Bulk pause/resume for all active sessions
+- **Authentication** - Secure API access with configurable authentication
+- **Metrics & Monitoring** - Comprehensive metrics for pause/resume operations

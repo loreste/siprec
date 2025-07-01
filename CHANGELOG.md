@@ -2,6 +2,44 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.3.0] - 2025-07-01
+
+### Added
+- **Pause/Resume Control API**: Comprehensive REST API for controlling recording and transcription
+  - Real-time pause and resume of individual sessions or all active sessions
+  - Granular control: pause recording, transcription, or both independently
+  - Secure API key authentication with configurable access control
+  - Per-session and global pause/resume operations
+  - Status monitoring with pause duration metrics
+- **Thread-Safe Stream Control**: Implementation of pausable I/O streams
+  - PausableWriter for recording streams that drops data when paused
+  - PausableReader for transcription streams that blocks reads when paused
+  - Mutex-protected operations for concurrent safety
+- **Enhanced Session Management**: Extended RTPForwarder with pause/resume state
+  - Thread-safe pause/resume methods with proper synchronization
+  - Real-time status tracking with pause timestamps and duration
+  - Seamless integration with existing STT providers
+- **Monitoring and Metrics**: Comprehensive observability for pause/resume operations
+  - Prometheus metrics for pause/resume events and durations
+  - Structured logging with session context and operation details
+  - Real-time status endpoints for monitoring active sessions
+- **Configuration System**: Full environment variable and JSON configuration support
+  - Configurable authentication, timeouts, and default behaviors
+  - Optional maximum pause duration with auto-resume capability
+  - Granular control over recording vs transcription pause behavior
+
+### Enhanced
+- **API Architecture**: Extended HTTP server with new REST endpoints
+- **Session Store**: Enhanced ShardedMap with Keys() method for session enumeration
+- **Documentation**: Comprehensive API documentation with usage examples
+- **Testing**: Complete unit and integration test coverage for all pause/resume functionality
+
+### Technical
+- **Thread Safety**: All operations use proper mutex synchronization
+- **Performance**: Minimal overhead with immediate effect pause/resume operations
+- **Reliability**: Non-blocking operations that don't affect other session functionality
+- **Security**: Optional API key authentication with audit logging
+
 ## [0.2.0] - 2025-05-23
 
 ### Added

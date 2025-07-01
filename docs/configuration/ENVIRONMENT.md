@@ -113,3 +113,40 @@ Complete reference for all environment variables supported by the SIPREC Server.
 - `DEBUG` (default: false) - Enable debug mode
 - `PPROF_ENABLED` (default: false) - Enable pprof profiling
 - `PPROF_PORT` (default: 6060) - Pprof server port
+
+## Pause/Resume Control API
+
+### API Configuration
+- `PAUSE_RESUME_ENABLED` (default: false) - Enable pause/resume API endpoints
+- `PAUSE_RESUME_REQUIRE_AUTH` (default: true) - Require API key authentication
+- `PAUSE_RESUME_API_KEY` - API key for authentication (required if auth enabled)
+- `PAUSE_RESUME_PER_SESSION` (default: true) - Allow per-session control
+
+### Default Behavior
+- `PAUSE_RECORDING` (default: true) - Pause recording by default when API called
+- `PAUSE_TRANSCRIPTION` (default: true) - Pause transcription by default when API called
+- `PAUSE_RESUME_NOTIFICATIONS` (default: true) - Send notification events
+
+### Advanced Options
+- `MAX_PAUSE_DURATION` (default: "0" - unlimited) - Maximum pause duration
+- `PAUSE_AUTO_RESUME` (default: false) - Auto-resume after max duration
+- `PAUSE_RESUME_TIMEOUT` (default: "30s") - API request timeout
+
+### Examples
+
+```bash
+# Enable pause/resume API with authentication
+PAUSE_RESUME_ENABLED=true
+PAUSE_RESUME_REQUIRE_AUTH=true
+PAUSE_RESUME_API_KEY=secure-api-key-here
+
+# Allow unlimited pause duration
+MAX_PAUSE_DURATION=0
+
+# Auto-resume after 1 hour
+MAX_PAUSE_DURATION=1h
+PAUSE_AUTO_RESUME=true
+
+# Disable authentication for internal use
+PAUSE_RESUME_REQUIRE_AUTH=false
+```
