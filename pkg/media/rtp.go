@@ -14,6 +14,7 @@ import (
 
 	"siprec-server/pkg/audio"
 	"siprec-server/pkg/metrics"
+	"siprec-server/pkg/security"
 
 	"github.com/pion/srtp/v2"
 	"github.com/sirupsen/logrus"
@@ -82,7 +83,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		SetUDPSocketBuffers(udpConn, forwarder.Logger)
 
 		// Open the file for recording RTP streams
-		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", callUUID))
+		// Sanitize the callUUID to prevent directory traversal
+		sanitizedUUID := security.SanitizeCallUUID(callUUID)
+		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", sanitizedUUID))
 		forwarder.RecordingFile, err = os.Create(filePath)
 		if err != nil {
 			forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")

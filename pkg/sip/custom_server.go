@@ -17,6 +17,7 @@ import (
 	"github.com/pion/sdp/v3"
 	
 	"siprec-server/pkg/media"
+	"siprec-server/pkg/security"
 	"siprec-server/pkg/siprec"
 )
 
@@ -245,9 +246,18 @@ func (s *CustomSIPServer) ListenAndServeTLS(ctx context.Context, address string,
 func (s *CustomSIPServer) handleUDPMessage(conn *net.UDPConn, clientAddr *net.UDPAddr, data []byte) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.logger.WithField("recover", r).Error("Recovered from panic in UDP message handler")
+			s.logger.WithFields(logrus.Fields{
+				"panic": r,
+				"client": clientAddr.String(),
+			}).Error("Recovered from panic in UDP message handler")
 		}
 	}()
+
+	// Validate message size
+	if err := security.ValidateSize(data, security.MaxSIPMessageSize, "UDP SIP message"); err != nil {
+		s.logger.WithError(err).WithField("client", clientAddr.String()).Warn("Rejected oversized UDP message")
+		return
+	}
 
 	// Parse SIP message
 	message, err := s.parseSIPMessage(data, nil)
@@ -270,8 +280,18 @@ func (s *CustomSIPServer) handleUDPMessage(conn *net.UDPConn, clientAddr *net.UD
 // handleTCPConnection handles TCP/TLS connections
 func (s *CustomSIPServer) handleTCPConnection(ctx context.Context, conn net.Conn, transport string) {
 	defer conn.Close()
-
+	
 	connID := fmt.Sprintf("%s-%s", transport, conn.RemoteAddr().String())
+	
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.WithFields(logrus.Fields{
+				"panic": r,
+				"connection_id": connID,
+				"transport": transport,
+			}).Error("Recovered from panic in TCP connection handler")
+		}
+	}()
 
 	sipConn := &SIPConnection{
 		conn:         conn,
@@ -310,8 +330,12 @@ func (s *CustomSIPServer) handleTCPConnection(ctx context.Context, conn net.Conn
 		case <-ctx.Done():
 			return
 		default:
-			// Set read timeout
-			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			// Set read timeout (configurable with fallback)
+			timeout := 30 * time.Second
+			if s.handler != nil && s.handler.Config != nil && s.handler.Config.SessionTimeout > 0 {
+				timeout = s.handler.Config.SessionTimeout
+			}
+			conn.SetReadDeadline(time.Now().Add(timeout))
 
 			// Read SIP message
 			message, err := s.readSIPMessageFromTCP(sipConn)
@@ -346,6 +370,7 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 	var buffer []byte
 	var contentLength int = -1
 	headerComplete := false
+	headerSize := 0
 
 	// Starting to read SIP message from TCP - debug log removed for cleaner output
 
@@ -355,6 +380,12 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 		if err != nil {
 			s.logger.WithError(err).Debug("Error reading line from TCP connection")
 			return nil, err
+		}
+
+		// Check header size limit
+		headerSize += len(line)
+		if headerSize > security.MaxSIPHeaderSize {
+			return nil, fmt.Errorf("SIP header size %d exceeds maximum %d", headerSize, security.MaxSIPHeaderSize)
 		}
 
 		buffer = append(buffer, line...)
@@ -384,6 +415,10 @@ func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessag
 			if len(parts) == 2 {
 				if cl, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
 					contentLength = cl
+					// Validate content length
+					if contentLength > security.MaxSIPBodySize {
+						return nil, fmt.Errorf("content-length %d exceeds maximum %d", contentLength, security.MaxSIPBodySize)
+					}
 					s.logger.WithField("content_length", contentLength).Debug("Parsed Content-Length header")
 				}
 			}
@@ -517,7 +552,11 @@ func (s *CustomSIPServer) parseSIPMessage(data []byte, conn *SIPConnection) (*SI
 func (s *CustomSIPServer) processSIPMessage(message *SIPMessage) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.logger.WithField("recover", r).Error("Recovered from panic in SIP message processor")
+			s.logger.WithFields(logrus.Fields{
+				"panic": r,
+				"method": message.Method,
+				"call_id": message.CallID,
+			}).Error("Recovered from panic in SIP message processor")
 		}
 	}()
 
@@ -1316,6 +1355,12 @@ func generateTag() string {
 
 // extractSiprecContent extracts SDP and rs-metadata from multipart SIPREC body
 func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) ([]byte, []byte) {
+	// Validate multipart body size
+	if err := security.ValidateSize(body, security.MaxMultipartSize, "multipart body"); err != nil {
+		s.logger.WithError(err).Warn("Multipart body exceeds size limit")
+		return nil, nil
+	}
+
 	bodyStr := string(body)
 
 	// Extract boundary from Content-Type
@@ -1357,10 +1402,22 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 
 			if strings.Contains(headers, "application/sdp") {
 				sdpData = []byte(content)
-				s.logger.WithField("sdp_size", len(sdpData)).Debug("Found SDP part")
+				// Validate SDP size
+				if err := security.ValidateSize(sdpData, security.MaxSDPSize, "SDP"); err != nil {
+					s.logger.WithError(err).Warn("SDP exceeds size limit")
+					sdpData = nil
+				} else {
+					s.logger.WithField("sdp_size", len(sdpData)).Debug("Found SDP part")
+				}
 			} else if strings.Contains(headers, "application/rs-metadata+xml") {
 				rsMetadata = []byte(content)
-				s.logger.WithField("metadata_size", len(rsMetadata)).Debug("Found rs-metadata part")
+				// Validate metadata size
+				if err := security.ValidateSize(rsMetadata, security.MaxMetadataSize, "SIPREC metadata"); err != nil {
+					s.logger.WithError(err).Warn("SIPREC metadata exceeds size limit")
+					rsMetadata = nil
+				} else {
+					s.logger.WithField("metadata_size", len(rsMetadata)).Debug("Found rs-metadata part")
+				}
 			}
 		}
 	}

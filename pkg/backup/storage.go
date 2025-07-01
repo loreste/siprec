@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -586,13 +587,11 @@ func NewAzureStorage(config AzureConfig, logger *logrus.Logger) (*AzureStorage, 
 	}
 
 	p := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-	url, _ := azblob.NewServiceURL(
-		fmt.Sprintf("https://%s.blob.core.windows.net", config.Account),
-		p,
-	)
+	URL, _ := url.Parse(fmt.Sprintf("https://%s.blob.core.windows.net", config.Account))
+	serviceURL := azblob.NewServiceURL(*URL, p)
 
 	return &AzureStorage{
-		serviceURL: url,
+		serviceURL: serviceURL,
 		container:  config.Container,
 		prefix:     config.Prefix,
 		logger:     logger,
@@ -654,7 +653,7 @@ func (a *AzureStorage) Download(remotePath, localPath string) error {
 	}
 	defer outFile.Close()
 
-	err = azblob.DownloadBlobToFile(ctx, blobURL, 0, azblob.CountToEnd, outFile, azblob.DownloadFromBlobOptions{})
+	err = azblob.DownloadBlobToFile(ctx, blobURL.BlobURL, 0, azblob.CountToEnd, outFile, azblob.DownloadFromBlobOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to download from Azure: %w", err)
 	}
@@ -679,10 +678,14 @@ func (a *AzureStorage) List() ([]StoredBackup, error) {
 		marker = listBlob.NextMarker
 
 		for _, blobInfo := range listBlob.Segment.BlobItems {
+			creationTime := time.Time{}
+			if blobInfo.Properties.CreationTime != nil {
+				creationTime = *blobInfo.Properties.CreationTime
+			}
 			backup := StoredBackup{
 				Path:        fmt.Sprintf("azure://%s/%s/%s", a.serviceURL.String(), a.container, blobInfo.Name),
 				Size:        *blobInfo.Properties.ContentLength,
-				CreatedAt:   blobInfo.Properties.CreationTime,
+				CreatedAt:   creationTime,
 				StorageType: "azure",
 			}
 

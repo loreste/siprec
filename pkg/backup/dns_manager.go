@@ -199,7 +199,7 @@ func (dm *DNSManager) updateBindRecord(ctx context.Context, record DNSRecord) er
 			Class:  dns.ClassANY,
 		},
 	}
-	msg.RemoveRRset(removeRR)
+	msg.RemoveRRset([]dns.RR{removeRR})
 
 	// Add new record
 	var newRR dns.RR

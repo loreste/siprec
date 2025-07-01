@@ -192,7 +192,7 @@ func TestDefaultConfiguration(t *testing.T) {
 
 	// Verify STT defaults
 	assert.Equal(t, []string{"google"}, config.STT.SupportedVendors)
-	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722"}, config.STT.SupportedCodecs)
+	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "OPUS"}, config.STT.SupportedCodecs)
 	assert.Equal(t, "google", config.STT.DefaultVendor)
 
 	// Verify resource defaults
