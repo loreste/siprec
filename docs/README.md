@@ -18,6 +18,7 @@ Welcome to the SIPREC Server documentation. This guide will help you navigate th
 - [Speech-to-Text Integration](features/STT_INTEGRATION.md) - Provider setup and usage
 - [Real-time Streaming](features/WEBSOCKET_STREAMING.md) - WebSocket transcription
 - [Message Queue Integration](features/AMQP_INTEGRATION.md) - AMQP/RabbitMQ setup
+- [Pause/Resume Control](features/PAUSE_RESUME_API.md) - Session control via REST API
 
 ### Security
 - [Security Overview](security/README.md) - Security features and best practices
