@@ -392,6 +392,14 @@ func initialize() error {
 
 	logger.Info("WebSocket real-time transcription streaming initialized")
 
+	// Register pause/resume handlers if enabled
+	if appConfig.PauseResume.Enabled {
+		pauseResumeService := sip.NewPauseResumeService(sipHandler, logger)
+		pauseResumeHandler := http_server.NewPauseResumeHandler(logger, &appConfig.PauseResume, pauseResumeService)
+		pauseResumeHandler.RegisterHandlers(httpServer)
+		logger.Info("Pause/Resume API handlers registered")
+	}
+
 	// Register AMQP transcription listener if AMQP is configured
 	if amqpClient != nil && amqpClient.IsConnected() {
 		amqpListener := messaging.NewAMQPTranscriptionListener(logger, amqpClient)

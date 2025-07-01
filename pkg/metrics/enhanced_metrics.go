@@ -39,6 +39,9 @@ var (
 	SessionRecoveries    *prometheus.CounterVec
 	SessionFailures      *prometheus.CounterVec
 	SessionDurationTotal *prometheus.HistogramVec
+	SessionsPaused       *prometheus.CounterVec
+	SessionsResumed      *prometheus.CounterVec
+	SessionPauseDuration *prometheus.HistogramVec
 
 	// Recording metrics
 	RecordingsStarted     *prometheus.CounterVec
@@ -296,6 +299,31 @@ func initSessionMetrics() {
 		},
 		[]string{"transport", "session_type"},
 	)
+
+	SessionsPaused = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "siprec_sessions_paused_total",
+			Help: "Total sessions paused",
+		},
+		[]string{"session_id", "pause_type"},
+	)
+
+	SessionsResumed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "siprec_sessions_resumed_total",
+			Help: "Total sessions resumed",
+		},
+		[]string{"session_id"},
+	)
+
+	SessionPauseDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "siprec_session_pause_duration_seconds",
+			Help:    "Duration of session pauses",
+			Buckets: prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s to ~6 minutes
+		},
+		[]string{"session_id", "pause_type"},
+	)
 }
 
 func initRecordingMetrics() {
@@ -535,6 +563,9 @@ func registerEnhancedMetrics() {
 		SessionRecoveries,
 		SessionFailures,
 		SessionDurationTotal,
+		SessionsPaused,
+		SessionsResumed,
+		SessionPauseDuration,
 
 		// Recording metrics
 		RecordingsStarted,
@@ -650,6 +681,24 @@ func RecordSessionCreated(transport, source string) {
 func RecordSessionTerminated(transport, reason string) {
 	if metricsEnabled {
 		SessionsTerminated.WithLabelValues(transport, reason).Inc()
+	}
+}
+
+func RecordSessionPaused(sessionID, pauseType string) {
+	if metricsEnabled {
+		SessionsPaused.WithLabelValues(sessionID, pauseType).Inc()
+	}
+}
+
+func RecordSessionResumed(sessionID string) {
+	if metricsEnabled {
+		SessionsResumed.WithLabelValues(sessionID).Inc()
+	}
+}
+
+func RecordSessionPauseDuration(sessionID, pauseType string, duration time.Duration) {
+	if metricsEnabled {
+		SessionPauseDuration.WithLabelValues(sessionID, pauseType).Observe(duration.Seconds())
 	}
 }
 

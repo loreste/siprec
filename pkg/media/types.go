@@ -27,6 +27,13 @@ type RTPForwarder struct {
 	isCleanedUp      bool       // Flag to track if resources have been cleaned up
 	CleanupMutex     sync.Mutex // Mutex to protect cleanup operations (exported for external access)
 	stopOnce         sync.Once  // Ensures StopChan is closed only once
+	
+	// Pause/Resume state
+	TranscriptionPaused bool          // Flag to indicate if transcription is paused
+	PausedAt           *time.Time     // When the session was paused
+	pauseMutex         sync.RWMutex   // Mutex for pause state
+	recordingWriter    *PausableWriter // Pausable writer for recording
+	transcriptionReader *PausableReader // Pausable reader for transcription
 
 	// SRTP-related fields
 	SRTPEnabled     bool   // Whether SRTP is enabled for this forwarder
@@ -137,6 +144,87 @@ func (f *RTPForwarder) Stop() {
 	f.stopOnce.Do(func() {
 		close(f.StopChan)
 	})
+}
+
+// Pause pauses recording and/or transcription
+func (f *RTPForwarder) Pause(pauseRecording, pauseTranscription bool) {
+	f.pauseMutex.Lock()
+	defer f.pauseMutex.Unlock()
+	
+	if pauseRecording {
+		f.RecordingPaused = true
+		// Pause the recording writer if available
+		if f.recordingWriter != nil {
+			f.recordingWriter.Pause()
+		}
+	}
+	
+	if pauseTranscription {
+		f.TranscriptionPaused = true
+		// Pause the transcription reader if available
+		if f.transcriptionReader != nil {
+			f.transcriptionReader.Pause()
+		}
+	}
+	
+	// Set pause timestamp if either is paused
+	if f.RecordingPaused || f.TranscriptionPaused {
+		now := time.Now()
+		f.PausedAt = &now
+		
+		if f.Logger != nil {
+			f.Logger.WithFields(logrus.Fields{
+				"recording_paused":     f.RecordingPaused,
+				"transcription_paused": f.TranscriptionPaused,
+				"session_id":          f.RecordingSession.ID,
+			}).Info("RTP forwarder paused")
+		}
+	}
+}
+
+// Resume resumes recording and transcription
+func (f *RTPForwarder) Resume() {
+	f.pauseMutex.Lock()
+	defer f.pauseMutex.Unlock()
+	
+	wasRecordingPaused := f.RecordingPaused
+	wasTranscriptionPaused := f.TranscriptionPaused
+	
+	f.RecordingPaused = false
+	f.TranscriptionPaused = false
+	f.PausedAt = nil
+	
+	// Resume the recording writer if it was paused
+	if wasRecordingPaused && f.recordingWriter != nil {
+		f.recordingWriter.Resume()
+	}
+	
+	// Resume the transcription reader if it was paused
+	if wasTranscriptionPaused && f.transcriptionReader != nil {
+		f.transcriptionReader.Resume()
+	}
+	
+	if f.Logger != nil && (wasRecordingPaused || wasTranscriptionPaused) {
+		f.Logger.WithFields(logrus.Fields{
+			"was_recording_paused":     wasRecordingPaused,
+			"was_transcription_paused": wasTranscriptionPaused,
+			"session_id":              f.RecordingSession.ID,
+		}).Info("RTP forwarder resumed")
+	}
+}
+
+// IsPaused returns whether recording or transcription is paused
+func (f *RTPForwarder) IsPaused() bool {
+	f.pauseMutex.RLock()
+	defer f.pauseMutex.RUnlock()
+	return f.RecordingPaused || f.TranscriptionPaused
+}
+
+// GetPauseStatus returns the current pause status
+func (f *RTPForwarder) GetPauseStatus() (recordingPaused, transcriptionPaused bool, pausedAt *time.Time) {
+	f.pauseMutex.RLock()
+	defer f.pauseMutex.RUnlock()
+	return f.RecordingPaused, f.TranscriptionPaused, f.PausedAt
 }
 
 // Cleanup performs a thorough cleanup of all resources used by the RTPForwarder
