@@ -19,6 +19,7 @@ import (
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
+	"siprec-server/pkg/pii"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
 	"siprec-server/pkg/session"
@@ -28,7 +29,7 @@ var (
 	logger       = logrus.New()
 	appConfig    *config.Config
 	legacyConfig *config.Configuration
-	amqpClient   *messaging.AMQPClient
+	amqpClient   messaging.AMQPClientInterface
 	sttManager   *stt.ProviderManager
 	sipHandler   *sip.Handler
 	httpServer   *http_server.Server
@@ -45,6 +46,10 @@ var (
 	// Encryption components
 	encryptionManager  encryption.EncryptionManager
 	keyRotationService *encryption.RotationService
+
+	// PII detection components
+	piiDetector *pii.PIIDetector
+	piiFilter   *stt.PIITranscriptionFilter
 )
 
 func main() {
@@ -203,7 +208,7 @@ func initialize() error {
 		logger.Info("Initializing AMQP client")
 
 		amqpConnectChan := make(chan struct {
-			client *messaging.AMQPClient
+			client messaging.AMQPClientInterface
 			err    error
 		}, 1)
 
@@ -212,26 +217,40 @@ func initialize() error {
 				if r := recover(); r != nil {
 					logger.WithField("recover", r).Error("Recovered from panic in AMQP initialization")
 					amqpConnectChan <- struct {
-						client *messaging.AMQPClient
+						client messaging.AMQPClientInterface
 						err    error
 					}{nil, fmt.Errorf("panic during AMQP initialization: %v", r)}
 				}
 			}()
 
-			amqpConfig := messaging.AMQPConfig{
-				URL:          appConfig.Messaging.AMQPUrl,
-				QueueName:    appConfig.Messaging.AMQPQueueName,
-				ExchangeName: "",
-				RoutingKey:   appConfig.Messaging.AMQPQueueName,
-				Durable:      true,
-				AutoDelete:   false,
+			// Use enhanced AMQP client with connection pooling and advanced features
+			enhancedClient := messaging.NewEnhancedAMQPClient(logger, &appConfig.Messaging.AMQP)
+			err := enhancedClient.Connect()
+			
+			// If enhanced client fails, fallback to basic client
+			if err != nil {
+				logger.WithError(err).Warn("Enhanced AMQP client failed, trying basic client")
+				amqpConfig := messaging.AMQPConfig{
+					URL:          appConfig.Messaging.AMQPUrl,
+					QueueName:    appConfig.Messaging.AMQPQueueName,
+					ExchangeName: "",
+					RoutingKey:   appConfig.Messaging.AMQPQueueName,
+					Durable:      true,
+					AutoDelete:   false,
+				}
+				basicClient := messaging.NewAMQPClient(logger, amqpConfig)
+				err = basicClient.Connect()
+				if err == nil {
+					amqpClient = basicClient
+				}
+			} else {
+				// Wrap enhanced client to be compatible with AMQPClient interface
+				amqpClient = &messaging.EnhancedAMQPClientWrapper{EnhancedClient: enhancedClient}
 			}
-			client := messaging.NewAMQPClient(logger, amqpConfig)
-			err := client.Connect()
 			amqpConnectChan <- struct {
-				client *messaging.AMQPClient
+				client messaging.AMQPClientInterface
 				err    error
-			}{client, err}
+			}{amqpClient, err}
 		}()
 
 		// Wait for AMQP connection with timeout
@@ -255,6 +274,32 @@ func initialize() error {
 
 	// Create transcription service before STT providers
 	transcriptionSvc = stt.NewTranscriptionService(logger)
+
+	// Initialize PII detection if enabled
+	if appConfig.PII.Enabled {
+		logger.Info("Initializing PII detection")
+		piiConfig := &pii.Config{
+			EnabledTypes:   convertPIITypes(appConfig.PII.EnabledTypes),
+			RedactionChar:  appConfig.PII.RedactionChar,
+			PreserveFormat: appConfig.PII.PreserveFormat,
+			ContextLength:  appConfig.PII.ContextLength,
+		}
+
+		var err error
+		piiDetector, err = pii.NewPIIDetector(logger, piiConfig)
+		if err != nil {
+			logger.WithError(err).Error("Failed to initialize PII detector")
+			return fmt.Errorf("failed to initialize PII detector: %w", err)
+		}
+
+		// Create PII filter for transcriptions
+		if appConfig.PII.ApplyToTranscriptions {
+			piiFilter = stt.NewPIITranscriptionFilter(logger, piiDetector, true)
+			logger.Info("PII transcription filter initialized")
+		}
+	} else {
+		logger.Info("PII detection disabled")
+	}
 	
 	// Log the configured STT vendors
 	logger.WithFields(logrus.Fields{
@@ -333,6 +378,8 @@ func initialize() error {
 			ChannelCount:         1,
 			MixChannels:          true,
 		},
+		// PII detection configuration
+		PIIAudioEnabled: appConfig.PII.Enabled && appConfig.PII.ApplyToRecordings,
 	}
 
 	// Create SIP handler config
@@ -384,7 +431,49 @@ func initialize() error {
 
 	// Create a bridge between transcription service and WebSocket hub
 	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
-	transcriptionSvc.AddListener(wsBridge)
+	
+	// Create PII audio transcription bridge if PII is enabled for recordings
+	var piiAudioBridge *stt.PIIAudioTranscriptionBridge
+	if appConfig.PII.Enabled && appConfig.PII.ApplyToRecordings {
+		// Create a function to retrieve RTP forwarders by call UUID
+		getRTPForwarder := func(callUUID string) *media.RTPForwarder {
+			if sipHandler != nil && sipHandler.ActiveCalls != nil {
+				if value, exists := sipHandler.ActiveCalls.Load(callUUID); exists {
+					if callData, ok := value.(*sip.CallData); ok && callData != nil {
+						return callData.Forwarder
+					}
+				}
+			}
+			return nil
+		}
+		
+		piiAudioBridge = stt.NewPIIAudioTranscriptionBridge(logger, getRTPForwarder, true)
+		logger.Info("PII audio transcription bridge initialized")
+	}
+
+	// If PII filtering is enabled for transcriptions, route through the filter
+	if piiFilter != nil {
+		piiFilter.AddListener(wsBridge)
+		
+		// Add PII audio bridge if enabled
+		if piiAudioBridge != nil {
+			piiFilter.AddListener(piiAudioBridge)
+			logger.Info("PII audio transcription bridge registered with PII filter")
+		}
+		
+		transcriptionSvc.AddListener(piiFilter)
+		logger.Info("WebSocket transcription bridge registered with PII filter")
+	} else {
+		transcriptionSvc.AddListener(wsBridge)
+		
+		// Add PII audio bridge directly if no PII filter but audio PII is enabled
+		if piiAudioBridge != nil {
+			transcriptionSvc.AddListener(piiAudioBridge)
+			logger.Info("PII audio transcription bridge registered directly")
+		}
+		
+		logger.Info("WebSocket transcription bridge registered directly")
+	}
 
 	// Create and register WebSocket handler
 	wsHandler = http_server.NewWebSocketHandler(logger, wsHub)
@@ -403,8 +492,30 @@ func initialize() error {
 	// Register AMQP transcription listener if AMQP is configured
 	if amqpClient != nil && amqpClient.IsConnected() {
 		amqpListener := messaging.NewAMQPTranscriptionListener(logger, amqpClient)
-		transcriptionSvc.AddListener(amqpListener)
-		logger.Info("AMQP transcription listener registered - transcriptions will be sent to message queue")
+		
+		// If PII filtering is enabled for transcriptions, route through the filter
+		if piiFilter != nil {
+			piiFilter.AddListener(amqpListener)
+			
+			// Add PII audio bridge to AMQP flow if not already added
+			if piiAudioBridge != nil {
+				// Check if already added in the WebSocket flow above
+				// The PII filter will handle both listeners
+				logger.Debug("PII audio bridge already registered with PII filter for AMQP flow")
+			}
+			
+			logger.Info("AMQP transcription listener registered with PII filter - filtered transcriptions will be sent to message queue")
+		} else {
+			transcriptionSvc.AddListener(amqpListener)
+			
+			// Add PII audio bridge to direct AMQP flow if not already added and no PII filter
+			if piiAudioBridge != nil {
+				// Check if already added in the WebSocket flow above
+				logger.Debug("PII audio bridge already registered directly for AMQP flow")
+			}
+			
+			logger.Info("AMQP transcription listener registered directly - transcriptions will be sent to message queue")
+		}
 	} else {
 		logger.Warn("AMQP not connected, transcriptions will not be sent to message queue")
 	}
@@ -708,4 +819,22 @@ func initializeEncryption() error {
 	}).Info("Encryption subsystem initialized")
 
 	return nil
+}
+
+// convertPIITypes converts string slice to PIIType slice
+func convertPIITypes(types []string) []pii.PIIType {
+	var piiTypes []pii.PIIType
+	for _, t := range types {
+		switch t {
+		case "ssn":
+			piiTypes = append(piiTypes, pii.PIITypeSSN)
+		case "credit_card":
+			piiTypes = append(piiTypes, pii.PIITypeCreditCard)
+		case "phone":
+			piiTypes = append(piiTypes, pii.PIITypePhone)
+		case "email":
+			piiTypes = append(piiTypes, pii.PIITypeEmail)
+		}
+	}
+	return piiTypes
 }

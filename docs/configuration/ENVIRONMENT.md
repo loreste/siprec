@@ -150,3 +150,122 @@ PAUSE_AUTO_RESUME=true
 # Disable authentication for internal use
 PAUSE_RESUME_REQUIRE_AUTH=false
 ```
+
+## PII Detection & Redaction
+
+Control automatic detection and redaction of personally identifiable information (PII) in transcriptions and audio recordings.
+
+### PII_DETECTION_ENABLED
+**Type**: Boolean  
+**Default**: `false`  
+**Description**: Enable or disable PII detection and redaction features.
+
+```env
+# Enable PII detection
+PII_DETECTION_ENABLED=true
+
+# Disable PII detection
+PII_DETECTION_ENABLED=false
+```
+
+### PII_ENABLED_TYPES
+**Type**: Comma-separated string  
+**Default**: `ssn,credit_card`  
+**Options**: `ssn`, `credit_card`, `phone`, `email`  
+**Description**: Specify which types of PII to detect and redact.
+
+```env
+# Detect all supported types
+PII_ENABLED_TYPES=ssn,credit_card,phone,email
+
+# Only detect SSN and credit cards
+PII_ENABLED_TYPES=ssn,credit_card
+
+# Only detect phone numbers
+PII_ENABLED_TYPES=phone
+```
+
+### PII_REDACTION_CHAR
+**Type**: String  
+**Default**: `*`  
+**Description**: Character used for redacting detected PII.
+
+```env
+# Use asterisks for redaction
+PII_REDACTION_CHAR=*
+
+# Use X for redaction
+PII_REDACTION_CHAR=X
+
+# Use dashes for redaction
+PII_REDACTION_CHAR=-
+```
+
+### PII_APPLY_TO_TRANSCRIPTIONS
+**Type**: Boolean  
+**Default**: `true`  
+**Description**: Apply PII filtering to transcription text.
+
+```env
+# Apply PII filtering to transcriptions
+PII_APPLY_TO_TRANSCRIPTIONS=true
+
+# Skip transcription filtering
+PII_APPLY_TO_TRANSCRIPTIONS=false
+```
+
+### PII_APPLY_TO_RECORDINGS
+**Type**: Boolean  
+**Default**: `true`  
+**Description**: Apply PII marking to audio recordings for post-processing.
+
+```env
+# Mark PII in audio timeline
+PII_APPLY_TO_RECORDINGS=true
+
+# Skip audio marking
+PII_APPLY_TO_RECORDINGS=false
+```
+
+### PII_PRESERVE_FORMAT
+**Type**: Boolean  
+**Default**: `true`  
+**Description**: Preserve the original format when redacting PII (e.g., keep dashes in phone numbers).
+
+```env
+# Preserve format: (555) 123-4567 → (***) ***-****
+PII_PRESERVE_FORMAT=true
+
+# Don't preserve format: (555) 123-4567 → **************
+PII_PRESERVE_FORMAT=false
+```
+
+### PII_CONTEXT_LENGTH
+**Type**: Integer  
+**Default**: `10`  
+**Range**: `0-50`  
+**Description**: Number of context characters to include around detected PII for logging and debugging.
+
+```env
+# Include 10 characters of context
+PII_CONTEXT_LENGTH=10
+
+# Include more context for debugging
+PII_CONTEXT_LENGTH=20
+
+# No context
+PII_CONTEXT_LENGTH=0
+```
+
+### Example PII Configuration
+
+```env
+# Complete PII detection setup
+PII_DETECTION_ENABLED=true
+PII_ENABLED_TYPES=ssn,credit_card,phone,email
+PII_REDACTION_CHAR=*
+PII_APPLY_TO_TRANSCRIPTIONS=true
+PII_APPLY_TO_RECORDINGS=true
+PII_PRESERVE_FORMAT=true
+PII_CONTEXT_LENGTH=10
+```

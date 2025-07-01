@@ -264,8 +264,12 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				// Update the time of the last received RTP packet
 				forwarder.LastRTPTime = time.Now()
 
-				// Check if recording is paused by the SIP dialog
-				if forwarder.RecordingPaused {
+				// Check if recording is paused by the SIP dialog (thread-safe)
+				forwarder.pauseMutex.RLock()
+				isPaused := forwarder.RecordingPaused
+				forwarder.pauseMutex.RUnlock()
+				
+				if isPaused {
 					returnBuffer(buffer) // Return buffer to pool if paused
 					if metrics.IsMetricsEnabled() {
 						metrics.RecordRTPDroppedPackets(callUUID, "recording_paused", 1)

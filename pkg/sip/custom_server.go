@@ -703,7 +703,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	
 	if recordingSession != nil {
 		// Create RTP forwarder for recording session
-		forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger)
+		piiAudioEnabled := s.handler.Config.MediaConfig.PIIAudioEnabled
+		forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger, piiAudioEnabled)
 		if err != nil {
 			logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)

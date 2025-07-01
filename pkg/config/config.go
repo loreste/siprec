@@ -32,6 +32,7 @@ type Config struct {
 	Performance    PerformanceConfig    `json:"performance"`
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker"`
 	PauseResume    PauseResumeConfig    `json:"pause_resume"`
+	PII            PIIConfig            `json:"pii"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -359,11 +360,12 @@ type LoggingConfig struct {
 
 // MessagingConfig holds messaging-related configurations
 type MessagingConfig struct {
-	// AMQP URL
-	AMQPUrl string `json:"amqp_url" env:"AMQP_URL"`
-
-	// AMQP queue name
+	// Basic AMQP configuration
+	AMQPUrl       string `json:"amqp_url" env:"AMQP_URL"`
 	AMQPQueueName string `json:"amqp_queue_name" env:"AMQP_QUEUE_NAME"`
+	
+	// AMQP Connection Pool Configuration
+	AMQP AMQPConfig `json:"amqp"`
 	
 	// Real-time AMQP configuration
 	EnableRealtimeAMQP  bool   `json:"enable_realtime_amqp" env:"ENABLE_REALTIME_AMQP" default:"false"`
@@ -382,6 +384,110 @@ type MessagingConfig struct {
 	PublishSentimentUpdates    bool `json:"publish_sentiment_updates" env:"PUBLISH_SENTIMENT_UPDATES" default:"true"`
 	PublishKeywordDetections   bool `json:"publish_keyword_detections" env:"PUBLISH_KEYWORD_DETECTIONS" default:"true"`
 	PublishSpeakerChanges      bool `json:"publish_speaker_changes" env:"PUBLISH_SPEAKER_CHANGES" default:"true"`
+}
+
+// AMQPConfig holds comprehensive AMQP configuration
+type AMQPConfig struct {
+	// Connection Configuration
+	Hosts                []string      `json:"hosts" env:"AMQP_HOSTS" default:"localhost:5672"`
+	Username             string        `json:"username" env:"AMQP_USERNAME" default:"guest"`
+	Password             string        `json:"password" env:"AMQP_PASSWORD" default:"guest"`
+	VirtualHost          string        `json:"virtual_host" env:"AMQP_VHOST" default:"/"`
+	ConnectionTimeout    time.Duration `json:"connection_timeout" env:"AMQP_CONNECTION_TIMEOUT" default:"30s"`
+	Heartbeat            time.Duration `json:"heartbeat" env:"AMQP_HEARTBEAT" default:"10s"`
+	
+	// Connection Pool Configuration
+	MaxConnections       int           `json:"max_connections" env:"AMQP_MAX_CONNECTIONS" default:"10"`
+	MaxChannelsPerConn   int           `json:"max_channels_per_conn" env:"AMQP_MAX_CHANNELS_PER_CONN" default:"100"`
+	ConnectionIdleTime   time.Duration `json:"connection_idle_time" env:"AMQP_CONNECTION_IDLE_TIME" default:"5m"`
+	
+	// Load Balancing Configuration
+	LoadBalancing        AMQPLoadBalancingConfig `json:"load_balancing"`
+	
+	// Exchange Configuration
+	Exchanges            []AMQPExchangeConfig    `json:"exchanges"`
+	
+	// Queue Configuration
+	Queues               []AMQPQueueConfig       `json:"queues"`
+	
+	// Message Configuration
+	DefaultExchange      string        `json:"default_exchange" env:"AMQP_DEFAULT_EXCHANGE" default:""`
+	DefaultRoutingKey    string        `json:"default_routing_key" env:"AMQP_DEFAULT_ROUTING_KEY"`
+	MessageTTL           time.Duration `json:"message_ttl" env:"AMQP_MESSAGE_TTL" default:"24h"`
+	PublishTimeout       time.Duration `json:"publish_timeout" env:"AMQP_PUBLISH_TIMEOUT" default:"5s"`
+	PublishConfirm       bool          `json:"publish_confirm" env:"AMQP_PUBLISH_CONFIRM" default:"true"`
+	
+	// Dead Letter Configuration
+	DeadLetterExchange   string        `json:"dead_letter_exchange" env:"AMQP_DLX" default:"siprec.dlx"`
+	DeadLetterRoutingKey string        `json:"dead_letter_routing_key" env:"AMQP_DLX_ROUTING_KEY" default:"failed"`
+	MaxRetries           int           `json:"max_retries" env:"AMQP_MAX_RETRIES" default:"3"`
+	RetryDelay           time.Duration `json:"retry_delay" env:"AMQP_RETRY_DELAY" default:"30s"`
+	
+	// Quality of Service Configuration
+	PrefetchCount        int           `json:"prefetch_count" env:"AMQP_PREFETCH_COUNT" default:"10"`
+	PrefetchSize         int           `json:"prefetch_size" env:"AMQP_PREFETCH_SIZE" default:"0"`
+	GlobalQos            bool          `json:"global_qos" env:"AMQP_GLOBAL_QOS" default:"false"`
+	
+	// Security Configuration
+	TLS                  AMQPTLSConfig `json:"tls"`
+	
+	// Monitoring Configuration
+	EnableMetrics        bool          `json:"enable_metrics" env:"AMQP_ENABLE_METRICS" default:"true"`
+	MetricsInterval      time.Duration `json:"metrics_interval" env:"AMQP_METRICS_INTERVAL" default:"30s"`
+	
+	// Reconnection Configuration
+	ReconnectDelay       time.Duration `json:"reconnect_delay" env:"AMQP_RECONNECT_DELAY" default:"5s"`
+	MaxReconnectDelay    time.Duration `json:"max_reconnect_delay" env:"AMQP_MAX_RECONNECT_DELAY" default:"30s"`
+	ReconnectMultiplier  float64       `json:"reconnect_multiplier" env:"AMQP_RECONNECT_MULTIPLIER" default:"2.0"`
+	MaxReconnectAttempts int           `json:"max_reconnect_attempts" env:"AMQP_MAX_RECONNECT_ATTEMPTS" default:"0"`
+}
+
+// AMQPLoadBalancingConfig holds load balancing configuration
+type AMQPLoadBalancingConfig struct {
+	Enabled    bool   `json:"enabled" env:"AMQP_LB_ENABLED" default:"true"`
+	Strategy   string `json:"strategy" env:"AMQP_LB_STRATEGY" default:"round_robin"`
+	HealthCheck bool  `json:"health_check" env:"AMQP_LB_HEALTH_CHECK" default:"true"`
+}
+
+// AMQPExchangeConfig holds exchange configuration
+type AMQPExchangeConfig struct {
+	Name       string            `json:"name"`
+	Type       string            `json:"type" default:"direct"`
+	Durable    bool              `json:"durable" default:"true"`
+	AutoDelete bool              `json:"auto_delete" default:"false"`
+	Internal   bool              `json:"internal" default:"false"`
+	NoWait     bool              `json:"no_wait" default:"false"`
+	Arguments  map[string]interface{} `json:"arguments"`
+}
+
+// AMQPQueueConfig holds queue configuration
+type AMQPQueueConfig struct {
+	Name       string            `json:"name"`
+	Durable    bool              `json:"durable" default:"true"`
+	AutoDelete bool              `json:"auto_delete" default:"false"`
+	Exclusive  bool              `json:"exclusive" default:"false"`
+	NoWait     bool              `json:"no_wait" default:"false"`
+	Arguments  map[string]interface{} `json:"arguments"`
+	
+	// Binding configuration
+	Bindings   []AMQPBindingConfig `json:"bindings"`
+}
+
+// AMQPBindingConfig holds queue binding configuration
+type AMQPBindingConfig struct {
+	Exchange   string            `json:"exchange"`
+	RoutingKey string            `json:"routing_key"`
+	NoWait     bool              `json:"no_wait" default:"false"`
+	Arguments  map[string]interface{} `json:"arguments"`
+}
+
+// AMQPTLSConfig holds TLS configuration for AMQP
+type AMQPTLSConfig struct {
+	Enabled    bool   `json:"enabled" env:"AMQP_TLS_ENABLED" default:"false"`
+	CertFile   string `json:"cert_file" env:"AMQP_TLS_CERT_FILE"`
+	KeyFile    string `json:"key_file" env:"AMQP_TLS_KEY_FILE"`
+	CAFile     string `json:"ca_file" env:"AMQP_TLS_CA_FILE"`
+	SkipVerify bool   `json:"skip_verify" env:"AMQP_TLS_SKIP_VERIFY" default:"false"`
 }
 
 // CircuitBreakerConfig holds circuit breaker configurations
@@ -548,6 +654,33 @@ type PauseResumeConfig struct {
 	APIKey string `json:"api_key" env:"PAUSE_RESUME_API_KEY"`
 }
 
+// PIIConfig holds configuration for PII (Personally Identifiable Information) detection
+type PIIConfig struct {
+	// Whether PII detection is enabled
+	Enabled bool `json:"enabled" env:"PII_DETECTION_ENABLED" default:"false"`
+
+	// Types of PII to detect (comma-separated: ssn,credit_card,phone,email)
+	EnabledTypes []string `json:"enabled_types" env:"PII_ENABLED_TYPES" default:"ssn,credit_card"`
+
+	// Character to use for redaction
+	RedactionChar string `json:"redaction_char" env:"PII_REDACTION_CHAR" default:"*"`
+
+	// Whether to preserve format in redaction (e.g., XXX-XX-1234)
+	PreserveFormat bool `json:"preserve_format" env:"PII_PRESERVE_FORMAT" default:"true"`
+
+	// Context length around detected PII for logging
+	ContextLength int `json:"context_length" env:"PII_CONTEXT_LENGTH" default:"20"`
+
+	// Whether to apply PII detection to transcriptions
+	ApplyToTranscriptions bool `json:"apply_to_transcriptions" env:"PII_APPLY_TO_TRANSCRIPTIONS" default:"true"`
+
+	// Whether to apply PII detection to audio recordings
+	ApplyToRecordings bool `json:"apply_to_recordings" env:"PII_APPLY_TO_RECORDINGS" default:"false"`
+
+	// Log level for PII detection events (debug, info, warn, error)
+	LogLevel string `json:"log_level" env:"PII_LOG_LEVEL" default:"info"`
+}
+
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
 	// Get current working directory
@@ -671,6 +804,11 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load pause/resume configuration
 	if err := loadPauseResumeConfig(logger, &config.PauseResume); err != nil {
 		return nil, errors.Wrap(err, "failed to load pause/resume configuration")
+	}
+
+	// Load PII detection configuration
+	if err := loadPIIConfig(logger, &config.PII); err != nil {
+		return nil, errors.Wrap(err, "failed to load PII detection configuration")
 	}
 
 	// Validate the complete configuration
@@ -1000,15 +1138,18 @@ func loadLoggingConfig(logger *logrus.Logger, config *LoggingConfig) error {
 
 // loadMessagingConfig loads the messaging configuration section
 func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
-	// Load AMQP URL
+	// Load legacy AMQP URL and queue name for backward compatibility
 	config.AMQPUrl = getEnv("AMQP_URL", "")
-
-	// Load AMQP queue name
 	config.AMQPQueueName = getEnv("AMQP_QUEUE_NAME", "")
 
-	// Validate AMQP config - both URL and queue name must be provided
+	// Validate legacy AMQP config
 	if (config.AMQPUrl != "" && config.AMQPQueueName == "") || (config.AMQPUrl == "" && config.AMQPQueueName != "") {
 		logger.Warn("Incomplete AMQP configuration: both AMQP_URL and AMQP_QUEUE_NAME must be provided")
+	}
+	
+	// Load enhanced AMQP configuration
+	if err := loadAMQPConfig(logger, &config.AMQP); err != nil {
+		return err
 	}
 	
 	// Load real-time AMQP configuration
@@ -1038,6 +1179,143 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	config.PublishKeywordDetections = getEnvBool("PUBLISH_KEYWORD_DETECTIONS", true)
 	config.PublishSpeakerChanges = getEnvBool("PUBLISH_SPEAKER_CHANGES", true)
 
+	return nil
+}
+
+// loadAMQPConfig loads the enhanced AMQP configuration
+func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
+	// Load connection configuration
+	hostsStr := getEnv("AMQP_HOSTS", "localhost:5672")
+	config.Hosts = strings.Split(hostsStr, ",")
+	for i, host := range config.Hosts {
+		config.Hosts[i] = strings.TrimSpace(host)
+	}
+	
+	config.Username = getEnv("AMQP_USERNAME", "guest")
+	config.Password = getEnv("AMQP_PASSWORD", "guest")
+	config.VirtualHost = getEnv("AMQP_VHOST", "/")
+	
+	// Load timeouts
+	connectionTimeoutStr := getEnv("AMQP_CONNECTION_TIMEOUT", "30s")
+	connectionTimeout, err := time.ParseDuration(connectionTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_CONNECTION_TIMEOUT value, using default: 30s")
+		config.ConnectionTimeout = 30 * time.Second
+	} else {
+		config.ConnectionTimeout = connectionTimeout
+	}
+	
+	heartbeatStr := getEnv("AMQP_HEARTBEAT", "10s")
+	heartbeat, err := time.ParseDuration(heartbeatStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_HEARTBEAT value, using default: 10s")
+		config.Heartbeat = 10 * time.Second
+	} else {
+		config.Heartbeat = heartbeat
+	}
+	
+	// Load connection pool configuration
+	config.MaxConnections = getEnvInt("AMQP_MAX_CONNECTIONS", 10)
+	config.MaxChannelsPerConn = getEnvInt("AMQP_MAX_CHANNELS_PER_CONN", 100)
+	
+	connectionIdleTimeStr := getEnv("AMQP_CONNECTION_IDLE_TIME", "5m")
+	connectionIdleTime, err := time.ParseDuration(connectionIdleTimeStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_CONNECTION_IDLE_TIME value, using default: 5m")
+		config.ConnectionIdleTime = 5 * time.Minute
+	} else {
+		config.ConnectionIdleTime = connectionIdleTime
+	}
+	
+	// Load load balancing configuration
+	config.LoadBalancing.Enabled = getEnvBool("AMQP_LB_ENABLED", true)
+	config.LoadBalancing.Strategy = getEnv("AMQP_LB_STRATEGY", "round_robin")
+	config.LoadBalancing.HealthCheck = getEnvBool("AMQP_LB_HEALTH_CHECK", true)
+	
+	// Load message configuration
+	config.DefaultExchange = getEnv("AMQP_DEFAULT_EXCHANGE", "")
+	config.DefaultRoutingKey = getEnv("AMQP_DEFAULT_ROUTING_KEY", "")
+	
+	messageTTLStr := getEnv("AMQP_MESSAGE_TTL", "24h")
+	messageTTL, err := time.ParseDuration(messageTTLStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_MESSAGE_TTL value, using default: 24h")
+		config.MessageTTL = 24 * time.Hour
+	} else {
+		config.MessageTTL = messageTTL
+	}
+	
+	publishTimeoutStr := getEnv("AMQP_PUBLISH_TIMEOUT", "5s")
+	publishTimeout, err := time.ParseDuration(publishTimeoutStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_PUBLISH_TIMEOUT value, using default: 5s")
+		config.PublishTimeout = 5 * time.Second
+	} else {
+		config.PublishTimeout = publishTimeout
+	}
+	
+	config.PublishConfirm = getEnvBool("AMQP_PUBLISH_CONFIRM", true)
+	
+	// Load dead letter configuration
+	config.DeadLetterExchange = getEnv("AMQP_DLX", "siprec.dlx")
+	config.DeadLetterRoutingKey = getEnv("AMQP_DLX_ROUTING_KEY", "failed")
+	config.MaxRetries = getEnvInt("AMQP_MAX_RETRIES", 3)
+	
+	retryDelayStr := getEnv("AMQP_RETRY_DELAY", "30s")
+	retryDelay, err := time.ParseDuration(retryDelayStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_RETRY_DELAY value, using default: 30s")
+		config.RetryDelay = 30 * time.Second
+	} else {
+		config.RetryDelay = retryDelay
+	}
+	
+	// Load QoS configuration
+	config.PrefetchCount = getEnvInt("AMQP_PREFETCH_COUNT", 10)
+	config.PrefetchSize = getEnvInt("AMQP_PREFETCH_SIZE", 0)
+	config.GlobalQos = getEnvBool("AMQP_GLOBAL_QOS", false)
+	
+	// Load TLS configuration
+	config.TLS.Enabled = getEnvBool("AMQP_TLS_ENABLED", false)
+	config.TLS.CertFile = getEnv("AMQP_TLS_CERT_FILE", "")
+	config.TLS.KeyFile = getEnv("AMQP_TLS_KEY_FILE", "")
+	config.TLS.CAFile = getEnv("AMQP_TLS_CA_FILE", "")
+	config.TLS.SkipVerify = getEnvBool("AMQP_TLS_SKIP_VERIFY", false)
+	
+	// Load monitoring configuration
+	config.EnableMetrics = getEnvBool("AMQP_ENABLE_METRICS", true)
+	
+	metricsIntervalStr := getEnv("AMQP_METRICS_INTERVAL", "30s")
+	metricsInterval, err := time.ParseDuration(metricsIntervalStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_METRICS_INTERVAL value, using default: 30s")
+		config.MetricsInterval = 30 * time.Second
+	} else {
+		config.MetricsInterval = metricsInterval
+	}
+	
+	// Load reconnection configuration
+	reconnectDelayStr := getEnv("AMQP_RECONNECT_DELAY", "5s")
+	reconnectDelay, err := time.ParseDuration(reconnectDelayStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_RECONNECT_DELAY value, using default: 5s")
+		config.ReconnectDelay = 5 * time.Second
+	} else {
+		config.ReconnectDelay = reconnectDelay
+	}
+	
+	maxReconnectDelayStr := getEnv("AMQP_MAX_RECONNECT_DELAY", "30s")
+	maxReconnectDelay, err := time.ParseDuration(maxReconnectDelayStr)
+	if err != nil {
+		logger.Warn("Invalid AMQP_MAX_RECONNECT_DELAY value, using default: 30s")
+		config.MaxReconnectDelay = 30 * time.Second
+	} else {
+		config.MaxReconnectDelay = maxReconnectDelay
+	}
+	
+	config.ReconnectMultiplier = getEnvFloat("AMQP_RECONNECT_MULTIPLIER", 2.0)
+	config.MaxReconnectAttempts = getEnvInt("AMQP_MAX_RECONNECT_ATTEMPTS", 0)
+	
 	return nil
 }
 
@@ -1644,6 +1922,21 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	return duration
 }
 
+// getEnvFloat retrieves an environment variable and converts it to float64
+func getEnvFloat(key string, defaultValue float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+
+	floatValue, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return defaultValue
+	}
+
+	return floatValue
+}
+
 // Helper function to get external IP
 func getExternalIP(logger *logrus.Logger) string {
 	// Try multiple services to be resilient
@@ -1992,5 +2285,84 @@ func loadOpenAISTTConfig(logger *logrus.Logger, config *OpenAISTTConfig) error {
 		logger.Warn("OpenAI STT enabled but OPENAI_API_KEY is not set")
 	}
 	
+	return nil
+}
+
+// loadPIIConfig loads the PII detection configuration section
+func loadPIIConfig(logger *logrus.Logger, config *PIIConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("PII_DETECTION_ENABLED", false)
+
+	// Load enabled types
+	enabledTypesStr := getEnv("PII_ENABLED_TYPES", "ssn,credit_card")
+	if enabledTypesStr == "" {
+		config.EnabledTypes = []string{"ssn", "credit_card"}
+	} else {
+		types := strings.Split(enabledTypesStr, ",")
+		for i, piiType := range types {
+			types[i] = strings.TrimSpace(piiType)
+		}
+		config.EnabledTypes = types
+	}
+
+	// Validate enabled types
+	validTypes := map[string]bool{
+		"ssn":         true,
+		"credit_card": true,
+		"phone":       true,
+		"email":       true,
+	}
+	var filteredTypes []string
+	for _, piiType := range config.EnabledTypes {
+		if validTypes[piiType] {
+			filteredTypes = append(filteredTypes, piiType)
+		} else {
+			logger.WithField("type", piiType).Warn("Invalid PII type specified, ignoring")
+		}
+	}
+	config.EnabledTypes = filteredTypes
+
+	// Load redaction character
+	config.RedactionChar = getEnv("PII_REDACTION_CHAR", "*")
+	if len(config.RedactionChar) != 1 {
+		logger.Warn("Invalid PII_REDACTION_CHAR, must be a single character, using default: *")
+		config.RedactionChar = "*"
+	}
+
+	// Load preserve format flag
+	config.PreserveFormat = getEnvBool("PII_PRESERVE_FORMAT", true)
+
+	// Load context length
+	config.ContextLength = getEnvInt("PII_CONTEXT_LENGTH", 20)
+	if config.ContextLength < 0 || config.ContextLength > 100 {
+		logger.Warn("Invalid PII_CONTEXT_LENGTH value, using default: 20")
+		config.ContextLength = 20
+	}
+
+	// Load application flags
+	config.ApplyToTranscriptions = getEnvBool("PII_APPLY_TO_TRANSCRIPTIONS", true)
+	config.ApplyToRecordings = getEnvBool("PII_APPLY_TO_RECORDINGS", false)
+
+	// Load log level
+	config.LogLevel = getEnv("PII_LOG_LEVEL", "info")
+	if _, err := logrus.ParseLevel(config.LogLevel); err != nil {
+		logger.Warnf("Invalid PII_LOG_LEVEL '%s', defaulting to 'info'", config.LogLevel)
+		config.LogLevel = "info"
+	}
+
+	// Log configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"enabled_types":           config.EnabledTypes,
+			"redaction_char":          config.RedactionChar,
+			"preserve_format":         config.PreserveFormat,
+			"apply_to_transcriptions": config.ApplyToTranscriptions,
+			"apply_to_recordings":     config.ApplyToRecordings,
+			"log_level":              config.LogLevel,
+		}).Info("PII detection enabled")
+	} else {
+		logger.Debug("PII detection disabled")
+	}
+
 	return nil
 }
