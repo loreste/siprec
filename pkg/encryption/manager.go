@@ -40,7 +40,13 @@ func NewManager(config *EncryptionConfig, keyStore KeyStore, logger *logrus.Logg
 
 	if keyStore == nil {
 		var err error
-		keyStore, err = NewFileKeyStore(config.MasterKeyPath, logger)
+		// Create a local KMS provider for the file keystore
+		kmsProvider, err := NewLocalKMSProvider(config.MasterKeyPath, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create KMS provider: %w", err)
+		}
+		
+		keyStore, err = NewFileKeyStore(config.MasterKeyPath, kmsProvider, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create key store: %w", err)
 		}

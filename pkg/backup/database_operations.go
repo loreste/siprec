@@ -223,7 +223,6 @@ func (dbo *DatabaseOperations) CheckPostgreSQLReplication(host string, port int,
 // checkPostgreSQLStandbyStatus checks PostgreSQL standby status
 func (dbo *DatabaseOperations) checkPostgreSQLStandbyStatus(db *sql.DB) (ReplicationStatus, error) {
 	var lagBytes sql.NullInt64
-	var lastMsgSendTime, lastMsgReceiptTime sql.NullTime
 
 	// Get replication lag
 	query := `

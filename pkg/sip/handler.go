@@ -96,6 +96,9 @@ type CallData struct {
 
 	// Remote address for potential reconnection
 	RemoteAddress string
+	
+	// Mutex for protecting mutable fields
+	mu sync.RWMutex
 }
 
 // DialogInfo holds information about a SIP dialog
@@ -203,17 +206,48 @@ func (h *Handler) SetupHandlers() {
 
 // UpdateActivity updates the last activity timestamp for a call
 func (c *CallData) UpdateActivity() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.LastActivity = time.Now()
 }
 
 // IsStale checks if a session is stale based on last activity
 func (c *CallData) IsStale(timeout time.Duration) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return time.Since(c.LastActivity) > timeout
+}
+
+// SafeCopy creates a thread-safe copy of CallData for serialization
+func (c *CallData) SafeCopy() CallData {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	// Create a copy with the current values
+	copy := CallData{
+		Forwarder:        c.Forwarder,
+		RecordingSession: c.RecordingSession,
+		DialogInfo:       c.DialogInfo,
+		LastActivity:     c.LastActivity,
+		RemoteAddress:    c.RemoteAddress,
+		// Note: Don't copy the mutex
+	}
+	return copy
 }
 
 // monitorSessions periodically checks for stale sessions
 func (h *Handler) monitorSessions(ctx context.Context) {
 	defer h.sessionMonitorWG.Done()
+	
+	// Add panic recovery
+	defer func() {
+		if r := recover(); r != nil {
+			h.Logger.WithFields(logrus.Fields{
+				"panic": r,
+				"component": "session_monitor",
+			}).Error("Recovered from panic in session monitor")
+		}
+	}()
 
 	logger := h.Logger.WithField("component", "session_monitor")
 	logger.Info("Starting session monitor")
@@ -252,11 +286,13 @@ func (h *Handler) cleanupStaleSessions() {
 
 			// Stop RTP forwarding and properly clean up resources
 			if callData.Forwarder != nil {
-				// Mark for cleanup tracking
+				// Use mutex to ensure thread-safe access to MarkedForCleanup
+				callData.Forwarder.CleanupMutex.Lock()
 				callData.Forwarder.MarkedForCleanup = true
+				callData.Forwarder.CleanupMutex.Unlock()
 
-				// Signal forwarding to stop
-				close(callData.Forwarder.StopChan)
+				// Safely signal forwarding to stop
+				callData.Forwarder.Stop()
 
 				// Perform thorough cleanup of all RTP forwarder resources
 				callData.Forwarder.Cleanup()
@@ -353,6 +389,142 @@ func (h *Handler) GetActiveCallCount() int {
 	return h.ActiveCalls.Count()
 }
 
+// GetSession returns information about a specific session
+func (h *Handler) GetSession(id string) (interface{}, error) {
+	// Try to load from active calls
+	if value, exists := h.ActiveCalls.Load(id); exists {
+		callData := value.(*CallData)
+		
+		// Create session info response
+		sessionInfo := map[string]interface{}{
+			"id":            id,
+			"state":         "active",
+			"last_activity": callData.LastActivity,
+			"remote_addr":   callData.RemoteAddress,
+		}
+		
+		// Add recording session info if available
+		if callData.RecordingSession != nil {
+			sessionInfo["recording"] = map[string]interface{}{
+				"session_id":      callData.RecordingSession.ID,
+				"state":           callData.RecordingSession.RecordingState,
+				"start_time":      callData.RecordingSession.StartTime,
+				"participants":    len(callData.RecordingSession.Participants),
+				"media_types":     callData.RecordingSession.MediaStreamTypes,
+			}
+		}
+		
+		// Add dialog info if available
+		if callData.DialogInfo != nil {
+			sessionInfo["dialog"] = map[string]interface{}{
+				"call_id":    callData.DialogInfo.CallID,
+				"local_tag":  callData.DialogInfo.LocalTag,
+				"remote_tag": callData.DialogInfo.RemoteTag,
+				"local_uri":  callData.DialogInfo.LocalURI,
+				"remote_uri": callData.DialogInfo.RemoteURI,
+			}
+		}
+		
+		return sessionInfo, nil
+	}
+	
+	// Try to load from persistent store if enabled
+	if h.Config.RedundancyEnabled && h.SessionStore != nil {
+		storedData, err := h.SessionStore.Load(id)
+		if err == nil && storedData != nil {
+			// Return stored session info
+			return map[string]interface{}{
+				"id":            id,
+				"state":         "stored",
+				"last_activity": storedData.LastActivity,
+				"remote_addr":   storedData.RemoteAddress,
+			}, nil
+		}
+	}
+	
+	return nil, errors.New("session not found")
+}
+
+// GetAllSessions returns information about all active sessions
+func (h *Handler) GetAllSessions() ([]interface{}, error) {
+	sessions := make([]interface{}, 0)
+	
+	// Collect active sessions
+	h.ActiveCalls.Range(func(key, value interface{}) bool {
+		id := key.(string)
+		sessionInfo, err := h.GetSession(id)
+		if err == nil {
+			sessions = append(sessions, sessionInfo)
+		}
+		return true
+	})
+	
+	// Add stored sessions if redundancy is enabled
+	if h.Config.RedundancyEnabled && h.SessionStore != nil {
+		storedIDs, err := h.SessionStore.List()
+		if err == nil {
+			for _, id := range storedIDs {
+				// Skip if already in active calls
+				if _, exists := h.ActiveCalls.Load(id); exists {
+					continue
+				}
+				
+				sessionInfo, err := h.GetSession(id)
+				if err == nil {
+					sessions = append(sessions, sessionInfo)
+				}
+			}
+		}
+	}
+	
+	return sessions, nil
+}
+
+// GetSessionStatistics returns detailed session statistics
+func (h *Handler) GetSessionStatistics() map[string]interface{} {
+	activeCalls := h.GetActiveCallCount()
+	
+	stats := map[string]interface{}{
+		"active_calls":      activeCalls,
+		"metrics_available": true,
+		"timestamp":         time.Now().Unix(),
+	}
+	
+	// Count different session states
+	var recording, connected int
+	
+	h.ActiveCalls.Range(func(key, value interface{}) bool {
+		callData := value.(*CallData)
+		if callData.RecordingSession != nil {
+			recording++
+			if callData.RecordingSession.RecordingState == "active" {
+				connected++
+			}
+		}
+		return true
+	})
+	
+	stats["recording_sessions"] = recording
+	stats["connected_sessions"] = connected
+	
+	// Add memory stats if available
+	if h.SessionStore != nil {
+		if storedIDs, err := h.SessionStore.List(); err == nil {
+			stats["stored_sessions"] = len(storedIDs)
+		}
+	}
+	
+	// Add port usage stats
+	available, total := media.GetPortManagerStats()
+	stats["rtp_ports"] = map[string]interface{}{
+		"available": available,
+		"total":     total,
+		"used":      total - available,
+	}
+	
+	return stats
+}
+
 // Shutdown gracefully shuts down the SIP handler and all its components
 func (h *Handler) Shutdown(ctx context.Context) error {
 	logger := h.Logger.WithField("operation", "sip_shutdown")
@@ -416,8 +588,11 @@ func NewMemorySessionStore() *MemorySessionStore {
 
 // Save stores a call data by key
 func (s *MemorySessionStore) Save(key string, data *CallData) error {
+	// Create a safe copy to avoid race conditions during serialization
+	safeCopy := data.SafeCopy()
+	
 	// Serialize the call data to JSON
-	jsonData, err := json.Marshal(data)
+	jsonData, err := json.Marshal(safeCopy)
 	if err != nil {
 		return err
 	}

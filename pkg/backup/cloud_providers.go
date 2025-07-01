@@ -2,10 +2,14 @@ package backup
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
+	"siprec-server/pkg/security"
 	"github.com/sirupsen/logrus"
 )
 
@@ -412,8 +416,13 @@ func (cpf *CloudProviderFactory) CreateDNSManager(provider, zoneID string) (inte
 
 // Helper methods
 func (cpf *CloudProviderFactory) getCloudflareAPIToken() string {
-	// This would typically come from environment variables or secure configuration
-	return "" // Placeholder - implement secure token retrieval
+	// Retrieve from secure credential provider
+	token, err := security.GetCredential("cloudflare.api_token")
+	if err != nil {
+		cpf.logger.WithError(err).Error("Failed to retrieve Cloudflare API token")
+		return ""
+	}
+	return token
 }
 
 // WaitForHealthCheck waits for a service to become healthy
@@ -444,9 +453,36 @@ func WaitForHealthCheck(ctx context.Context, healthCheckURL string, timeout time
 
 // performHealthCheck performs an actual health check
 func performHealthCheck(ctx context.Context, url string) bool {
-	// Implementation would perform HTTP GET request to health check endpoint
-	// Return true if status code is 2xx, false otherwise
-	return false // Placeholder
+	// Create HTTP client with context
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false
+	}
+	
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: false, // Always verify certificates in production
+			},
+			MaxIdleConns:        10,
+			IdleConnTimeout:     30 * time.Second,
+			DisableCompression:  true,
+		},
+	}
+	
+	// Perform health check
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	
+	// Read and discard body to ensure connection can be reused
+	io.Copy(io.Discard, resp.Body)
+	
+	// Check if status is 2xx
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 // GetCloudProviderErrorDetails extracts details from cloud provider errors
