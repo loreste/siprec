@@ -11,22 +11,33 @@ All notable changes to the SIPREC server project will be documented in this file
   - Secure API key authentication with configurable access control
   - Per-session and global pause/resume operations
   - Status monitoring with pause duration metrics
+- **PII Detection & Redaction**: Automatic detection and redaction of personally identifiable information
+  - Real-time detection of SSNs, credit card numbers, phone numbers, and email addresses
+  - Advanced validation using Luhn algorithm for credit cards and SSN format validation
+  - Configurable redaction with format preservation options
+  - Transcription filtering with real-time PII redaction
+  - Audio timeline marking for post-processing PII redaction
+  - Thread-safe processing with race condition prevention
+  - Integration with WebSocket and AMQP transcription delivery
 - **Thread-Safe Stream Control**: Implementation of pausable I/O streams
   - PausableWriter for recording streams that drops data when paused
   - PausableReader for transcription streams that blocks reads when paused
   - Mutex-protected operations for concurrent safety
-- **Enhanced Session Management**: Extended RTPForwarder with pause/resume state
+- **Enhanced Session Management**: Extended RTPForwarder with pause/resume state and PII audio marking
   - Thread-safe pause/resume methods with proper synchronization
   - Real-time status tracking with pause timestamps and duration
   - Seamless integration with existing STT providers
-- **Monitoring and Metrics**: Comprehensive observability for pause/resume operations
+  - PII audio marker integration for timeline-based redaction
+- **Monitoring and Metrics**: Comprehensive observability for pause/resume and PII operations
   - Prometheus metrics for pause/resume events and durations
+  - PII detection metrics and performance monitoring
   - Structured logging with session context and operation details
   - Real-time status endpoints for monitoring active sessions
 - **Configuration System**: Full environment variable and JSON configuration support
   - Configurable authentication, timeouts, and default behaviors
   - Optional maximum pause duration with auto-resume capability
   - Granular control over recording vs transcription pause behavior
+  - Comprehensive PII detection configuration options
 
 ### Enhanced
 - **API Architecture**: Extended HTTP server with new REST endpoints

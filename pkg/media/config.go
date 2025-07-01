@@ -24,6 +24,9 @@ type Config struct {
 
 	// Audio processing configuration
 	AudioProcessing AudioProcessingConfig
+
+	// PII detection configuration
+	PIIAudioEnabled bool
 }
 
 // AudioProcessingConfig holds audio processing settings
