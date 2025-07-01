@@ -14,6 +14,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 ### Core SIPREC Capabilities
 - **📞 RFC Compliance** - Complete RFC 7865/7866 implementation for SIP session recording
 - **🔄 Session Management** - Advanced session lifecycle management with failover support
+- **⏸️ Pause/Resume Control** - Real-time pause and resume of recording and transcription via REST API
 - **🎯 NAT Traversal** - Comprehensive NAT support with STUN integration for cloud deployments
 - **🔗 SIP Integration** - Custom SIP server implementation optimized for TCP transport and large metadata
 
@@ -128,6 +129,12 @@ STT_ENABLE_STREAMING=true      # Enable real-time streaming transcription
 # Audio Processing
 VAD_ENABLED=true
 NOISE_REDUCTION_ENABLED=true
+
+# Pause/Resume Control API
+PAUSE_RESUME_ENABLED=true          # Enable pause/resume API
+PAUSE_RESUME_REQUIRE_AUTH=true     # Require API key authentication
+PAUSE_RESUME_API_KEY=your-api-key  # API key for authentication
+PAUSE_RESUME_PER_SESSION=true      # Allow per-session control
 ```
 
 For detailed configuration, see [Configuration Guide](docs/configuration/README.md).
@@ -170,6 +177,39 @@ SIPREC Server is built with a modular architecture:
 - `GET /metrics` - Prometheus metrics
 - `GET /api/sessions` - Active sessions
 - `GET /api/sessions/stats` - Session statistics
+
+### Pause/Resume Control API
+
+- `POST /api/sessions/{id}/pause` - Pause recording/transcription for specific session
+- `POST /api/sessions/{id}/resume` - Resume recording/transcription for specific session  
+- `GET /api/sessions/{id}/pause-status` - Get pause status for specific session
+- `POST /api/sessions/pause-all` - Pause all active sessions
+- `POST /api/sessions/resume-all` - Resume all paused sessions
+- `GET /api/sessions/pause-status` - Get pause status for all sessions
+
+#### Example Usage
+
+```bash
+# Pause recording for a specific session
+curl -X POST http://localhost:8080/api/sessions/session-123/pause \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"pause_recording": true, "pause_transcription": false}'
+
+# Resume a session
+curl -X POST http://localhost:8080/api/sessions/session-123/resume \
+  -H "X-API-Key: your-api-key"
+
+# Get pause status
+curl -H "X-API-Key: your-api-key" \
+  http://localhost:8080/api/sessions/session-123/pause-status
+
+# Pause all sessions
+curl -X POST http://localhost:8080/api/sessions/pause-all \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"pause_recording": true, "pause_transcription": true}'
+```
 
 ### WebSocket
 
