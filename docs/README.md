@@ -33,6 +33,7 @@ Welcome to the SIPREC Server documentation. This guide will help you navigate th
 - [Monitoring & Metrics](operations/MONITORING.md) - Health checks and metrics
 - [Troubleshooting](operations/TROUBLESHOOTING.md) - Common issues and solutions
 - [Backup & Recovery](operations/BACKUP_RECOVERY.md) - Data protection
+- [Recording Storage](operations/RECORDING_STORAGE.md) - Upload encrypted recordings to S3/GCS/Azure
 
 ### Development
 - [Architecture Overview](development/ARCHITECTURE.md) - System design
