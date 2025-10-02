@@ -10,7 +10,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"siprec-server/pkg/metrics"
 )
+
+func init() {
+	metrics.EnableMetrics(false)
+}
 
 // MockSttProvider implements Provider interface for testing
 type MockSttProvider struct {
@@ -36,7 +42,7 @@ func TestNewProviderManager(t *testing.T) {
 	logger := logrus.New()
 	defaultProvider := "test"
 
-	manager := NewProviderManager(logger, defaultProvider)
+	manager := NewProviderManager(logger, defaultProvider, nil)
 
 	assert.NotNil(t, manager, "ProviderManager should not be nil")
 	assert.Equal(t, defaultProvider, manager.defaultProvider, "Default provider should match")
@@ -45,7 +51,7 @@ func TestNewProviderManager(t *testing.T) {
 
 func TestRegisterProvider(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "test")
+	manager := NewProviderManager(logger, "test", nil)
 
 	// Create a mock provider that initializes successfully
 	provider := new(MockSttProvider)
@@ -64,7 +70,7 @@ func TestRegisterProvider(t *testing.T) {
 
 func TestRegisterProviderInitError(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "test")
+	manager := NewProviderManager(logger, "test", nil)
 
 	// Create a mock provider that fails to initialize
 	provider := new(MockSttProvider)
@@ -83,7 +89,7 @@ func TestRegisterProviderInitError(t *testing.T) {
 
 func TestGetProvider(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "test")
+	manager := NewProviderManager(logger, "test", nil)
 
 	// Create and register a mock provider
 	provider := new(MockSttProvider)
@@ -105,7 +111,7 @@ func TestGetProvider(t *testing.T) {
 
 func TestGetDefaultProvider(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "default")
+	manager := NewProviderManager(logger, "default", nil)
 
 	// Create and register a mock provider
 	provider := new(MockSttProvider)
@@ -122,7 +128,7 @@ func TestGetDefaultProvider(t *testing.T) {
 
 func TestStreamToProvider(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "default")
+	manager := NewProviderManager(logger, "default", []string{"default", "specific"})
 
 	// Create and register mock providers
 	defaultProvider := new(MockSttProvider)
@@ -153,7 +159,7 @@ func TestStreamToProvider(t *testing.T) {
 
 func TestStreamToProviderFallback(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "default")
+	manager := NewProviderManager(logger, "default", []string{"default"})
 
 	// Create and register only the default provider
 	defaultProvider := new(MockSttProvider)
@@ -179,7 +185,7 @@ func TestStreamToProviderFallback(t *testing.T) {
 
 func TestStreamToProviderNoProviders(t *testing.T) {
 	logger := logrus.New()
-	manager := NewProviderManager(logger, "default")
+	manager := NewProviderManager(logger, "default", nil)
 
 	// Don't register any providers
 
@@ -193,4 +199,58 @@ func TestStreamToProviderNoProviders(t *testing.T) {
 
 	assert.Error(t, err, "StreamToProvider should return an error")
 	assert.Equal(t, ErrNoProviderAvailable, err, "Error should be ErrNoProviderAvailable")
+}
+
+func TestStreamToProviderFallbackOrderSeekable(t *testing.T) {
+	logger := logrus.New()
+	manager := NewProviderManager(logger, "primary", []string{"primary", "secondary"})
+
+	primary := new(MockSttProvider)
+	primary.On("Initialize").Return(nil)
+	primary.On("Name").Return("primary")
+	primary.On("StreamToText", mock.Anything, mock.Anything, "call-seekable").Return(errors.New("primary failure"))
+
+	secondary := new(MockSttProvider)
+	secondary.On("Initialize").Return(nil)
+	secondary.On("Name").Return("secondary")
+	secondary.On("StreamToText", mock.Anything, mock.Anything, "call-seekable").Return(nil)
+
+	manager.RegisterProvider(primary)
+	manager.RegisterProvider(secondary)
+
+	ctx := context.Background()
+	reader := bytes.NewReader([]byte("seekable audio"))
+
+	err := manager.StreamToProvider(ctx, "primary", reader, "call-seekable")
+
+	assert.NoError(t, err)
+	primary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-seekable")
+	secondary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-seekable")
+}
+
+func TestStreamToProviderFallbackNonSeekable(t *testing.T) {
+	logger := logrus.New()
+	manager := NewProviderManager(logger, "primary", []string{"primary", "secondary"})
+
+	primary := new(MockSttProvider)
+	primary.On("Initialize").Return(nil)
+	primary.On("Name").Return("primary")
+	primaryErr := errors.New("primary failure")
+	primary.On("StreamToText", mock.Anything, mock.Anything, "call-nonseek").Return(primaryErr)
+
+	secondary := new(MockSttProvider)
+	secondary.On("Initialize").Return(nil)
+	secondary.On("Name").Return("secondary")
+
+	manager.RegisterProvider(primary)
+	manager.RegisterProvider(secondary)
+
+	ctx := context.Background()
+	nonSeekable := io.NopCloser(bytes.NewBufferString("stream"))
+
+	err := manager.StreamToProvider(ctx, "primary", nonSeekable, "call-nonseek")
+
+	assert.ErrorIs(t, err, primaryErr)
+	primary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-nonseek")
+	secondary.AssertNotCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-nonseek")
 }

@@ -17,6 +17,7 @@ type RTPForwarder struct {
 	RTCPPort         int // RTCP port (RTP + 1, odd)
 	Conn             *net.UDPConn
 	StopChan         chan struct{}
+	CallUUID         string
 	TranscriptChan   chan string
 	RecordingFile    *os.File                 // Used to store the recorded media stream
 	LastRTPTime      time.Time                // Tracks the last time an RTP packet was received
@@ -27,12 +28,14 @@ type RTPForwarder struct {
 	isCleanedUp      bool       // Flag to track if resources have been cleaned up
 	CleanupMutex     sync.Mutex // Mutex to protect cleanup operations (exported for external access)
 	stopOnce         sync.Once  // Ensures StopChan is closed only once
-	
+	RecordingPath    string
+	Storage          RecordingStorage
+
 	// Pause/Resume state
-	TranscriptionPaused bool          // Flag to indicate if transcription is paused
-	PausedAt           *time.Time     // When the session was paused
-	pauseMutex         sync.RWMutex   // Mutex for pause state
-	recordingWriter    *PausableWriter // Pausable writer for recording
+	TranscriptionPaused bool            // Flag to indicate if transcription is paused
+	PausedAt            *time.Time      // When the session was paused
+	pauseMutex          sync.RWMutex    // Mutex for pause state
+	recordingWriter     *PausableWriter // Pausable writer for recording
 	transcriptionReader *PausableReader // Pausable reader for transcription
 
 	// SRTP-related fields
@@ -160,7 +163,7 @@ func (f *RTPForwarder) Stop() {
 func (f *RTPForwarder) Pause(pauseRecording, pauseTranscription bool) {
 	f.pauseMutex.Lock()
 	defer f.pauseMutex.Unlock()
-	
+
 	if pauseRecording {
 		f.RecordingPaused = true
 		// Pause the recording writer if available
@@ -168,7 +171,7 @@ func (f *RTPForwarder) Pause(pauseRecording, pauseTranscription bool) {
 			f.recordingWriter.Pause()
 		}
 	}
-	
+
 	if pauseTranscription {
 		f.TranscriptionPaused = true
 		// Pause the transcription reader if available
@@ -176,17 +179,17 @@ func (f *RTPForwarder) Pause(pauseRecording, pauseTranscription bool) {
 			f.transcriptionReader.Pause()
 		}
 	}
-	
+
 	// Set pause timestamp if either is paused
 	if f.RecordingPaused || f.TranscriptionPaused {
 		now := time.Now()
 		f.PausedAt = &now
-		
+
 		if f.Logger != nil {
 			f.Logger.WithFields(logrus.Fields{
 				"recording_paused":     f.RecordingPaused,
 				"transcription_paused": f.TranscriptionPaused,
-				"session_id":          f.RecordingSession.ID,
+				"session_id":           f.RecordingSession.ID,
 			}).Info("RTP forwarder paused")
 		}
 	}
@@ -196,29 +199,29 @@ func (f *RTPForwarder) Pause(pauseRecording, pauseTranscription bool) {
 func (f *RTPForwarder) Resume() {
 	f.pauseMutex.Lock()
 	defer f.pauseMutex.Unlock()
-	
+
 	wasRecordingPaused := f.RecordingPaused
 	wasTranscriptionPaused := f.TranscriptionPaused
-	
+
 	f.RecordingPaused = false
 	f.TranscriptionPaused = false
 	f.PausedAt = nil
-	
+
 	// Resume the recording writer if it was paused
 	if wasRecordingPaused && f.recordingWriter != nil {
 		f.recordingWriter.Resume()
 	}
-	
+
 	// Resume the transcription reader if it was paused
 	if wasTranscriptionPaused && f.transcriptionReader != nil {
 		f.transcriptionReader.Resume()
 	}
-	
+
 	if f.Logger != nil && (wasRecordingPaused || wasTranscriptionPaused) {
 		f.Logger.WithFields(logrus.Fields{
 			"was_recording_paused":     wasRecordingPaused,
 			"was_transcription_paused": wasTranscriptionPaused,
-			"session_id":              f.RecordingSession.ID,
+			"session_id":               f.RecordingSession.ID,
 		}).Info("RTP forwarder resumed")
 	}
 }
@@ -278,6 +281,15 @@ func (f *RTPForwarder) Cleanup() {
 	if f.RecordingFile != nil {
 		f.RecordingFile.Close()
 		f.RecordingFile = nil
+	}
+
+	// Upload recording to external storage if configured
+	if f.Storage != nil && f.RecordingPath != "" {
+		if err := f.Storage.Upload(f.CallUUID, f.RecordingSession, f.RecordingPath); err != nil {
+			f.Logger.WithError(err).WithField("path", f.RecordingPath).Warn("Failed to upload recording to storage backend")
+		} else if !f.Storage.KeepLocalCopy() {
+			RemoveLocalRecording(f.Logger, f.RecordingPath)
+		}
 	}
 
 	// Close audio processor if it implements a Close method

@@ -14,15 +14,16 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"siprec-server/pkg/backup"
 	"siprec-server/pkg/config"
 	"siprec-server/pkg/encryption"
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
 	"siprec-server/pkg/pii"
+	"siprec-server/pkg/session"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
-	"siprec-server/pkg/session"
 )
 
 var (
@@ -51,6 +52,66 @@ var (
 	piiDetector *pii.PIIDetector
 	piiFilter   *stt.PIITranscriptionFilter
 )
+
+func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfig, encCfg *config.EncryptionConfig) media.RecordingStorage {
+	if recCfg == nil || !recCfg.Storage.Enabled {
+		return nil
+	}
+
+	storageCfg := backup.StorageConfig{}
+	storageCfg.Local = recCfg.Storage.KeepLocal
+
+	backends := 0
+	if recCfg.Storage.S3.Enabled {
+		storageCfg.S3 = backup.S3Config{
+			Enabled:   true,
+			Bucket:    recCfg.Storage.S3.Bucket,
+			Region:    recCfg.Storage.S3.Region,
+			AccessKey: recCfg.Storage.S3.AccessKey,
+			SecretKey: recCfg.Storage.S3.SecretKey,
+			Prefix:    recCfg.Storage.S3.Prefix,
+		}
+		backends++
+	}
+
+	if recCfg.Storage.GCS.Enabled {
+		storageCfg.GCS = backup.GCSConfig{
+			Enabled:           true,
+			Bucket:            recCfg.Storage.GCS.Bucket,
+			ServiceAccountKey: recCfg.Storage.GCS.ServiceAccountKey,
+			Prefix:            recCfg.Storage.GCS.Prefix,
+		}
+		backends++
+	}
+
+	if recCfg.Storage.Azure.Enabled {
+		storageCfg.Azure = backup.AzureConfig{
+			Enabled:   true,
+			Account:   recCfg.Storage.Azure.Account,
+			Container: recCfg.Storage.Azure.Container,
+			AccessKey: recCfg.Storage.Azure.AccessKey,
+			Prefix:    recCfg.Storage.Azure.Prefix,
+		}
+		backends++
+	}
+
+	if !storageCfg.Local && backends == 0 {
+		logger.Warn("Recording storage enabled but no remote backend configured; disabling upload")
+		return nil
+	}
+
+	store, err := backup.NewBackupStorage(storageCfg, logger)
+	if err != nil {
+		logger.WithError(err).Error("Failed to initialize recording storage backend")
+		return nil
+	}
+
+	if encCfg != nil && !encCfg.EnableRecordingEncryption {
+		logger.Warn("Recording storage is enabled without ENABLE_RECORDING_ENCRYPTION; enable encryption to meet compliance requirements")
+	}
+
+	return media.NewRecordingStorage(logger, store, recCfg.Storage.KeepLocal)
+}
 
 func main() {
 	// Set up logger with basic configuration (will be updated after config is loaded)
@@ -226,7 +287,7 @@ func initialize() error {
 			// Use enhanced AMQP client with connection pooling and advanced features
 			enhancedClient := messaging.NewEnhancedAMQPClient(logger, &appConfig.Messaging.AMQP)
 			err := enhancedClient.Connect()
-			
+
 			// If enhanced client fails, fallback to basic client
 			if err != nil {
 				logger.WithError(err).Warn("Enhanced AMQP client failed, trying basic client")
@@ -270,7 +331,7 @@ func initialize() error {
 	}
 
 	// Initialize speech-to-text providers
-	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor)
+	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor, appConfig.STT.SupportedVendors)
 
 	// Create transcription service before STT providers
 	transcriptionSvc = stt.NewTranscriptionService(logger)
@@ -300,7 +361,7 @@ func initialize() error {
 	} else {
 		logger.Info("PII detection disabled")
 	}
-	
+
 	// Log the configured STT vendors
 	logger.WithFields(logrus.Fields{
 		"vendors": appConfig.STT.SupportedVendors,
@@ -357,16 +418,19 @@ func initialize() error {
 		"max_port": appConfig.Network.RTPPortMax,
 	}).Info("Initialized RTP port manager")
 
+	recordingStorage := createRecordingStorage(logger, &appConfig.Recording, &appConfig.Encryption)
+
 	// Create the media config
 	mediaConfig := &media.Config{
-		RTPPortMin:    appConfig.Network.RTPPortMin,
-		RTPPortMax:    appConfig.Network.RTPPortMax,
-		EnableSRTP:    appConfig.Network.EnableSRTP,
-		RecordingDir:  appConfig.Recording.Directory,
-		BehindNAT:     appConfig.Network.BehindNAT,
-		InternalIP:    appConfig.Network.InternalIP,
-		ExternalIP:    appConfig.Network.ExternalIP,
-		DefaultVendor: appConfig.STT.DefaultVendor,
+		RTPPortMin:       appConfig.Network.RTPPortMin,
+		RTPPortMax:       appConfig.Network.RTPPortMax,
+		EnableSRTP:       appConfig.Network.EnableSRTP,
+		RecordingDir:     appConfig.Recording.Directory,
+		RecordingStorage: recordingStorage,
+		BehindNAT:        appConfig.Network.BehindNAT,
+		InternalIP:       appConfig.Network.InternalIP,
+		ExternalIP:       appConfig.Network.ExternalIP,
+		DefaultVendor:    appConfig.STT.DefaultVendor,
 		// Initialize audio processing configuration with sensible defaults
 		AudioProcessing: media.AudioProcessingConfig{
 			Enabled:              true, // Force enable for testing
@@ -425,13 +489,13 @@ func initialize() error {
 	// Create the WebSocket hub and start it in a goroutine
 	wsHub = http_server.NewTranscriptionHub(logger)
 	go wsHub.Run(rootCtx)
-	
+
 	// Set the WebSocket hub reference for health checks
 	httpServer.SetWebSocketHub(wsHub)
 
 	// Create a bridge between transcription service and WebSocket hub
 	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
-	
+
 	// Create PII audio transcription bridge if PII is enabled for recordings
 	var piiAudioBridge *stt.PIIAudioTranscriptionBridge
 	if appConfig.PII.Enabled && appConfig.PII.ApplyToRecordings {
@@ -446,7 +510,7 @@ func initialize() error {
 			}
 			return nil
 		}
-		
+
 		piiAudioBridge = stt.NewPIIAudioTranscriptionBridge(logger, getRTPForwarder, true)
 		logger.Info("PII audio transcription bridge initialized")
 	}
@@ -454,24 +518,24 @@ func initialize() error {
 	// If PII filtering is enabled for transcriptions, route through the filter
 	if piiFilter != nil {
 		piiFilter.AddListener(wsBridge)
-		
+
 		// Add PII audio bridge if enabled
 		if piiAudioBridge != nil {
 			piiFilter.AddListener(piiAudioBridge)
 			logger.Info("PII audio transcription bridge registered with PII filter")
 		}
-		
+
 		transcriptionSvc.AddListener(piiFilter)
 		logger.Info("WebSocket transcription bridge registered with PII filter")
 	} else {
 		transcriptionSvc.AddListener(wsBridge)
-		
+
 		// Add PII audio bridge directly if no PII filter but audio PII is enabled
 		if piiAudioBridge != nil {
 			transcriptionSvc.AddListener(piiAudioBridge)
 			logger.Info("PII audio transcription bridge registered directly")
 		}
-		
+
 		logger.Info("WebSocket transcription bridge registered directly")
 	}
 
@@ -492,28 +556,28 @@ func initialize() error {
 	// Register AMQP transcription listener if AMQP is configured
 	if amqpClient != nil && amqpClient.IsConnected() {
 		amqpListener := messaging.NewAMQPTranscriptionListener(logger, amqpClient)
-		
+
 		// If PII filtering is enabled for transcriptions, route through the filter
 		if piiFilter != nil {
 			piiFilter.AddListener(amqpListener)
-			
+
 			// Add PII audio bridge to AMQP flow if not already added
 			if piiAudioBridge != nil {
 				// Check if already added in the WebSocket flow above
 				// The PII filter will handle both listeners
 				logger.Debug("PII audio bridge already registered with PII filter for AMQP flow")
 			}
-			
+
 			logger.Info("AMQP transcription listener registered with PII filter - filtered transcriptions will be sent to message queue")
 		} else {
 			transcriptionSvc.AddListener(amqpListener)
-			
+
 			// Add PII audio bridge to direct AMQP flow if not already added and no PII filter
 			if piiAudioBridge != nil {
 				// Check if already added in the WebSocket flow above
 				logger.Debug("PII audio bridge already registered directly for AMQP flow")
 			}
-			
+
 			logger.Info("AMQP transcription listener registered directly - transcriptions will be sent to message queue")
 		}
 	} else {
@@ -757,14 +821,14 @@ func initializeEncryption() error {
 		EnableMetadataEncryption:  appConfig.Encryption.EnableMetadataEncryption,
 		Algorithm:                 appConfig.Encryption.Algorithm,
 		KeyDerivationMethod:       appConfig.Encryption.KeyDerivationMethod,
-		MasterKeyPath:            appConfig.Encryption.MasterKeyPath,
-		KeyRotationInterval:      appConfig.Encryption.KeyRotationInterval,
-		KeyBackupEnabled:         appConfig.Encryption.KeyBackupEnabled,
-		KeySize:                  appConfig.Encryption.KeySize,
-		NonceSize:                appConfig.Encryption.NonceSize,
-		SaltSize:                 appConfig.Encryption.SaltSize,
-		PBKDF2Iterations:         appConfig.Encryption.PBKDF2Iterations,
-		EncryptionKeyStore:       appConfig.Encryption.EncryptionKeyStore,
+		MasterKeyPath:             appConfig.Encryption.MasterKeyPath,
+		KeyRotationInterval:       appConfig.Encryption.KeyRotationInterval,
+		KeyBackupEnabled:          appConfig.Encryption.KeyBackupEnabled,
+		KeySize:                   appConfig.Encryption.KeySize,
+		NonceSize:                 appConfig.Encryption.NonceSize,
+		SaltSize:                  appConfig.Encryption.SaltSize,
+		PBKDF2Iterations:          appConfig.Encryption.PBKDF2Iterations,
+		EncryptionKeyStore:        appConfig.Encryption.EncryptionKeyStore,
 	}
 
 	// Create key store
@@ -797,7 +861,7 @@ func initializeEncryption() error {
 	// Create key rotation service if encryption is enabled
 	if encConfig.EnableRecordingEncryption || encConfig.EnableMetadataEncryption {
 		keyRotationService = encryption.NewRotationService(encryptionManager, encConfig, logger)
-		
+
 		// Start key rotation service
 		if err := keyRotationService.Start(); err != nil {
 			return fmt.Errorf("failed to start key rotation service: %w", err)
@@ -813,9 +877,9 @@ func initializeEncryption() error {
 	logger.WithFields(logrus.Fields{
 		"recording_encryption": encConfig.EnableRecordingEncryption,
 		"metadata_encryption":  encConfig.EnableMetadataEncryption,
-		"algorithm":           encConfig.Algorithm,
-		"key_store":           encConfig.EncryptionKeyStore,
-		"rotation_enabled":    keyRotationService != nil,
+		"algorithm":            encConfig.Algorithm,
+		"key_store":            encConfig.EncryptionKeyStore,
+		"rotation_enabled":     keyRotationService != nil,
 	}).Info("Encryption subsystem initialized")
 
 	return nil
