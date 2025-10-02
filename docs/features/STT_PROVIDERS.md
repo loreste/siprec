@@ -186,18 +186,6 @@ AZURE_LANGUAGE=en-US
 - Custom model training
 - Multi-modal AI applications
 
-## Provider Manager
-
-### Configuration
-
-The provider manager allows dynamic switching between providers and load balancing:
-
-```go
-manager := stt.NewProviderManager(logger, "google-enhanced")
-
-// Register multiple providers
-googleProvider := stt.NewGoogleProviderEnhanced(logger)
-deepgramProvider := stt.NewDeepgramProviderEnhanced(logger)
 
 manager.RegisterProvider(googleProvider)
 manager.RegisterProvider(deepgramProvider)
@@ -297,6 +285,44 @@ retryConfig := &stt.RetryConfig{
 - Automatic failover between providers
 - Quality-based provider selection
 - Fallback to simpler processing modes
+
+## Provider Manager & Fallback
+
+### Configuration
+
+The provider manager coordinates registration, metrics, and fallback between vendors. The order passed to `NewProviderManager` controls failover behaviour.
+
+```go
+fallbackOrder := []string{"google-enhanced", "deepgram-enhanced", "openai"}
+manager := stt.NewProviderManager(logger, "google-enhanced", fallbackOrder)
+
+googleProvider := stt.NewGoogleProviderEnhanced(logger)
+deepgramProvider := stt.NewDeepgramProviderEnhanced(logger)
+openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, openaiConfig)
+
+manager.RegisterProvider(googleProvider)
+manager.RegisterProvider(deepgramProvider)
+manager.RegisterProvider(openaiProvider)
+```
+
+### Fallback & Telemetry
+
+- If the requested vendor fails, the manager tries the default vendor and then walks the `fallbackOrder` list.
+- For seekable audio (files, buffers), the manager rewinds between attempts. Live RTP streams typically cannot be rewound and therefore stop after the first failure.
+- Every attempt records metrics via `stt_requests_total` and `stt_latency_seconds`; successful fallbacks are also logged at `WARN` level with the vendor that ultimately succeeded.
+- Use `SUPPORTED_VENDORS` and `STT_DEFAULT_VENDOR` environment variables to keep the runtime order in sync with configuration files.
+
+### Usage
+
+```go
+ctx := context.Background()
+audioStream := getAudioStream()
+callUUID := "call-123"
+
+if err := manager.StreamToProvider(ctx, "google-enhanced", audioStream, callUUID); err != nil {
+    logger.WithError(err).Error("STT transcription failed")
+}
+```
 
 ## Best Practices
 
