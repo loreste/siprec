@@ -486,45 +486,45 @@ func (p *DeepgramProviderEnhanced) buildQueryParams() url.Values {
 	query := url.Values{}
 
 	// Basic parameters
-	query.Add("model", p.config.Model)
-	query.Add("language", p.config.Language)
-	query.Add("version", p.config.Version)
-	query.Add("tier", p.config.Tier)
+	query.Set("model", p.config.Model)
+	query.Set("language", p.config.Language)
+	query.Set("version", p.config.Version)
+	query.Set("tier", p.config.Tier)
 
 	// Audio parameters
-	query.Add("encoding", p.config.Encoding)
-	query.Add("sample_rate", fmt.Sprintf("%d", p.config.SampleRate))
-	query.Add("channels", fmt.Sprintf("%d", p.config.Channels))
+	query.Set("encoding", p.config.Encoding)
+	query.Set("sample_rate", fmt.Sprintf("%d", p.config.SampleRate))
+	query.Set("channels", fmt.Sprintf("%d", p.config.Channels))
 
 	// Feature parameters
-	query.Add("punctuate", fmt.Sprintf("%t", p.config.Punctuate))
-	query.Add("diarize", fmt.Sprintf("%t", p.config.Diarize))
-	query.Add("smart_format", fmt.Sprintf("%t", p.config.SmartFormat))
-	query.Add("profanity_filter", fmt.Sprintf("%t", p.config.ProfanityFilter))
-	query.Add("utterances", fmt.Sprintf("%t", p.config.Utterances))
-	query.Add("interim_results", fmt.Sprintf("%t", p.config.InterimResults))
+	query.Set("punctuate", fmt.Sprintf("%t", p.config.Punctuate))
+	query.Set("diarize", fmt.Sprintf("%t", p.config.Diarize))
+	query.Set("smart_format", fmt.Sprintf("%t", p.config.SmartFormat))
+	query.Set("profanity_filter", fmt.Sprintf("%t", p.config.ProfanityFilter))
+	query.Set("utterances", fmt.Sprintf("%t", p.config.Utterances))
+	query.Set("interim_results", fmt.Sprintf("%t", p.config.InterimResults))
 
 	// Advanced features
-	query.Add("vad_events", fmt.Sprintf("%t", p.config.VAD))
-	query.Add("endpointing", fmt.Sprintf("%t", p.config.Endpointing))
-	query.Add("include_metadata", fmt.Sprintf("%t", p.config.Confidence))
-	query.Add("timestamps", fmt.Sprintf("%t", p.config.Timestamps))
-	query.Add("paragraphs", fmt.Sprintf("%t", p.config.Paragraphs))
-	query.Add("sentences", fmt.Sprintf("%t", p.config.Sentences))
+	query.Set("vad_events", fmt.Sprintf("%t", p.config.VAD))
+	query.Set("endpointing", fmt.Sprintf("%t", p.config.Endpointing))
+	query.Set("include_metadata", fmt.Sprintf("%t", p.config.Confidence))
+	query.Set("timestamps", fmt.Sprintf("%t", p.config.Timestamps))
+	query.Set("paragraphs", fmt.Sprintf("%t", p.config.Paragraphs))
+	query.Set("sentences", fmt.Sprintf("%t", p.config.Sentences))
 
 	// Redaction
 	if len(p.config.Redact) > 0 {
-		query.Add("redact", strings.Join(p.config.Redact, ","))
+		query.Set("redact", strings.Join(p.config.Redact, ","))
 	}
 
 	// Keywords
 	if len(p.config.Keywords) > 0 {
-		query.Add("keywords", strings.Join(p.config.Keywords, ","))
+		query.Set("keywords", strings.Join(p.config.Keywords, ","))
 	}
 
 	// Custom model
 	if p.config.CustomModel != "" {
-		query.Add("model", p.config.CustomModel)
+		query.Set("model", p.config.CustomModel)
 	}
 
 	return query

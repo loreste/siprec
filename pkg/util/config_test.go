@@ -58,7 +58,7 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 		// Load vendors
 		vendorsEnv := os.Getenv("SUPPORTED_VENDORS")
 		if vendorsEnv == "" {
-			config.SupportedVendors = []string{"google"}
+			config.SupportedVendors = []string{"google", "openai"}
 		} else {
 			config.SupportedVendors = strings.Split(vendorsEnv, ",")
 		}
@@ -187,7 +187,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		// Load vendors with defaults
 		vendorsEnv := os.Getenv("SUPPORTED_VENDORS")
 		if vendorsEnv == "" {
-			config.SupportedVendors = []string{"google"}
+			config.SupportedVendors = []string{"google", "openai"}
 		} else {
 			config.SupportedVendors = strings.Split(vendorsEnv, ",")
 		}
@@ -273,7 +273,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 
 	// Check default values
 	assert.Equal(t, []string{"PCMU", "PCMA", "G722"}, config.SupportedCodecs, "Default codecs should be set")
-	assert.Equal(t, []string{"google"}, config.SupportedVendors, "Default vendor should be google")
+	assert.Equal(t, []string{"google", "openai"}, config.SupportedVendors, "Default vendors should include google and openai")
 	assert.Equal(t, "google", config.DefaultVendor, "Default speech vendor should be google")
 	assert.Equal(t, 500, config.MaxConcurrentCalls, "Default MaxConcurrentCalls should be 500")
 	assert.Equal(t, 4*time.Hour, config.RecordingMaxDuration, "Default recording duration should be 4 hours")

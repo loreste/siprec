@@ -82,7 +82,7 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	// Load vendors
 	vendorsEnv := os.Getenv("SUPPORTED_VENDORS")
 	if vendorsEnv == "" {
-		config.SupportedVendors = []string{"google"}
+		config.SupportedVendors = []string{"google", "openai"}
 	} else {
 		config.SupportedVendors = strings.Split(vendorsEnv, ",")
 	}

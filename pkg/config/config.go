@@ -18,12 +18,12 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
-	Network     NetworkConfig     `json:"network"`
-	HTTP        HTTPConfig        `json:"http"`
-	Recording   RecordingConfig   `json:"recording"`
-	STT         STTConfig         `json:"stt"`
-	Resources   ResourceConfig    `json:"resources"`
-	Logging     LoggingConfig     `json:"logging"`
+	Network        NetworkConfig        `json:"network"`
+	HTTP           HTTPConfig           `json:"http"`
+	Recording      RecordingConfig      `json:"recording"`
+	STT            STTConfig            `json:"stt"`
+	Resources      ResourceConfig       `json:"resources"`
+	Logging        LoggingConfig        `json:"logging"`
 	Messaging      MessagingConfig      `json:"messaging"`
 	Redundancy     RedundancyConfig     `json:"redundancy"`
 	Encryption     EncryptionConfig     `json:"encryption"`
@@ -119,57 +119,57 @@ type RecordingConfig struct {
 // STTConfig holds speech-to-text configurations
 type STTConfig struct {
 	// Supported STT vendors
-	SupportedVendors []string `json:"supported_vendors" env:"SUPPORTED_VENDORS" default:"google"`
+	SupportedVendors []string `json:"supported_vendors" env:"SUPPORTED_VENDORS" default:"google,openai"`
 
 	// Supported audio codecs
 	SupportedCodecs []string `json:"supported_codecs" env:"SUPPORTED_CODECS" default:"PCMU,PCMA,G722"`
 
 	// Default STT vendor
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
-	
+
 	// Provider-specific configurations
-	Google    GoogleSTTConfig    `json:"google"`
-	Deepgram  DeepgramSTTConfig  `json:"deepgram"`
-	Azure     AzureSTTConfig     `json:"azure"`
-	Amazon    AmazonSTTConfig    `json:"amazon"`
-	OpenAI    OpenAISTTConfig    `json:"openai"`
+	Google   GoogleSTTConfig   `json:"google"`
+	Deepgram DeepgramSTTConfig `json:"deepgram"`
+	Azure    AzureSTTConfig    `json:"azure"`
+	Amazon   AmazonSTTConfig   `json:"amazon"`
+	OpenAI   OpenAISTTConfig   `json:"openai"`
 }
 
 // GoogleSTTConfig holds Google Speech-to-Text configuration
 type GoogleSTTConfig struct {
 	// Whether Google STT is enabled
 	Enabled bool `json:"enabled" env:"GOOGLE_STT_ENABLED" default:"true"`
-	
+
 	// Google Cloud credentials file path
 	CredentialsFile string `json:"credentials_file" env:"GOOGLE_APPLICATION_CREDENTIALS"`
-	
+
 	// Google Cloud project ID
 	ProjectID string `json:"project_id" env:"GOOGLE_PROJECT_ID"`
-	
+
 	// API key (alternative to credentials file)
 	APIKey string `json:"api_key" env:"GOOGLE_STT_API_KEY"`
-	
+
 	// Default language code
 	Language string `json:"language" env:"GOOGLE_STT_LANGUAGE" default:"en-US"`
-	
+
 	// Sample rate for audio
 	SampleRate int `json:"sample_rate" env:"GOOGLE_STT_SAMPLE_RATE" default:"16000"`
-	
+
 	// Enable enhanced models
 	EnhancedModels bool `json:"enhanced_models" env:"GOOGLE_STT_ENHANCED_MODELS" default:"false"`
-	
+
 	// Model to use (latest_long, latest_short, etc.)
 	Model string `json:"model" env:"GOOGLE_STT_MODEL" default:"latest_long"`
-	
+
 	// Enable automatic punctuation
 	EnableAutomaticPunctuation bool `json:"enable_automatic_punctuation" env:"GOOGLE_STT_AUTO_PUNCTUATION" default:"true"`
-	
+
 	// Enable word time offsets
 	EnableWordTimeOffsets bool `json:"enable_word_time_offsets" env:"GOOGLE_STT_WORD_TIME_OFFSETS" default:"true"`
-	
+
 	// Max alternatives to return
 	MaxAlternatives int `json:"max_alternatives" env:"GOOGLE_STT_MAX_ALTERNATIVES" default:"1"`
-	
+
 	// Profanity filter
 	ProfanityFilter bool `json:"profanity_filter" env:"GOOGLE_STT_PROFANITY_FILTER" default:"false"`
 }
@@ -178,71 +178,71 @@ type GoogleSTTConfig struct {
 type DeepgramSTTConfig struct {
 	// Whether Deepgram STT is enabled
 	Enabled bool `json:"enabled" env:"DEEPGRAM_STT_ENABLED" default:"false"`
-	
+
 	// Deepgram API key
 	APIKey string `json:"api_key" env:"DEEPGRAM_API_KEY"`
-	
+
 	// API URL (for self-hosted)
 	APIURL string `json:"api_url" env:"DEEPGRAM_API_URL" default:"https://api.deepgram.com"`
-	
+
 	// Model to use (nova-2, nova, enhanced, base)
 	Model string `json:"model" env:"DEEPGRAM_MODEL" default:"nova-2"`
-	
+
 	// Language
 	Language string `json:"language" env:"DEEPGRAM_LANGUAGE" default:"en-US"`
-	
+
 	// Tier (nova, enhanced, base)
 	Tier string `json:"tier" env:"DEEPGRAM_TIER" default:"nova"`
-	
+
 	// Version
 	Version string `json:"version" env:"DEEPGRAM_VERSION" default:"latest"`
-	
+
 	// Enable punctuation
 	Punctuate bool `json:"punctuate" env:"DEEPGRAM_PUNCTUATE" default:"true"`
-	
+
 	// Enable diarization
 	Diarize bool `json:"diarize" env:"DEEPGRAM_DIARIZE" default:"false"`
-	
+
 	// Enable numerals conversion
 	Numerals bool `json:"numerals" env:"DEEPGRAM_NUMERALS" default:"true"`
-	
+
 	// Smart formatting
 	SmartFormat bool `json:"smart_format" env:"DEEPGRAM_SMART_FORMAT" default:"true"`
-	
+
 	// Profanity filter
 	ProfanityFilter bool `json:"profanity_filter" env:"DEEPGRAM_PROFANITY_FILTER" default:"false"`
-	
+
 	// Redact sensitive information
 	Redact []string `json:"redact" env:"DEEPGRAM_REDACT"`
-	
+
 	// Keywords to boost
 	Keywords []string `json:"keywords" env:"DEEPGRAM_KEYWORDS"`
-	
+
 	// Multi-language and accent detection configuration
 	// Enable automatic language detection
 	DetectLanguage bool `json:"detect_language" env:"DEEPGRAM_DETECT_LANGUAGE" default:"true"`
-	
+
 	// Supported languages for detection (comma-separated)
 	SupportedLanguages []string `json:"supported_languages" env:"DEEPGRAM_SUPPORTED_LANGUAGES"`
-	
+
 	// Language detection confidence threshold (0.0-1.0)
 	LanguageConfidenceThreshold float64 `json:"language_confidence_threshold" env:"DEEPGRAM_LANGUAGE_CONFIDENCE" default:"0.7"`
-	
+
 	// Enable accent-specific model selection
 	AccentAwareModels bool `json:"accent_aware_models" env:"DEEPGRAM_ACCENT_AWARE" default:"true"`
-	
+
 	// Fallback language when detection fails
 	FallbackLanguage string `json:"fallback_language" env:"DEEPGRAM_FALLBACK_LANGUAGE" default:"en-US"`
-	
+
 	// Enable real-time language switching
 	RealtimeLanguageSwitching bool `json:"realtime_language_switching" env:"DEEPGRAM_REALTIME_SWITCHING" default:"false"`
-	
+
 	// Language switching interval in seconds
 	LanguageSwitchingInterval int `json:"language_switching_interval" env:"DEEPGRAM_SWITCHING_INTERVAL" default:"5"`
-	
+
 	// Enable multi-language alternative results
 	MultiLanguageAlternatives bool `json:"multilang_alternatives" env:"DEEPGRAM_MULTILANG_ALTERNATIVES" default:"false"`
-	
+
 	// Maximum number of language alternatives to return
 	MaxLanguageAlternatives int `json:"max_language_alternatives" env:"DEEPGRAM_MAX_LANG_ALTERNATIVES" default:"3"`
 }
@@ -251,25 +251,25 @@ type DeepgramSTTConfig struct {
 type AzureSTTConfig struct {
 	// Whether Azure STT is enabled
 	Enabled bool `json:"enabled" env:"AZURE_STT_ENABLED" default:"false"`
-	
+
 	// Azure Speech Services subscription key
 	SubscriptionKey string `json:"subscription_key" env:"AZURE_SPEECH_KEY"`
-	
+
 	// Azure region
 	Region string `json:"region" env:"AZURE_SPEECH_REGION"`
-	
+
 	// Language
 	Language string `json:"language" env:"AZURE_STT_LANGUAGE" default:"en-US"`
-	
+
 	// Endpoint URL (for custom endpoints)
 	EndpointURL string `json:"endpoint_url" env:"AZURE_STT_ENDPOINT"`
-	
+
 	// Enable detailed results
 	EnableDetailedResults bool `json:"enable_detailed_results" env:"AZURE_STT_DETAILED_RESULTS" default:"true"`
-	
+
 	// Profanity filter
 	ProfanityFilter string `json:"profanity_filter" env:"AZURE_STT_PROFANITY_FILTER" default:"masked"`
-	
+
 	// Output format (simple, detailed)
 	OutputFormat string `json:"output_format" env:"AZURE_STT_OUTPUT_FORMAT" default:"detailed"`
 }
@@ -278,34 +278,34 @@ type AzureSTTConfig struct {
 type AmazonSTTConfig struct {
 	// Whether Amazon Transcribe is enabled
 	Enabled bool `json:"enabled" env:"AMAZON_STT_ENABLED" default:"false"`
-	
+
 	// AWS Access Key ID
 	AccessKeyID string `json:"access_key_id" env:"AWS_ACCESS_KEY_ID"`
-	
+
 	// AWS Secret Access Key
 	SecretAccessKey string `json:"secret_access_key" env:"AWS_SECRET_ACCESS_KEY"`
-	
+
 	// AWS Region
 	Region string `json:"region" env:"AWS_REGION" default:"us-east-1"`
-	
+
 	// Language code
 	Language string `json:"language" env:"AMAZON_STT_LANGUAGE" default:"en-US"`
-	
+
 	// Media format
 	MediaFormat string `json:"media_format" env:"AMAZON_STT_MEDIA_FORMAT" default:"wav"`
-	
+
 	// Sample rate
 	SampleRate int `json:"sample_rate" env:"AMAZON_STT_SAMPLE_RATE" default:"16000"`
-	
+
 	// Vocabulary name for custom vocabulary
 	VocabularyName string `json:"vocabulary_name" env:"AMAZON_STT_VOCABULARY"`
-	
+
 	// Enable channel identification
 	EnableChannelIdentification bool `json:"enable_channel_identification" env:"AMAZON_STT_CHANNEL_ID" default:"false"`
-	
+
 	// Enable speaker identification
 	EnableSpeakerIdentification bool `json:"enable_speaker_identification" env:"AMAZON_STT_SPEAKER_ID" default:"false"`
-	
+
 	// Max speaker labels
 	MaxSpeakerLabels int `json:"max_speaker_labels" env:"AMAZON_STT_MAX_SPEAKERS" default:"2"`
 }
@@ -314,28 +314,28 @@ type AmazonSTTConfig struct {
 type OpenAISTTConfig struct {
 	// Whether OpenAI STT is enabled
 	Enabled bool `json:"enabled" env:"OPENAI_STT_ENABLED" default:"false"`
-	
+
 	// OpenAI API key
 	APIKey string `json:"api_key" env:"OPENAI_API_KEY"`
-	
+
 	// Organization ID (optional)
 	OrganizationID string `json:"organization_id" env:"OPENAI_ORGANIZATION_ID"`
-	
+
 	// Model to use (whisper-1)
 	Model string `json:"model" env:"OPENAI_STT_MODEL" default:"whisper-1"`
-	
+
 	// Language (optional, auto-detect if not specified)
 	Language string `json:"language" env:"OPENAI_STT_LANGUAGE"`
-	
+
 	// Prompt for context
 	Prompt string `json:"prompt" env:"OPENAI_STT_PROMPT"`
-	
+
 	// Response format (json, text, srt, verbose_json, vtt)
 	ResponseFormat string `json:"response_format" env:"OPENAI_STT_RESPONSE_FORMAT" default:"verbose_json"`
-	
+
 	// Temperature for sampling
 	Temperature float64 `json:"temperature" env:"OPENAI_STT_TEMPERATURE" default:"0.0"`
-	
+
 	// Base URL for API (for custom endpoints)
 	BaseURL string `json:"base_url" env:"OPENAI_BASE_URL" default:"https://api.openai.com/v1"`
 }
@@ -363,78 +363,78 @@ type MessagingConfig struct {
 	// Basic AMQP configuration
 	AMQPUrl       string `json:"amqp_url" env:"AMQP_URL"`
 	AMQPQueueName string `json:"amqp_queue_name" env:"AMQP_QUEUE_NAME"`
-	
+
 	// AMQP Connection Pool Configuration
 	AMQP AMQPConfig `json:"amqp"`
-	
+
 	// Real-time AMQP configuration
-	EnableRealtimeAMQP  bool   `json:"enable_realtime_amqp" env:"ENABLE_REALTIME_AMQP" default:"false"`
-	RealtimeQueueName   string `json:"realtime_queue_name" env:"REALTIME_QUEUE_NAME" default:"siprec_realtime"`
+	EnableRealtimeAMQP   bool   `json:"enable_realtime_amqp" env:"ENABLE_REALTIME_AMQP" default:"false"`
+	RealtimeQueueName    string `json:"realtime_queue_name" env:"REALTIME_QUEUE_NAME" default:"siprec_realtime"`
 	RealtimeExchangeName string `json:"realtime_exchange_name" env:"REALTIME_EXCHANGE_NAME" default:""`
-	RealtimeRoutingKey  string `json:"realtime_routing_key" env:"REALTIME_ROUTING_KEY" default:"siprec.realtime"`
-	
+	RealtimeRoutingKey   string `json:"realtime_routing_key" env:"REALTIME_ROUTING_KEY" default:"siprec.realtime"`
+
 	// Real-time AMQP batching
 	RealtimeBatchSize    int           `json:"realtime_batch_size" env:"REALTIME_BATCH_SIZE" default:"10"`
 	RealtimeBatchTimeout time.Duration `json:"realtime_batch_timeout" env:"REALTIME_BATCH_TIMEOUT" default:"1s"`
 	RealtimeQueueSize    int           `json:"realtime_queue_size" env:"REALTIME_QUEUE_SIZE" default:"1000"`
-	
+
 	// Real-time event filtering
-	PublishPartialTranscripts  bool `json:"publish_partial_transcripts" env:"PUBLISH_PARTIAL_TRANSCRIPTS" default:"true"`
-	PublishFinalTranscripts    bool `json:"publish_final_transcripts" env:"PUBLISH_FINAL_TRANSCRIPTS" default:"true"`
-	PublishSentimentUpdates    bool `json:"publish_sentiment_updates" env:"PUBLISH_SENTIMENT_UPDATES" default:"true"`
-	PublishKeywordDetections   bool `json:"publish_keyword_detections" env:"PUBLISH_KEYWORD_DETECTIONS" default:"true"`
-	PublishSpeakerChanges      bool `json:"publish_speaker_changes" env:"PUBLISH_SPEAKER_CHANGES" default:"true"`
+	PublishPartialTranscripts bool `json:"publish_partial_transcripts" env:"PUBLISH_PARTIAL_TRANSCRIPTS" default:"true"`
+	PublishFinalTranscripts   bool `json:"publish_final_transcripts" env:"PUBLISH_FINAL_TRANSCRIPTS" default:"true"`
+	PublishSentimentUpdates   bool `json:"publish_sentiment_updates" env:"PUBLISH_SENTIMENT_UPDATES" default:"true"`
+	PublishKeywordDetections  bool `json:"publish_keyword_detections" env:"PUBLISH_KEYWORD_DETECTIONS" default:"true"`
+	PublishSpeakerChanges     bool `json:"publish_speaker_changes" env:"PUBLISH_SPEAKER_CHANGES" default:"true"`
 }
 
 // AMQPConfig holds comprehensive AMQP configuration
 type AMQPConfig struct {
 	// Connection Configuration
-	Hosts                []string      `json:"hosts" env:"AMQP_HOSTS" default:"localhost:5672"`
-	Username             string        `json:"username" env:"AMQP_USERNAME" default:"guest"`
-	Password             string        `json:"password" env:"AMQP_PASSWORD" default:"guest"`
-	VirtualHost          string        `json:"virtual_host" env:"AMQP_VHOST" default:"/"`
-	ConnectionTimeout    time.Duration `json:"connection_timeout" env:"AMQP_CONNECTION_TIMEOUT" default:"30s"`
-	Heartbeat            time.Duration `json:"heartbeat" env:"AMQP_HEARTBEAT" default:"10s"`
-	
+	Hosts             []string      `json:"hosts" env:"AMQP_HOSTS" default:"localhost:5672"`
+	Username          string        `json:"username" env:"AMQP_USERNAME" default:"guest"`
+	Password          string        `json:"password" env:"AMQP_PASSWORD" default:"guest"`
+	VirtualHost       string        `json:"virtual_host" env:"AMQP_VHOST" default:"/"`
+	ConnectionTimeout time.Duration `json:"connection_timeout" env:"AMQP_CONNECTION_TIMEOUT" default:"30s"`
+	Heartbeat         time.Duration `json:"heartbeat" env:"AMQP_HEARTBEAT" default:"10s"`
+
 	// Connection Pool Configuration
-	MaxConnections       int           `json:"max_connections" env:"AMQP_MAX_CONNECTIONS" default:"10"`
-	MaxChannelsPerConn   int           `json:"max_channels_per_conn" env:"AMQP_MAX_CHANNELS_PER_CONN" default:"100"`
-	ConnectionIdleTime   time.Duration `json:"connection_idle_time" env:"AMQP_CONNECTION_IDLE_TIME" default:"5m"`
-	
+	MaxConnections     int           `json:"max_connections" env:"AMQP_MAX_CONNECTIONS" default:"10"`
+	MaxChannelsPerConn int           `json:"max_channels_per_conn" env:"AMQP_MAX_CHANNELS_PER_CONN" default:"100"`
+	ConnectionIdleTime time.Duration `json:"connection_idle_time" env:"AMQP_CONNECTION_IDLE_TIME" default:"5m"`
+
 	// Load Balancing Configuration
-	LoadBalancing        AMQPLoadBalancingConfig `json:"load_balancing"`
-	
+	LoadBalancing AMQPLoadBalancingConfig `json:"load_balancing"`
+
 	// Exchange Configuration
-	Exchanges            []AMQPExchangeConfig    `json:"exchanges"`
-	
+	Exchanges []AMQPExchangeConfig `json:"exchanges"`
+
 	// Queue Configuration
-	Queues               []AMQPQueueConfig       `json:"queues"`
-	
+	Queues []AMQPQueueConfig `json:"queues"`
+
 	// Message Configuration
-	DefaultExchange      string        `json:"default_exchange" env:"AMQP_DEFAULT_EXCHANGE" default:""`
-	DefaultRoutingKey    string        `json:"default_routing_key" env:"AMQP_DEFAULT_ROUTING_KEY"`
-	MessageTTL           time.Duration `json:"message_ttl" env:"AMQP_MESSAGE_TTL" default:"24h"`
-	PublishTimeout       time.Duration `json:"publish_timeout" env:"AMQP_PUBLISH_TIMEOUT" default:"5s"`
-	PublishConfirm       bool          `json:"publish_confirm" env:"AMQP_PUBLISH_CONFIRM" default:"true"`
-	
+	DefaultExchange   string        `json:"default_exchange" env:"AMQP_DEFAULT_EXCHANGE" default:""`
+	DefaultRoutingKey string        `json:"default_routing_key" env:"AMQP_DEFAULT_ROUTING_KEY"`
+	MessageTTL        time.Duration `json:"message_ttl" env:"AMQP_MESSAGE_TTL" default:"24h"`
+	PublishTimeout    time.Duration `json:"publish_timeout" env:"AMQP_PUBLISH_TIMEOUT" default:"5s"`
+	PublishConfirm    bool          `json:"publish_confirm" env:"AMQP_PUBLISH_CONFIRM" default:"true"`
+
 	// Dead Letter Configuration
 	DeadLetterExchange   string        `json:"dead_letter_exchange" env:"AMQP_DLX" default:"siprec.dlx"`
 	DeadLetterRoutingKey string        `json:"dead_letter_routing_key" env:"AMQP_DLX_ROUTING_KEY" default:"failed"`
 	MaxRetries           int           `json:"max_retries" env:"AMQP_MAX_RETRIES" default:"3"`
 	RetryDelay           time.Duration `json:"retry_delay" env:"AMQP_RETRY_DELAY" default:"30s"`
-	
+
 	// Quality of Service Configuration
-	PrefetchCount        int           `json:"prefetch_count" env:"AMQP_PREFETCH_COUNT" default:"10"`
-	PrefetchSize         int           `json:"prefetch_size" env:"AMQP_PREFETCH_SIZE" default:"0"`
-	GlobalQos            bool          `json:"global_qos" env:"AMQP_GLOBAL_QOS" default:"false"`
-	
+	PrefetchCount int  `json:"prefetch_count" env:"AMQP_PREFETCH_COUNT" default:"10"`
+	PrefetchSize  int  `json:"prefetch_size" env:"AMQP_PREFETCH_SIZE" default:"0"`
+	GlobalQos     bool `json:"global_qos" env:"AMQP_GLOBAL_QOS" default:"false"`
+
 	// Security Configuration
-	TLS                  AMQPTLSConfig `json:"tls"`
-	
+	TLS AMQPTLSConfig `json:"tls"`
+
 	// Monitoring Configuration
-	EnableMetrics        bool          `json:"enable_metrics" env:"AMQP_ENABLE_METRICS" default:"true"`
-	MetricsInterval      time.Duration `json:"metrics_interval" env:"AMQP_METRICS_INTERVAL" default:"30s"`
-	
+	EnableMetrics   bool          `json:"enable_metrics" env:"AMQP_ENABLE_METRICS" default:"true"`
+	MetricsInterval time.Duration `json:"metrics_interval" env:"AMQP_METRICS_INTERVAL" default:"30s"`
+
 	// Reconnection Configuration
 	ReconnectDelay       time.Duration `json:"reconnect_delay" env:"AMQP_RECONNECT_DELAY" default:"5s"`
 	MaxReconnectDelay    time.Duration `json:"max_reconnect_delay" env:"AMQP_MAX_RECONNECT_DELAY" default:"30s"`
@@ -444,40 +444,40 @@ type AMQPConfig struct {
 
 // AMQPLoadBalancingConfig holds load balancing configuration
 type AMQPLoadBalancingConfig struct {
-	Enabled    bool   `json:"enabled" env:"AMQP_LB_ENABLED" default:"true"`
-	Strategy   string `json:"strategy" env:"AMQP_LB_STRATEGY" default:"round_robin"`
-	HealthCheck bool  `json:"health_check" env:"AMQP_LB_HEALTH_CHECK" default:"true"`
+	Enabled     bool   `json:"enabled" env:"AMQP_LB_ENABLED" default:"true"`
+	Strategy    string `json:"strategy" env:"AMQP_LB_STRATEGY" default:"round_robin"`
+	HealthCheck bool   `json:"health_check" env:"AMQP_LB_HEALTH_CHECK" default:"true"`
 }
 
 // AMQPExchangeConfig holds exchange configuration
 type AMQPExchangeConfig struct {
-	Name       string            `json:"name"`
-	Type       string            `json:"type" default:"direct"`
-	Durable    bool              `json:"durable" default:"true"`
-	AutoDelete bool              `json:"auto_delete" default:"false"`
-	Internal   bool              `json:"internal" default:"false"`
-	NoWait     bool              `json:"no_wait" default:"false"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type" default:"direct"`
+	Durable    bool                   `json:"durable" default:"true"`
+	AutoDelete bool                   `json:"auto_delete" default:"false"`
+	Internal   bool                   `json:"internal" default:"false"`
+	NoWait     bool                   `json:"no_wait" default:"false"`
 	Arguments  map[string]interface{} `json:"arguments"`
 }
 
 // AMQPQueueConfig holds queue configuration
 type AMQPQueueConfig struct {
-	Name       string            `json:"name"`
-	Durable    bool              `json:"durable" default:"true"`
-	AutoDelete bool              `json:"auto_delete" default:"false"`
-	Exclusive  bool              `json:"exclusive" default:"false"`
-	NoWait     bool              `json:"no_wait" default:"false"`
+	Name       string                 `json:"name"`
+	Durable    bool                   `json:"durable" default:"true"`
+	AutoDelete bool                   `json:"auto_delete" default:"false"`
+	Exclusive  bool                   `json:"exclusive" default:"false"`
+	NoWait     bool                   `json:"no_wait" default:"false"`
 	Arguments  map[string]interface{} `json:"arguments"`
-	
+
 	// Binding configuration
-	Bindings   []AMQPBindingConfig `json:"bindings"`
+	Bindings []AMQPBindingConfig `json:"bindings"`
 }
 
 // AMQPBindingConfig holds queue binding configuration
 type AMQPBindingConfig struct {
-	Exchange   string            `json:"exchange"`
-	RoutingKey string            `json:"routing_key"`
-	NoWait     bool              `json:"no_wait" default:"false"`
+	Exchange   string                 `json:"exchange"`
+	RoutingKey string                 `json:"routing_key"`
+	NoWait     bool                   `json:"no_wait" default:"false"`
 	Arguments  map[string]interface{} `json:"arguments"`
 }
 
@@ -494,30 +494,30 @@ type AMQPTLSConfig struct {
 type CircuitBreakerConfig struct {
 	// Global circuit breaker settings
 	Enabled bool `json:"enabled" env:"CIRCUIT_BREAKER_ENABLED" default:"true"`
-	
+
 	// STT circuit breaker settings
-	STTFailureThreshold     int64         `json:"stt_failure_threshold" env:"STT_CB_FAILURE_THRESHOLD" default:"3"`
-	STTTimeout              time.Duration `json:"stt_timeout" env:"STT_CB_TIMEOUT" default:"30s"`
-	STTRequestTimeout       time.Duration `json:"stt_request_timeout" env:"STT_CB_REQUEST_TIMEOUT" default:"45s"`
-	
+	STTFailureThreshold int64         `json:"stt_failure_threshold" env:"STT_CB_FAILURE_THRESHOLD" default:"3"`
+	STTTimeout          time.Duration `json:"stt_timeout" env:"STT_CB_TIMEOUT" default:"30s"`
+	STTRequestTimeout   time.Duration `json:"stt_request_timeout" env:"STT_CB_REQUEST_TIMEOUT" default:"45s"`
+
 	// AMQP circuit breaker settings
-	AMQPFailureThreshold    int64         `json:"amqp_failure_threshold" env:"AMQP_CB_FAILURE_THRESHOLD" default:"5"`
-	AMQPTimeout             time.Duration `json:"amqp_timeout" env:"AMQP_CB_TIMEOUT" default:"60s"`
-	AMQPRequestTimeout      time.Duration `json:"amqp_request_timeout" env:"AMQP_CB_REQUEST_TIMEOUT" default:"10s"`
-	
+	AMQPFailureThreshold int64         `json:"amqp_failure_threshold" env:"AMQP_CB_FAILURE_THRESHOLD" default:"5"`
+	AMQPTimeout          time.Duration `json:"amqp_timeout" env:"AMQP_CB_TIMEOUT" default:"60s"`
+	AMQPRequestTimeout   time.Duration `json:"amqp_request_timeout" env:"AMQP_CB_REQUEST_TIMEOUT" default:"10s"`
+
 	// Redis circuit breaker settings
-	RedisFailureThreshold   int64         `json:"redis_failure_threshold" env:"REDIS_CB_FAILURE_THRESHOLD" default:"8"`
-	RedisTimeout            time.Duration `json:"redis_timeout" env:"REDIS_CB_TIMEOUT" default:"20s"`
-	RedisRequestTimeout     time.Duration `json:"redis_request_timeout" env:"REDIS_CB_REQUEST_TIMEOUT" default:"5s"`
-	
+	RedisFailureThreshold int64         `json:"redis_failure_threshold" env:"REDIS_CB_FAILURE_THRESHOLD" default:"8"`
+	RedisTimeout          time.Duration `json:"redis_timeout" env:"REDIS_CB_TIMEOUT" default:"20s"`
+	RedisRequestTimeout   time.Duration `json:"redis_request_timeout" env:"REDIS_CB_REQUEST_TIMEOUT" default:"5s"`
+
 	// HTTP circuit breaker settings
-	HTTPFailureThreshold    int64         `json:"http_failure_threshold" env:"HTTP_CB_FAILURE_THRESHOLD" default:"5"`
-	HTTPTimeout             time.Duration `json:"http_timeout" env:"HTTP_CB_TIMEOUT" default:"45s"`
-	HTTPRequestTimeout      time.Duration `json:"http_request_timeout" env:"HTTP_CB_REQUEST_TIMEOUT" default:"30s"`
-	
+	HTTPFailureThreshold int64         `json:"http_failure_threshold" env:"HTTP_CB_FAILURE_THRESHOLD" default:"5"`
+	HTTPTimeout          time.Duration `json:"http_timeout" env:"HTTP_CB_TIMEOUT" default:"45s"`
+	HTTPRequestTimeout   time.Duration `json:"http_request_timeout" env:"HTTP_CB_REQUEST_TIMEOUT" default:"30s"`
+
 	// Monitoring settings
-	MonitoringEnabled       bool          `json:"monitoring_enabled" env:"CB_MONITORING_ENABLED" default:"true"`
-	MonitoringInterval      time.Duration `json:"monitoring_interval" env:"CB_MONITORING_INTERVAL" default:"30s"`
+	MonitoringEnabled  bool          `json:"monitoring_enabled" env:"CB_MONITORING_ENABLED" default:"true"`
+	MonitoringInterval time.Duration `json:"monitoring_interval" env:"CB_MONITORING_INTERVAL" default:"30s"`
 }
 
 // RedundancyConfig holds session redundancy configurations
@@ -566,16 +566,16 @@ type AsyncSTTConfig struct {
 	Enabled bool `json:"enabled" env:"STT_ASYNC_ENABLED" default:"true"`
 
 	// Worker configuration
-	WorkerCount   int `json:"worker_count" env:"STT_WORKER_COUNT" default:"3"`
-	MaxRetries    int `json:"max_retries" env:"STT_MAX_RETRIES" default:"3"`
-	RetryBackoff  time.Duration `json:"retry_backoff" env:"STT_RETRY_BACKOFF" default:"30s"`
-	JobTimeout    time.Duration `json:"job_timeout" env:"STT_JOB_TIMEOUT" default:"300s"`
+	WorkerCount  int           `json:"worker_count" env:"STT_WORKER_COUNT" default:"3"`
+	MaxRetries   int           `json:"max_retries" env:"STT_MAX_RETRIES" default:"3"`
+	RetryBackoff time.Duration `json:"retry_backoff" env:"STT_RETRY_BACKOFF" default:"30s"`
+	JobTimeout   time.Duration `json:"job_timeout" env:"STT_JOB_TIMEOUT" default:"300s"`
 
 	// Queue configuration
-	QueueBufferSize     int `json:"queue_buffer_size" env:"STT_QUEUE_BUFFER_SIZE" default:"1000"`
-	BatchSize           int `json:"batch_size" env:"STT_BATCH_SIZE" default:"10"`
-	BatchTimeout        time.Duration `json:"batch_timeout" env:"STT_BATCH_TIMEOUT" default:"60s"`
-	EnablePrioritization bool `json:"enable_prioritization" env:"STT_ENABLE_PRIORITIZATION" default:"true"`
+	QueueBufferSize      int           `json:"queue_buffer_size" env:"STT_QUEUE_BUFFER_SIZE" default:"1000"`
+	BatchSize            int           `json:"batch_size" env:"STT_BATCH_SIZE" default:"10"`
+	BatchTimeout         time.Duration `json:"batch_timeout" env:"STT_BATCH_TIMEOUT" default:"60s"`
+	EnablePrioritization bool          `json:"enable_prioritization" env:"STT_ENABLE_PRIORITIZATION" default:"true"`
 
 	// Resource limits
 	MaxConcurrentJobs int `json:"max_concurrent_jobs" env:"STT_MAX_CONCURRENT_JOBS" default:"50"`
@@ -620,8 +620,8 @@ type PerformanceConfig struct {
 	CPULimit float64 `json:"cpu_limit" env:"PERFORMANCE_CPU_LIMIT" default:"80.0"`
 
 	// Optimization settings
-	EnableAutoGC     bool `json:"enable_auto_gc" env:"PERFORMANCE_ENABLE_AUTO_GC" default:"true"`
-	GCTargetPercent  int  `json:"gc_target_percent" env:"PERFORMANCE_GC_TARGET_PERCENT" default:"50"`
+	EnableAutoGC    bool `json:"enable_auto_gc" env:"PERFORMANCE_ENABLE_AUTO_GC" default:"true"`
+	GCTargetPercent int  `json:"gc_target_percent" env:"PERFORMANCE_GC_TARGET_PERCENT" default:"50"`
 }
 
 // PauseResumeConfig holds configuration for pause/resume functionality
@@ -1017,11 +1017,11 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 	// Load supported vendors - check both STT_VENDORS and SUPPORTED_VENDORS for compatibility
 	vendorsStr := getEnv("STT_VENDORS", "")
 	if vendorsStr == "" {
-		vendorsStr = getEnv("SUPPORTED_VENDORS", "google")
+		vendorsStr = getEnv("SUPPORTED_VENDORS", "google,openai")
 	}
 	if vendorsStr == "" {
-		config.SupportedVendors = []string{"google"}
-		logger.Info("No STT vendors specified, defaulting to: google")
+		config.SupportedVendors = []string{"google", "openai"}
+		logger.Info("No STT vendors specified, defaulting to: google, openai")
 	} else {
 		vendors := strings.Split(vendorsStr, ",")
 		for i, vendor := range vendors {
@@ -1076,19 +1076,19 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 	if err := loadGoogleSTTConfig(logger, &config.Google); err != nil {
 		return fmt.Errorf("failed to load Google STT config: %w", err)
 	}
-	
+
 	if err := loadDeepgramSTTConfig(logger, &config.Deepgram); err != nil {
 		return fmt.Errorf("failed to load Deepgram STT config: %w", err)
 	}
-	
+
 	if err := loadAzureSTTConfig(logger, &config.Azure); err != nil {
 		return fmt.Errorf("failed to load Azure STT config: %w", err)
 	}
-	
+
 	if err := loadAmazonSTTConfig(logger, &config.Amazon); err != nil {
 		return fmt.Errorf("failed to load Amazon STT config: %w", err)
 	}
-	
+
 	if err := loadOpenAISTTConfig(logger, &config.OpenAI); err != nil {
 		return fmt.Errorf("failed to load OpenAI STT config: %w", err)
 	}
@@ -1146,22 +1146,22 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	if (config.AMQPUrl != "" && config.AMQPQueueName == "") || (config.AMQPUrl == "" && config.AMQPQueueName != "") {
 		logger.Warn("Incomplete AMQP configuration: both AMQP_URL and AMQP_QUEUE_NAME must be provided")
 	}
-	
+
 	// Load enhanced AMQP configuration
 	if err := loadAMQPConfig(logger, &config.AMQP); err != nil {
 		return err
 	}
-	
+
 	// Load real-time AMQP configuration
 	config.EnableRealtimeAMQP = getEnvBool("ENABLE_REALTIME_AMQP", false)
 	config.RealtimeQueueName = getEnv("REALTIME_QUEUE_NAME", "siprec_realtime")
 	config.RealtimeExchangeName = getEnv("REALTIME_EXCHANGE_NAME", "")
 	config.RealtimeRoutingKey = getEnv("REALTIME_ROUTING_KEY", "siprec.realtime")
-	
+
 	// Load real-time AMQP batching configuration
 	config.RealtimeBatchSize = getEnvInt("REALTIME_BATCH_SIZE", 10)
 	config.RealtimeQueueSize = getEnvInt("REALTIME_QUEUE_SIZE", 1000)
-	
+
 	// Load real-time batch timeout
 	realtimeBatchTimeoutStr := getEnv("REALTIME_BATCH_TIMEOUT", "1s")
 	realtimeBatchTimeout, err := time.ParseDuration(realtimeBatchTimeoutStr)
@@ -1171,7 +1171,7 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	} else {
 		config.RealtimeBatchTimeout = realtimeBatchTimeout
 	}
-	
+
 	// Load real-time event filtering configuration
 	config.PublishPartialTranscripts = getEnvBool("PUBLISH_PARTIAL_TRANSCRIPTS", true)
 	config.PublishFinalTranscripts = getEnvBool("PUBLISH_FINAL_TRANSCRIPTS", true)
@@ -1190,11 +1190,11 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	for i, host := range config.Hosts {
 		config.Hosts[i] = strings.TrimSpace(host)
 	}
-	
+
 	config.Username = getEnv("AMQP_USERNAME", "guest")
 	config.Password = getEnv("AMQP_PASSWORD", "guest")
 	config.VirtualHost = getEnv("AMQP_VHOST", "/")
-	
+
 	// Load timeouts
 	connectionTimeoutStr := getEnv("AMQP_CONNECTION_TIMEOUT", "30s")
 	connectionTimeout, err := time.ParseDuration(connectionTimeoutStr)
@@ -1204,7 +1204,7 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.ConnectionTimeout = connectionTimeout
 	}
-	
+
 	heartbeatStr := getEnv("AMQP_HEARTBEAT", "10s")
 	heartbeat, err := time.ParseDuration(heartbeatStr)
 	if err != nil {
@@ -1213,11 +1213,11 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.Heartbeat = heartbeat
 	}
-	
+
 	// Load connection pool configuration
 	config.MaxConnections = getEnvInt("AMQP_MAX_CONNECTIONS", 10)
 	config.MaxChannelsPerConn = getEnvInt("AMQP_MAX_CHANNELS_PER_CONN", 100)
-	
+
 	connectionIdleTimeStr := getEnv("AMQP_CONNECTION_IDLE_TIME", "5m")
 	connectionIdleTime, err := time.ParseDuration(connectionIdleTimeStr)
 	if err != nil {
@@ -1226,16 +1226,16 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.ConnectionIdleTime = connectionIdleTime
 	}
-	
+
 	// Load load balancing configuration
 	config.LoadBalancing.Enabled = getEnvBool("AMQP_LB_ENABLED", true)
 	config.LoadBalancing.Strategy = getEnv("AMQP_LB_STRATEGY", "round_robin")
 	config.LoadBalancing.HealthCheck = getEnvBool("AMQP_LB_HEALTH_CHECK", true)
-	
+
 	// Load message configuration
 	config.DefaultExchange = getEnv("AMQP_DEFAULT_EXCHANGE", "")
 	config.DefaultRoutingKey = getEnv("AMQP_DEFAULT_ROUTING_KEY", "")
-	
+
 	messageTTLStr := getEnv("AMQP_MESSAGE_TTL", "24h")
 	messageTTL, err := time.ParseDuration(messageTTLStr)
 	if err != nil {
@@ -1244,7 +1244,7 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.MessageTTL = messageTTL
 	}
-	
+
 	publishTimeoutStr := getEnv("AMQP_PUBLISH_TIMEOUT", "5s")
 	publishTimeout, err := time.ParseDuration(publishTimeoutStr)
 	if err != nil {
@@ -1253,14 +1253,14 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.PublishTimeout = publishTimeout
 	}
-	
+
 	config.PublishConfirm = getEnvBool("AMQP_PUBLISH_CONFIRM", true)
-	
+
 	// Load dead letter configuration
 	config.DeadLetterExchange = getEnv("AMQP_DLX", "siprec.dlx")
 	config.DeadLetterRoutingKey = getEnv("AMQP_DLX_ROUTING_KEY", "failed")
 	config.MaxRetries = getEnvInt("AMQP_MAX_RETRIES", 3)
-	
+
 	retryDelayStr := getEnv("AMQP_RETRY_DELAY", "30s")
 	retryDelay, err := time.ParseDuration(retryDelayStr)
 	if err != nil {
@@ -1269,22 +1269,22 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.RetryDelay = retryDelay
 	}
-	
+
 	// Load QoS configuration
 	config.PrefetchCount = getEnvInt("AMQP_PREFETCH_COUNT", 10)
 	config.PrefetchSize = getEnvInt("AMQP_PREFETCH_SIZE", 0)
 	config.GlobalQos = getEnvBool("AMQP_GLOBAL_QOS", false)
-	
+
 	// Load TLS configuration
 	config.TLS.Enabled = getEnvBool("AMQP_TLS_ENABLED", false)
 	config.TLS.CertFile = getEnv("AMQP_TLS_CERT_FILE", "")
 	config.TLS.KeyFile = getEnv("AMQP_TLS_KEY_FILE", "")
 	config.TLS.CAFile = getEnv("AMQP_TLS_CA_FILE", "")
 	config.TLS.SkipVerify = getEnvBool("AMQP_TLS_SKIP_VERIFY", false)
-	
+
 	// Load monitoring configuration
 	config.EnableMetrics = getEnvBool("AMQP_ENABLE_METRICS", true)
-	
+
 	metricsIntervalStr := getEnv("AMQP_METRICS_INTERVAL", "30s")
 	metricsInterval, err := time.ParseDuration(metricsIntervalStr)
 	if err != nil {
@@ -1293,7 +1293,7 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.MetricsInterval = metricsInterval
 	}
-	
+
 	// Load reconnection configuration
 	reconnectDelayStr := getEnv("AMQP_RECONNECT_DELAY", "5s")
 	reconnectDelay, err := time.ParseDuration(reconnectDelayStr)
@@ -1303,7 +1303,7 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.ReconnectDelay = reconnectDelay
 	}
-	
+
 	maxReconnectDelayStr := getEnv("AMQP_MAX_RECONNECT_DELAY", "30s")
 	maxReconnectDelay, err := time.ParseDuration(maxReconnectDelayStr)
 	if err != nil {
@@ -1312,10 +1312,10 @@ func loadAMQPConfig(logger *logrus.Logger, config *AMQPConfig) error {
 	} else {
 		config.MaxReconnectDelay = maxReconnectDelay
 	}
-	
+
 	config.ReconnectMultiplier = getEnvFloat("AMQP_RECONNECT_MULTIPLIER", 2.0)
 	config.MaxReconnectAttempts = getEnvInt("AMQP_MAX_RECONNECT_ATTEMPTS", 0)
-	
+
 	return nil
 }
 
@@ -1574,10 +1574,10 @@ func loadHotReloadConfig(logger *logrus.Logger, config *HotReloadConfig) error {
 	// Log hot-reload configuration
 	if config.Enabled {
 		logger.WithFields(logrus.Fields{
-			"debounce_time":  config.DebounceTime,
+			"debounce_time":   config.DebounceTime,
 			"max_reload_time": config.MaxReloadTime,
-			"backup_enabled": config.BackupEnabled,
-			"backup_dir":     config.BackupDir,
+			"backup_enabled":  config.BackupEnabled,
+			"backup_dir":      config.BackupDir,
 		}).Info("Configuration hot-reload enabled")
 	} else {
 		logger.Debug("Configuration hot-reload disabled")
@@ -1692,13 +1692,13 @@ func loadPauseResumeConfig(logger *logrus.Logger, config *PauseResumeConfig) err
 	// Log configuration
 	if config.Enabled {
 		logger.WithFields(logrus.Fields{
-			"pause_recording":    config.PauseRecording,
+			"pause_recording":     config.PauseRecording,
 			"pause_transcription": config.PauseTranscription,
-			"send_notifications": config.SendNotifications,
-			"max_pause_duration": config.MaxPauseDuration,
-			"auto_resume":        config.AutoResume,
-			"per_session":        config.PerSession,
-			"require_auth":       config.RequireAuth,
+			"send_notifications":  config.SendNotifications,
+			"max_pause_duration":  config.MaxPauseDuration,
+			"auto_resume":         config.AutoResume,
+			"per_session":         config.PerSession,
+			"require_auth":        config.RequireAuth,
 		}).Info("Pause/Resume API enabled")
 	} else {
 		logger.Debug("Pause/Resume API disabled")
@@ -1991,10 +1991,10 @@ func getInternalIP(logger *logrus.Logger) string {
 func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfig) error {
 	// Load global circuit breaker settings
 	config.Enabled = getEnvBool("CIRCUIT_BREAKER_ENABLED", true)
-	
+
 	// Load STT circuit breaker settings
 	config.STTFailureThreshold = int64(getEnvInt("STT_CB_FAILURE_THRESHOLD", 3))
-	
+
 	sttTimeoutStr := getEnv("STT_CB_TIMEOUT", "30s")
 	sttTimeout, err := time.ParseDuration(sttTimeoutStr)
 	if err != nil {
@@ -2003,7 +2003,7 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.STTTimeout = sttTimeout
 	}
-	
+
 	sttRequestTimeoutStr := getEnv("STT_CB_REQUEST_TIMEOUT", "45s")
 	sttRequestTimeout, err := time.ParseDuration(sttRequestTimeoutStr)
 	if err != nil {
@@ -2012,10 +2012,10 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.STTRequestTimeout = sttRequestTimeout
 	}
-	
+
 	// Load AMQP circuit breaker settings
 	config.AMQPFailureThreshold = int64(getEnvInt("AMQP_CB_FAILURE_THRESHOLD", 5))
-	
+
 	amqpTimeoutStr := getEnv("AMQP_CB_TIMEOUT", "60s")
 	amqpTimeout, err := time.ParseDuration(amqpTimeoutStr)
 	if err != nil {
@@ -2024,7 +2024,7 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.AMQPTimeout = amqpTimeout
 	}
-	
+
 	amqpRequestTimeoutStr := getEnv("AMQP_CB_REQUEST_TIMEOUT", "10s")
 	amqpRequestTimeout, err := time.ParseDuration(amqpRequestTimeoutStr)
 	if err != nil {
@@ -2033,10 +2033,10 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.AMQPRequestTimeout = amqpRequestTimeout
 	}
-	
+
 	// Load Redis circuit breaker settings
 	config.RedisFailureThreshold = int64(getEnvInt("REDIS_CB_FAILURE_THRESHOLD", 8))
-	
+
 	redisTimeoutStr := getEnv("REDIS_CB_TIMEOUT", "20s")
 	redisTimeout, err := time.ParseDuration(redisTimeoutStr)
 	if err != nil {
@@ -2045,7 +2045,7 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.RedisTimeout = redisTimeout
 	}
-	
+
 	redisRequestTimeoutStr := getEnv("REDIS_CB_REQUEST_TIMEOUT", "5s")
 	redisRequestTimeout, err := time.ParseDuration(redisRequestTimeoutStr)
 	if err != nil {
@@ -2054,10 +2054,10 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.RedisRequestTimeout = redisRequestTimeout
 	}
-	
+
 	// Load HTTP circuit breaker settings
 	config.HTTPFailureThreshold = int64(getEnvInt("HTTP_CB_FAILURE_THRESHOLD", 5))
-	
+
 	httpTimeoutStr := getEnv("HTTP_CB_TIMEOUT", "45s")
 	httpTimeout, err := time.ParseDuration(httpTimeoutStr)
 	if err != nil {
@@ -2066,7 +2066,7 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.HTTPTimeout = httpTimeout
 	}
-	
+
 	httpRequestTimeoutStr := getEnv("HTTP_CB_REQUEST_TIMEOUT", "30s")
 	httpRequestTimeout, err := time.ParseDuration(httpRequestTimeoutStr)
 	if err != nil {
@@ -2075,10 +2075,10 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.HTTPRequestTimeout = httpRequestTimeout
 	}
-	
+
 	// Load monitoring settings
 	config.MonitoringEnabled = getEnvBool("CB_MONITORING_ENABLED", true)
-	
+
 	monitoringIntervalStr := getEnv("CB_MONITORING_INTERVAL", "30s")
 	monitoringInterval, err := time.ParseDuration(monitoringIntervalStr)
 	if err != nil {
@@ -2087,7 +2087,7 @@ func loadCircuitBreakerConfig(logger *logrus.Logger, config *CircuitBreakerConfi
 	} else {
 		config.MonitoringInterval = monitoringInterval
 	}
-	
+
 	return nil
 }
 
@@ -2105,11 +2105,11 @@ func loadGoogleSTTConfig(logger *logrus.Logger, config *GoogleSTTConfig) error {
 	config.EnableWordTimeOffsets = getEnvBool("GOOGLE_STT_WORD_TIME_OFFSETS", true)
 	config.MaxAlternatives = getEnvInt("GOOGLE_STT_MAX_ALTERNATIVES", 1)
 	config.ProfanityFilter = getEnvBool("GOOGLE_STT_PROFANITY_FILTER", false)
-	
+
 	if config.Enabled && config.CredentialsFile == "" && config.APIKey == "" {
 		logger.Warn("Google STT enabled but neither GOOGLE_APPLICATION_CREDENTIALS nor GOOGLE_STT_API_KEY is set")
 	}
-	
+
 	return nil
 }
 
@@ -2127,7 +2127,7 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 	config.Numerals = getEnvBool("DEEPGRAM_NUMERALS", true)
 	config.SmartFormat = getEnvBool("DEEPGRAM_SMART_FORMAT", true)
 	config.ProfanityFilter = getEnvBool("DEEPGRAM_PROFANITY_FILTER", false)
-	
+
 	// Parse redact list
 	redactStr := getEnv("DEEPGRAM_REDACT", "")
 	if redactStr != "" {
@@ -2136,7 +2136,7 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 			config.Redact[i] = strings.TrimSpace(item)
 		}
 	}
-	
+
 	// Parse keywords list
 	keywordsStr := getEnv("DEEPGRAM_KEYWORDS", "")
 	if keywordsStr != "" {
@@ -2145,10 +2145,10 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 			config.Keywords[i] = strings.TrimSpace(keyword)
 		}
 	}
-	
+
 	// Load multi-language and accent detection configuration
 	config.DetectLanguage = getEnvBool("DEEPGRAM_DETECT_LANGUAGE", true)
-	
+
 	// Parse supported languages list
 	supportedLangsStr := getEnv("DEEPGRAM_SUPPORTED_LANGUAGES", "en-US,es-ES,fr-FR,de-DE,it-IT,pt-BR,ru-RU,ja-JP,zh-CN,ko-KR,ar-SA,hi-IN")
 	if supportedLangsStr != "" {
@@ -2160,7 +2160,7 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 		// Default to common languages if not specified
 		config.SupportedLanguages = []string{"en-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR"}
 	}
-	
+
 	// Load language confidence threshold
 	confidenceStr := getEnv("DEEPGRAM_LANGUAGE_CONFIDENCE", "0.7")
 	if confidence, err := strconv.ParseFloat(confidenceStr, 64); err != nil {
@@ -2169,7 +2169,7 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 	} else {
 		config.LanguageConfidenceThreshold = confidence
 	}
-	
+
 	// Load accent-aware configuration
 	config.AccentAwareModels = getEnvBool("DEEPGRAM_ACCENT_AWARE", true)
 	config.FallbackLanguage = getEnv("DEEPGRAM_FALLBACK_LANGUAGE", "en-US")
@@ -2177,18 +2177,18 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 	config.LanguageSwitchingInterval = getEnvInt("DEEPGRAM_SWITCHING_INTERVAL", 5)
 	config.MultiLanguageAlternatives = getEnvBool("DEEPGRAM_MULTILANG_ALTERNATIVES", false)
 	config.MaxLanguageAlternatives = getEnvInt("DEEPGRAM_MAX_LANG_ALTERNATIVES", 3)
-	
+
 	// Validate accent detection configuration
 	if config.DetectLanguage && len(config.SupportedLanguages) == 0 {
 		logger.Warn("Language detection enabled but no supported languages specified")
 		config.SupportedLanguages = []string{"en-US"}
 	}
-	
+
 	if config.LanguageConfidenceThreshold < 0.0 || config.LanguageConfidenceThreshold > 1.0 {
 		logger.Warn("Invalid language confidence threshold, using default: 0.7")
 		config.LanguageConfidenceThreshold = 0.7
 	}
-	
+
 	// Validate fallback language is in supported languages
 	fallbackFound := false
 	for _, lang := range config.SupportedLanguages {
@@ -2201,23 +2201,23 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 		logger.Warnf("Fallback language '%s' not in supported languages, adding it", config.FallbackLanguage)
 		config.SupportedLanguages = append(config.SupportedLanguages, config.FallbackLanguage)
 	}
-	
+
 	if config.Enabled && config.APIKey == "" {
 		logger.Warn("Deepgram STT enabled but DEEPGRAM_API_KEY is not set")
 	}
-	
+
 	// Log accent detection configuration if enabled
 	if config.Enabled && config.DetectLanguage {
 		logger.WithFields(logrus.Fields{
-			"supported_languages":       config.SupportedLanguages,
-			"confidence_threshold":      config.LanguageConfidenceThreshold,
-			"accent_aware_models":       config.AccentAwareModels,
-			"fallback_language":         config.FallbackLanguage,
-			"realtime_switching":        config.RealtimeLanguageSwitching,
-			"multilang_alternatives":    config.MultiLanguageAlternatives,
+			"supported_languages":    config.SupportedLanguages,
+			"confidence_threshold":   config.LanguageConfidenceThreshold,
+			"accent_aware_models":    config.AccentAwareModels,
+			"fallback_language":      config.FallbackLanguage,
+			"realtime_switching":     config.RealtimeLanguageSwitching,
+			"multilang_alternatives": config.MultiLanguageAlternatives,
 		}).Info("Deepgram multi-language accent detection enabled")
 	}
-	
+
 	return nil
 }
 
@@ -2231,11 +2231,11 @@ func loadAzureSTTConfig(logger *logrus.Logger, config *AzureSTTConfig) error {
 	config.EnableDetailedResults = getEnvBool("AZURE_STT_DETAILED_RESULTS", true)
 	config.ProfanityFilter = getEnv("AZURE_STT_PROFANITY_FILTER", "masked")
 	config.OutputFormat = getEnv("AZURE_STT_OUTPUT_FORMAT", "detailed")
-	
+
 	if config.Enabled && (config.SubscriptionKey == "" || config.Region == "") {
 		logger.Warn("Azure STT enabled but AZURE_SPEECH_KEY or AZURE_SPEECH_REGION is not set")
 	}
-	
+
 	return nil
 }
 
@@ -2252,11 +2252,11 @@ func loadAmazonSTTConfig(logger *logrus.Logger, config *AmazonSTTConfig) error {
 	config.EnableChannelIdentification = getEnvBool("AMAZON_STT_CHANNEL_ID", false)
 	config.EnableSpeakerIdentification = getEnvBool("AMAZON_STT_SPEAKER_ID", false)
 	config.MaxSpeakerLabels = getEnvInt("AMAZON_STT_MAX_SPEAKERS", 2)
-	
+
 	if config.Enabled && (config.AccessKeyID == "" || config.SecretAccessKey == "") {
 		logger.Warn("Amazon STT enabled but AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is not set")
 	}
-	
+
 	return nil
 }
 
@@ -2270,7 +2270,7 @@ func loadOpenAISTTConfig(logger *logrus.Logger, config *OpenAISTTConfig) error {
 	config.Prompt = getEnv("OPENAI_STT_PROMPT", "")
 	config.ResponseFormat = getEnv("OPENAI_STT_RESPONSE_FORMAT", "verbose_json")
 	config.BaseURL = getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-	
+
 	// Parse temperature
 	tempStr := getEnv("OPENAI_STT_TEMPERATURE", "0.0")
 	temp, err := strconv.ParseFloat(tempStr, 64)
@@ -2280,11 +2280,11 @@ func loadOpenAISTTConfig(logger *logrus.Logger, config *OpenAISTTConfig) error {
 	} else {
 		config.Temperature = temp
 	}
-	
+
 	if config.Enabled && config.APIKey == "" {
 		logger.Warn("OpenAI STT enabled but OPENAI_API_KEY is not set")
 	}
-	
+
 	return nil
 }
 
@@ -2358,7 +2358,7 @@ func loadPIIConfig(logger *logrus.Logger, config *PIIConfig) error {
 			"preserve_format":         config.PreserveFormat,
 			"apply_to_transcriptions": config.ApplyToTranscriptions,
 			"apply_to_recordings":     config.ApplyToRecordings,
-			"log_level":              config.LogLevel,
+			"log_level":               config.LogLevel,
 		}).Info("PII detection enabled")
 	} else {
 		logger.Debug("PII detection disabled")

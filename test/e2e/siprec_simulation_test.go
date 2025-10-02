@@ -74,10 +74,7 @@ func TestSimulatedSiprecFullFlow(t *testing.T) {
 	}()
 
 	// Create a UPD listener to simulate the RTP receiver
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: call.RTPPort})
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	conn := listenUDPOrSkip(t, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: call.RTPPort})
 	defer conn.Close()
 
 	logger.WithField("port", call.RTPPort).Info("Listening for RTP packets")
@@ -111,11 +108,7 @@ func TestSimulatedSiprecFullFlow(t *testing.T) {
 	// Simulate sending RTP packets (acting as the SIP client)
 	go func() {
 		// Create a client UDP connection
-		clientConn, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: call.RTPPort})
-		if err != nil {
-			t.Logf("Failed to create client UDP connection: %v", err)
-			return
-		}
+		clientConn := dialUDPOrSkip(t, "udp", nil, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: call.RTPPort})
 		defer clientConn.Close()
 
 		// Create a simple RTP packet (12-byte header + data)
