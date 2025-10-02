@@ -26,6 +26,20 @@ type STTProviderTestSuite struct {
 	results          map[string][]TranscriptionResult
 }
 
+func (suite *STTProviderTestSuite) attachTranscriptionService(provider stt.Provider) {
+	if setter, ok := provider.(interface {
+		SetTranscriptionService(*stt.TranscriptionService)
+	}); ok {
+		setter.SetTranscriptionService(suite.transcriptionSvc)
+	}
+
+	if streamer, ok := provider.(stt.StreamingProvider); ok {
+		streamer.SetCallback(func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
+			suite.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
+		})
+	}
+}
+
 // TranscriptionResult captures test results
 type TranscriptionResult struct {
 	Provider     string
@@ -156,6 +170,7 @@ func (suite *STTProviderTestSuite) initializeProviders() {
 			suite.logger.WithError(err).Warn("Failed to initialize Amazon Transcribe provider")
 		} else {
 			suite.providers["amazon-transcribe"] = provider
+			suite.attachTranscriptionService(provider)
 			suite.logger.Info("Initialized Amazon Transcribe provider")
 		}
 	}
@@ -167,6 +182,7 @@ func (suite *STTProviderTestSuite) initializeProviders() {
 			suite.logger.WithError(err).Warn("Failed to initialize Azure Speech provider")
 		} else {
 			suite.providers["azure-speech"] = provider
+			suite.attachTranscriptionService(provider)
 			suite.logger.Info("Initialized Azure Speech provider")
 		}
 	}
@@ -175,19 +191,19 @@ func (suite *STTProviderTestSuite) initializeProviders() {
 	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
 		googleConfig := &config.GoogleSTTConfig{
 			Enabled:               true,
-			CredentialsPath:       os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+			CredentialsFile:       os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
 			Model:                 "latest_long",
 			Language:              "en-US",
 			EnableWordTimeOffsets: true,
-			EnableWordConfidence:  true,
+			EnhancedModels:        true,
 			MaxAlternatives:       3,
-			UseEnhanced:           true,
 		}
 		provider := stt.NewGoogleProvider(suite.logger, suite.transcriptionSvc, googleConfig)
 		if err := provider.Initialize(); err != nil {
 			suite.logger.WithError(err).Warn("Failed to initialize Google Speech provider")
 		} else {
 			suite.providers["google-speech"] = provider
+			suite.attachTranscriptionService(provider)
 			suite.logger.Info("Initialized Google Speech provider")
 		}
 	}
@@ -198,6 +214,7 @@ func (suite *STTProviderTestSuite) initializeProviders() {
 		suite.logger.WithError(err).Error("Failed to initialize Mock provider")
 	} else {
 		suite.providers["mock"] = mockProvider
+		suite.attachTranscriptionService(mockProvider)
 		suite.logger.Info("Initialized Mock provider")
 	}
 
@@ -242,7 +259,9 @@ func (suite *STTProviderTestSuite) TestBasicTranscription() {
 			if name == "mock" {
 				// Mock provider should always succeed
 				suite.Assert().NoError(err, "Mock provider should not return error")
-				suite.Assert().NotEmpty(listener.results, "Should receive transcription results")
+				require.Eventually(suite.T(), func() bool {
+					return len(listener.results) > 0
+				}, 5*time.Second, 50*time.Millisecond, "Should receive transcription results")
 			} else {
 				// Real providers might fail due to network/auth issues in test environment
 				if err != nil {
@@ -349,7 +368,9 @@ func (suite *STTProviderTestSuite) TestProviderPerformance() {
 			suite.Assert().Less(duration, 60*time.Second, "Transcription should complete within reasonable time")
 
 			if name == "mock" && err == nil {
-				suite.Assert().NotEmpty(listener.results, "Should receive results from mock provider")
+				require.Eventually(suite.T(), func() bool {
+					return len(listener.results) > 0
+				}, 5*time.Second, 50*time.Millisecond, "Should receive results from mock provider")
 			}
 		})
 	}
