@@ -34,6 +34,14 @@ func TestConfigLoading(t *testing.T) {
 	os.Setenv("RECORDING_DIR", "./test-recordings")
 	os.Setenv("RECORDING_MAX_DURATION_HOURS", "6")
 	os.Setenv("RECORDING_CLEANUP_DAYS", "45")
+	os.Setenv("RECORDING_STORAGE_ENABLED", "true")
+	os.Setenv("RECORDING_STORAGE_KEEP_LOCAL", "false")
+	os.Setenv("RECORDING_STORAGE_S3_ENABLED", "true")
+	os.Setenv("RECORDING_STORAGE_S3_BUCKET", "compliance-audio")
+	os.Setenv("RECORDING_STORAGE_S3_REGION", "us-east-1")
+	os.Setenv("RECORDING_STORAGE_S3_ACCESS_KEY", "access")
+	os.Setenv("RECORDING_STORAGE_S3_SECRET_KEY", "secret")
+	os.Setenv("RECORDING_STORAGE_S3_PREFIX", "recordings/")
 
 	os.Setenv("SUPPORTED_VENDORS", "google,deepgram,openai")
 	os.Setenv("SUPPORTED_CODECS", "PCMU,PCMA,G722,OPUS")
@@ -64,7 +72,10 @@ func TestConfigLoading(t *testing.T) {
 			"RTP_PORT_MAX", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 			"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
 			"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
-			"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "SUPPORTED_VENDORS",
+			"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "RECORDING_STORAGE_ENABLED",
+			"RECORDING_STORAGE_KEEP_LOCAL", "RECORDING_STORAGE_S3_ENABLED", "RECORDING_STORAGE_S3_BUCKET",
+			"RECORDING_STORAGE_S3_REGION", "RECORDING_STORAGE_S3_ACCESS_KEY", "RECORDING_STORAGE_S3_SECRET_KEY",
+			"RECORDING_STORAGE_S3_PREFIX", "SUPPORTED_VENDORS",
 			"SUPPORTED_CODECS", "DEFAULT_SPEECH_VENDOR", "MAX_CONCURRENT_CALLS", "LOG_LEVEL",
 			"LOG_FORMAT", "AMQP_URL", "AMQP_QUEUE_NAME", "ENABLE_REDUNDANCY", "SESSION_TIMEOUT",
 			"SESSION_CHECK_INTERVAL", "REDUNDANCY_STORAGE_TYPE",
@@ -109,6 +120,11 @@ func TestConfigLoading(t *testing.T) {
 	assert.Equal(t, "./test-recordings", config.Recording.Directory)
 	assert.Equal(t, 6*time.Hour, config.Recording.MaxDuration)
 	assert.Equal(t, 45, config.Recording.CleanupDays)
+	assert.True(t, config.Recording.Storage.Enabled)
+	assert.False(t, config.Recording.Storage.KeepLocal)
+	assert.True(t, config.Recording.Storage.S3.Enabled)
+	assert.Equal(t, "compliance-audio", config.Recording.Storage.S3.Bucket)
+	assert.Equal(t, "recordings/", config.Recording.Storage.S3.Prefix)
 
 	// Verify STT configuration
 	assert.Equal(t, []string{"google", "deepgram", "openai"}, config.STT.SupportedVendors)
@@ -189,6 +205,8 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.Equal(t, "./recordings", config.Recording.Directory)
 	assert.Equal(t, 4*time.Hour, config.Recording.MaxDuration)
 	assert.Equal(t, 30, config.Recording.CleanupDays)
+	assert.False(t, config.Recording.Storage.Enabled)
+	assert.True(t, config.Recording.Storage.KeepLocal)
 
 	// Verify STT defaults
 	assert.Equal(t, []string{"google", "openai"}, config.STT.SupportedVendors)

@@ -45,14 +45,14 @@ func main() {
 func basicDeepgramExample(logger *logrus.Logger) {
 	// Create transcription service
 	transcriptionSvc := stt.NewTranscriptionService(logger)
-	
+
 	// Create Deepgram STT config
 	deepgramConfig := &config.DeepgramSTTConfig{
 		Enabled:  true,
 		Language: "en-US",
 		Model:    "nova-2",
 	}
-	
+
 	// Create basic Deepgram provider
 	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
 
@@ -282,7 +282,7 @@ func websocketStreamingExample(logger *logrus.Logger) {
 
 func providerManagerExample(logger *logrus.Logger) {
 	// Create provider manager
-	manager := stt.NewProviderManager(logger, "deepgram-enhanced")
+	manager := stt.NewProviderManager(logger, "deepgram-enhanced", []string{"deepgram-enhanced"})
 
 	// Register enhanced Deepgram provider
 	deepgramPMConfig := &config.DeepgramSTTConfig{
@@ -511,7 +511,7 @@ func demoConfigurationUpdates(logger *logrus.Logger) {
 	// Show initial config
 	fmt.Printf("📋 Initial Model: %s, Language: %s\n", initialConfig.Model, initialConfig.Language)
 
-	// Create updated configuration 
+	// Create updated configuration
 	updatedConfig := &config.DeepgramSTTConfig{
 		Enabled:  true,
 		Language: "es-ES",

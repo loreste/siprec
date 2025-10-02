@@ -114,6 +114,46 @@ type RecordingConfig struct {
 
 	// Days to keep recordings before cleanup
 	CleanupDays int `json:"cleanup_days" env:"RECORDING_CLEANUP_DAYS" default:"30"`
+
+	// Storage configuration for recordings
+	Storage RecordingStorageConfig `json:"storage"`
+}
+
+// RecordingStorageConfig defines remote storage options for recordings
+type RecordingStorageConfig struct {
+	Enabled   bool `json:"enabled" env:"RECORDING_STORAGE_ENABLED" default:"false"`
+	KeepLocal bool `json:"keep_local" env:"RECORDING_STORAGE_KEEP_LOCAL" default:"true"`
+
+	S3    RecordingS3Config    `json:"s3"`
+	GCS   RecordingGCSConfig   `json:"gcs"`
+	Azure RecordingAzureConfig `json:"azure"`
+}
+
+// RecordingS3Config holds AWS S3 configuration for recordings
+type RecordingS3Config struct {
+	Enabled   bool   `json:"enabled" env:"RECORDING_STORAGE_S3_ENABLED" default:"false"`
+	Bucket    string `json:"bucket" env:"RECORDING_STORAGE_S3_BUCKET"`
+	Region    string `json:"region" env:"RECORDING_STORAGE_S3_REGION"`
+	AccessKey string `json:"access_key" env:"RECORDING_STORAGE_S3_ACCESS_KEY"`
+	SecretKey string `json:"secret_key" env:"RECORDING_STORAGE_S3_SECRET_KEY"`
+	Prefix    string `json:"prefix" env:"RECORDING_STORAGE_S3_PREFIX"`
+}
+
+// RecordingGCSConfig holds Google Cloud Storage configuration for recordings
+type RecordingGCSConfig struct {
+	Enabled           bool   `json:"enabled" env:"RECORDING_STORAGE_GCS_ENABLED" default:"false"`
+	Bucket            string `json:"bucket" env:"RECORDING_STORAGE_GCS_BUCKET"`
+	ServiceAccountKey string `json:"service_account_key" env:"RECORDING_STORAGE_GCS_SERVICE_ACCOUNT"`
+	Prefix            string `json:"prefix" env:"RECORDING_STORAGE_GCS_PREFIX"`
+}
+
+// RecordingAzureConfig holds Azure Blob Storage configuration for recordings
+type RecordingAzureConfig struct {
+	Enabled   bool   `json:"enabled" env:"RECORDING_STORAGE_AZURE_ENABLED" default:"false"`
+	Account   string `json:"account" env:"RECORDING_STORAGE_AZURE_ACCOUNT"`
+	Container string `json:"container" env:"RECORDING_STORAGE_AZURE_CONTAINER"`
+	AccessKey string `json:"access_key" env:"RECORDING_STORAGE_AZURE_ACCESS_KEY"`
+	Prefix    string `json:"prefix" env:"RECORDING_STORAGE_AZURE_PREFIX"`
 }
 
 // STTConfig holds speech-to-text configurations
@@ -1007,6 +1047,37 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 		config.CleanupDays = 30
 	} else {
 		config.CleanupDays = cleanupDays
+	}
+
+	// Load recording storage configuration
+	config.Storage.Enabled = getEnvBool("RECORDING_STORAGE_ENABLED", false)
+	config.Storage.KeepLocal = getEnvBool("RECORDING_STORAGE_KEEP_LOCAL", true)
+
+	config.Storage.S3.Enabled = getEnvBool("RECORDING_STORAGE_S3_ENABLED", false)
+	config.Storage.S3.Bucket = getEnv("RECORDING_STORAGE_S3_BUCKET", "")
+	config.Storage.S3.Region = getEnv("RECORDING_STORAGE_S3_REGION", "")
+	config.Storage.S3.AccessKey = getEnv("RECORDING_STORAGE_S3_ACCESS_KEY", "")
+	config.Storage.S3.SecretKey = getEnv("RECORDING_STORAGE_S3_SECRET_KEY", "")
+	config.Storage.S3.Prefix = getEnv("RECORDING_STORAGE_S3_PREFIX", "")
+
+	config.Storage.GCS.Enabled = getEnvBool("RECORDING_STORAGE_GCS_ENABLED", false)
+	config.Storage.GCS.Bucket = getEnv("RECORDING_STORAGE_GCS_BUCKET", "")
+	config.Storage.GCS.ServiceAccountKey = getEnv("RECORDING_STORAGE_GCS_SERVICE_ACCOUNT", "")
+	config.Storage.GCS.Prefix = getEnv("RECORDING_STORAGE_GCS_PREFIX", "")
+
+	config.Storage.Azure.Enabled = getEnvBool("RECORDING_STORAGE_AZURE_ENABLED", false)
+	config.Storage.Azure.Account = getEnv("RECORDING_STORAGE_AZURE_ACCOUNT", "")
+	config.Storage.Azure.Container = getEnv("RECORDING_STORAGE_AZURE_CONTAINER", "")
+	config.Storage.Azure.AccessKey = getEnv("RECORDING_STORAGE_AZURE_ACCESS_KEY", "")
+	config.Storage.Azure.Prefix = getEnv("RECORDING_STORAGE_AZURE_PREFIX", "")
+
+	if config.Storage.Enabled {
+		logger.WithFields(logrus.Fields{
+			"keep_local": config.Storage.KeepLocal,
+			"s3":         config.Storage.S3.Enabled,
+			"gcs":        config.Storage.GCS.Enabled,
+			"azure":      config.Storage.Azure.Enabled,
+		}).Info("Recording storage enabled")
 	}
 
 	return nil

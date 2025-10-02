@@ -8,7 +8,8 @@ type Config struct {
 	EnableSRTP bool
 
 	// Recording configuration
-	RecordingDir string
+	RecordingDir     string
+	RecordingStorage RecordingStorage
 
 	// NAT configuration
 	BehindNAT  bool
