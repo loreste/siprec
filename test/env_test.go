@@ -105,6 +105,9 @@ func TestRunEnvironmentCheck(t *testing.T) {
 
 // This is the test function that Go will run
 func ExampleRunEnvironmentCheck() {
+	os.Setenv("RUN_ENV_CHECK_SILENT", "1")
+	defer os.Unsetenv("RUN_ENV_CHECK_SILENT")
+
 	// This is just a stub to demonstrate usage
 	RunEnvironmentCheck()
 	fmt.Println("Environment check completed")

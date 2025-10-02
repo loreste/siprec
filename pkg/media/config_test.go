@@ -30,6 +30,9 @@ func TestConfig(t *testing.T) {
 }
 
 func TestPortManager(t *testing.T) {
+	restore := setPortAvailabilityChecker(func(int) bool { return true })
+	defer restore()
+
 	minPort := 10000
 	maxPort := 10010
 
@@ -60,6 +63,9 @@ func TestPortManager(t *testing.T) {
 }
 
 func TestPortManagerBasicFunctionality(t *testing.T) {
+	restore := setPortAvailabilityChecker(func(int) bool { return true })
+	defer restore()
+
 	minPort := 50000 // Use high port numbers to avoid conflicts
 	maxPort := 50004 // Only even ports: 50000, 50002, 50004 (3 ports available)
 
@@ -88,6 +94,9 @@ func TestPortManagerBasicFunctionality(t *testing.T) {
 }
 
 func TestGlobalPortManager(t *testing.T) {
+	restore := setPortAvailabilityChecker(func(int) bool { return true })
+	defer restore()
+
 	// Test the global port manager functions
 	InitPortManager(20000, 20010)
 	pm := GetPortManager()

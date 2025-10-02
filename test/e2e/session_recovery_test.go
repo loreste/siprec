@@ -155,12 +155,10 @@ func TestRealTimeSessionRecovery(t *testing.T) {
 	rtpPort2 := 17002
 
 	// Create UDP listeners for the RTP ports
-	conn1, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: rtpPort1})
-	require.NoError(t, err, "Failed to create UDP listener for port 1")
+	conn1 := listenUDPOrSkip(t, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: rtpPort1})
 	defer conn1.Close()
 
-	conn2, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: rtpPort2})
-	require.NoError(t, err, "Failed to create UDP listener for port 2")
+	conn2 := listenUDPOrSkip(t, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: rtpPort2})
 	defer conn2.Close()
 
 	// Create original session
@@ -251,11 +249,7 @@ func TestRealTimeSessionRecovery(t *testing.T) {
 			defer wg.Done()
 
 			// Create a client UDP connection
-			clientConn, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
-			if err != nil {
-				logger.WithError(err).Error("Failed to create client UDP connection")
-				return
-			}
+			clientConn := dialUDPOrSkip(t, "udp", nil, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
 			defer clientConn.Close()
 
 			// Create a simple RTP packet

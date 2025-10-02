@@ -2,6 +2,7 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -136,7 +137,13 @@ func RunEnvironmentCheck() {
 	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 	})
-	logger.SetOutput(os.Stdout)
+
+	silent := os.Getenv("RUN_ENV_CHECK_SILENT") == "1"
+	if silent {
+		logger.SetOutput(io.Discard)
+	} else {
+		logger.SetOutput(os.Stdout)
+	}
 
 	// Check for LOG_LEVEL environment variable
 	logLevel := GetEnvWithDefault("LOG_LEVEL", "info")
@@ -167,8 +174,10 @@ func RunEnvironmentCheck() {
 	}
 
 	// Print environment variables relevant to redundancy
-	fmt.Println("Environment Variables:")
-	fmt.Println("======================")
+	if !silent {
+		fmt.Println("Environment Variables:")
+		fmt.Println("=====================")
+	}
 
 	// Define the environment variables to check
 	envVars := map[string]string{
@@ -185,8 +194,10 @@ func RunEnvironmentCheck() {
 	}
 
 	// Print all environment variables
-	for key, value := range envVars {
-		fmt.Printf("%s: %s\n", key, value)
+	if !silent {
+		for key, value := range envVars {
+			fmt.Printf("%s: %s\n", key, value)
+		}
 	}
 
 	// Check if important directories exist

@@ -191,7 +191,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.Equal(t, 30, config.Recording.CleanupDays)
 
 	// Verify STT defaults
-	assert.Equal(t, []string{"google"}, config.STT.SupportedVendors)
+	assert.Equal(t, []string{"google", "openai"}, config.STT.SupportedVendors)
 	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "OPUS"}, config.STT.SupportedCodecs)
 	assert.Equal(t, "google", config.STT.DefaultVendor)
 
