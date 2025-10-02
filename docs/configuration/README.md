@@ -19,9 +19,13 @@ SIP_PORT=5060
 HTTP_HOST=0.0.0.0
 HTTP_PORT=8080
 
-# STT Provider (choose one)
-STT_PROVIDER=openai
-OPENAI_API_KEY=your-api-key
+# STT providers (fallback order)
+SUPPORTED_VENDORS=openai,deepgram
+STT_DEFAULT_VENDOR=openai
+
+# Provider-specific credentials
+OPENAI_API_KEY=your-openai-api-key
+# DEEPGRAM_API_KEY=your-deepgram-api-key
 
 # Optional: Message Queue
 AMQP_ENABLED=true
