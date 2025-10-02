@@ -19,41 +19,95 @@ Complete reference for all environment variables supported by the SIPREC Server.
 - `HTTP_WRITE_TIMEOUT` (default: "15s") - HTTP write timeout
 - `HTTP_ENABLE_METRICS` (default: true) - Enable Prometheus metrics
 
-### RTP Configuration
-- `RTP_START_PORT` (default: 30000) - RTP port range start
-- `RTP_END_PORT` (default: 40000) - RTP port range end
-- `RTP_PUBLIC_IP` - Public IP for RTP (auto-detected if not set)
+### RTP & NAT Configuration
+- `RTP_PORT_MIN` (default: 10000) - Even-numbered start of the RTP/RTCP port range
+- `RTP_PORT_MAX` (default: 20000) - End of the RTP/RTCP port range
+- `ENABLE_SRTP` (default: false) - Enable SRTP key negotiation and encrypted media
+- `BEHIND_NAT` (default: false) - Enable NAT-aware SIP/SDP rewriting and binding
+- `INTERNAL_IP` - IP address used for local UDP binding when behind NAT
+- `EXTERNAL_IP` - Public IP advertised in SDP (auto-detected when unset)
+- `STUN_SERVER` (default: Google STUN pool) - Comma-separated list of STUN servers used for auto-discovery
 
 ## STT Provider Configuration
 
-### Provider Selection
-- `STT_PROVIDER` (required) - STT provider: "openai", "google", "aws", "azure", "deepgram"
+### Provider Selection & Fallback
+- `SUPPORTED_VENDORS` (default: `google,openai`) - Comma-separated list defining the STT fallback order
+- `STT_DEFAULT_VENDOR` (default: `google`) - Preferred provider used when the requested vendor is unavailable
+- `STT_VENDORS` - Legacy alias for `SUPPORTED_VENDORS` (still honoured for backwards compatibility)
+
+During runtime the provider manager walks the `SUPPORTED_VENDORS` list in order until a provider succeeds. Keep the list aligned with the providers you register in configuration.
 
 ### OpenAI
-- `OPENAI_API_KEY` - OpenAI API key
-- `OPENAI_MODEL` (default: "whisper-1") - Model to use
-- `OPENAI_LANGUAGE` - Language code (optional)
+- `OPENAI_STT_ENABLED` (default: false) - Enable OpenAI Whisper
+- `OPENAI_API_KEY` - API key used for authentication
+- `OPENAI_STT_MODEL` (default: `whisper-1`) - Model identifier
+- `OPENAI_STT_LANGUAGE` - Optional language hint (auto-detected when omitted)
+- `OPENAI_STT_PROMPT` - Prompt text providing context for better accuracy
+- `OPENAI_STT_RESPONSE_FORMAT` (default: `verbose_json`) - API response format
+- `OPENAI_STT_TEMPERATURE` (default: `0.0`) - Sampling temperature
+- `OPENAI_BASE_URL` (default: `https://api.openai.com/v1`) - Override for private deployments
 
 ### Google Cloud
-- `GOOGLE_CREDENTIALS_PATH` - Path to service account JSON
-- `GOOGLE_LANGUAGE_CODE` (default: "en-US") - Language code
-- `GOOGLE_MODEL` (default: "latest_long") - Recognition model
+- `GOOGLE_STT_ENABLED` (default: true) - Enable Google Cloud STT
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to service-account JSON file
+- `GOOGLE_PROJECT_ID` - Google Cloud project ID
+- `GOOGLE_STT_API_KEY` - Optional API key alternative to service account
+- `GOOGLE_STT_LANGUAGE` (default: `en-US`) - Language code
+- `GOOGLE_STT_SAMPLE_RATE` (default: `16000`) - Sample rate in Hz
+- `GOOGLE_STT_MODEL` (default: `latest_long`) - Recognition model
+- `GOOGLE_STT_ENHANCED_MODELS` (default: `false`) - Enable premium models
+- `GOOGLE_STT_AUTO_PUNCTUATION` (default: `true`) - Automatic punctuation
+- `GOOGLE_STT_WORD_TIME_OFFSETS` (default: `true`) - Include word-level timestamps
 
 ### AWS Transcribe
 - `AWS_REGION` - AWS region
 - `AWS_ACCESS_KEY_ID` - AWS access key
 - `AWS_SECRET_ACCESS_KEY` - AWS secret key
-- `AWS_LANGUAGE_CODE` (default: "en-US") - Language code
+- `AWS_PROFILE` - Optional profile name (when using shared credentials)
+- `TRANSCRIBE_LANGUAGE_CODE` (default: `en-US`) - Target language
 
 ### Azure Speech
 - `AZURE_SPEECH_KEY` - Azure Speech API key
 - `AZURE_SPEECH_REGION` - Azure region
-- `AZURE_LANGUAGE` (default: "en-US") - Language code
+- `AZURE_LANGUAGE` (default: `en-US`) - Language code
 
 ### Deepgram
-- `DEEPGRAM_API_KEY` - Deepgram API key
-- `DEEPGRAM_MODEL` (default: "general") - Model to use
-- `DEEPGRAM_LANGUAGE` (default: "en") - Language code
+- `DEEPGRAM_STT_ENABLED` (default: false) - Enable Deepgram STT
+- `DEEPGRAM_API_KEY` - API key
+- `DEEPGRAM_MODEL` (default: `nova-2`) - Model identifier
+- `DEEPGRAM_LANGUAGE` (default: `en`) - Language code
+- `DEEPGRAM_TIER` (default: `nova`) - Tier (nova, enhanced, base)
+- `DEEPGRAM_VERSION` (default: `latest`) - API version
+- `DEEPGRAM_PUNCTUATE` (default: `true`) - Automatic punctuation
+
+## Recording Storage
+
+Enable multi-cloud storage for captured audio after the local file is finalized.
+
+- `RECORDING_STORAGE_ENABLED` (default: false) - Upload recordings to external storage backends
+- `RECORDING_STORAGE_KEEP_LOCAL` (default: true) - Retain the local `.wav` file after upload
+
+### AWS S3
+- `RECORDING_STORAGE_S3_ENABLED` (default: false) - Enable S3 uploads
+- `RECORDING_STORAGE_S3_BUCKET` - Target bucket name
+- `RECORDING_STORAGE_S3_REGION` - AWS region
+- `RECORDING_STORAGE_S3_ACCESS_KEY` / `RECORDING_STORAGE_S3_SECRET_KEY` - Access credentials
+- `RECORDING_STORAGE_S3_PREFIX` - Optional path/prefix inside the bucket
+
+### Google Cloud Storage
+- `RECORDING_STORAGE_GCS_ENABLED` (default: false) - Enable GCS uploads
+- `RECORDING_STORAGE_GCS_BUCKET` - Target bucket
+- `RECORDING_STORAGE_GCS_SERVICE_ACCOUNT` - Base64 encoded service account JSON or path
+- `RECORDING_STORAGE_GCS_PREFIX` - Optional object prefix
+
+### Azure Blob Storage
+- `RECORDING_STORAGE_AZURE_ENABLED` (default: false) - Enable Azure uploads
+- `RECORDING_STORAGE_AZURE_ACCOUNT` - Storage account name
+- `RECORDING_STORAGE_AZURE_CONTAINER` - Container name
+- `RECORDING_STORAGE_AZURE_ACCESS_KEY` - Access key
+- `RECORDING_STORAGE_AZURE_PREFIX` - Optional blob prefix
+
+> **Compliance Tip:** Enable `ENABLE_RECORDING_ENCRYPTION=true` to encrypt local files before they are uploaded for PCI/HIPAA workloads.
 
 ## Message Queue Configuration
 
