@@ -25,6 +25,35 @@ type PortPair struct {
 	RTCPPort int // Odd port for RTCP (RTP + 1)
 }
 
+var (
+	portCheckMu sync.RWMutex
+	portCheckFn = defaultPortAvailabilityCheck
+)
+
+// setPortAvailabilityChecker overrides the UDP port availability check. It is
+// intended for use in tests where the runtime sandbox forbids binding to
+// arbitrary UDP ports. The returned function restores the previous checker and
+// should typically be deferred by the caller.
+func setPortAvailabilityChecker(fn func(int) bool) func() {
+	portCheckMu.Lock()
+	previous := portCheckFn
+	portCheckFn = fn
+	portCheckMu.Unlock()
+
+	return func() {
+		portCheckMu.Lock()
+		portCheckFn = previous
+		portCheckMu.Unlock()
+	}
+}
+
+func portAvailable(port int) bool {
+	portCheckMu.RLock()
+	checker := portCheckFn
+	portCheckMu.RUnlock()
+	return checker(port)
+}
+
 // PortManagerStats tracks port allocation statistics
 type PortManagerStats struct {
 	TotalPorts        int
@@ -72,7 +101,7 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	// Try to reuse recently freed ports first (better for OS and networking)
 	if cachedPorts := pm.getRecentlyFreedPorts(); len(cachedPorts) > 0 {
 		for _, port := range cachedPorts {
-			if !pm.usedPorts[port] && isPortAvailableWithLock(port) {
+			if !pm.usedPorts[port] && portAvailable(port) {
 				pm.usedPorts[port] = true
 				pm.stats.AllocationCount++
 				pm.stats.ReuseHits++
@@ -88,7 +117,7 @@ func (pm *PortManager) AllocatePort() (int, error) {
 		if !pm.usedPorts[port] {
 			// Check if the port is actually available while holding the lock
 			// to prevent race conditions with other goroutines
-			if isPortAvailableWithLock(port) {
+			if portAvailable(port) {
 				pm.usedPorts[port] = true
 				pm.stats.AllocationCount++
 				pm.updateStats()
@@ -100,7 +129,7 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	// Second try - check all ports in the range regardless of our usedPorts map
 	// This handles cases where ports were released externally
 	for port := pm.minPort; port <= pm.maxPort; port += 2 {
-		if isPortAvailableWithLock(port) {
+		if portAvailable(port) {
 			pm.usedPorts[port] = true
 			pm.stats.AllocationCount++
 			pm.updateStats()
@@ -125,8 +154,8 @@ func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
 			// Ensure RTP port is even and both ports are available
 			if rtpPort%2 == 0 && rtcpPort <= pm.maxPort &&
 				!pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] &&
-				isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
-				
+				portAvailable(rtpPort) && portAvailable(rtcpPort) {
+
 				pm.usedPorts[rtpPort] = true
 				pm.usedPorts[rtcpPort] = true
 				pm.stats.AllocationCount += 2 // Count both ports
@@ -143,10 +172,10 @@ func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
 		if port%2 == 0 {
 			rtpPort := port
 			rtcpPort := port + 1
-			
+
 			// Check if both ports are available
 			if !pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] {
-				if isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
+				if portAvailable(rtpPort) && portAvailable(rtcpPort) {
 					pm.usedPorts[rtpPort] = true
 					pm.usedPorts[rtcpPort] = true
 					pm.stats.AllocationCount += 2 // Count both ports
@@ -162,8 +191,8 @@ func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
 		if port%2 == 0 {
 			rtpPort := port
 			rtcpPort := port + 1
-			
-			if isPortAvailableWithLock(rtpPort) && isPortAvailableWithLock(rtcpPort) {
+
+			if portAvailable(rtpPort) && portAvailable(rtcpPort) {
 				pm.usedPorts[rtpPort] = true
 				pm.usedPorts[rtcpPort] = true
 				pm.stats.AllocationCount += 2
@@ -197,7 +226,7 @@ func (pm *PortManager) ReleasePortPair(pair *PortPair) {
 	if pair == nil {
 		return
 	}
-	
+
 	pm.portsMutex.Lock()
 	defer pm.portsMutex.Unlock()
 
@@ -208,7 +237,7 @@ func (pm *PortManager) ReleasePortPair(pair *PortPair) {
 		// Cache RTP port for reuse (RTCP port will be RTP + 1)
 		pm.recentlyUsed.Set(fmt.Sprintf("port_%d", pair.RTPPort), pair.RTPPort)
 	}
-	
+
 	if pm.usedPorts[pair.RTCPPort] {
 		delete(pm.usedPorts, pair.RTCPPort)
 		pm.stats.DeallocationCount++
@@ -263,21 +292,7 @@ func (pm *PortManager) updateStats() {
 	pm.stats.AvailablePorts = pm.stats.TotalPorts - pm.stats.UsedPorts
 }
 
-// isPortAvailable checks if a UDP port is available for binding
-// This function should only be called from outside AllocatePort
-func isPortAvailable(port int) bool {
-	addr := net.UDPAddr{Port: port}
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
-// isPortAvailableWithLock checks if a UDP port is available for binding
-// This variant is used within AllocatePort while the mutex is held
-func isPortAvailableWithLock(port int) bool {
+func defaultPortAvailabilityCheck(port int) bool {
 	addr := net.UDPAddr{Port: port}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
