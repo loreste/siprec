@@ -50,14 +50,14 @@ func main() {
 func basicGoogleExample(logger *logrus.Logger) {
 	// Create transcription service
 	transcriptionSvc := stt.NewTranscriptionService(logger)
-	
+
 	// Create Google STT config
 	googleConfig := &config.GoogleSTTConfig{
 		Enabled:    true,
 		Language:   "en-US",
 		SampleRate: 16000,
 	}
-	
+
 	// Create basic Google provider
 	provider := stt.NewGoogleProvider(logger, transcriptionSvc, googleConfig)
 
@@ -345,7 +345,7 @@ func streamingWithDiarizationExample(logger *logrus.Logger) {
 
 func providerManagerExample(logger *logrus.Logger) {
 	// Create provider manager
-	manager := stt.NewProviderManager(logger, "google-enhanced")
+	manager := stt.NewProviderManager(logger, "google-enhanced", []string{"google-enhanced"})
 
 	// Register enhanced Google provider
 	googleProvider := stt.NewGoogleProviderEnhanced(logger)

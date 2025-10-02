@@ -95,6 +95,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			return
 		}
 		// Don't use defer close since we transfer ownership to forwarder
+		forwarder.RecordingPath = filePath
+		forwarder.CallUUID = callUUID
+		forwarder.Storage = config.RecordingStorage
 
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
@@ -211,7 +214,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		// Create pausable writers for recording and transcription
 		recordingWriter := NewPausableWriter(forwarder.RecordingFile)
 		transcriptionReader := NewPausableReader(recordingReader)
-		
+
 		// Store references in forwarder for external control
 		forwarder.recordingWriter = recordingWriter
 		forwarder.transcriptionReader = transcriptionReader
@@ -268,7 +271,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				forwarder.pauseMutex.RLock()
 				isPaused := forwarder.RecordingPaused
 				forwarder.pauseMutex.RUnlock()
-				
+
 				if isPaused {
 					returnBuffer(buffer) // Return buffer to pool if paused
 					if metrics.IsMetricsEnabled() {

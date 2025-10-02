@@ -3,9 +3,12 @@ package stt
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
+
+	"siprec-server/pkg/metrics"
 )
 
 // TranscriptionCallback is the callback function signature for real-time transcription results
@@ -26,18 +29,18 @@ type Provider interface {
 // StreamingProvider extends Provider with real-time streaming capabilities
 type StreamingProvider interface {
 	Provider
-	
+
 	// SetCallback sets the callback function for real-time transcription results
 	SetCallback(callback TranscriptionCallback)
 }
 
-// EnhancedStreamingProvider extends StreamingProvider with advanced capabilities  
+// EnhancedStreamingProvider extends StreamingProvider with advanced capabilities
 type EnhancedStreamingProvider interface {
 	StreamingProvider
-	
+
 	// GetActiveConnections returns the number of active streaming connections
 	GetActiveConnections() int
-	
+
 	// Shutdown gracefully shuts down all active connections
 	Shutdown(ctx context.Context) error
 }
@@ -47,14 +50,25 @@ type ProviderManager struct {
 	logger          *logrus.Logger
 	providers       map[string]Provider
 	defaultProvider string
+	fallbackOrder   []string
 }
 
 // NewProviderManager creates a new provider manager
-func NewProviderManager(logger *logrus.Logger, defaultProvider string) *ProviderManager {
+func NewProviderManager(logger *logrus.Logger, defaultProvider string, fallbackOrder []string) *ProviderManager {
+	orderCopy := make([]string, 0, len(fallbackOrder))
+	for _, vendor := range fallbackOrder {
+		trimmed := strings.TrimSpace(vendor)
+		if trimmed == "" {
+			continue
+		}
+		orderCopy = append(orderCopy, trimmed)
+	}
+
 	return &ProviderManager{
 		logger:          logger,
 		providers:       make(map[string]Provider),
 		defaultProvider: defaultProvider,
+		fallbackOrder:   orderCopy,
 	}
 }
 
@@ -89,42 +103,117 @@ func (m *ProviderManager) GetDefaultProvider() (Provider, bool) {
 
 // StreamToProvider is a generic function to stream audio to the desired provider
 func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName string, audioStream io.Reader, callUUID string) error {
-	// Get start time for latency tracking
-	startTime := time.Now()
+	attempts := m.buildAttemptOrder(providerName)
+	if len(attempts) == 0 {
+		return ErrNoProviderAvailable
+	}
 
-	// Log start of transcription
-	m.logger.WithFields(logrus.Fields{
-		"call_uuid": callUUID,
-		"provider":  providerName,
-	}).Info("Starting transcription")
+	var lastErr error
+	streamSeekable, _ := audioStream.(io.Seeker)
+	seekableWarningLogged := false
 
-	// Get the provider
-	provider, exists := m.GetProvider(providerName)
-	if !exists {
-		// Try default provider
-		m.logger.WithFields(logrus.Fields{
-			"call_uuid":        callUUID,
-			"provider":         providerName,
-			"default_provider": m.defaultProvider,
-		}).Warn("Provider not found, falling back to default")
-
-		provider, exists = m.GetDefaultProvider()
+	for idx, vendor := range attempts {
+		provider, exists := m.GetProvider(vendor)
 		if !exists {
-			return ErrNoProviderAvailable
+			continue
+		}
+
+		if idx > 0 {
+			if streamSeekable == nil {
+				if !seekableWarningLogged {
+					m.logger.WithFields(logrus.Fields{
+						"call_uuid": callUUID,
+						"attempt":   vendor,
+					}).Warn("Audio stream is not seekable; STT fallback limited")
+					seekableWarningLogged = true
+				}
+				break
+			}
+			if _, err := streamSeekable.Seek(0, io.SeekStart); err != nil {
+				lastErr = err
+				m.logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to rewind audio stream for STT fallback")
+				break
+			}
+		}
+
+		m.logger.WithFields(logrus.Fields{
+			"call_uuid": callUUID,
+			"provider":  vendor,
+			"attempt":   idx + 1,
+		}).Info("Starting transcription")
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		startTime := time.Now()
+		stopTimer := metrics.ObserveSTTLatency(vendor)
+		err := provider.StreamToText(ctx, audioStream, callUUID)
+		stopTimer()
+
+		status := "success"
+		if err != nil {
+			status = "error"
+			lastErr = err
+		}
+		metrics.RecordSTTRequest(vendor, status)
+
+		elapsed := time.Since(startTime)
+		m.logger.WithFields(logrus.Fields{
+			"call_uuid":   callUUID,
+			"provider":    vendor,
+			"duration_ms": elapsed.Milliseconds(),
+			"error":       err != nil,
+			"attempt":     idx + 1,
+		}).Info("Transcription attempt completed")
+
+		if err == nil {
+			if idx > 0 {
+				m.logger.WithFields(logrus.Fields{
+					"call_uuid": callUUID,
+					"provider":  vendor,
+					"attempts":  idx + 1,
+				}).Warn("STT fallback succeeded after previous provider errors")
+			}
+			return nil
+		}
+
+		// Provider failed; log and try next if possible
+		m.logger.WithError(err).WithFields(logrus.Fields{
+			"call_uuid": callUUID,
+			"provider":  vendor,
+			"attempt":   idx + 1,
+		}).Warn("STT provider failed, evaluating fallback options")
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+
+	return ErrNoProviderAvailable
+}
+
+func (m *ProviderManager) buildAttemptOrder(requested string) []string {
+	seen := make(map[string]bool)
+	order := make([]string, 0, len(m.fallbackOrder)+2)
+
+	add := func(v string) {
+		candidate := strings.TrimSpace(v)
+		if candidate == "" {
+			return
+		}
+		if !seen[candidate] {
+			order = append(order, candidate)
+			seen[candidate] = true
 		}
 	}
 
-	// Stream to the provider
-	err := provider.StreamToText(ctx, audioStream, callUUID)
+	add(requested)
+	add(m.defaultProvider)
 
-	// Log transcription completion and latency
-	elapsed := time.Since(startTime)
-	m.logger.WithFields(logrus.Fields{
-		"call_uuid":   callUUID,
-		"provider":    provider.Name(),
-		"duration_ms": elapsed.Milliseconds(),
-		"error":       err != nil,
-	}).Info("Transcription completed")
+	for _, vendor := range m.fallbackOrder {
+		add(vendor)
+	}
 
-	return err
+	return order
 }
