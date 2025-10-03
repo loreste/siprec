@@ -29,50 +29,52 @@ type AsyncSTTProcessor struct {
 	wg              sync.WaitGroup
 	metrics         *AsyncSTTMetrics
 	callbacks       []JobCallback
-	callbacksMutex  sync.RWMutex  // Dedicated mutex for callbacks slice
+	callbacksMutex  sync.RWMutex // Dedicated mutex for callbacks slice
 	started         bool
 	mutex           sync.RWMutex
 }
 
 // AsyncSTTConfig holds configuration for async STT processing
 type AsyncSTTConfig struct {
-	WorkerCount         int           `yaml:"worker_count" env:"STT_WORKER_COUNT" default:"3"`
-	MaxRetries          int           `yaml:"max_retries" env:"STT_MAX_RETRIES" default:"3"`
-	RetryBackoff        time.Duration `yaml:"retry_backoff" env:"STT_RETRY_BACKOFF" default:"30s"`
-	JobTimeout          time.Duration `yaml:"job_timeout" env:"STT_JOB_TIMEOUT" default:"300s"`
-	QueueBufferSize     int           `yaml:"queue_buffer_size" env:"STT_QUEUE_BUFFER_SIZE" default:"1000"`
-	BatchSize           int           `yaml:"batch_size" env:"STT_BATCH_SIZE" default:"10"`
-	BatchTimeout        time.Duration `yaml:"batch_timeout" env:"STT_BATCH_TIMEOUT" default:"60s"`
+	WorkerCount          int           `yaml:"worker_count" env:"STT_WORKER_COUNT" default:"3"`
+	MaxRetries           int           `yaml:"max_retries" env:"STT_MAX_RETRIES" default:"3"`
+	RetryBackoff         time.Duration `yaml:"retry_backoff" env:"STT_RETRY_BACKOFF" default:"30s"`
+	JobTimeout           time.Duration `yaml:"job_timeout" env:"STT_JOB_TIMEOUT" default:"300s"`
+	QueueBufferSize      int           `yaml:"queue_buffer_size" env:"STT_QUEUE_BUFFER_SIZE" default:"1000"`
+	BatchSize            int           `yaml:"batch_size" env:"STT_BATCH_SIZE" default:"10"`
+	BatchTimeout         time.Duration `yaml:"batch_timeout" env:"STT_BATCH_TIMEOUT" default:"60s"`
 	EnablePrioritization bool          `yaml:"enable_prioritization" env:"STT_ENABLE_PRIORITIZATION" default:"true"`
-	MaxConcurrentJobs   int           `yaml:"max_concurrent_jobs" env:"STT_MAX_CONCURRENT_JOBS" default:"50"`
-	CleanupInterval     time.Duration `yaml:"cleanup_interval" env:"STT_CLEANUP_INTERVAL" default:"300s"`
-	JobRetentionTime    time.Duration `yaml:"job_retention_time" env:"STT_JOB_RETENTION_TIME" default:"24h"`
-	EnableCostTracking  bool          `yaml:"enable_cost_tracking" env:"STT_ENABLE_COST_TRACKING" default:"true"`
-	
+	MaxConcurrentJobs    int           `yaml:"max_concurrent_jobs" env:"STT_MAX_CONCURRENT_JOBS" default:"50"`
+	CleanupInterval      time.Duration `yaml:"cleanup_interval" env:"STT_CLEANUP_INTERVAL" default:"300s"`
+	JobRetentionTime     time.Duration `yaml:"job_retention_time" env:"STT_JOB_RETENTION_TIME" default:"24h"`
+	EnableCostTracking   bool          `yaml:"enable_cost_tracking" env:"STT_ENABLE_COST_TRACKING" default:"true"`
+
 	// Performance optimization settings
-	MaxMemoryPerWorker  int64         `yaml:"max_memory_per_worker" env:"STT_MAX_MEMORY_PER_WORKER" default:"268435456"` // 256MB
-	GCInterval          time.Duration `yaml:"gc_interval" env:"STT_GC_INTERVAL" default:"300s"`                         // Force GC every 5 minutes
-	WorkerIdleTimeout   time.Duration `yaml:"worker_idle_timeout" env:"STT_WORKER_IDLE_TIMEOUT" default:"30s"`         // Worker idle timeout
+	MaxMemoryPerWorker int64         `yaml:"max_memory_per_worker" env:"STT_MAX_MEMORY_PER_WORKER" default:"268435456"` // 256MB
+	GCInterval         time.Duration `yaml:"gc_interval" env:"STT_GC_INTERVAL" default:"300s"`                          // Force GC every 5 minutes
+	WorkerIdleTimeout  time.Duration `yaml:"worker_idle_timeout" env:"STT_WORKER_IDLE_TIMEOUT" default:"30s"`           // Worker idle timeout
+	QueuePurgeToken    string        `yaml:"queue_purge_token" env:"STT_QUEUE_PURGE_TOKEN"`
 }
 
 // DefaultAsyncSTTConfig returns default configuration
 func DefaultAsyncSTTConfig() *AsyncSTTConfig {
 	return &AsyncSTTConfig{
-		WorkerCount:         3,
-		MaxRetries:          3,
-		RetryBackoff:        30 * time.Second,
-		JobTimeout:          5 * time.Minute,
-		QueueBufferSize:     1000,
-		BatchSize:           10,
-		BatchTimeout:        60 * time.Second,
+		WorkerCount:          3,
+		MaxRetries:           3,
+		RetryBackoff:         30 * time.Second,
+		JobTimeout:           5 * time.Minute,
+		QueueBufferSize:      1000,
+		BatchSize:            10,
+		BatchTimeout:         60 * time.Second,
 		EnablePrioritization: true,
-		MaxConcurrentJobs:   50,
-		CleanupInterval:     5 * time.Minute,
-		JobRetentionTime:    24 * time.Hour,
-		EnableCostTracking:  true,
-		MaxMemoryPerWorker:  256 * 1024 * 1024, // 256MB
-		GCInterval:          5 * time.Minute,
-		WorkerIdleTimeout:   30 * time.Second,
+		MaxConcurrentJobs:    50,
+		CleanupInterval:      5 * time.Minute,
+		JobRetentionTime:     24 * time.Hour,
+		EnableCostTracking:   true,
+		MaxMemoryPerWorker:   256 * 1024 * 1024, // 256MB
+		GCInterval:           5 * time.Minute,
+		WorkerIdleTimeout:    30 * time.Second,
+		QueuePurgeToken:      "",
 	}
 }
 
@@ -257,6 +259,55 @@ func (p *AsyncSTTProcessor) GetQueueStats() (*QueueStats, error) {
 	return p.queue.GetQueueStats()
 }
 
+// Config returns the processor configuration
+func (p *AsyncSTTProcessor) Config() *AsyncSTTConfig {
+	return p.config
+}
+
+// PurgeQueue forcibly removes all jobs from the underlying queue
+func (p *AsyncSTTProcessor) PurgeQueue(reason, requestedBy string) (int, *QueueStats, *QueueStats, error) {
+	if p.queue == nil {
+		return 0, nil, nil, fmt.Errorf("queue not initialized")
+	}
+
+	before, err := p.queue.GetQueueStats()
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to collect pre-purge statistics: %w", err)
+	}
+
+	if err := p.queue.Purge(); err != nil {
+		return 0, before, nil, fmt.Errorf("failed to purge STT queue: %w", err)
+	}
+
+	after, err := p.queue.GetQueueStats()
+	if err != nil {
+		return 0, before, nil, fmt.Errorf("failed to collect post-purge statistics: %w", err)
+	}
+
+	p.metrics.mutex.Lock()
+	p.metrics.QueueSize = 0
+	p.metrics.mutex.Unlock()
+
+	removed := 0
+	if before != nil {
+		removed = int(before.TotalJobs)
+	}
+
+	logFields := logrus.Fields{
+		"removed_jobs": removed,
+	}
+	if reason != "" {
+		logFields["reason"] = reason
+	}
+	if requestedBy != "" {
+		logFields["requested_by"] = requestedBy
+	}
+
+	p.logger.WithFields(logFields).Warn("STT queue purged")
+
+	return removed, before, after, nil
+}
+
 // GetMetrics returns current processing metrics
 func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
 	p.metrics.mutex.RLock()
@@ -295,7 +346,7 @@ func (p *AsyncSTTProcessor) runWorker(worker *STTWorker) {
 	defer p.wg.Done()
 
 	worker.logger.Info("STT worker started")
-	
+
 	idleTimer := time.NewTimer(p.config.WorkerIdleTimeout)
 	defer idleTimer.Stop()
 
@@ -319,7 +370,7 @@ func (p *AsyncSTTProcessor) runWorker(worker *STTWorker) {
 			jobCtx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
 			job, err := p.queue.Dequeue(jobCtx)
 			cancel()
-			
+
 			if err != nil {
 				if err == context.Canceled || err == context.DeadlineExceeded {
 					if err == context.Canceled {
@@ -406,7 +457,7 @@ func (p *AsyncSTTProcessor) processJob(worker *STTWorker, job *STTJob) {
 	callbacksCopy := make([]JobCallback, len(p.callbacks))
 	copy(callbacksCopy, p.callbacks)
 	p.callbacksMutex.RUnlock()
-	
+
 	for _, callback := range callbacksCopy {
 		go callback(job)
 	}
@@ -461,7 +512,7 @@ func (p *AsyncSTTProcessor) executeSTTJob(ctx context.Context, job *STTJob) (*Tr
 		Confidence: 0.95,
 		Language:   job.Language,
 		Duration:   time.Duration(fileInfo.Size()/16000) * time.Second, // Estimate based on 16kHz
-		WordCount:  10, // Mock word count
+		WordCount:  10,                                                 // Mock word count
 		Provider:   job.Provider,
 		ModelUsed:  "enhanced",
 	}
@@ -523,7 +574,7 @@ func (p *AsyncSTTProcessor) handleJobFailure(worker *STTWorker, job *STTJob, job
 		callbacksCopy := make([]JobCallback, len(p.callbacks))
 		copy(callbacksCopy, p.callbacks)
 		p.callbacksMutex.RUnlock()
-		
+
 		for _, callback := range callbacksCopy {
 			go callback(job)
 		}
@@ -655,14 +706,14 @@ func (p *AsyncSTTProcessor) performMemoryOptimizations() {
 
 	// Force garbage collection
 	runtime.GC()
-	
+
 	// Force memory back to OS
 	debug.FreeOSMemory()
 
 	runtime.ReadMemStats(&memAfter)
 
 	freedMB := float64(memBefore.HeapInuse-memAfter.HeapInuse) / 1024 / 1024
-	
+
 	if freedMB > 1 { // Only log if we freed significant memory
 		p.logger.WithFields(logrus.Fields{
 			"memory_freed_mb": freedMB,
@@ -771,7 +822,7 @@ func (p *AsyncSTTProcessor) updateMetrics(operation string, processingTime *time
 type contextReader struct {
 	reader   io.Reader
 	ctx      context.Context
-	readSize int64  // Track bytes read for memory optimization
+	readSize int64 // Track bytes read for memory optimization
 }
 
 func (r *contextReader) Read(p []byte) (int, error) {
@@ -781,12 +832,12 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	default:
 		n, err := r.reader.Read(p)
 		r.readSize += int64(n)
-		
+
 		// Optimize read buffer size for large files to reduce memory allocation
 		if r.readSize > 1024*1024 && len(p) < 64*1024 { // If we've read >1MB and buffer is small
 			// Request larger reads for efficiency (this is just tracking, caller controls buffer size)
 		}
-		
+
 		return n, err
 	}
 }
