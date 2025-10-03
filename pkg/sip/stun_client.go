@@ -3,7 +3,10 @@ package sip
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pion/stun"
@@ -53,12 +56,12 @@ func (sc *STUNClient) GetExternalIP(ctx context.Context) (string, error) {
 				sc.logger.WithError(err).WithField("server", server).Debug("STUN query failed")
 				continue
 			}
-			
+
 			sc.logger.WithFields(logrus.Fields{
 				"server":      server,
 				"external_ip": ip,
 			}).Info("Successfully detected external IP via STUN")
-			
+
 			return ip, nil
 		}
 	}
@@ -150,7 +153,85 @@ func NewHTTPFallbackClient(logger *logrus.Logger) *HTTPFallbackClient {
 
 // GetExternalIP detects external IP via HTTP services
 func (hc *HTTPFallbackClient) GetExternalIP(ctx context.Context) (string, error) {
-	// Implementation would use net/http to query these services
-	// For now, return error to avoid external dependencies
-	return "", fmt.Errorf("HTTP fallback not implemented")
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if len(hc.services) == 0 {
+		return "", fmt.Errorf("no HTTP fallback services configured")
+	}
+
+	client := &http.Client{Timeout: hc.timeout}
+
+	var lastErr error
+	for _, service := range hc.services {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+
+		url := strings.TrimSpace(service)
+		if url == "" {
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			hc.logger.WithError(err).WithField("service", service).Debug("Failed to construct HTTP fallback request")
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "siprec-stun-fallback/1.0")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			hc.logger.WithError(err).WithField("service", service).Debug("HTTP fallback request failed")
+			lastErr = err
+			continue
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+		resp.Body.Close()
+		if err != nil {
+			hc.logger.WithError(err).WithField("service", service).Debug("Failed to read HTTP fallback response")
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			err = fmt.Errorf("unexpected status code %d", resp.StatusCode)
+			hc.logger.WithError(err).WithField("service", service).Debug("HTTP fallback returned non-success status")
+			lastErr = err
+			continue
+		}
+
+		ipStr := strings.TrimSpace(string(body))
+		if ipStr == "" {
+			hc.logger.WithField("service", service).Debug("HTTP fallback returned empty body")
+			lastErr = fmt.Errorf("empty response")
+			continue
+		}
+
+		if net.ParseIP(ipStr) == nil {
+			hc.logger.WithFields(logrus.Fields{
+				"service": service,
+				"value":   ipStr,
+			}).Debug("HTTP fallback returned invalid IP")
+			lastErr = fmt.Errorf("invalid IP response: %s", ipStr)
+			continue
+		}
+
+		hc.logger.WithFields(logrus.Fields{
+			"service":     service,
+			"external_ip": ipStr,
+		}).Info("Successfully detected external IP via HTTP fallback")
+		return ipStr, nil
+	}
+
+	if lastErr != nil {
+		return "", fmt.Errorf("failed HTTP fallback lookup: %w", lastErr)
+	}
+
+	return "", fmt.Errorf("failed to detect external IP via HTTP fallback")
 }

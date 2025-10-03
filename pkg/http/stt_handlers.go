@@ -1,9 +1,11 @@
 package http
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"siprec-server/pkg/stt"
@@ -47,10 +49,10 @@ type SubmitJobRequest struct {
 
 // SubmitJobResponse represents the response to a job submission
 type SubmitJobResponse struct {
-	JobID        string  `json:"job_id"`
-	Status       string  `json:"status"`
+	JobID         string  `json:"job_id"`
+	Status        string  `json:"status"`
 	EstimatedCost float64 `json:"estimated_cost,omitempty"`
-	Message      string  `json:"message"`
+	Message       string  `json:"message"`
 }
 
 // JobStatusResponse represents a job status response
@@ -68,9 +70,9 @@ type JobListResponse struct {
 
 // StatsResponse represents queue statistics
 type StatsResponse struct {
-	QueueStats *stt.QueueStats       `json:"queue_stats"`
-	Metrics    *stt.AsyncSTTMetrics  `json:"metrics"`
-	Timestamp  time.Time             `json:"timestamp"`
+	QueueStats *stt.QueueStats      `json:"queue_stats"`
+	Metrics    *stt.AsyncSTTMetrics `json:"metrics"`
+	Timestamp  time.Time            `json:"timestamp"`
 }
 
 // SubmitJobHandler handles STT job submission
@@ -330,19 +332,118 @@ func (h *STTHandlers) PurgeQueueHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// This is a dangerous operation - in production you'd want authentication
-	h.logger.Warning("STT queue purge requested via API")
+	if h.processor == nil {
+		http.Error(w, "STT processor unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
-	// For now, just return not implemented
-	// You could implement this by adding a Purge method to the async processor
-	response := map[string]string{
-		"status":  "error",
-		"message": "Queue purge not implemented - use with caution",
+	var req struct {
+		Confirm     bool   `json:"confirm"`
+		Reason      string `json:"reason"`
+		DryRun      bool   `json:"dry_run"`
+		RequestedBy string `json:"requested_by"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.WithError(err).Warn("Invalid purge queue request payload")
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !req.Confirm {
+		http.Error(w, "Confirmation flag is required", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(req.Reason) == "" {
+		http.Error(w, "A reason must be provided for auditing", http.StatusBadRequest)
+		return
+	}
+
+	expectedToken := ""
+	if cfg := h.processor.Config(); cfg != nil {
+		expectedToken = cfg.QueuePurgeToken
+	}
+
+	if expectedToken != "" {
+		provided := extractQueueToken(r)
+		if !secureCompareToken(provided, expectedToken) {
+			h.logger.WithFields(logrus.Fields{
+				"requested_by": req.RequestedBy,
+				"remote_addr":  r.RemoteAddr,
+			}).Warn("Rejected STT queue purge due to invalid token")
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	statsBefore, err := h.processor.GetQueueStats()
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to gather queue stats before purge")
+		http.Error(w, "Failed to inspect queue", http.StatusInternalServerError)
+		return
+	}
+
+	if req.DryRun {
+		resp := map[string]interface{}{
+			"status":       "ok",
+			"message":      "Dry run: queue not purged",
+			"dry_run":      true,
+			"stats_before": statsBefore,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	jobsRemoved, before, after, err := h.processor.PurgeQueue(req.Reason, req.RequestedBy)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to purge STT queue")
+		http.Error(w, "Failed to purge queue", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"status":       "ok",
+		"message":      fmt.Sprintf("Purged %d jobs from STT queue", jobsRemoved),
+		"jobs_removed": jobsRemoved,
+		"stats_before": before,
+		"stats_after":  after,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(resp)
+}
+
+func extractQueueToken(r *http.Request) string {
+	token := strings.TrimSpace(r.Header.Get("X-STT-Queue-Token"))
+	if token != "" {
+		return token
+	}
+
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return strings.TrimSpace(authHeader[7:])
+	}
+
+	return ""
+}
+
+func secureCompareToken(provided, expected string) bool {
+	if provided == "" || expected == "" {
+		return false
+	}
+
+	if len(provided) != len(expected) {
+		return false
+	}
+
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1 {
+		return true
+	}
+
+	return false
 }
 
 // HealthCheckSTT returns STT system health information
