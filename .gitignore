@@ -25,6 +25,7 @@ testenv
 
 # Dependency directories
 /vendor/
+.gomodcache/
 
 # Go workspace file
 go.work
@@ -102,6 +103,7 @@ notes.md
 *.todo
 *.planning
 *.notes
+AGENTS.md
 
 # Deployment files with sensitive data
 deploy_enhanced.sh
