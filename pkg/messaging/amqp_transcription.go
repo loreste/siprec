@@ -1,9 +1,15 @@
 package messaging
 
 import (
+	"context"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"siprec-server/pkg/telemetry/tracing"
 )
 
 // AMQPTranscriptionListener implements the TranscriptionListener interface
@@ -50,6 +56,13 @@ func (l *AMQPTranscriptionListener) OnTranscription(callUUID string, transcripti
 		return
 	}
 
+	callCtx := tracing.ContextForCall(callUUID)
+	_, publishSpan := tracing.StartSpan(callCtx, "amqp.publish.transcription", trace.WithAttributes(
+		attribute.String("call.id", callUUID),
+		attribute.Bool("transcription.final", isFinal),
+	), trace.WithSpanKind(trace.SpanKindProducer))
+	defer publishSpan.End()
+
 	// Add isFinal flag to metadata
 	if metadata == nil {
 		metadata = make(map[string]interface{})
@@ -63,21 +76,28 @@ func (l *AMQPTranscriptionListener) OnTranscription(callUUID string, transcripti
 		publishDone <- l.client.PublishTranscription(transcription, callUUID, metadata)
 	}()
 
+	start := time.Now()
 	// Wait with timeout
 	select {
 	case err := <-publishDone:
+		publishSpan.SetAttributes(attribute.Int64("amqp.publish.duration_ms", time.Since(start).Milliseconds()))
 		if err != nil {
 			l.logger.WithFields(logrus.Fields{
 				"call_uuid": callUUID,
 				"error":     err.Error(),
 			}).Warn("Failed to publish transcription to AMQP")
+			publishSpan.RecordError(err)
+			publishSpan.SetStatus(codes.Error, err.Error())
 		} else {
 			l.logger.WithFields(logrus.Fields{
 				"call_uuid": callUUID,
 				"is_final":  isFinal,
 			}).Debug("Transcription published to AMQP queue")
+			publishSpan.SetStatus(codes.Ok, "published")
 		}
 	case <-time.After(500 * time.Millisecond):
 		l.logger.WithField("call_uuid", callUUID).Warn("AMQP publish timed out, continuing processing")
+		publishSpan.RecordError(context.DeadlineExceeded)
+		publishSpan.SetStatus(codes.Error, "publish timeout")
 	}
 }

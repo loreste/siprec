@@ -1,12 +1,14 @@
 package auth
 
 import (
+	stdctx "context"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"siprec-server/pkg/database"
+	"siprec-server/pkg/security/audit"
 
 	"github.com/sirupsen/logrus"
 )
@@ -87,6 +89,51 @@ func (r *RBACManager) CheckAccess(context *AccessContext) *AccessResult {
 		Timestamp: time.Now(),
 	}
 
+	logAudit := func(outcome string, reason string) {
+		if context == nil {
+			return
+		}
+
+		tenant := ""
+		callID := ""
+		if context.Metadata != nil {
+			if value, ok := context.Metadata["tenant"].(string); ok {
+				tenant = value
+			}
+			if value, ok := context.Metadata["call_id"].(string); ok {
+				callID = value
+			}
+		}
+
+		users := make([]string, 0, 1)
+		if context.Username != "" {
+			users = append(users, context.Username)
+		} else if context.UserID != "" {
+			users = append(users, context.UserID)
+		}
+
+		details := map[string]interface{}{
+			"resource":     context.Resource,
+			"action":       context.Action,
+			"permission":   result.Permission,
+			"allowed":      outcome == audit.OutcomeSuccess,
+			"reason":       reason,
+			"request_path": context.RequestPath,
+		}
+
+		evt := &audit.Event{
+			Category: "policy",
+			Action:   "access_check",
+			Outcome:  outcome,
+			CallID:   callID,
+			Tenant:   tenant,
+			Users:    users,
+			Details:  details,
+		}
+
+		audit.Log(stdctx.Background(), r.logger, evt)
+	}
+
 	// Build required permission from context
 	var requiredPermission string
 	if context.Resource != "" && context.Action != "" {
@@ -118,6 +165,8 @@ func (r *RBACManager) CheckAccess(context *AccessContext) *AccessResult {
 			"action":     context.Action,
 		}).Debug("Access granted")
 
+		logAudit(audit.OutcomeSuccess, result.Reason)
+
 		return result
 	}
 
@@ -135,6 +184,8 @@ func (r *RBACManager) CheckAccess(context *AccessContext) *AccessResult {
 				"permission": requiredPermission,
 			}).Debug("Access granted via role")
 
+			logAudit(audit.OutcomeSuccess, result.Reason)
+
 			return result
 		}
 	}
@@ -151,6 +202,8 @@ func (r *RBACManager) CheckAccess(context *AccessContext) *AccessResult {
 		"resource":   context.Resource,
 		"action":     context.Action,
 	}).Warning("Access denied")
+
+	logAudit(audit.OutcomeFailure, result.Reason)
 
 	return result
 }
