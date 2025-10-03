@@ -9,6 +9,12 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/metrics"
+	"siprec-server/pkg/security/audit"
+	"siprec-server/pkg/telemetry/tracing"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // TranscriptionCallback is the callback function signature for real-time transcription results
@@ -108,6 +114,12 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 		return ErrNoProviderAvailable
 	}
 
+	ctx, sttSpan := tracing.StartSpan(ctx, "stt.stream", trace.WithAttributes(
+		attribute.String("call.id", callUUID),
+		attribute.String("stt.requested_provider", providerName),
+	))
+	defer sttSpan.End()
+
 	var lastErr error
 	streamSeekable, _ := audioStream.(io.Seeker)
 	seekableWarningLogged := false
@@ -146,9 +158,14 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 			return ctx.Err()
 		}
 
+		attemptCtx, attemptSpan := tracing.StartSpan(ctx, "stt.provider.attempt", trace.WithAttributes(
+			attribute.String("stt.provider", vendor),
+			attribute.Int("stt.attempt_number", idx+1),
+		), trace.WithSpanKind(trace.SpanKindClient))
+
 		startTime := time.Now()
 		stopTimer := metrics.ObserveSTTLatency(vendor)
-		err := provider.StreamToText(ctx, audioStream, callUUID)
+		err := provider.StreamToText(attemptCtx, audioStream, callUUID)
 		stopTimer()
 
 		status := "success"
@@ -159,6 +176,17 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 		metrics.RecordSTTRequest(vendor, status)
 
 		elapsed := time.Since(startTime)
+		attemptSpan.SetAttributes(
+			attribute.Int64("stt.duration_ms", elapsed.Milliseconds()),
+		)
+		if err != nil {
+			attemptSpan.RecordError(err)
+			attemptSpan.SetStatus(codes.Error, err.Error())
+		} else {
+			attemptSpan.SetStatus(codes.Ok, "completed")
+		}
+		attemptSpan.End()
+
 		m.logger.WithFields(logrus.Fields{
 			"call_uuid":   callUUID,
 			"provider":    vendor,
@@ -175,6 +203,22 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 					"attempts":  idx + 1,
 				}).Warn("STT fallback succeeded after previous provider errors")
 			}
+			sttSpan.SetAttributes(
+				attribute.String("stt.provider", vendor),
+				attribute.Int("stt.attempts", idx+1),
+			)
+			sttSpan.SetStatus(codes.Ok, "transcription completed")
+			audit.Log(attemptCtx, m.logger, &audit.Event{
+				Category: "stt",
+				Action:   "transcription",
+				Outcome:  audit.OutcomeSuccess,
+				CallID:   callUUID,
+				Details: map[string]interface{}{
+					"provider":    vendor,
+					"attempt":     idx + 1,
+					"duration_ms": elapsed.Milliseconds(),
+				},
+			})
 			return nil
 		}
 
@@ -184,12 +228,27 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 			"provider":  vendor,
 			"attempt":   idx + 1,
 		}).Warn("STT provider failed, evaluating fallback options")
+
+		audit.Log(attemptCtx, m.logger, &audit.Event{
+			Category: "stt",
+			Action:   "transcription",
+			Outcome:  audit.OutcomeFailure,
+			CallID:   callUUID,
+			Details: map[string]interface{}{
+				"provider": vendor,
+				"attempt":  idx + 1,
+				"error":    err.Error(),
+			},
+		})
 	}
 
 	if lastErr != nil {
+		sttSpan.RecordError(lastErr)
+		sttSpan.SetStatus(codes.Error, lastErr.Error())
 		return lastErr
 	}
 
+	sttSpan.SetStatus(codes.Error, "no provider available")
 	return ErrNoProviderAvailable
 }
 

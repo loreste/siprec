@@ -24,6 +24,7 @@ import (
 	"siprec-server/pkg/session"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
+	"siprec-server/pkg/telemetry/tracing"
 )
 
 var (
@@ -51,6 +52,8 @@ var (
 	// PII detection components
 	piiDetector *pii.PIIDetector
 	piiFilter   *stt.PIITranscriptionFilter
+
+	tracingShutdown = func(ctx context.Context) error { return nil }
 )
 
 func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfig, encCfg *config.EncryptionConfig) media.RecordingStorage {
@@ -227,6 +230,12 @@ func main() {
 			logger.Info("All components shut down successfully")
 		}
 
+		shutdownTraceCtx, shutdownTraceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := tracingShutdown(shutdownTraceCtx); err != nil {
+			logger.WithError(err).Warn("Failed to flush tracing spans during shutdown")
+		}
+		shutdownTraceCancel()
+
 		logger.Info("Application shut down gracefully")
 		os.Exit(0)
 	}()
@@ -253,6 +262,12 @@ func initialize() error {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
+
+	shutdownTracing, err := tracing.Init(rootCtx, appConfig.Tracing, logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize tracing: %w", err)
+	}
+	tracingShutdown = shutdownTracing
 
 	// Initialize encryption manager
 	logger.Info("About to initialize encryption...")

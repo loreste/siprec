@@ -15,10 +15,14 @@ import (
 
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/security"
+	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/siprec"
+	"siprec-server/pkg/telemetry/tracing"
 )
 
 // CustomSIPServer is our own SIP server implementation
@@ -95,6 +99,7 @@ type CallState struct {
 	RecordingSession  *siprec.RecordingSession // SIPREC recording session with metadata
 	RTPForwarder      *media.RTPForwarder      // RTP forwarder for this call
 	AllocatedPortPair *media.PortPair          // Port pair reserved for non-SIPREC calls
+	TraceScope        *tracing.CallScope       // Per-call tracing scope
 }
 
 // NewCustomSIPServer creates a new custom SIP server
@@ -636,13 +641,27 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	logger := s.logger.WithField("siprec", true)
 
 	// Log message details
+	transport := ""
+	if message.Connection != nil {
+		transport = message.Connection.transport
+	}
+
 	logger.WithFields(logrus.Fields{
 		"call_id":   message.CallID,
 		"body_size": len(message.Body),
-		"transport": message.Connection.transport,
+		"transport": transport,
 		"from_tag":  message.FromTag,
 		"branch":    message.Branch,
 	}).Info("Processing SIPREC INVITE with large metadata")
+
+	callScope := tracing.StartCallScope(
+		s.shutdownCtx,
+		message.CallID,
+		attribute.String("sip.method", "INVITE"),
+		attribute.String("sip.transport", transport),
+		attribute.Bool("siprec.initial_invite", true),
+	)
+	callCtx := callScope.Context()
 
 	// Create or update call state
 	callState := &CallState{
@@ -654,12 +673,27 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
 		IsRecording:  true,
+		TraceScope:   callScope,
 	}
 
 	// Store call state
 	s.callMutex.Lock()
 	s.callStates[message.CallID] = callState
 	s.callMutex.Unlock()
+
+	success := false
+	var inviteErr error
+	defer func() {
+		if success {
+			return
+		}
+		if callState.TraceScope != nil {
+			callState.TraceScope.End(inviteErr)
+		}
+		s.callMutex.Lock()
+		delete(s.callStates, message.CallID)
+		s.callMutex.Unlock()
+	}()
 
 	// Extract SDP from multipart body for SIPREC
 	sdpData, rsMetadata := s.extractSiprecContent(message.Body, message.ContentType)
@@ -672,25 +706,66 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	if rsMetadata != nil {
 		logger.WithField("metadata_size", len(rsMetadata)).Info("Extracted SIPREC metadata")
 
-		// Parse the SIPREC metadata XML
+		metadataCtx, metadataSpan := tracing.StartSpan(callCtx, "siprec.metadata.parse", trace.WithAttributes(
+			attribute.Int("siprec.metadata.bytes", len(rsMetadata)),
+		))
 		parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message.ContentType)
 		if err != nil {
+			metadataSpan.RecordError(err)
+			metadataSpan.End()
+			inviteErr = err
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to parse SIPREC metadata")
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category: "sip",
+				Action:   "invite",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"stage": "parse_metadata",
+					"error": err.Error(),
+				},
+			})
 			// Send error response for invalid metadata
 			s.sendResponse(message, 400, "Bad Request - Invalid SIPREC metadata", nil, nil)
 			return
 		}
+		metadataSpan.End()
+		callCtx = metadataCtx
 
 		// Create recording session from metadata
 		recordingSession, err = s.createRecordingSession(message.CallID, parsedMetadata, logger)
 		if err != nil {
+			inviteErr = err
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to create recording session")
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category: "sip",
+				Action:   "invite",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"stage": "create_session",
+					"error": err.Error(),
+				},
+			})
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
 
 		// Store session information in call state
 		callState.RecordingSession = recordingSession
+		if callScope.Metadata() != nil {
+			callScope.Metadata().SetSessionID(recordingSession.ID)
+			if tenant := audit.TenantFromSession(recordingSession); tenant != "" {
+				callScope.Metadata().SetTenant(tenant)
+			}
+			callScope.Metadata().SetUsers(audit.UsersFromSession(recordingSession))
+		}
+		callScope.SetAttributes(
+			attribute.String("recording.session_id", recordingSession.ID),
+			attribute.Int("recording.participants", len(recordingSession.Participants)),
+		)
 		logger.WithFields(logrus.Fields{
 			"session_id":        recordingSession.ID,
 			"participant_count": len(recordingSession.Participants),
@@ -707,7 +782,19 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		piiAudioEnabled := s.handler.Config.MediaConfig.PIIAudioEnabled
 		forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger, piiAudioEnabled)
 		if err != nil {
+			inviteErr = err
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category: "sip",
+				Action:   "invite",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"stage": "rtp_forwarder",
+					"error": err.Error(),
+				},
+			})
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
@@ -719,7 +806,19 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 		mediaConfig := s.handler.Config.MediaConfig
 		if mediaConfig == nil {
+			inviteErr = fmt.Errorf("media configuration missing")
+			callScope.RecordError(inviteErr)
 			logger.Error("Media configuration missing; cannot start RTP forwarding")
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category: "sip",
+				Action:   "invite",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"stage": "media_config",
+					"error": inviteErr.Error(),
+				},
+			})
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
@@ -732,7 +831,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 		}
 
-		media.StartRTPForwarding(s.shutdownCtx, rtpForwarder, message.CallID, mediaConfig, sttProvider)
+		media.StartRTPForwarding(callCtx, rtpForwarder, message.CallID, mediaConfig, sttProvider)
 
 		// Generate SDP response using the proper handler methods with allocated port
 		// Parse the received SDP if available
@@ -780,7 +879,20 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	if recordingSession != nil {
 		contentType, multipartBody, err := s.generateSiprecResponse(responseSDP, recordingSession, logger)
 		if err != nil {
+			inviteErr = err
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to generate SIPREC response")
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category:  "sip",
+				Action:    "invite",
+				Outcome:   audit.OutcomeFailure,
+				CallID:    message.CallID,
+				SessionID: sessionIDFromState(callState),
+				Details: map[string]interface{}{
+					"stage": "generate_response",
+					"error": err.Error(),
+				},
+			})
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
@@ -800,6 +912,25 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		callState.LastActivity = time.Now()
 		s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	}
+
+	success = true
+	if callState.TraceScope != nil {
+		callState.TraceScope.SetAttributes(attribute.String("siprec.state", "connected"))
+		callState.TraceScope.Span().AddEvent("siprec.invite.accepted", trace.WithAttributes(
+			attribute.Bool("siprec.has_metadata", recordingSession != nil),
+		))
+	}
+	audit.Log(callCtx, s.logger, &audit.Event{
+		Category:  "sip",
+		Action:    "invite",
+		Outcome:   audit.OutcomeSuccess,
+		CallID:    message.CallID,
+		SessionID: sessionIDFromState(callState),
+		Details: map[string]interface{}{
+			"transport":       transport,
+			"siprec_metadata": recordingSession != nil,
+		},
+	})
 	logger.WithFields(logrus.Fields{
 		"call_id":   message.CallID,
 		"local_tag": callState.LocalTag,
@@ -816,6 +947,23 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		"body_size":      len(message.Body),
 	}).Info("Processing SIPREC re-INVITE for session update")
 
+	callScope := callState.TraceScope
+	if callScope == nil {
+		callScope = tracing.StartCallScope(
+			s.shutdownCtx,
+			message.CallID,
+			attribute.String("sip.method", "INVITE"),
+			attribute.Bool("siprec.reinvite_promoted", true),
+		)
+		callState.TraceScope = callScope
+	}
+
+	reinviteCtx, reinviteSpan := tracing.StartSpan(callScope.Context(), "siprec.reinvite", trace.WithAttributes(
+		attribute.Bool("siprec.has_existing_session", callState.RecordingSession != nil),
+		attribute.Int("siprec.reinvite_body_bytes", len(message.Body)),
+	))
+	defer reinviteSpan.End()
+
 	// Extract new metadata from re-INVITE
 	sdpData, rsMetadata := s.extractSiprecContent(message.Body, message.ContentType)
 
@@ -823,7 +971,19 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		// Parse the updated metadata
 		parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message.ContentType)
 		if err != nil {
+			reinviteSpan.RecordError(err)
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to parse SIPREC metadata in re-INVITE")
+			audit.Log(reinviteCtx, s.logger, &audit.Event{
+				Category: "sip",
+				Action:   "reinvite",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"stage": "parse_metadata",
+					"error": err.Error(),
+				},
+			})
 			s.sendResponse(message, 400, "Bad Request - Invalid SIPREC metadata", nil, nil)
 			return
 		}
@@ -832,7 +992,20 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		if callState.RecordingSession != nil {
 			err = s.updateRecordingSession(callState.RecordingSession, parsedMetadata, logger)
 			if err != nil {
+				reinviteSpan.RecordError(err)
+				callScope.RecordError(err)
 				logger.WithError(err).Error("Failed to update recording session")
+				audit.Log(reinviteCtx, s.logger, &audit.Event{
+					Category:  "sip",
+					Action:    "reinvite",
+					Outcome:   audit.OutcomeFailure,
+					CallID:    message.CallID,
+					SessionID: sessionIDFromState(callState),
+					Details: map[string]interface{}{
+						"stage": "update_session",
+						"error": err.Error(),
+					},
+				})
 				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 				return
 			}
@@ -840,11 +1013,30 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			// Create new session if none exists (shouldn't happen but handle gracefully)
 			recordingSession, err := s.createRecordingSession(message.CallID, parsedMetadata, logger)
 			if err != nil {
+				reinviteSpan.RecordError(err)
+				callScope.RecordError(err)
 				logger.WithError(err).Error("Failed to create recording session from re-INVITE")
+				audit.Log(reinviteCtx, s.logger, &audit.Event{
+					Category: "sip",
+					Action:   "reinvite",
+					Outcome:  audit.OutcomeFailure,
+					CallID:   message.CallID,
+					Details: map[string]interface{}{
+						"stage": "create_session",
+						"error": err.Error(),
+					},
+				})
 				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 				return
 			}
 			callState.RecordingSession = recordingSession
+			if callScope.Metadata() != nil {
+				callScope.Metadata().SetSessionID(recordingSession.ID)
+			}
+			callScope.SetAttributes(
+				attribute.String("recording.session_id", recordingSession.ID),
+				attribute.Int("recording.participants", len(recordingSession.Participants)),
+			)
 		}
 
 		logger.WithFields(logrus.Fields{
@@ -852,6 +1044,14 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			"new_state":  callState.RecordingSession.RecordingState,
 			"sequence":   callState.RecordingSession.SequenceNumber,
 		}).Info("Updated recording session from SIPREC re-INVITE")
+
+		if callScope.Metadata() != nil && callState.RecordingSession != nil {
+			if tenant := audit.TenantFromSession(callState.RecordingSession); tenant != "" {
+				callScope.Metadata().SetTenant(tenant)
+			}
+			callScope.Metadata().SetSessionID(callState.RecordingSession.ID)
+			callScope.Metadata().SetUsers(audit.UsersFromSession(callState.RecordingSession))
+		}
 	}
 
 	// Update SDP if provided
@@ -893,7 +1093,20 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	if callState.RecordingSession != nil {
 		contentType, multipartBody, err := s.generateSiprecResponse(responseSDP, callState.RecordingSession, logger)
 		if err != nil {
+			reinviteSpan.RecordError(err)
+			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to generate SIPREC response for re-INVITE")
+			audit.Log(reinviteCtx, s.logger, &audit.Event{
+				Category:  "sip",
+				Action:    "reinvite",
+				Outcome:   audit.OutcomeFailure,
+				CallID:    message.CallID,
+				SessionID: sessionIDFromState(callState),
+				Details: map[string]interface{}{
+					"stage": "generate_response",
+					"error": err.Error(),
+				},
+			})
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
@@ -903,6 +1116,21 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	} else {
 		s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	}
+
+	callScope.Span().AddEvent("siprec.reinvite.processed", trace.WithAttributes(
+		attribute.Bool("siprec.metadata_updated", rsMetadata != nil),
+	))
+	audit.Log(reinviteCtx, s.logger, &audit.Event{
+		Category:  "sip",
+		Action:    "reinvite",
+		Outcome:   audit.OutcomeSuccess,
+		CallID:    message.CallID,
+		SessionID: sessionIDFromState(callState),
+		Details: map[string]interface{}{
+			"metadata_updated": rsMetadata != nil,
+			"rtp_forwarder":    callState.RTPForwarder != nil,
+		},
+	})
 
 	logger.WithField("call_id", message.CallID).Info("Successfully responded to SIPREC re-INVITE")
 }
@@ -1109,8 +1337,29 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "BYE")
 	logger.Info("Received BYE request")
 
-	// Clean up call state and recording session if exists
+	var callScope *tracing.CallScope
 	callState := s.getCallState(message.CallID)
+	if callState != nil {
+		callScope = callState.TraceScope
+	} else if scope, ok := tracing.GetCallScope(message.CallID); ok {
+		callScope = scope
+	}
+
+	byeCtx := tracing.ContextForCall(message.CallID)
+	var byeSpan trace.Span
+	if callScope != nil {
+		byeCtx, byeSpan = tracing.StartSpan(callScope.Context(), "siprec.bye", trace.WithAttributes(
+			attribute.String("sip.method", "BYE"),
+		))
+		callScope.SetAttributes(attribute.String("siprec.state", "terminating"))
+	} else {
+		byeCtx, byeSpan = tracing.StartSpan(byeCtx, "siprec.bye", trace.WithAttributes(
+			attribute.String("sip.method", "BYE"),
+		))
+	}
+	defer byeSpan.End()
+
+	// Clean up call state and recording session if exists
 	if callState != nil {
 		if callState.RecordingSession != nil {
 			// Update recording session to terminated state
@@ -1158,6 +1407,29 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 
 		logger.WithField("call_id", message.CallID).Info("Call state cleaned up")
 	}
+
+	if callScope != nil {
+		callScope.Span().AddEvent("siprec.call.terminated", trace.WithAttributes(
+			attribute.String("termination.reason", "bye"),
+		))
+		callScope.End(nil)
+	}
+
+	auditOutcome := audit.OutcomeSuccess
+	if callState == nil {
+		auditOutcome = audit.OutcomeFailure
+	}
+
+	audit.Log(byeCtx, s.logger, &audit.Event{
+		Category:  "sip",
+		Action:    "bye",
+		Outcome:   auditOutcome,
+		CallID:    message.CallID,
+		SessionID: sessionIDFromState(callState),
+		Details: map[string]interface{}{
+			"call_state_present": callState != nil,
+		},
+	})
 
 	s.sendResponse(message, 200, "OK", nil, nil)
 	logger.Info("Successfully responded to BYE request")
@@ -1294,6 +1566,13 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 	if err := s.writeToConnection(message.Connection, responseBytes); err != nil {
 		s.logger.WithError(err).Error("Failed to send SIP response")
 	}
+}
+
+func sessionIDFromState(callState *CallState) string {
+	if callState != nil && callState.RecordingSession != nil {
+		return callState.RecordingSession.ID
+	}
+	return ""
 }
 
 // writeToConnection writes data to a SIP connection

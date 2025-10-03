@@ -15,9 +15,13 @@ import (
 	"siprec-server/pkg/audio"
 	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/security"
+	"siprec-server/pkg/telemetry/tracing"
 
 	"github.com/pion/srtp/v2"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func init() {
@@ -28,6 +32,13 @@ func init() {
 // StartRTPForwarding starts forwarding RTP packets for a call
 func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string, config *Config, sttProvider func(context.Context, string, io.Reader, string) error) {
 	go func() {
+		rtpCtx, rtpSpan := tracing.StartSpan(ctx, "rtp.forward", trace.WithAttributes(
+			attribute.String("call.id", callUUID),
+			attribute.Int("rtp.local_port", forwarder.LocalPort),
+		))
+		defer rtpSpan.End()
+		ctx = rtpCtx
+
 		// Add panic recovery
 		defer func() {
 			if r := recover(); r != nil {
@@ -35,6 +46,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					"panic":     r,
 					"call_uuid": callUUID,
 				}).Error("Panic in RTP forwarding goroutine")
+				rtpSpan.RecordError(fmt.Errorf("panic: %v", r))
+				rtpSpan.SetStatus(codes.Error, "panic during RTP forwarding")
 			}
 			// Always cleanup resources
 			forwarder.Cleanup()
@@ -70,6 +83,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		udpConn, err := net.ListenUDP("udp", listenAddr)
 		if err != nil {
 			forwarder.Logger.WithError(err).WithField("port", forwarder.LocalPort).Error("Failed to listen on UDP port for RTP forwarding")
+			rtpSpan.RecordError(err)
+			rtpSpan.SetStatus(codes.Error, "listen udp failed")
 			if metrics.IsMetricsEnabled() {
 				metrics.RecordRTPDroppedPackets(callUUID, "listen_failure", 1)
 			}
@@ -89,6 +104,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		forwarder.RecordingFile, err = os.Create(filePath)
 		if err != nil {
 			forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
+			rtpSpan.RecordError(err)
+			rtpSpan.SetStatus(codes.Error, "recording file creation failed")
 			if metrics.IsMetricsEnabled() {
 				metrics.RecordRTPDroppedPackets(callUUID, "file_creation_failed", 1)
 			}
@@ -223,6 +240,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		recordingReader = io.TeeReader(recordingReader, recordingWriter)
 
 		// Start transcription based on the selected provider (through pausable reader)
+		rtpSpan.AddEvent("stt.dispatch", trace.WithAttributes(
+			attribute.String("stt.vendor", config.DefaultVendor),
+		))
 		go sttProvider(ctx, config.DefaultVendor, transcriptionReader, callUUID)
 
 		// Start the timeout monitoring routine
@@ -336,6 +356,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 							if finishProcessingTimer != nil {
 								finishProcessingTimer()
 							}
+							rtpSpan.RecordError(err)
 							continue
 						}
 					}
@@ -352,6 +373,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						if metrics.IsMetricsEnabled() {
 							metrics.RecordSRTPDecryptionErrors(callUUID, "read_error", 1)
 						}
+
+						rtpSpan.RecordError(err)
 
 						if finishProcessingTimer != nil {
 							finishProcessingTimer()

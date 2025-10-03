@@ -10,6 +10,7 @@ import (
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
+	"siprec-server/pkg/telemetry/tracing"
 
 	"github.com/sirupsen/logrus"
 )
@@ -75,7 +76,7 @@ type Handler struct {
 
 	// NAT rewriter for SIP header modification
 	NATRewriter *NATRewriter
-	
+
 	// Custom SIP server for handling SIPREC with metadata
 	Server *CustomSIPServer
 }
@@ -96,7 +97,10 @@ type CallData struct {
 
 	// Remote address for potential reconnection
 	RemoteAddress string
-	
+
+	// TraceScope links the call to its OpenTelemetry span
+	TraceScope *tracing.CallScope
+
 	// Mutex for protecting mutable fields
 	mu sync.RWMutex
 }
@@ -222,7 +226,7 @@ func (c *CallData) IsStale(timeout time.Duration) bool {
 func (c *CallData) SafeCopy() CallData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	// Create a copy with the current values
 	copy := CallData{
 		Forwarder:        c.Forwarder,
@@ -238,12 +242,12 @@ func (c *CallData) SafeCopy() CallData {
 // monitorSessions periodically checks for stale sessions
 func (h *Handler) monitorSessions(ctx context.Context) {
 	defer h.sessionMonitorWG.Done()
-	
+
 	// Add panic recovery
 	defer func() {
 		if r := recover(); r != nil {
 			h.Logger.WithFields(logrus.Fields{
-				"panic": r,
+				"panic":     r,
 				"component": "session_monitor",
 			}).Error("Recovered from panic in session monitor")
 		}
@@ -278,7 +282,7 @@ func (h *Handler) cleanupStaleSessions() {
 	// Collect stale sessions first to avoid modifying map during iteration
 	var staleCallUUIDs []string
 	var staleCallData []*CallData
-	
+
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		callUUID := key.(string)
 		callData := value.(*CallData)
@@ -291,7 +295,7 @@ func (h *Handler) cleanupStaleSessions() {
 
 		return true // Continue iteration
 	})
-	
+
 	// Process stale sessions outside of the iteration
 	for i, callUUID := range staleCallUUIDs {
 		callData := staleCallData[i]
@@ -309,6 +313,10 @@ func (h *Handler) cleanupStaleSessions() {
 
 			// Perform thorough cleanup of all RTP forwarder resources
 			callData.Forwarder.Cleanup()
+		}
+
+		if callData.TraceScope != nil {
+			callData.TraceScope.End(nil)
 		}
 
 		// Remove from active calls
@@ -357,7 +365,7 @@ func (h *Handler) CleanupActiveCalls() {
 	// Collect all active calls first to avoid modifying map during iteration
 	var activeCallUUIDs []string
 	var activeCallData []*CallData
-	
+
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		callUUID := key.(string)
 		callData := value.(*CallData)
@@ -365,7 +373,7 @@ func (h *Handler) CleanupActiveCalls() {
 		activeCallData = append(activeCallData, callData)
 		return true // Continue iteration
 	})
-	
+
 	// Process all active calls outside of the iteration
 	for i, callUUID := range activeCallUUIDs {
 		callData := activeCallData[i]
@@ -389,6 +397,10 @@ func (h *Handler) CleanupActiveCalls() {
 
 		// Remove from the active calls map
 		h.ActiveCalls.Delete(callUUID)
+
+		if callData.TraceScope != nil {
+			callData.TraceScope.End(nil)
+		}
 	}
 
 	// Log status of persistent sessions
@@ -413,7 +425,7 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 	// Try to load from active calls
 	if value, exists := h.ActiveCalls.Load(id); exists {
 		callData := value.(*CallData)
-		
+
 		// Create session info response
 		sessionInfo := map[string]interface{}{
 			"id":            id,
@@ -421,18 +433,18 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 			"last_activity": callData.LastActivity,
 			"remote_addr":   callData.RemoteAddress,
 		}
-		
+
 		// Add recording session info if available
 		if callData.RecordingSession != nil {
 			sessionInfo["recording"] = map[string]interface{}{
-				"session_id":      callData.RecordingSession.ID,
-				"state":           callData.RecordingSession.RecordingState,
-				"start_time":      callData.RecordingSession.StartTime,
-				"participants":    len(callData.RecordingSession.Participants),
-				"media_types":     callData.RecordingSession.MediaStreamTypes,
+				"session_id":   callData.RecordingSession.ID,
+				"state":        callData.RecordingSession.RecordingState,
+				"start_time":   callData.RecordingSession.StartTime,
+				"participants": len(callData.RecordingSession.Participants),
+				"media_types":  callData.RecordingSession.MediaStreamTypes,
 			}
 		}
-		
+
 		// Add dialog info if available
 		if callData.DialogInfo != nil {
 			sessionInfo["dialog"] = map[string]interface{}{
@@ -443,10 +455,10 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 				"remote_uri": callData.DialogInfo.RemoteURI,
 			}
 		}
-		
+
 		return sessionInfo, nil
 	}
-	
+
 	// Try to load from persistent store if enabled
 	if h.Config.RedundancyEnabled && h.SessionStore != nil {
 		storedData, err := h.SessionStore.Load(id)
@@ -460,14 +472,14 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 			}, nil
 		}
 	}
-	
+
 	return nil, errors.New("session not found")
 }
 
 // GetAllSessions returns information about all active sessions
 func (h *Handler) GetAllSessions() ([]interface{}, error) {
 	sessions := make([]interface{}, 0)
-	
+
 	// Collect active sessions
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		id := key.(string)
@@ -477,7 +489,7 @@ func (h *Handler) GetAllSessions() ([]interface{}, error) {
 		}
 		return true
 	})
-	
+
 	// Add stored sessions if redundancy is enabled
 	if h.Config.RedundancyEnabled && h.SessionStore != nil {
 		storedIDs, err := h.SessionStore.List()
@@ -487,7 +499,7 @@ func (h *Handler) GetAllSessions() ([]interface{}, error) {
 				if _, exists := h.ActiveCalls.Load(id); exists {
 					continue
 				}
-				
+
 				sessionInfo, err := h.GetSession(id)
 				if err == nil {
 					sessions = append(sessions, sessionInfo)
@@ -495,23 +507,23 @@ func (h *Handler) GetAllSessions() ([]interface{}, error) {
 			}
 		}
 	}
-	
+
 	return sessions, nil
 }
 
 // GetSessionStatistics returns detailed session statistics
 func (h *Handler) GetSessionStatistics() map[string]interface{} {
 	activeCalls := h.GetActiveCallCount()
-	
+
 	stats := map[string]interface{}{
 		"active_calls":      activeCalls,
 		"metrics_available": true,
 		"timestamp":         time.Now().Unix(),
 	}
-	
+
 	// Count different session states
 	var recording, connected int
-	
+
 	h.ActiveCalls.Range(func(key, value interface{}) bool {
 		callData := value.(*CallData)
 		if callData.RecordingSession != nil {
@@ -522,17 +534,17 @@ func (h *Handler) GetSessionStatistics() map[string]interface{} {
 		}
 		return true
 	})
-	
+
 	stats["recording_sessions"] = recording
 	stats["connected_sessions"] = connected
-	
+
 	// Add memory stats if available
 	if h.SessionStore != nil {
 		if storedIDs, err := h.SessionStore.List(); err == nil {
 			stats["stored_sessions"] = len(storedIDs)
 		}
 	}
-	
+
 	// Add port usage stats
 	available, total := media.GetPortManagerStats()
 	stats["rtp_ports"] = map[string]interface{}{
@@ -540,7 +552,7 @@ func (h *Handler) GetSessionStatistics() map[string]interface{} {
 		"total":     total,
 		"used":      total - available,
 	}
-	
+
 	return stats
 }
 
@@ -609,7 +621,7 @@ func NewMemorySessionStore() *MemorySessionStore {
 func (s *MemorySessionStore) Save(key string, data *CallData) error {
 	// Create a safe copy to avoid race conditions during serialization
 	safeCopy := data.SafeCopy()
-	
+
 	// Serialize the call data to JSON
 	jsonData, err := json.Marshal(safeCopy)
 	if err != nil {

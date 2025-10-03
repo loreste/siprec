@@ -7,7 +7,9 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/backup"
+	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/siprec"
+	"siprec-server/pkg/telemetry/tracing"
 )
 
 // RecordingStorage defines how completed recordings are persisted
@@ -55,6 +57,16 @@ func (b *backupRecordingStorage) Upload(callUUID string, session *siprec.Recordi
 
 	locations, err := b.storage.Upload(localPath, backupID)
 	if err != nil {
+		audit.Log(tracing.ContextForCall(callUUID), b.logger, &audit.Event{
+			Category:  "storage",
+			Action:    "upload",
+			Outcome:   audit.OutcomeFailure,
+			CallID:    callUUID,
+			SessionID: session.ID,
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		})
 		return err
 	}
 
@@ -63,6 +75,17 @@ func (b *backupRecordingStorage) Upload(callUUID string, session *siprec.Recordi
 		"call_uuid":  callUUID,
 		"stored_at":  locations,
 	}).Info("Recording persisted to external storage")
+
+	audit.Log(tracing.ContextForCall(callUUID), b.logger, &audit.Event{
+		Category:  "storage",
+		Action:    "upload",
+		Outcome:   audit.OutcomeSuccess,
+		CallID:    callUUID,
+		SessionID: session.ID,
+		Details: map[string]interface{}{
+			"locations": locations,
+		},
+	})
 
 	return nil
 }
