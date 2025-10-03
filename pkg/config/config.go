@@ -33,6 +33,7 @@ type Config struct {
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker"`
 	PauseResume    PauseResumeConfig    `json:"pause_resume"`
 	PII            PIIConfig            `json:"pii"`
+	Tracing        TracingConfig        `json:"tracing"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -396,6 +397,15 @@ type LoggingConfig struct {
 
 	// Log output file (empty = stdout)
 	OutputFile string `json:"output_file" env:"LOG_OUTPUT_FILE"`
+}
+
+// TracingConfig holds OpenTelemetry tracing configuration
+type TracingConfig struct {
+	Enabled     bool    `json:"enabled" env:"OTEL_TRACING_ENABLED" default:"false"`
+	Endpoint    string  `json:"endpoint" env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	Insecure    bool    `json:"insecure" env:"OTEL_EXPORTER_OTLP_INSECURE" default:"false"`
+	ServiceName string  `json:"service_name" env:"OTEL_SERVICE_NAME" default:"siprec-server"`
+	SampleRatio float64 `json:"sample_ratio" env:"OTEL_TRACES_SAMPLER_RATIO" default:"1.0"`
 }
 
 // MessagingConfig holds messaging-related configurations
