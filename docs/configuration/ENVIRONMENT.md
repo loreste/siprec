@@ -119,6 +119,11 @@ Enable multi-cloud storage for captured audio after the local file is finalized.
 - `AMQP_ROUTING_KEY` (default: "transcription") - Routing key
 - `AMQP_QUEUE_DURABLE` (default: true) - Durable queue
 - `AMQP_DELIVERY_MODE` (default: 2) - Delivery mode (2=persistent)
+- `AMQP_TLS_ENABLED` (default: false) - Enable TLS when using `AMQP_URL`
+- `AMQP_TLS_CA_FILE` - Path to CA bundle for server verification
+- `AMQP_TLS_CERT_FILE` / `AMQP_TLS_KEY_FILE` - Client certificate/key pair
+- `AMQP_TLS_SKIP_VERIFY` (default: false) - Skip server certificate verification (testing only)
+- `AMQP_HOSTS` - Comma-separated list of hosts for the enhanced AMQP client pool
 
 ## Audio Processing
 

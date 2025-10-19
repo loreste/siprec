@@ -28,13 +28,14 @@ import (
 )
 
 var (
-	logger       = logrus.New()
-	appConfig    *config.Config
-	legacyConfig *config.Configuration
-	amqpClient   messaging.AMQPClientInterface
-	sttManager   *stt.ProviderManager
-	sipHandler   *sip.Handler
-	httpServer   *http_server.Server
+	logger        = logrus.New()
+	appConfig     *config.Config
+	legacyConfig  *config.Configuration
+	amqpClient    messaging.AMQPClientInterface
+	amqpEndpoints []amqpTranscriptionEndpoint
+	sttManager    *stt.ProviderManager
+	sipHandler    *sip.Handler
+	httpServer    *http_server.Server
 
 	// Context for graceful shutdown
 	rootCtx    context.Context
@@ -55,6 +56,13 @@ var (
 
 	tracingShutdown = func(ctx context.Context) error { return nil }
 )
+
+type amqpTranscriptionEndpoint struct {
+	name           string
+	client         messaging.AMQPClientInterface
+	publishPartial bool
+	publishFinal   bool
+}
 
 func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfig, encCfg *config.EncryptionConfig) media.RecordingStorage {
 	if recCfg == nil || !recCfg.Storage.Enabled {
@@ -189,11 +197,16 @@ func main() {
 			}
 		}
 
-		// Disconnect from AMQP
-		if amqpClient != nil {
-			logger.Debug("Disconnecting from AMQP...")
-			amqpClient.Disconnect()
-			logger.Info("AMQP disconnected")
+		// Disconnect from AMQP endpoints
+		if len(amqpEndpoints) > 0 {
+			for _, endpoint := range amqpEndpoints {
+				if endpoint.client == nil {
+					continue
+				}
+				logger.WithField("amqp_endpoint", endpoint.name).Debug("Disconnecting from AMQP endpoint...")
+				endpoint.client.Disconnect()
+				logger.WithField("amqp_endpoint", endpoint.name).Info("AMQP endpoint disconnected")
+			}
 		}
 
 		// Shut down WebSocket hub if active
@@ -208,8 +221,13 @@ func main() {
 		// Shut down STT providers
 		if sttManager != nil {
 			logger.Debug("Shutting down STT providers...")
-			// TODO: Add shutdown method to STT providers if needed
-			logger.Info("STT providers shut down")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := sttManager.Shutdown(shutdownCtx); err != nil {
+				logger.WithError(err).Error("Error shutting down STT providers")
+			} else {
+				logger.Info("STT providers shut down")
+			}
 		}
 
 		// Stop encryption services
@@ -277,6 +295,8 @@ func initialize() error {
 	}
 	logger.Info("Encryption initialization completed")
 
+	amqpEndpoints = nil
+
 	// Initialize AMQP client with robust error handling
 	if appConfig.Messaging.AMQPUrl != "" && appConfig.Messaging.AMQPQueueName != "" {
 		// Create AMQP client in a separate goroutine with timeout
@@ -313,6 +333,7 @@ func initialize() error {
 					RoutingKey:   appConfig.Messaging.AMQPQueueName,
 					Durable:      true,
 					AutoDelete:   false,
+					TLSConfig:    convertToMessagingTLS(appConfig.Messaging.AMQP.TLS),
 				}
 				basicClient := messaging.NewAMQPClient(logger, amqpConfig)
 				err = basicClient.Connect()
@@ -343,6 +364,80 @@ func initialize() error {
 		}
 	} else {
 		logger.Warn("AMQP not configured, transcriptions will not be sent to message queue")
+	}
+
+	if amqpClient != nil && amqpClient.IsConnected() {
+		amqpEndpoints = append(amqpEndpoints, amqpTranscriptionEndpoint{
+			name:           "primary",
+			client:         amqpClient,
+			publishPartial: appConfig.Messaging.PublishPartialTranscripts,
+			publishFinal:   appConfig.Messaging.PublishFinalTranscripts,
+		})
+	}
+
+	if appConfig.Messaging.EnableRealtimeAMQP && len(appConfig.Messaging.RealtimeEndpoints) > 0 {
+		logger.WithField("endpoint_count", len(appConfig.Messaging.RealtimeEndpoints)).Info("Initializing additional realtime AMQP endpoints")
+		for _, endpointCfg := range appConfig.Messaging.RealtimeEndpoints {
+			if !endpointCfg.Enabled {
+				continue
+			}
+
+			endpointLogger := logger.WithField("amqp_endpoint", endpointCfg.Name)
+
+			var endpointClient messaging.AMQPClientInterface
+			if endpointCfg.UseEnhanced {
+				cfgCopy := endpointCfg.AMQP
+				if endpointCfg.ExchangeName != "" {
+					cfgCopy.DefaultExchange = endpointCfg.ExchangeName
+				}
+				if endpointCfg.RoutingKey != "" {
+					cfgCopy.DefaultRoutingKey = endpointCfg.RoutingKey
+				}
+
+				enhancedClient := messaging.NewEnhancedAMQPClient(logger, &cfgCopy)
+				if err := enhancedClient.Connect(); err != nil {
+					endpointLogger.WithError(err).Warn("Failed to connect enhanced AMQP endpoint")
+					continue
+				}
+				endpointClient = &messaging.EnhancedAMQPClientWrapper{EnhancedClient: enhancedClient}
+			} else {
+				if endpointCfg.URL == "" {
+					endpointLogger.Warn("Realtime AMQP endpoint missing URL, skipping")
+					continue
+				}
+
+				simpleConfig := messaging.AMQPConfig{
+					URL:          endpointCfg.URL,
+					QueueName:    endpointCfg.QueueName,
+					ExchangeName: endpointCfg.ExchangeName,
+					RoutingKey:   endpointCfg.RoutingKey,
+					Durable:      true,
+					AutoDelete:   false,
+					TLSConfig:    convertToMessagingTLS(endpointCfg.TLS),
+				}
+
+				simpleClient := messaging.NewAMQPClient(logger, simpleConfig)
+				if err := simpleClient.Connect(); err != nil {
+					endpointLogger.WithError(err).Warn("Failed to connect AMQP endpoint")
+					continue
+				}
+				endpointClient = simpleClient
+			}
+
+			if endpointClient == nil || !endpointClient.IsConnected() {
+				endpointLogger.Warn("AMQP endpoint is not connected after initialization")
+				continue
+			}
+
+			amqpEndpoints = append(amqpEndpoints, amqpTranscriptionEndpoint{
+				name:           endpointCfg.Name,
+				client:         endpointClient,
+				publishPartial: boolWithDefault(endpointCfg.PublishPartial, appConfig.Messaging.PublishPartialTranscripts),
+				publishFinal:   boolWithDefault(endpointCfg.PublishFinal, appConfig.Messaging.PublishFinalTranscripts),
+			})
+
+			endpointLogger.Info("Realtime AMQP endpoint initialized")
+		}
 	}
 
 	// Initialize speech-to-text providers
@@ -419,6 +514,20 @@ func initialize() error {
 				openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, &appConfig.STT.OpenAI)
 				if err := sttManager.RegisterProvider(openaiProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register OpenAI provider")
+				}
+			}
+		case "speechmatics":
+			if appConfig.STT.Speechmatics.Enabled {
+				speechmaticsProvider := stt.NewSpeechmaticsProvider(logger, transcriptionSvc, &appConfig.STT.Speechmatics)
+				if err := sttManager.RegisterProvider(speechmaticsProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Speechmatics provider")
+				}
+			}
+		case "elevenlabs":
+			if appConfig.STT.ElevenLabs.Enabled {
+				elevenProvider := stt.NewElevenLabsProvider(logger, transcriptionSvc, &appConfig.STT.ElevenLabs)
+				if err := sttManager.RegisterProvider(elevenProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register ElevenLabs provider")
 				}
 			}
 		default:
@@ -568,35 +677,35 @@ func initialize() error {
 		logger.Info("Pause/Resume API handlers registered")
 	}
 
-	// Register AMQP transcription listener if AMQP is configured
-	if amqpClient != nil && amqpClient.IsConnected() {
-		amqpListener := messaging.NewAMQPTranscriptionListener(logger, amqpClient)
-
-		// If PII filtering is enabled for transcriptions, route through the filter
-		if piiFilter != nil {
-			piiFilter.AddListener(amqpListener)
-
-			// Add PII audio bridge to AMQP flow if not already added
-			if piiAudioBridge != nil {
-				// Check if already added in the WebSocket flow above
-				// The PII filter will handle both listeners
-				logger.Debug("PII audio bridge already registered with PII filter for AMQP flow")
+	// Register AMQP transcription listeners for each configured endpoint
+	if len(amqpEndpoints) > 0 {
+		for _, endpoint := range amqpEndpoints {
+			if endpoint.client == nil || !endpoint.client.IsConnected() {
+				logger.WithField("amqp_endpoint", endpoint.name).Warn("AMQP endpoint not connected, skipping transcription listener registration")
+				continue
 			}
 
-			logger.Info("AMQP transcription listener registered with PII filter - filtered transcriptions will be sent to message queue")
-		} else {
-			transcriptionSvc.AddListener(amqpListener)
+			endpointLogger := logger.WithField("amqp_endpoint", endpoint.name)
+			baseListener := messaging.NewAMQPTranscriptionListener(endpointLogger, endpoint.client)
 
-			// Add PII audio bridge to direct AMQP flow if not already added and no PII filter
-			if piiAudioBridge != nil {
-				// Check if already added in the WebSocket flow above
-				logger.Debug("PII audio bridge already registered directly for AMQP flow")
+			var listener interface {
+				OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{})
+			} = baseListener
+
+			if !endpoint.publishPartial || !endpoint.publishFinal {
+				listener = messaging.NewFilteredTranscriptionListener(baseListener, endpoint.publishPartial, endpoint.publishFinal)
 			}
 
-			logger.Info("AMQP transcription listener registered directly - transcriptions will be sent to message queue")
+			if piiFilter != nil {
+				piiFilter.AddListener(listener)
+				endpointLogger.Info("AMQP transcription listener registered with PII filter")
+			} else {
+				transcriptionSvc.AddListener(listener)
+				endpointLogger.Info("AMQP transcription listener registered directly")
+			}
 		}
 	} else {
-		logger.Warn("AMQP not connected, transcriptions will not be sent to message queue")
+		logger.Warn("No AMQP endpoints connected; transcriptions will not be delivered via AMQP")
 	}
 
 	// Log configuration on startup
@@ -653,90 +762,101 @@ func startSIPServer(wg *sync.WaitGroup) {
 		}(address, port)
 	}
 
-	// Check if TLS is enabled
-	if appConfig.Network.EnableTLS && appConfig.Network.TLSPort != 0 {
+	// Check if TLS can be started
+	startTLS := appConfig.Network.EnableTLS && appConfig.Network.TLSPort != 0
+	if startTLS {
 		tlsAddress := fmt.Sprintf("%s:%d", ip, appConfig.Network.TLSPort)
 
 		// Verify TLS certificate and key files exist
 		if appConfig.Network.TLSCertFile == "" || appConfig.Network.TLSKeyFile == "" {
-			logger.Warn("TLS is enabled but certificate or key file is not specified, TLS will not be started")
-			return
+			logger.Warn("TLS is enabled but certificate or key file is not specified, skipping TLS listener")
+			startTLS = false
 		}
 
-		// Get absolute paths for certificate files
-		certPath, _ := filepath.Abs(appConfig.Network.TLSCertFile)
-		keyPath, _ := filepath.Abs(appConfig.Network.TLSKeyFile)
+		var cert tls.Certificate
 
-		logger.WithFields(logrus.Fields{
-			"cert_path": certPath,
-			"key_path":  keyPath,
-		}).Debug("TLS certificate file paths")
+		if startTLS {
+			// Get absolute paths for certificate files to make debugging easier
+			certPath, _ := filepath.Abs(appConfig.Network.TLSCertFile)
+			keyPath, _ := filepath.Abs(appConfig.Network.TLSKeyFile)
 
-		// Check if certificate and key files exist
-		if _, err := os.Stat(appConfig.Network.TLSCertFile); os.IsNotExist(err) {
-			logger.WithField("cert_file", appConfig.Network.TLSCertFile).Error("TLS certificate file does not exist, TLS will not be started")
-			return
-		}
+			logger.WithFields(logrus.Fields{
+				"cert_path": certPath,
+				"key_path":  keyPath,
+			}).Debug("TLS certificate file paths")
 
-		if _, err := os.Stat(appConfig.Network.TLSKeyFile); os.IsNotExist(err) {
-			logger.WithField("key_file", appConfig.Network.TLSKeyFile).Error("TLS key file does not exist, TLS will not be started")
-			return
-		}
-
-		// Load and validate TLS certificate
-		cert, err := tls.LoadX509KeyPair(appConfig.Network.TLSCertFile, appConfig.Network.TLSKeyFile)
-		if err != nil {
-			logger.WithError(err).Error("Failed to load TLS certificate and key, TLS will not be started")
-			return
-		}
-
-		// Set up TLS configuration using sipgo's utility function or manual config
-		tlsConfig := &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-		}
-
-		logger.WithFields(logrus.Fields{
-			"address": tlsAddress,
-			"port":    appConfig.Network.TLSPort,
-		}).Info("Starting SIP server on TLS")
-
-		// Start TLS server in a separate goroutine
-		wgListeners.Add(1)
-		go func() {
-			defer wgListeners.Done()
-
-			// Use CustomSIPServer TLS method
-			if err := sipHandler.Server.ListenAndServeTLS(
-				ctx,
-				tlsAddress,
-				tlsConfig,
-			); err != nil {
-				logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
-				errChan <- fmt.Errorf("TLS listener error: %w", err)
-				return
+			// Check if certificate and key files exist
+			if _, err := os.Stat(appConfig.Network.TLSCertFile); os.IsNotExist(err) {
+				logger.WithField("cert_file", appConfig.Network.TLSCertFile).Error("TLS certificate file does not exist, skipping TLS listener")
+				startTLS = false
 			}
 
-			logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
-		}()
-
-		// Verify TLS server started successfully by checking if the port is listening
-		// Allow time for the server to start
-		go func() {
-			time.Sleep(1 * time.Second)
-
-			dialer := &net.Dialer{
-				Timeout: 2 * time.Second,
+			if startTLS {
+				if _, err := os.Stat(appConfig.Network.TLSKeyFile); os.IsNotExist(err) {
+					logger.WithField("key_file", appConfig.Network.TLSKeyFile).Error("TLS key file does not exist, skipping TLS listener")
+					startTLS = false
+				}
 			}
 
-			conn, err := dialer.DialContext(ctx, "tcp", tlsAddress)
-			if err != nil {
-				logger.WithError(err).Warn("TLS port check failed - port does not appear to be listening")
-			} else {
-				conn.Close()
-				logger.WithField("port", appConfig.Network.TLSPort).Info("TLS port verified to be listening")
+			// Load and validate TLS certificate
+			if startTLS {
+				var err error
+				cert, err = tls.LoadX509KeyPair(appConfig.Network.TLSCertFile, appConfig.Network.TLSKeyFile)
+				if err != nil {
+					logger.WithError(err).Error("Failed to load TLS certificate and key, skipping TLS listener")
+					startTLS = false
+				}
 			}
-		}()
+		}
+		if startTLS {
+			// Set up TLS configuration using sipgo's utility function or manual config
+			tlsConfig := &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{cert},
+			}
+
+			logger.WithFields(logrus.Fields{
+				"address": tlsAddress,
+				"port":    appConfig.Network.TLSPort,
+			}).Info("Starting SIP server on TLS")
+
+			// Start TLS server in a separate goroutine
+			wgListeners.Add(1)
+			go func() {
+				defer wgListeners.Done()
+
+				// Use CustomSIPServer TLS method
+				if err := sipHandler.Server.ListenAndServeTLS(
+					ctx,
+					tlsAddress,
+					tlsConfig,
+				); err != nil {
+					logger.WithError(err).WithField("port", appConfig.Network.TLSPort).Error("Failed to start SIP server on TLS")
+					errChan <- fmt.Errorf("TLS listener error: %w", err)
+					return
+				}
+
+				logger.WithField("port", appConfig.Network.TLSPort).Info("SIP server started on TLS successfully")
+			}()
+
+			// Verify TLS server started successfully by checking if the port is listening
+			// Allow time for the server to start
+			go func() {
+				time.Sleep(1 * time.Second)
+
+				dialer := &net.Dialer{
+					Timeout: 2 * time.Second,
+				}
+
+				conn, err := dialer.DialContext(ctx, "tcp", tlsAddress)
+				if err != nil {
+					logger.WithError(err).Warn("TLS port check failed - port does not appear to be listening")
+				} else {
+					conn.Close()
+					logger.WithField("port", appConfig.Network.TLSPort).Info("TLS port verified to be listening")
+				}
+			}()
+		}
 	}
 
 	// Keep server running until an error occurs or context is cancelled
@@ -824,6 +944,23 @@ func logStartupConfig() {
 		"check_interval":     appConfig.Redundancy.SessionCheckInterval,
 		"storage_type":       appConfig.Redundancy.StorageType,
 	}).Info("Redundancy configuration")
+}
+
+func convertToMessagingTLS(cfg config.AMQPTLSConfig) messaging.AMQPTLSConfig {
+	return messaging.AMQPTLSConfig{
+		Enabled:    cfg.Enabled,
+		CertFile:   cfg.CertFile,
+		KeyFile:    cfg.KeyFile,
+		CAFile:     cfg.CAFile,
+		SkipVerify: cfg.SkipVerify,
+	}
+}
+
+func boolWithDefault(flag *bool, fallback bool) bool {
+	if flag == nil {
+		return fallback
+	}
+	return *flag
 }
 
 // initializeEncryption initializes the encryption subsystem

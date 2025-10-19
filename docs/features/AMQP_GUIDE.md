@@ -20,6 +20,8 @@ The AMQP integration includes several features to ensure production readiness:
 - **Message Expiration**: Messages have a 12-hour expiration to prevent queue overflow
 - **Graceful Degradation**: If AMQP is unavailable, the server continues to function without interruption
 - **Panic Recovery**: All AMQP operations include panic recovery to prevent cascading failures
+- **Multi-Endpoint Fan-out**: Publish live transcriptions to multiple RabbitMQ clusters concurrently
+- **TLS Support**: Secure AMQP connections (including client certificates and custom CA bundles)
 
 ## Configuration
 
@@ -39,6 +41,61 @@ AMQP_QUEUE_NAME=transcriptions
 
 - `AMQP_QUEUE_NAME`: The name of the queue to publish transcriptions to
   - Default: Empty (AMQP disabled)
+
+### TLS (Optional)
+
+To enable TLS for the legacy AMQP client, set the following environment variables:
+
+```
+AMQP_TLS_ENABLED=true
+AMQP_TLS_CA_FILE=/etc/rabbitmq/ca.pem
+AMQP_TLS_CERT_FILE=/etc/rabbitmq/client.pem
+AMQP_TLS_KEY_FILE=/etc/rabbitmq/client.key
+AMQP_TLS_SKIP_VERIFY=false
+```
+
+`AMQP_URL` may use either the `amqps://` or `amqp://` scheme. When TLS variables are supplied, the client automatically negotiates secure connections.
+
+### Multiple AMQP Endpoints & Fan-out
+
+When you need to deliver live transcriptions to more than one RabbitMQ cluster, define additional endpoints inside your configuration file:
+
+```json
+{
+  "messaging": {
+    "enable_realtime_amqp": true,
+    "realtime_amqp_endpoints": [
+      {
+        "name": "primary-rabbit",
+        "use_enhanced": true,
+        "amqp": {
+          "hosts": ["rabbitmq-a.internal:5671", "rabbitmq-b.internal:5671"],
+          "username": "siprec",
+          "password": "super-secret",
+          "virtual_host": "/siprec",
+          "default_exchange": "siprec.transcriptions",
+          "default_routing_key": "calls.raw",
+          "tls": {
+            "enabled": true,
+            "ca_file": "/etc/rabbitmq/ca.pem"
+          }
+        }
+      },
+      {
+        "name": "analytics-bus",
+        "use_enhanced": false,
+        "url": "amqps://analytics:token@analytics-bus.example.com:5672/",
+        "queue_name": "analytics.transcriptions",
+        "publish_partial": false
+      }
+    ]
+  }
+}
+```
+
+- Set `use_enhanced` to `true` to leverage the connection pool (`AMQP_HOSTS`, TLS options, load balancing, and retry controls).
+- Set `publish_partial` or `publish_final` to limit which events a specific endpoint receives. If omitted, global `PUBLISH_PARTIAL_TRANSCRIPTS` / `PUBLISH_FINAL_TRANSCRIPTS` settings are used.
+- Legacy `AMQP_URL` + `AMQP_QUEUE_NAME` remain supported and will be treated as the first endpoint.
 
 ## Message Format
 

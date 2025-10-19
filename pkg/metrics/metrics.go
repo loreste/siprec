@@ -57,6 +57,12 @@ var (
 	AMQPConnectionErrors  *prometheus.CounterVec
 	AMQPReconnectAttempts *prometheus.CounterVec
 	AMQPConnectionStatus  prometheus.Gauge
+
+	// Provider health metrics
+	ProviderHealthStatus     *prometheus.GaugeVec
+	ProviderHealthCheckTime  *prometheus.HistogramVec
+	ProviderSelectionScore   *prometheus.GaugeVec
+	ProviderCircuitBreaker   *prometheus.GaugeVec
 )
 
 // Init initializes all metrics and registers them with Prometheus
@@ -296,6 +302,40 @@ func Init(logger *logrus.Logger) {
 			},
 		)
 
+		// Initialize provider health metrics
+		ProviderHealthStatus = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "siprec_provider_health_status",
+				Help: "Health status of STT providers (1 = healthy, 0 = unhealthy)",
+			},
+			[]string{"provider"},
+		)
+
+		ProviderHealthCheckTime = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "siprec_provider_health_check_seconds",
+				Help:    "Time taken for provider health checks",
+				Buckets: prometheus.ExponentialBuckets(0.01, 2, 10), // 10ms to ~10s
+			},
+			[]string{"provider"},
+		)
+
+		ProviderSelectionScore = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "siprec_provider_selection_score",
+				Help: "Selection score for STT providers (0-100)",
+			},
+			[]string{"provider"},
+		)
+
+		ProviderCircuitBreaker = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "siprec_provider_circuit_breaker_status",
+				Help: "Circuit breaker status (0=closed, 1=open, 2=half-open)",
+			},
+			[]string{"provider"},
+		)
+
 		// Register all metrics
 		registry.MustRegister(
 			// RTP metrics
@@ -339,6 +379,12 @@ func Init(logger *logrus.Logger) {
 			AMQPConnectionErrors,
 			AMQPReconnectAttempts,
 			AMQPConnectionStatus,
+
+			// Provider health metrics
+			ProviderHealthStatus,
+			ProviderHealthCheckTime,
+			ProviderSelectionScore,
+			ProviderCircuitBreaker,
 		)
 
 		logger.Info("Prometheus metrics initialized")
@@ -573,5 +619,38 @@ func RecordAudioProcessingError(callUUID, errorType string, count float64) {
 	if metricsEnabled {
 		// Use VADEvents counter for error tracking since we don't have a dedicated counter
 		VADEvents.WithLabelValues(callUUID, "error_"+errorType).Add(count)
+	}
+}
+
+// RecordProviderHealth records provider health status
+func RecordProviderHealth(provider, status string, responseTimeMs int64) {
+	if metricsEnabled {
+		healthValue := 0.0
+		if status == "healthy" {
+			healthValue = 1.0
+		}
+		ProviderHealthStatus.WithLabelValues(provider).Set(healthValue)
+		ProviderHealthCheckTime.WithLabelValues(provider).Observe(float64(responseTimeMs) / 1000.0)
+	}
+}
+
+// SetProviderScore sets the provider selection score
+func SetProviderScore(provider string, score float64) {
+	if metricsEnabled {
+		ProviderSelectionScore.WithLabelValues(provider).Set(score)
+	}
+}
+
+// SetCircuitBreakerStatus sets the circuit breaker status
+func SetCircuitBreakerStatus(provider, state string) {
+	if metricsEnabled {
+		value := 0.0
+		switch state {
+		case "open":
+			value = 1.0
+		case "half-open":
+			value = 2.0
+		}
+		ProviderCircuitBreaker.WithLabelValues(provider).Set(value)
 	}
 }

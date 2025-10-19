@@ -33,12 +33,12 @@ func TestNATRewriter_RewriteViaHeaders(t *testing.T) {
 		RequestURI: "sip:test@example.com",
 		Version:    "SIP/2.0",
 		Headers: map[string][]string{
-			"Via":     {"SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bK123"},
-			"Contact": {"<sip:user@192.168.1.100:5060>"},
-			"From":    {"<sip:caller@192.168.1.100:5060>;tag=abc"},
-			"To":      {"<sip:callee@example.com>"},
-			"Call-ID": {"test-call-id"},
-			"CSeq":    {"1 INVITE"},
+			"via":     {"SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bK123"},
+			"contact": {"<sip:user@192.168.1.100:5060>"},
+			"from":    {"<sip:caller@192.168.1.100:5060>;tag=abc"},
+			"to":      {"<sip:callee@example.com>"},
+			"call-id": {"test-call-id"},
+			"cseq":    {"1 INVITE"},
 		},
 		CallID: "test-call-id",
 		Connection: &SIPConnection{
@@ -54,7 +54,7 @@ func TestNATRewriter_RewriteViaHeaders(t *testing.T) {
 	}
 
 	// Check Via header was rewritten
-	viaHeaders, exists := message.Headers["Via"]
+	viaHeaders, exists := message.Headers["via"]
 	if !exists || len(viaHeaders) == 0 {
 		t.Fatal("Via header is missing")
 	}
@@ -67,7 +67,7 @@ func TestNATRewriter_RewriteViaHeaders(t *testing.T) {
 	}
 
 	// Check Contact header was rewritten
-	contactHeaders, exists := message.Headers["Contact"]
+	contactHeaders, exists := message.Headers["contact"]
 	if !exists || len(contactHeaders) == 0 {
 		t.Fatal("Contact header is missing")
 	}
@@ -186,11 +186,11 @@ func TestNATRewriter_DisabledNAT(t *testing.T) {
 		RequestURI: "sip:test@example.com",
 		Version:    "SIP/2.0",
 		Headers: map[string][]string{
-			"Via":     {originalVia},
-			"Call-ID": {"test-call-id"},
-			"From":    {"<sip:test@test.com>"},
-			"To":      {"<sip:test@test.com>"},
-			"CSeq":    {"1 INVITE"},
+			"via":     {originalVia},
+			"call-id": {"test-call-id"},
+			"from":    {"<sip:test@test.com>"},
+			"to":      {"<sip:test@test.com>"},
+			"cseq":    {"1 INVITE"},
 		},
 		CallID: "test-call-id",
 		Connection: &SIPConnection{
@@ -206,7 +206,7 @@ func TestNATRewriter_DisabledNAT(t *testing.T) {
 	}
 
 	// Check Via header was NOT rewritten
-	viaHeaders, exists := message.Headers["Via"]
+	viaHeaders, exists := message.Headers["via"]
 	if !exists || len(viaHeaders) == 0 {
 		t.Fatal("Via header is missing")
 	}
@@ -245,8 +245,8 @@ m=audio 10000 RTP/AVP 0`
 		RequestURI: "sip:test@example.com",
 		Version:    "SIP/2.0",
 		Headers: map[string][]string{
-			"Via":          {"SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bK123"},
-			"Content-Type": {"application/sdp"},
+			"via":          {"SIP/2.0/UDP 192.168.1.100:5060;branch=z9hG4bK123"},
+			"content-type": {"application/sdp"},
 		},
 		Body:   []byte(sdpBody),
 		CallID: "test-call-id",

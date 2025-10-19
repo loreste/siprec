@@ -2,8 +2,13 @@ package messaging
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +33,16 @@ type AMQPConfig struct {
 	RoutingKey   string
 	Durable      bool
 	AutoDelete   bool
+	TLSConfig    AMQPTLSConfig
+}
+
+// AMQPTLSConfig captures TLS options for basic AMQP clients.
+type AMQPTLSConfig struct {
+	Enabled    bool
+	CertFile   string
+	KeyFile    string
+	CAFile     string
+	SkipVerify bool
 }
 
 // AMQPClient handles AMQP connections and message publishing
@@ -100,7 +115,7 @@ func (c *AMQPClient) Connect() error {
 	}, 1)
 
 	go func() {
-		conn, err := amqp.Dial(c.config.URL)
+		conn, err := c.dialWithTLS(c.config.URL)
 		select {
 		case <-ctx.Done():
 			// Context already timed out, clean up and return
@@ -228,6 +243,66 @@ func (c *AMQPClient) Connect() error {
 	go c.monitorConnection()
 
 	return nil
+}
+
+func (c *AMQPClient) dialWithTLS(connURL string) (*amqp.Connection, error) {
+	parsed, err := url.Parse(connURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid AMQP URL: %w", err)
+	}
+
+	useTLS := strings.EqualFold(parsed.Scheme, "amqps") || c.config.TLSConfig.Enabled
+	if !useTLS {
+		return amqp.Dial(connURL)
+	}
+
+	tlsConfig, err := buildAMQPTLSConfig(c.config.TLSConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.EqualFold(parsed.Scheme, "amqp") {
+		parsed.Scheme = "amqps"
+		connURL = parsed.String()
+	}
+
+	return amqp.DialConfig(connURL, amqp.Config{
+		TLSClientConfig: tlsConfig,
+		Heartbeat:       10 * time.Second,
+		Locale:          "en_US",
+	})
+}
+
+func buildAMQPTLSConfig(cfg AMQPTLSConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: cfg.SkipVerify,
+	}
+
+	if cfg.CertFile != "" && cfg.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load AMQP TLS certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	if cfg.CAFile != "" {
+		rootPool, err := x509.SystemCertPool()
+		if err != nil || rootPool == nil {
+			rootPool = x509.NewCertPool()
+		}
+
+		caBytes, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read AMQP TLS CA file: %w", err)
+		}
+		if !rootPool.AppendCertsFromPEM(caBytes) {
+			return nil, fmt.Errorf("failed to append AMQP TLS CA certificate")
+		}
+		tlsConfig.RootCAs = rootPool
+	}
+
+	return tlsConfig, nil
 }
 
 // Disconnect closes the AMQP connection

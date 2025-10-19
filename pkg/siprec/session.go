@@ -3,6 +3,7 @@ package siprec
 import (
 	"encoding/xml"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,16 +14,102 @@ import (
 
 // UpdateRecordingSession updates an existing recording session with new metadata
 func UpdateRecordingSession(existing *RecordingSession, rsMetadata *RSMetadata) {
+	if existing == nil || rsMetadata == nil {
+		return
+	}
+
+	if existing.ExtendedMetadata == nil {
+		existing.ExtendedMetadata = make(map[string]string)
+	}
+
 	// Update recording state if changed
 	if rsMetadata.State != "" {
 		existing.RecordingState = rsMetadata.State
 	}
 
+	if reason := strings.TrimSpace(rsMetadata.Reason); reason != "" {
+		existing.StateReason = reason
+		existing.ExtendedMetadata["state_reason"] = reason
+		existing.ExtendedMetadata["reason"] = reason
+	}
+
+	if reasonRef := strings.TrimSpace(rsMetadata.ReasonRef); reasonRef != "" {
+		existing.StateReasonRef = reasonRef
+		existing.ExtendedMetadata["state_reason_ref"] = reasonRef
+		existing.ExtendedMetadata["reason_ref"] = reasonRef
+	}
+
+	if expires := strings.TrimSpace(rsMetadata.Expires); expires != "" {
+		existing.ExtendedMetadata["state_expires"] = expires
+		existing.ExtendedMetadata["expires"] = expires
+		if parsed, err := time.Parse(time.RFC3339, expires); err == nil {
+			existing.StateExpires = parsed
+		}
+	}
+
 	// Update participant information
 	existing.Participants = updateParticipants(existing.Participants, rsMetadata.Participants)
 
+	if len(rsMetadata.SessionGroupAssociations) > 0 {
+		existing.SessionGroups = rsMetadata.SessionGroupAssociations
+		if existing.SessionGroupRoles == nil {
+			existing.SessionGroupRoles = make(map[string]string, len(rsMetadata.SessionGroupAssociations))
+		} else {
+			for key := range existing.SessionGroupRoles {
+				delete(existing.SessionGroupRoles, key)
+			}
+		}
+		for _, assoc := range rsMetadata.SessionGroupAssociations {
+			existing.SessionGroupRoles[assoc.SessionGroupID] = assoc.Role
+			key := fmt.Sprintf("session_group_%s", assoc.SessionGroupID)
+			existing.ExtendedMetadata[key] = assoc.Role
+		}
+	}
+
+	if len(rsMetadata.PolicyUpdates) > 0 {
+		existing.PolicyUpdates = rsMetadata.PolicyUpdates
+		if existing.PolicyStates == nil {
+			existing.PolicyStates = make(map[string]PolicyAckStatus, len(rsMetadata.PolicyUpdates))
+		} else {
+			for key := range existing.PolicyStates {
+				delete(existing.PolicyStates, key)
+			}
+		}
+		for _, policy := range rsMetadata.PolicyUpdates {
+			rawTimestamp := strings.TrimSpace(policy.Timestamp)
+			reportedAt := time.Now()
+			if rawTimestamp != "" {
+				if parsed, err := time.Parse(time.RFC3339, rawTimestamp); err == nil {
+					reportedAt = parsed
+				}
+			}
+			statusValue := strings.ToLower(strings.TrimSpace(policy.Status))
+			existing.PolicyStates[policy.PolicyID] = PolicyAckStatus{
+				Status:       statusValue,
+				Acknowledged: policy.Acknowledged,
+				ReportedAt:   reportedAt,
+				RawTimestamp: rawTimestamp,
+			}
+
+			statusKey := fmt.Sprintf("policy_%s_status", policy.PolicyID)
+			existing.ExtendedMetadata[statusKey] = statusValue
+			existing.ExtendedMetadata[statusKey+"_ack"] = strconv.FormatBool(policy.Acknowledged)
+			if rawTimestamp != "" {
+				existing.ExtendedMetadata[statusKey+"_timestamp"] = rawTimestamp
+			} else {
+				delete(existing.ExtendedMetadata, statusKey+"_timestamp")
+			}
+		}
+	}
+
 	// Update sequence number
-	existing.SequenceNumber++
+	nextSequence := existing.SequenceNumber + 1
+	if rsMetadata.Sequence > nextSequence {
+		nextSequence = rsMetadata.Sequence
+	} else if rsMetadata.Sequence > existing.SequenceNumber {
+		nextSequence = rsMetadata.Sequence
+	}
+	existing.SequenceNumber = nextSequence
 
 	// Update associated time
 	existing.AssociatedTime = time.Now()

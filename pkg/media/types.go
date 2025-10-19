@@ -1,6 +1,8 @@
 package media
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"net"
 	"os"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"siprec-server/pkg/siprec"
 
 	"github.com/sirupsen/logrus"
+	"strings"
 )
 
 // RTPForwarder handles RTP packet forwarding and recording
@@ -16,6 +19,7 @@ type RTPForwarder struct {
 	LocalPort        int // RTP port (even)
 	RTCPPort         int // RTCP port (RTP + 1, odd)
 	Conn             *net.UDPConn
+	RTCPConn         *net.UDPConn
 	StopChan         chan struct{}
 	CallUUID         string
 	TranscriptChan   chan string
@@ -30,6 +34,15 @@ type RTPForwarder struct {
 	stopOnce         sync.Once  // Ensures StopChan is closed only once
 	RecordingPath    string
 	Storage          RecordingStorage
+
+	// Codec / audio format information
+	CodecPayloadType byte
+	CodecName        string
+	SampleRate       int
+	Channels         int
+
+	// WAV writer handles PCM containerization
+	WAVWriter *WAVWriter
 
 	// Pause/Resume state
 	TranscriptionPaused bool            // Flag to indicate if transcription is paused
@@ -51,8 +64,22 @@ type RTPForwarder struct {
 	// PII audio tracking
 	PIIAudioMarker *PIIAudioMarker // Tracks PII detection events for audio redaction
 
+	// Remote party addressing
+	RemoteRTPAddr          *net.UDPAddr
+	RemoteRTCPAddr         *net.UDPAddr
+	ExpectedRemoteRTCPPort int
+	UseRTCPMux             bool
+
 	// Cleanup tracking
 	MarkedForCleanup bool // Flag indicating if this forwarder has been marked for cleanup
+
+	// RTP/RTCP statistics
+	LocalSSRC  uint32
+	RemoteSSRC uint32
+	RTPStats   *rtpStreamStats
+
+	rtcpStopChan chan struct{}
+	remoteMutex  sync.Mutex
 }
 
 // SDPOptions defines options for SDP generation
@@ -119,6 +146,15 @@ func GetPortManager() *PortManager {
 	return portManager
 }
 
+func generateRandomSSRC() uint32 {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// Fallback to time-based value if crypto source unavailable
+		return uint32(time.Now().UnixNano())
+	}
+	return binary.BigEndian.Uint32(buf[:])
+}
+
 // NewRTPForwarder creates a new RTP forwarder using RFC 3550 compliant RTP/RTCP port pairs
 func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger, piiAudioEnabled bool) (*RTPForwarder, error) {
 	// Get an RTP/RTCP port pair from the port manager (RFC 3550 compliant)
@@ -144,12 +180,32 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		Logger:           logger,
 		SRTPEnabled:      false,
 		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
-		SRTPKeyLifetime:  2 ^ 31,                    // Default lifetime from RFC 3711
+		SRTPKeyLifetime:  1 << 31,                   // Default lifetime from RFC 3711
 		AudioProcessor:   nil,                       // Will be initialized in StartRTPForwarding
 		PIIAudioMarker:   piiAudioMarker,            // PII audio tracking
 		isCleanedUp:      false,                     // Not cleaned up initially
 		MarkedForCleanup: false,                     // Not marked for cleanup initially
+		LocalSSRC:        generateRandomSSRC(),
+		RTPStats:         newRTPStreamStats(),
+		rtcpStopChan:     make(chan struct{}, 1),
 	}, nil
+}
+
+// SetCodecInfo configures payload format information used for recording.
+func (f *RTPForwarder) SetCodecInfo(payloadType byte, codecName string, sampleRate, channels int) {
+	f.CodecPayloadType = payloadType
+	f.CodecName = strings.ToUpper(codecName)
+	f.SampleRate = sampleRate
+	f.Channels = channels
+	if f.SampleRate <= 0 {
+		f.SampleRate = 8000
+	}
+	if f.Channels <= 0 {
+		f.Channels = 1
+	}
+	if f.RTPStats != nil && sampleRate > 0 {
+		f.RTPStats.SetClockRate(sampleRate)
+	}
 }
 
 // Stop safely stops the RTP forwarder by closing the stop channel
@@ -255,6 +311,19 @@ func (f *RTPForwarder) Cleanup() {
 	// Mark as cleaned up to prevent duplicate cleanup
 	f.isCleanedUp = true
 
+	// Stop RTCP sender loop before closing sockets
+	if f.rtcpStopChan != nil {
+		select {
+		case f.rtcpStopChan <- struct{}{}:
+		default:
+		}
+	}
+
+	// Send RTCP BYE before tearing down sockets
+	if f.RemoteRTCPAddr != nil {
+		sendRTCPBye(f)
+	}
+
 	// Get the port manager and release the port(s)
 	pm := GetPortManager()
 	if f.RTCPPort > 0 {
@@ -277,8 +346,19 @@ func (f *RTPForwarder) Cleanup() {
 		f.Conn = nil
 	}
 
+	if f.RTCPConn != nil {
+		f.RTCPConn.Close()
+		f.RTCPConn = nil
+	}
+
 	// Close recording file if open
 	if f.RecordingFile != nil {
+		if f.WAVWriter != nil {
+			if err := f.WAVWriter.Finalize(); err != nil && f.Logger != nil {
+				f.Logger.WithError(err).Warn("Failed to finalize WAV header during cleanup")
+			}
+			f.WAVWriter = nil
+		}
 		f.RecordingFile.Close()
 		f.RecordingFile = nil
 	}
