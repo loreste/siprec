@@ -7,7 +7,9 @@
 [![NAT Support](https://img.shields.io/badge/NAT-Supported-blue.svg)](docs/configuration/README.md)
 [![TCP Optimized](https://img.shields.io/badge/TCP-Optimized-orange.svg)](docs/architecture/SIP_ARCHITECTURE.md)
 
-A high-performance, enterprise-grade SIP recording (SIPREC) server that implements RFC 7865/7866 with custom TCP-optimized transport, advanced real-time transcription capabilities, and comprehensive NAT support for cloud deployments.
+A high-performance, enterprise-grade SIP recording (SIPREC) server that implements RFC 7865/7866 with custom TCP-optimized transport, advanced real-time transcription capabilities, comprehensive NAT support for cloud deployments, and production-ready features including database persistence, cloud storage, real-time analytics, and compliance support.
+
+**Complete Feature Set**: 7 STT providers • MySQL/MariaDB persistence • S3/GCS/Azure storage • Elasticsearch analytics • WebSocket streaming • PCI/GDPR compliance • Advanced audio processing • High availability clustering • OpenTelemetry tracing • Automated backups • Multi-channel alerting
 
 ## ✨ Key Features
 
@@ -59,14 +61,23 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🛡️ Security Enforcement** - Configurable TLS/SRTP requirements with certificate validation
 
 ### Enterprise Features
-- **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
-- **📨 Message Queue** - AMQP integration with delivery guarantees, multi-endpoint fan-out, connection pooling, and TLS support
-- **📈 Monitoring** - Comprehensive metrics, health checks, and operational visibility with Prometheus integration
+- **🔐 Security** - End-to-end encryption with TLS/SRTP, configurable key rotation, and HSM support
+- **📨 Message Queue** - AMQP integration with DLQ handling, exchange management, delivery guarantees, and exponential retry
+- **📈 Monitoring** - Prometheus metrics, OpenTelemetry tracing, CPU/memory profiling, and goroutine monitoring
 - **☁️ Cloud Ready** - Optimized for GCP, AWS, Azure with automatic configuration
 - **⚠️ Advanced Warning System** - Intelligent warning collection with severity levels and automatic resolution
 - **✅ Configuration Validation** - Comprehensive startup validation with detailed error reporting
-- **🔄 Provider Resilience** - Automatic failover with score-based provider selection
+- **🔄 Provider Resilience** - Automatic failover with score-based provider selection and circuit breakers
 - **🌍 Language Routing** - Intelligent routing of calls to STT providers based on language detection
+
+### Operations & Resilience
+- **🔔 Alerting System** - Multi-channel alerts (email, Slack, webhook) with aggregation and deduplication
+- **💾 Backup & Recovery** - Automated backups with point-in-time recovery and rotation policies
+- **🌐 Clustering** - Leader election, distributed session management, and node health monitoring
+- **📊 Telemetry** - OpenTelemetry integration with distributed tracing and custom metrics
+- **⚡ Performance** - Auto-tuning, worker pool optimization, and resource limit management
+- **🔄 Business Continuity** - Disaster recovery, automatic failover, and data replication
+- **🔧 DNS Management** - SRV records, DNS-based load balancing, and failover strategies
 
 ## 🚀 Quick Start
 
@@ -283,6 +294,39 @@ PII_APPLY_TO_TRANSCRIPTIONS=true   # Apply PII filtering to transcriptions
 PII_APPLY_TO_RECORDINGS=true       # Apply PII marking to audio recordings
 PII_PRESERVE_FORMAT=true           # Preserve original format when redacting
 PII_CONTEXT_LENGTH=10              # Context characters around detected PII
+
+# Alerting Configuration
+ALERTING_ENABLED=true               # Enable alerting system
+ALERT_CHANNELS=email,slack,webhook  # Alert delivery channels
+ALERT_EMAIL_TO=ops@example.com      # Email recipients
+ALERT_SLACK_WEBHOOK=https://hooks.slack.com/services/xxx
+ALERT_AGGREGATION_WINDOW=5m         # Alert aggregation window
+
+# Clustering & HA
+CLUSTER_ENABLED=false               # Enable clustering
+CLUSTER_NODE_ID=node-1              # Unique node identifier
+CLUSTER_PEERS=node-2:8080,node-3:8080  # Peer nodes
+LEADER_ELECTION_ENABLED=true        # Enable leader election
+
+# Telemetry & Tracing
+TELEMETRY_ENABLED=true              # Enable OpenTelemetry
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_SERVICE_NAME=siprec
+TRACING_ENABLED=true                # Enable distributed tracing
+TRACING_SAMPLE_RATE=0.1             # Trace sampling rate
+
+# Performance Monitoring
+PERFORMANCE_MONITORING_ENABLED=true  # Enable performance monitoring
+AUTO_TUNING_ENABLED=true            # Enable auto-tuning
+WORKER_POOL_MIN=10                  # Minimum worker pool size
+WORKER_POOL_MAX=100                 # Maximum worker pool size
+GOROUTINE_LIMIT=10000               # Maximum goroutines
+
+# Backup Configuration
+BACKUP_ENABLED=true                 # Enable automatic backups
+BACKUP_SCHEDULE="0 2 * * *"        # Cron schedule for backups
+BACKUP_RETENTION_DAYS=30            # Backup retention period
+BACKUP_STORAGE_PATH=/backups        # Backup storage location
 ```
 
 For detailed configuration, see [Configuration Guide](docs/configuration/README.md).
@@ -659,15 +703,22 @@ tail -f /var/log/siprec/siprec.log
 - **Legal Compliance**: Lawful intercept and recording capabilities
 - **Network Analysis**: Call quality and performance monitoring
 
-## 📊 Comparison
+## 📊 Feature Comparison
 
 | Feature | SIPREC Server | Commercial Solutions | Open Source Alternatives |
 |---------|---------------|---------------------|--------------------------|
 | RFC Compliance | ✅ Full RFC 7865/7866 | ✅ Yes | ⚠️ Limited |
-| Real-time Transcription | ✅ Multi-provider | ✅ Yes | ❌ No |
+| Real-time Transcription | ✅ 7 Providers | ⚠️ 1-2 Providers | ❌ No |
+| Database Persistence | ✅ MySQL/MariaDB | ✅ Yes | ⚠️ Basic |
+| Cloud Storage | ✅ S3/GCS/Azure | ✅ Yes | ❌ No |
+| Real-time Analytics | ✅ Elasticsearch | ⚠️ Limited | ❌ No |
+| WebSocket Streaming | ✅ Yes | ⚠️ Some | ❌ No |
+| PCI/GDPR Compliance | ✅ Built-in | ✅ Yes | ❌ No |
+| Audio Processing | ✅ Advanced | ⚠️ Basic | ❌ No |
+| Clustering/HA | ✅ Yes | ✅ Yes | ❌ No |
 | NAT Support | ✅ Advanced | ✅ Yes | ⚠️ Basic |
-| Cloud Ready | ✅ Optimized | ✅ Yes | ⚠️ Manual |
-| Cost | ✅ Open Source | ❌ Expensive | ✅ Free |
+| Cloud Native | ✅ Optimized | ✅ Yes | ⚠️ Manual |
+| Cost | ✅ Open Source | ❌ $$$$ | ✅ Free |
 | Customization | ✅ Full Control | ❌ Limited | ✅ Yes |
 
 ## 🤝 Contributing
