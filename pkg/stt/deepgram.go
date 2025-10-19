@@ -15,23 +15,25 @@ import (
 
 // DeepgramProvider implements the Provider interface for Deepgram
 type DeepgramProvider struct {
-	logger               *logrus.Logger
-	transcriptionSvc     *TranscriptionService
-	config               *config.DeepgramSTTConfig
-	languageSwitcher     *LanguageSwitcher
-	transitionSmoother   *LanguageTransitionSmoother
-	persistenceService   *LanguagePersistenceService
-	callback TranscriptionCallback
+	logger             *logrus.Logger
+	transcriptionSvc   *TranscriptionService
+	config             *config.DeepgramSTTConfig
+	languageSwitcher   *LanguageSwitcher
+	transitionSmoother *LanguageTransitionSmoother
+	persistenceService *LanguagePersistenceService
+	providerManager    *ProviderManager
+	callback           TranscriptionCallback
 }
 
 // NewDeepgramProvider creates a new Deepgram provider
-func NewDeepgramProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.DeepgramSTTConfig) *DeepgramProvider {
+func NewDeepgramProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.DeepgramSTTConfig, manager *ProviderManager) *DeepgramProvider {
 	provider := &DeepgramProvider{
 		logger:           logger,
 		transcriptionSvc: transcriptionSvc,
 		config:           cfg,
+		providerManager:  manager,
 	}
-	
+
 	// Initialize language switcher if real-time switching is enabled
 	if cfg.RealtimeLanguageSwitching {
 		provider.languageSwitcher = NewLanguageSwitcher(logger, cfg)
@@ -39,7 +41,7 @@ func NewDeepgramProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionS
 		provider.persistenceService = NewLanguagePersistenceService(logger)
 		logger.Info("Language switcher, transition smoother, and persistence service initialized for Deepgram provider")
 	}
-	
+
 	return provider
 }
 
@@ -65,25 +67,25 @@ func (p *DeepgramProvider) Initialize() error {
 
 	// Log basic configuration
 	p.logger.WithFields(logrus.Fields{
-		"api_url":         p.config.APIURL,
-		"model":           p.config.Model,
-		"language":        p.config.Language,
-		"tier":            p.config.Tier,
-		"punctuate":       p.config.Punctuate,
-		"diarize":         p.config.Diarize,
-		"smart_format":    p.config.SmartFormat,
+		"api_url":      p.config.APIURL,
+		"model":        p.config.Model,
+		"language":     p.config.Language,
+		"tier":         p.config.Tier,
+		"punctuate":    p.config.Punctuate,
+		"diarize":      p.config.Diarize,
+		"smart_format": p.config.SmartFormat,
 	}).Info("Deepgram provider initialized successfully")
-	
+
 	// Log enhanced accent detection configuration if enabled
 	if p.config.DetectLanguage {
 		p.logger.WithFields(logrus.Fields{
-			"supported_languages":       p.config.SupportedLanguages,
-			"confidence_threshold":      p.config.LanguageConfidenceThreshold,
-			"accent_aware_models":       p.config.AccentAwareModels,
-			"fallback_language":         p.config.FallbackLanguage,
-			"realtime_switching":        p.config.RealtimeLanguageSwitching,
-			"multilang_alternatives":    p.config.MultiLanguageAlternatives,
-			"max_alternatives":          p.config.MaxLanguageAlternatives,
+			"supported_languages":    p.config.SupportedLanguages,
+			"confidence_threshold":   p.config.LanguageConfidenceThreshold,
+			"accent_aware_models":    p.config.AccentAwareModels,
+			"fallback_language":      p.config.FallbackLanguage,
+			"realtime_switching":     p.config.RealtimeLanguageSwitching,
+			"multilang_alternatives": p.config.MultiLanguageAlternatives,
+			"max_alternatives":       p.config.MaxLanguageAlternatives,
 		}).Info("Deepgram multi-language accent detection enabled")
 	}
 	return nil
@@ -165,23 +167,23 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 	// Add query parameters to the request URL from configuration
 	query := req.URL.Query()
 	query.Add("model", p.config.Model)
-	
+
 	// Enhanced language detection and accent handling
 	if p.config.DetectLanguage && len(p.config.SupportedLanguages) > 0 {
 		// Enable language detection with supported languages
 		query.Add("detect_language", "true")
 		query.Add("language", strings.Join(p.config.SupportedLanguages, ","))
-		
+
 		// Add accent-aware model selection if enabled
 		if p.config.AccentAwareModels {
-			query.Add("model", "nova-2")  // Use the most advanced model for accent detection
+			query.Add("model", "nova-2") // Use the most advanced model for accent detection
 		}
-		
+
 		// Add confidence threshold for language detection
 		if p.config.LanguageConfidenceThreshold > 0 {
 			query.Add("language_confidence", fmt.Sprintf("%.2f", p.config.LanguageConfidenceThreshold))
 		}
-		
+
 		// Enable alternatives if multi-language alternatives are requested
 		if p.config.MultiLanguageAlternatives && p.config.MaxLanguageAlternatives > 1 {
 			query.Add("alternatives", fmt.Sprintf("%d", p.config.MaxLanguageAlternatives))
@@ -194,7 +196,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 		}
 		query.Add("language", language)
 	}
-	
+
 	query.Add("tier", p.config.Tier)
 	query.Add("version", p.config.Version)
 	query.Add("punctuate", fmt.Sprintf("%t", p.config.Punctuate))
@@ -259,13 +261,13 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 				metadata["language_confidence_threshold"] = p.config.LanguageConfidenceThreshold
 				metadata["accent_aware_models"] = p.config.AccentAwareModels
 				metadata["fallback_language"] = p.config.FallbackLanguage
-				
+
 				// Include detected language information if available in metadata
 				if deepgramResp.Metadata.Language != "" {
 					metadata["detected_language"] = deepgramResp.Metadata.Language
 					metadata["language_confidence"] = deepgramResp.Metadata.LanguageConfidence
 				}
-				
+
 				// Include multiple detected languages if available
 				if len(deepgramResp.Metadata.DetectedLanguages) > 0 {
 					metadata["detected_languages"] = deepgramResp.Metadata.DetectedLanguages
@@ -289,7 +291,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 					TranscriptText: transcript,
 					WordCount:      len(alternative.Words),
 				}
-				
+
 				// Add alternatives if available
 				if len(deepgramResp.Metadata.DetectedLanguages) > 0 {
 					detection.Alternatives = make([]LanguageAlternative, 0)
@@ -300,7 +302,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						})
 					}
 				}
-				
+
 				// Initialize persistence profile if not exists and get optimal settings
 				if p.persistenceService != nil {
 					// Get optimal language settings for this call
@@ -310,30 +312,40 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						metadata["optimal_cooldown"] = optimalSettings.SwitchCooldown
 					}
 				}
-				
+
 				// Process the detection and check for language switch
 				shouldSwitch, newLanguage, switchConfidence := p.languageSwitcher.ProcessLanguageDetection(callUUID, detection)
-				
+				if p.providerManager != nil {
+					if routed := p.providerManager.RouteCallByLanguage(callUUID, detection.Language); routed != "" {
+						metadata["routed_provider"] = routed
+					}
+				}
+
 				if shouldSwitch {
 					metadata["language_switched"] = true
 					metadata["previous_language"] = metadata["detected_language"]
 					metadata["new_language"] = newLanguage
 					metadata["switch_confidence"] = switchConfidence
-					
+					if p.providerManager != nil {
+						if routed := p.providerManager.RouteCallByLanguage(callUUID, newLanguage); routed != "" {
+							metadata["routed_provider"] = routed
+						}
+					}
+
 					// Initialize transition smoothing
 					if p.transitionSmoother != nil {
 						oldLang := metadata["detected_language"].(string)
 						p.transitionSmoother.StartTransition(callUUID, oldLang, newLanguage)
 					}
-					
+
 					p.logger.WithFields(logrus.Fields{
-						"call_uuid":        callUUID,
+						"call_uuid":         callUUID,
 						"previous_language": metadata["detected_language"],
-						"new_language":     newLanguage,
+						"new_language":      newLanguage,
 						"switch_confidence": switchConfidence,
 					}).Info("Language switch detected and processed")
 				}
-				
+
 				// Apply transition smoothing if active
 				if p.transitionSmoother != nil {
 					transcriptionSegment := TranscriptionSegment{
@@ -347,9 +359,9 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						IsFinal:      true,
 						Alternatives: detection.Alternatives,
 					}
-					
+
 					smoothedSegment := p.transitionSmoother.AddTranscriptionSegment(callUUID, transcriptionSegment)
-					
+
 					if smoothedSegment != nil {
 						// Update transcript and metadata with smoothed results
 						transcript = smoothedSegment.Text
@@ -357,7 +369,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						metadata["smoothed_confidence"] = smoothedSegment.Confidence
 						metadata["original_transcript"] = transcriptionSegment.Text
 						metadata["transition_applied"] = true
-						
+
 						p.logger.WithFields(logrus.Fields{
 							"call_uuid":         callUUID,
 							"original_text":     transcriptionSegment.Text,
@@ -367,7 +379,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						}).Debug("Applied transition smoothing")
 					}
 				}
-				
+
 				// Update language persistence with usage data
 				if p.persistenceService != nil {
 					usageUpdate := LanguageUsageUpdate{
@@ -381,14 +393,14 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 						ContextualScore: 0.8, // Default contextual score
 						Latency:         time.Since(detection.Timestamp),
 					}
-					
+
 					if shouldSwitch {
 						usageUpdate.SwitchReason = "language_switch"
 					}
-					
+
 					p.persistenceService.UpdateLanguageUsage(callUUID, usageUpdate)
 				}
-				
+
 				// Add language switching metadata
 				if session, exists := p.languageSwitcher.GetSessionInfo(callUUID); exists {
 					metadata["current_language"] = session.CurrentLanguage
@@ -430,12 +442,12 @@ func (p *DeepgramProvider) EndCallSession(callUUID string) {
 		p.languageSwitcher.EndCallSession(callUUID)
 		p.logger.WithField("call_uuid", callUUID).Debug("Ended language switching session")
 	}
-	
+
 	if p.transitionSmoother != nil {
 		p.transitionSmoother.EndCallSession(callUUID)
 		p.logger.WithField("call_uuid", callUUID).Debug("Ended language transition smoothing session")
 	}
-	
+
 	if p.persistenceService != nil {
 		p.persistenceService.EndCallProfile(callUUID)
 		p.logger.WithField("call_uuid", callUUID).Debug("Ended language persistence session")
@@ -448,18 +460,18 @@ func (p *DeepgramProvider) StartCallSession(callUUID, callerID string) {
 		p.languageSwitcher.StartCallSession(callUUID)
 		p.logger.WithField("call_uuid", callUUID).Debug("Started language switching session")
 	}
-	
+
 	if p.persistenceService != nil {
 		userPreferences := &UserLanguagePreferences{
-			PreferredLanguages:     p.config.SupportedLanguages,
-			FallbackLanguage:       p.config.FallbackLanguage,
-			SwitchingSensitivity:   "medium",
-			AutoDetectionEnabled:   p.config.DetectLanguage,
-			ManualOverrideEnabled:  true,
-			LearningEnabled:        true,
-			PreferenceUpdatedAt:    time.Now(),
+			PreferredLanguages:    p.config.SupportedLanguages,
+			FallbackLanguage:      p.config.FallbackLanguage,
+			SwitchingSensitivity:  "medium",
+			AutoDetectionEnabled:  p.config.DetectLanguage,
+			ManualOverrideEnabled: true,
+			LearningEnabled:       true,
+			PreferenceUpdatedAt:   time.Now(),
 		}
-		
+
 		p.persistenceService.StartCallProfile(callUUID, callerID, userPreferences)
 		p.logger.WithField("call_uuid", callUUID).Debug("Started language persistence session")
 	}

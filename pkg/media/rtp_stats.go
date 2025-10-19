@@ -138,3 +138,23 @@ func (s *rtpStreamStats) buildReceptionReport(ssrc uint32) *rtcp.ReceptionReport
 
 	return report
 }
+
+func (s *rtpStreamStats) Snapshot() (packetLoss float64, jitter float64, totalPackets uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.initialized {
+		return 0, 0, 0
+	}
+
+	expected := (s.maxSeq - s.baseSeq) + 1
+	if expected == 0 {
+		expected = 1
+	}
+	lost := float64(expected-s.received) / float64(expected)
+	if lost < 0 {
+		lost = 0
+	}
+
+	return lost, s.jitter, s.received
+}

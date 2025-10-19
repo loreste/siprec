@@ -1,0 +1,5 @@
+=== RUN   TestNewHandler
+time="2025-10-19T19:20:20-04:00" level=info msg="Using default shard count for call map" default_shard_count=32
+--- PASS: TestNewHandler (0.00s)
+PASS
+ok  	siprec-server/pkg/sip	1.040s

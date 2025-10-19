@@ -30,12 +30,13 @@ func TestNewHandler(t *testing.T) {
 	}
 
 	// Create new handler
-	handler, err := NewHandler(logger, config, mockSttProvider)
+	handler, err := NewHandler(logger, config, nil)
 
 	assert.NoError(t, err, "NewHandler should not return an error")
 	assert.NotNil(t, handler, "Handler should not be nil")
 	assert.Equal(t, config, handler.Config, "Config should be set")
 	assert.NotNil(t, handler.ActiveCalls, "ActiveCalls map should be initialized")
+	handler.STTCallback = mockSttProvider
 }
 
 // TestCallData tests the CallData struct
@@ -66,7 +67,8 @@ func TestGetActiveCallCount(t *testing.T) {
 			RTPPortMax: 20000,
 		},
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Initial count should be zero
 	count := handler.GetActiveCallCount()
@@ -104,7 +106,8 @@ func TestCleanupActiveCalls(t *testing.T) {
 		},
 		ShardCount: 16,
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Add some calls
 	for i := 0; i < 5; i++ {
@@ -136,7 +139,8 @@ func TestGetSession(t *testing.T) {
 		},
 		ShardCount: 16,
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Test with non-existent session
 	session, err := handler.GetSession("non-existent")
@@ -148,10 +152,10 @@ func TestGetSession(t *testing.T) {
 		LastActivity: time.Now(),
 		DialogInfo:   &DialogInfo{CallID: "call1"},
 		RecordingSession: &siprec.RecordingSession{
-			ID:         "session1",
-			SIPID:      "call1",
-			StartTime:  time.Now(),
-			UpdatedAt:  time.Now(),
+			ID:        "session1",
+			SIPID:     "call1",
+			StartTime: time.Now(),
+			UpdatedAt: time.Now(),
 		},
 	}
 
@@ -173,7 +177,8 @@ func TestGetAllSessions(t *testing.T) {
 		},
 		ShardCount: 16,
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Initially should be empty
 	sessions, err := handler.GetAllSessions()
@@ -212,11 +217,12 @@ func TestGetSessionStatistics(t *testing.T) {
 		},
 		ShardCount: 16,
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Add sessions with different states
 	now := time.Now()
-	
+
 	// Active session
 	activeSession := &CallData{
 		LastActivity: now,
@@ -248,7 +254,7 @@ func TestGetSessionStatistics(t *testing.T) {
 
 	// Get statistics
 	stats := handler.GetSessionStatistics()
-	
+
 	assert.Equal(t, 2, stats["active_calls"])
 	assert.Equal(t, 2, stats["recording_sessions"])
 	assert.Equal(t, 1, stats["connected_sessions"]) // Only the active one
@@ -268,7 +274,8 @@ func TestShutdown(t *testing.T) {
 		},
 		ShardCount: 16,
 	}
-	handler, _ := NewHandler(logger, config, mockSttProvider)
+	handler, _ := NewHandler(logger, config, nil)
+	handler.STTCallback = mockSttProvider
 
 	// Setup handlers first
 	handler.SetupHandlers()
@@ -289,7 +296,7 @@ func TestShutdown(t *testing.T) {
 	// Shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	err := handler.Shutdown(ctx)
 	assert.NoError(t, err)
 

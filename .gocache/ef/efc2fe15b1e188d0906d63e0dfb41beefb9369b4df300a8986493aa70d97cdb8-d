@@ -1,0 +1,4 @@
+./auxiliary.go
+./doc.go
+./storage_client.go
+./version.go

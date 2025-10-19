@@ -1,0 +1,6 @@
+./doc.go
+./enable.go
+./metric.go
+./metric_chan.go
+./metric_exception.go
+./reporter.go
