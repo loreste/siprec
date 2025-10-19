@@ -8,12 +8,139 @@ import (
 	"mime"
 	"mime/multipart"
 	"strings"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
 
 	"siprec-server/pkg/errors"
 )
+
+// ValidationResult captures schema validation issues for SIPREC metadata.
+type ValidationResult struct {
+	Errors   []string
+	Warnings []string
+}
+
+// Allowed recording states per RFC 6341/7866.
+var allowedRecordingStates = map[string]struct{}{
+	"pending":      {},
+	"initializing": {},
+	"active":       {},
+	"paused":       {},
+	"partial":      {},
+	"inactive":     {},
+	"resuming":     {},
+	"recovering":   {},
+	"completed":    {},
+	"terminated":   {},
+	"error":        {},
+}
+
+// Allowed reason codes when signalling state changes.
+var allowedRecordingReasons = map[string]struct{}{
+	"normal":             {},
+	"manual":             {},
+	"error":              {},
+	"failure":            {},
+	"system-failure":     {},
+	"media-failure":      {},
+	"resource-exhausted": {},
+	"policy":             {},
+	"timeout":            {},
+	"emergency":          {},
+	"cancelled":          {},
+}
+
+var stateReasonMatrix = map[string]map[string]struct{}{
+	"pending": {
+		"normal":             {},
+		"manual":             {},
+		"policy":             {},
+		"resource-exhausted": {},
+	},
+	"initializing": {
+		"normal": {},
+		"manual": {},
+		"policy": {},
+	},
+	"active": {
+		"normal":    {},
+		"manual":    {},
+		"policy":    {},
+		"emergency": {},
+	},
+	"paused": {
+		"manual":             {},
+		"policy":             {},
+		"resource-exhausted": {},
+		"system-failure":     {},
+	},
+	"partial": {
+		"manual":             {},
+		"policy":             {},
+		"resource-exhausted": {},
+		"system-failure":     {},
+	},
+	"inactive": {
+		"normal": {},
+		"manual": {},
+		"policy": {},
+	},
+	"resuming": {
+		"normal": {},
+		"manual": {},
+	},
+	"recovering": {
+		"manual":         {},
+		"system-failure": {},
+		"error":          {},
+	},
+	"completed": {
+		"normal": {},
+		"manual": {},
+		"policy": {},
+	},
+	"terminated": {
+		"normal":             {},
+		"manual":             {},
+		"error":              {},
+		"failure":            {},
+		"system-failure":     {},
+		"media-failure":      {},
+		"resource-exhausted": {},
+		"policy":             {},
+		"timeout":            {},
+		"emergency":          {},
+		"cancelled":          {},
+	},
+	"error": {
+		"error":          {},
+		"failure":        {},
+		"system-failure": {},
+		"media-failure":  {},
+	},
+}
+
+var allowedPolicyStatuses = map[string]struct{}{
+	"pending":      {},
+	"applied":      {},
+	"acknowledged": {},
+	"rejected":     {},
+	"accepted":     {},
+	"denied":       {},
+	"revoked":      {},
+	"deferred":     {},
+	"error":        {},
+}
+
+func (vr *ValidationResult) addError(msg string) {
+	vr.Errors = append(vr.Errors, msg)
+}
+
+func (vr *ValidationResult) addWarning(msg string) {
+	vr.Warnings = append(vr.Warnings, msg)
+}
 
 // ParseSiprecInvite extracts SDP and rs-metadata from a SIPREC INVITE request
 func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err error) {
@@ -88,12 +215,23 @@ func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err 
 
 // CreateMetadataResponse creates a response rs-metadata with proper session ID
 func CreateMetadataResponse(metadata *RSMetadata) (string, error) {
-	// Update the metadata to create a response
-	// Here we'd typically keep the same sessionID but might need to update state or other attributes
-	metadata.State = "active"
+	if metadata == nil {
+		return "", fmt.Errorf("metadata cannot be nil")
+	}
 
-	// Marshal back to XML
-	metadataBytes, err := xml.MarshalIndent(metadata, "", "  ")
+	response := *metadata
+
+	state := strings.TrimSpace(response.State)
+	if state == "" {
+		state = "active"
+	}
+	response.State = state
+
+	if response.Sequence <= 0 {
+		response.Sequence = 1
+	}
+
+	metadataBytes, err := xml.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("error marshaling response metadata: %w", err)
 	}
@@ -228,25 +366,18 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 			WithField("xml_content", metadataContent[:min(len(metadataContent), 100)]+"...") // Truncate to avoid huge errors
 	}
 
-	// Comprehensive validation
-	deficiencies := ValidateSiprecMessage(&rsMetadata)
-	if len(deficiencies) > 0 {
-		// If there are critical deficiencies, return an error
-		for _, deficiency := range deficiencies {
-			if strings.Contains(deficiency, "missing session ID") ||
-				strings.Contains(deficiency, "missing recording state") ||
-				strings.Contains(deficiency, "invalid recording state") {
-				return nil, errors.NewInvalidInput(fmt.Sprintf("critical metadata validation failure: %v", deficiencies)).
-					WithCode("INVALID_METADATA").
-					WithFields(map[string]interface{}{
-						"deficiencies": deficiencies,
-						"session_id":   rsMetadata.SessionID,
-					})
-			}
-		}
+	validation := ValidateSiprecMessage(&rsMetadata)
+	if len(validation.Errors) > 0 {
+		return nil, errors.NewInvalidInput(fmt.Sprintf("critical metadata validation failure: %v", validation.Errors)).
+			WithCode("INVALID_METADATA").
+			WithFields(map[string]interface{}{
+				"deficiencies": validation.Errors,
+				"session_id":   rsMetadata.SessionID,
+			})
+	}
 
-		// For non-critical issues, just return the metadata with a warning
-		return &rsMetadata, fmt.Errorf("metadata validation warnings: %v", deficiencies)
+	if len(validation.Warnings) > 0 {
+		fmt.Printf("Warning: SIPREC metadata validation warnings: %v\n", validation.Warnings)
 	}
 
 	return &rsMetadata, nil
@@ -316,135 +447,285 @@ func ExtractRSMetadata(contentType string, body []byte) (*RSMetadata, error) {
 
 // ValidateSiprecMessage performs a comprehensive validation of a SIPREC message
 // Returns a list of deficiencies found in the message
-func ValidateSiprecMessage(rsMetadata *RSMetadata) []string {
+func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
+	result := ValidationResult{}
+
 	if rsMetadata == nil {
-		return []string{"metadata is nil"}
+		result.addError("metadata is nil")
+		return result
 	}
 
-	deficiencies := []string{}
-
-	// Check for required fields
-	if rsMetadata.SessionID == "" {
-		deficiencies = append(deficiencies, "missing recording session ID")
-	} else if len(rsMetadata.SessionID) > 255 {
-		// RFC 7866 compliance - check for overly long IDs
-		deficiencies = append(deficiencies, "session ID exceeds maximum allowed length")
+	if ns := strings.TrimSpace(rsMetadata.XMLName.Space); ns != "" && ns != "urn:ietf:params:xml:ns:recording:1" {
+		result.addWarning(fmt.Sprintf("unexpected metadata namespace: %s", ns))
+	} else if ns == "" {
+		result.addWarning("metadata XML missing namespace declaration")
 	}
 
-	// Check for recording state
-	if rsMetadata.State == "" {
-		deficiencies = append(deficiencies, "missing recording state")
-	} else {
-		// Validate that state is one of the allowed values
-		validStates := map[string]bool{
-			"active":     true,
-			"paused":     true,
-			"inactive":   true,
-			"terminated": true,
-		}
+	if local := strings.TrimSpace(rsMetadata.XMLName.Local); local != "" && local != "recording" {
+		result.addError(fmt.Sprintf("unexpected root element: %s", local))
+	}
 
-		if !validStates[rsMetadata.State] {
-			deficiencies = append(deficiencies, fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
-		}
+	sessionID := strings.TrimSpace(rsMetadata.SessionID)
+	if sessionID == "" {
+		result.addError("missing recording session ID")
+	} else if len(sessionID) > 255 {
+		result.addError("session ID exceeds maximum allowed length")
+	}
 
-		// If state is terminated, reason should be provided
-		if rsMetadata.State == "terminated" && rsMetadata.Reason == "" {
-			deficiencies = append(deficiencies, "termination reason not provided")
+	state := strings.ToLower(strings.TrimSpace(rsMetadata.State))
+	if state == "" {
+		result.addError("missing recording state")
+	} else if _, ok := allowedRecordingStates[state]; !ok {
+		result.addError(fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
+	}
+
+	reason := strings.ToLower(strings.TrimSpace(rsMetadata.Reason))
+	if state == "terminated" && reason == "" {
+		result.addError("termination reason not provided")
+	}
+	if reason != "" {
+		if _, ok := allowedRecordingReasons[reason]; !ok {
+			result.addError(fmt.Sprintf("unsupported recording reason: %s", rsMetadata.Reason))
+		}
+		if allowedSet, ok := stateReasonMatrix[state]; ok && len(allowedSet) > 0 {
+			if _, allowed := allowedSet[reason]; !allowed {
+				result.addError(fmt.Sprintf("reason %q is not valid for state %q", reason, state))
+			}
+		}
+	} else if state == "error" {
+		result.addError("error state must include a reason")
+	}
+
+	if reasonRef := strings.TrimSpace(rsMetadata.ReasonRef); reasonRef != "" {
+		if !strings.HasPrefix(reasonRef, "urn:ietf:params:xml:ns:recording:1:") {
+			result.addWarning(fmt.Sprintf("reasonref uses non-standard namespace: %s", rsMetadata.ReasonRef))
+		}
+		if reason == "" {
+			result.addWarning("reasonref provided without reason attribute")
 		}
 	}
 
-	// Validate sequence number for state changes
 	if rsMetadata.Sequence < 0 {
-		deficiencies = append(deficiencies, "invalid sequence number")
+		result.addError("invalid sequence number")
 	}
 
-	// Validate association information
-	if (rsMetadata.SessionRecordingAssoc == RSAssociation{}) {
-		deficiencies = append(deficiencies, "missing session recording association")
-	} else if rsMetadata.SessionRecordingAssoc.SessionID == "" {
-		deficiencies = append(deficiencies, "missing session ID in recording association")
+	if expires := strings.TrimSpace(rsMetadata.Expires); expires != "" {
+		if _, err := time.Parse(time.RFC3339, expires); err != nil {
+			result.addWarning(fmt.Sprintf("expires attribute is not RFC3339 timestamp: %v", err))
+		}
 	}
 
-	// Validate additional association fields for compliance
-	if rsMetadata.SessionRecordingAssoc.CallID == "" && rsMetadata.SessionRecordingAssoc.FixedID == "" {
-		deficiencies = append(deficiencies, "session association missing both call-ID and fixed-ID")
-	}
-
-	// Check for participants
+	participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
 	if len(rsMetadata.Participants) == 0 {
-		deficiencies = append(deficiencies, "no participants defined")
+		result.addWarning("no participants provided in metadata")
+	}
+	for _, participant := range rsMetadata.Participants {
+		id := strings.TrimSpace(participant.ID)
+		if id == "" {
+			result.addError("participant missing id attribute")
+			continue
+		}
+		if _, exists := participantIDs[id]; exists {
+			result.addWarning(fmt.Sprintf("duplicate participant id detected: %s", id))
+		}
+		participantIDs[id] = struct{}{}
+
+		if len(participant.Aor) == 0 {
+			result.addWarning(fmt.Sprintf("participant %s missing address-of-record entries", id))
+		}
+		for _, aor := range participant.Aor {
+			if strings.TrimSpace(aor.Value) == "" {
+				result.addError(fmt.Sprintf("participant %s includes empty AOR value", id))
+			}
+		}
+	}
+
+	for _, group := range rsMetadata.Group {
+		groupID := strings.TrimSpace(group.ID)
+		if groupID == "" {
+			result.addError("group missing id attribute")
+			continue
+		}
+		for _, ref := range group.ParticipantRefs {
+			if _, exists := participantIDs[strings.TrimSpace(ref)]; !exists {
+				result.addWarning(fmt.Sprintf("group %s references unknown participant %s", groupID, ref))
+			}
+		}
+	}
+
+	streamIDs := make(map[string]struct{}, len(rsMetadata.Streams))
+	for _, stream := range rsMetadata.Streams {
+		label := strings.TrimSpace(stream.Label)
+		if label == "" {
+			result.addError("stream missing label attribute")
+		}
+		streamID := strings.TrimSpace(stream.StreamID)
+		if streamID == "" {
+			result.addError("stream missing streamid attribute")
+		} else {
+			if _, exists := streamIDs[streamID]; exists {
+				result.addWarning(fmt.Sprintf("duplicate streamid detected: %s", streamID))
+			}
+			streamIDs[streamID] = struct{}{}
+		}
+		if stream.Type == "" {
+			result.addWarning(fmt.Sprintf("stream %s missing type attribute", streamID))
+		}
+	}
+
+	if len(rsMetadata.SessionGroupAssociations) > 0 {
+		assocSeen := make(map[string]struct{}, len(rsMetadata.SessionGroupAssociations))
+		for _, assoc := range rsMetadata.SessionGroupAssociations {
+			groupID := strings.TrimSpace(assoc.SessionGroupID)
+			if groupID == "" {
+				result.addError("sessiongroupassoc missing sessiongroupid attribute")
+			}
+			sAssocID := strings.TrimSpace(assoc.SessionID)
+			if sAssocID == "" {
+				result.addError("sessiongroupassoc missing sessionid attribute")
+			} else if sessionID != "" && sAssocID != sessionID {
+				result.addWarning(fmt.Sprintf("sessiongroupassoc references mismatched sessionid %s (expected %s)", sAssocID, sessionID))
+			}
+			key := fmt.Sprintf("%s::%s", groupID, sAssocID)
+			if _, exists := assocSeen[key]; exists {
+				result.addWarning(fmt.Sprintf("duplicate sessiongroup association detected for %s", key))
+			}
+			assocSeen[key] = struct{}{}
+		}
+	}
+
+	if len(rsMetadata.PolicyUpdates) > 0 {
+		policyIDs := make(map[string]struct{}, len(rsMetadata.PolicyUpdates))
+		for _, update := range rsMetadata.PolicyUpdates {
+			policyID := strings.TrimSpace(update.PolicyID)
+			if policyID == "" {
+				result.addError("policy update missing policyid attribute")
+			}
+			if policyID != "" {
+				if _, exists := policyIDs[policyID]; exists {
+					result.addWarning(fmt.Sprintf("duplicate policy update entry for %s", policyID))
+				}
+				policyIDs[policyID] = struct{}{}
+			}
+
+			status := strings.ToLower(strings.TrimSpace(update.Status))
+			if status == "" {
+				result.addError(fmt.Sprintf("policy %s missing status attribute", policyID))
+			} else if _, ok := allowedPolicyStatuses[status]; !ok {
+				result.addError(fmt.Sprintf("policy %s uses unsupported status %q", policyID, status))
+			}
+
+			if update.Timestamp != "" {
+				if _, err := time.Parse(time.RFC3339, strings.TrimSpace(update.Timestamp)); err != nil {
+					result.addWarning(fmt.Sprintf("policy %s timestamp not RFC3339: %v", policyID, err))
+				}
+			}
+
+			if update.Acknowledged {
+				if status == "pending" {
+					result.addWarning(fmt.Sprintf("policy %s acknowledged while still pending", policyID))
+				}
+				if strings.TrimSpace(update.Timestamp) == "" {
+					result.addWarning(fmt.Sprintf("policy %s acknowledged without timestamp", policyID))
+				}
+			} else if status == "acknowledged" || status == "applied" {
+				result.addWarning(fmt.Sprintf("policy %s status %q reported without acknowledgement flag", policyID, status))
+			}
+		}
+	}
+
+	assoc := rsMetadata.SessionRecordingAssoc
+	if (assoc == RSAssociation{}) {
+		result.addError("missing session recording association")
+	} else if strings.TrimSpace(assoc.SessionID) == "" {
+		result.addError("missing session ID in recording association")
+	} else if sessionID != "" && strings.TrimSpace(assoc.SessionID) != sessionID {
+		result.addWarning(fmt.Sprintf("recording association sessionid (%s) does not match metadata session (%s)", assoc.SessionID, sessionID))
+	}
+	if assoc.CallID == "" && assoc.FixedID == "" {
+		result.addWarning("session association missing both call-ID and fixed-ID")
+	}
+
+	for _, groupAssoc := range rsMetadata.SessionGroupAssociations {
+		if strings.TrimSpace(groupAssoc.SessionGroupID) == "" {
+			result.addError("session group association missing sessiongroupid")
+		}
+		if strings.TrimSpace(groupAssoc.SessionID) == "" {
+			result.addError("session group association missing sessionid")
+		}
+	}
+
+	for _, policy := range rsMetadata.PolicyUpdates {
+		if strings.TrimSpace(policy.PolicyID) == "" {
+			result.addError("policy update missing policyid")
+		}
+		if strings.TrimSpace(policy.Status) == "" {
+			result.addError(fmt.Sprintf("policy %s missing status", policy.PolicyID))
+		}
+	}
+
+	if len(rsMetadata.Participants) == 0 {
+		result.addError("no participants defined")
 	} else {
-		// Validate participant information
+		participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
 		for i, participant := range rsMetadata.Participants {
-			if participant.ID == "" {
-				deficiencies = append(deficiencies, fmt.Sprintf("participant %d missing ID", i))
+			id := strings.TrimSpace(participant.ID)
+			if id == "" {
+				result.addError(fmt.Sprintf("participant %d missing ID", i))
+			} else {
+				if _, exists := participantIDs[id]; exists {
+					result.addError(fmt.Sprintf("duplicate participant ID detected: %s", id))
+				} else {
+					participantIDs[id] = struct{}{}
+				}
 			}
 
-			// Check if participant has any identifiers
 			if len(participant.Aor) == 0 {
-				deficiencies = append(deficiencies, fmt.Sprintf("participant %s has no address of record", participant.ID))
+				result.addError(fmt.Sprintf("participant %s has no address of record", participant.ID))
 			}
 
-			// Validate AOR URIs
 			for j, aor := range participant.Aor {
-				if aor.Value == "" {
-					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has empty AOR at index %d", participant.ID, j))
+				if strings.TrimSpace(aor.Value) == "" {
+					result.addError(fmt.Sprintf("participant %s has empty AOR at index %d", participant.ID, j))
 				}
-
-				// Basic URI validation if URI format is specified
 				if aor.URI != "" && !strings.Contains(aor.URI, ":") {
-					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has invalid URI format for AOR", participant.ID))
+					result.addWarning(fmt.Sprintf("participant %s has invalid URI format for AOR %s", participant.ID, aor.URI))
 				}
 			}
 
-			// Validate role if provided
 			if participant.Role != "" {
-				validRoles := map[string]bool{
-					"active":  true,
-					"passive": true,
-					"focus":   true,
-					"mixer":   true,
-				}
-
-				if !validRoles[participant.Role] {
-					deficiencies = append(deficiencies, fmt.Sprintf("participant %s has invalid role: %s", participant.ID, participant.Role))
+				switch participant.Role {
+				case "active", "passive", "focus", "mixer":
+				default:
+					result.addWarning(fmt.Sprintf("participant %s has unrecognised role: %s", participant.ID, participant.Role))
 				}
 			}
 		}
 	}
 
-	// Validate stream information if present
 	for i, stream := range rsMetadata.Streams {
-		if stream.Label == "" {
-			deficiencies = append(deficiencies, fmt.Sprintf("stream at index %d missing label", i))
+		if strings.TrimSpace(stream.Label) == "" {
+			result.addError(fmt.Sprintf("stream at index %d missing label", i))
 		}
 
-		if stream.StreamID == "" {
-			deficiencies = append(deficiencies, fmt.Sprintf("stream with label %s missing stream ID", stream.Label))
+		if strings.TrimSpace(stream.StreamID) == "" {
+			result.addError(fmt.Sprintf("stream with label %s missing stream ID", stream.Label))
 		}
 
-		// Validate stream type if provided
 		if stream.Type != "" {
-			validTypes := map[string]bool{
-				"audio":       true,
-				"video":       true,
-				"text":        true,
-				"message":     true,
-				"application": true,
-			}
-
-			if !validTypes[stream.Type] {
-				deficiencies = append(deficiencies, fmt.Sprintf("stream %s has invalid type: %s", stream.Label, stream.Type))
+			switch stream.Type {
+			case "audio", "video", "text", "message", "application":
+			default:
+				result.addWarning(fmt.Sprintf("stream %s has invalid type: %s", stream.Label, stream.Type))
 			}
 		}
 
-		// For mixed streams, validate mixing information
 		if stream.Mode == "mixed" && len(stream.Mixing.MixedStreams) == 0 {
-			deficiencies = append(deficiencies, fmt.Sprintf("mixed stream %s has no source streams defined", stream.Label))
+			result.addWarning(fmt.Sprintf("mixed stream %s has no source streams defined", stream.Label))
 		}
 	}
 
-	return deficiencies
+	return result
 }
 
 // GenerateErrorResponse creates an error response for a SIPREC request

@@ -6,11 +6,13 @@ This guide explains how to configure different Speech-to-Text (STT) providers wi
 
 The SIPREC server supports multiple STT providers with circuit breaker protection and fallback capabilities:
 
-- **Google Cloud Speech-to-Text** - High accuracy, supports many languages
-- **Deepgram** - Fast, cost-effective, specialized for conversation
-- **Azure Speech Services** - Microsoft's cloud speech service
-- **Amazon Transcribe** - AWS speech recognition service  
-- **OpenAI Whisper** - Advanced AI-powered transcription
+- **Google Cloud Speech-to-Text** – High accuracy, supports many languages
+- **Deepgram** – Fast, cost-effective, specialized for conversation
+- **Azure Speech Services** – Microsoft's cloud speech service
+- **Amazon Transcribe** – AWS speech recognition service  
+- **OpenAI Whisper** – Advanced AI-powered transcription
+- **ElevenLabs STT** – Timestamped transcripts with advanced formatting controls
+- **Speechmatics** – Enterprise transcription with diarization and channel separation
 
 ## Quick Start
 
@@ -24,7 +26,7 @@ The SIPREC server supports multiple STT providers with circuit breaker protectio
 
 ```bash
 # Supported STT vendors (comma-separated list)
-SUPPORTED_VENDORS=google,deepgram,azure,amazon,openai
+SUPPORTED_VENDORS=google,deepgram,elevenlabs,speechmatics,openai
 
 # Default STT vendor to use
 DEFAULT_SPEECH_VENDOR=google
@@ -189,6 +191,53 @@ OPENAI_STT_PROMPT="This is a business call about insurance claims"
 
 # Optional: Custom endpoint
 OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+### ElevenLabs STT
+
+```bash
+# Enable ElevenLabs STT
+ELEVENLABS_STT_ENABLED=true
+
+# ElevenLabs credentials (required)
+ELEVENLABS_API_KEY=xi-your-api-key
+
+# Model and language
+ELEVENLABS_MODEL_ID=eleven_monolingual_v1
+ELEVENLABS_LANGUAGE=en
+
+# Feature toggles
+ELEVENLABS_ENABLE_DIARIZATION=false
+ELEVENLABS_ENABLE_TIMESTAMPS=true
+ELEVENLABS_ENABLE_PUNCTUATION=true
+ELEVENLABS_ENABLE_PARAGRAPHS=false
+
+# Optional: Custom API URL / timeout
+ELEVENLABS_API_URL=https://api.elevenlabs.io
+ELEVENLABS_TIMEOUT=45s
+```
+
+### Speechmatics
+
+```bash
+# Enable Speechmatics STT
+SPEECHMATICS_STT_ENABLED=true
+
+# Speechmatics credentials (required)
+SPEECHMATICS_API_KEY=smk-your-api-token
+
+# Language and model selection
+SPEECHMATICS_LANGUAGE=en-US
+SPEECHMATICS_MODEL=universal  # universal, meetings, medical, finance
+
+# Feature toggles
+SPEECHMATICS_ENABLE_DIARIZATION=false
+SPEECHMATICS_ENABLE_PUNCTUATION=true
+SPEECHMATICS_CHANNEL_SEPARATION=false
+
+# Optional: Custom API URL / timeout
+SPEECHMATICS_API_URL=https://asr.api.speechmatics.com/v2
+SPEECHMATICS_TIMEOUT=60s
 ```
 
 ## Circuit Breaker Configuration

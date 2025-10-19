@@ -217,6 +217,7 @@ func (erm *EncryptedRecordingManager) StopRecording(sessionID string) error {
 	}
 
 	delete(erm.sessions, sessionID)
+	erm.encryptionManager.CleanupSession(sessionID)
 
 	erm.logger.WithFields(logrus.Fields{
 		"session_id": sessionID,

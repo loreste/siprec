@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	sipparser "github.com/emiago/sipgo/sip"
 	"github.com/sirupsen/logrus"
 )
 
@@ -240,41 +241,117 @@ func (nr *NATRewriter) RewriteOutgoingMessage(message *SIPMessage) error {
 	return nil
 }
 
+// RewriteOutgoingResponse performs NAT adjustments directly on sipgo response objects.
+func (nr *NATRewriter) RewriteOutgoingResponse(resp *sipparser.Response) error {
+	if resp == nil {
+		return nil
+	}
+
+	if !nr.config.BehindNAT && !nr.config.ForceRewrite {
+		return nil
+	}
+
+	externalIP := nr.GetExternalIP()
+	if nr.config.InternalIP == "" || externalIP == "" {
+		return nil
+	}
+
+	if nr.config.RewriteVia {
+		vHeaders := resp.GetHeaders("Via")
+		for _, header := range vHeaders {
+			if via, ok := header.(*sipparser.ViaHeader); ok {
+				nr.updateViaHeader(via, externalIP)
+			}
+		}
+	}
+
+	if nr.config.RewriteContact {
+		contactHeaders := resp.GetHeaders("Contact")
+		for _, header := range contactHeaders {
+			if contact, ok := header.(*sipparser.ContactHeader); ok {
+				nr.updateContactHeader(contact, externalIP)
+			}
+		}
+	}
+
+	if nr.config.RewriteRecordRoute {
+		rrHeaders := resp.GetHeaders("Record-Route")
+		for _, header := range rrHeaders {
+			if recordRoute, ok := header.(*sipparser.RecordRouteHeader); ok {
+				nr.updateURIHost(&recordRoute.Address, externalIP)
+			}
+		}
+	}
+
+	if len(resp.Body()) > 0 {
+		rewritten := nr.fastStringReplace(string(resp.Body()), externalIP)
+		if rewritten != string(resp.Body()) {
+			resp.SetBody([]byte(rewritten))
+		}
+	}
+
+	return nil
+}
+
 // rewriteViaHeadersOptimized uses pre-allocated builders and single-pass processing
 func (nr *NATRewriter) rewriteViaHeadersOptimized(message *SIPMessage, externalIP string) {
 	viaHeaders, exists := message.Headers["via"]
-	headerKey := "via"
 	if !exists || len(viaHeaders) == 0 {
-		// Try case variations
-		if viaHeaders, exists = message.Headers["Via"]; exists && len(viaHeaders) > 0 {
-			headerKey = "Via"
-		} else {
-			return
-		}
+		return
 	}
 
 	for i, via := range viaHeaders {
 		if newVia := nr.fastStringReplace(via, externalIP); newVia != via {
-			message.Headers[headerKey][i] = newVia
+			message.Headers["via"][i] = newVia
 		}
+	}
+}
+
+func (nr *NATRewriter) updateViaHeader(via *sipparser.ViaHeader, externalIP string) {
+	if via == nil {
+		return
+	}
+
+	if nr.shouldRewriteHost(via.Host) {
+		via.Host = externalIP
+	}
+
+	if nr.config.ExternalPort != 0 {
+		via.Port = nr.config.ExternalPort
+	}
+}
+
+func (nr *NATRewriter) updateContactHeader(contact *sipparser.ContactHeader, externalIP string) {
+	if contact == nil {
+		return
+	}
+	nr.updateURIHost(&contact.Address, externalIP)
+}
+
+func (nr *NATRewriter) updateURIHost(uri *sipparser.Uri, externalIP string) {
+	if uri == nil {
+		return
+	}
+
+	if nr.shouldRewriteHost(uri.Host) {
+		uri.Host = externalIP
+	}
+
+	if nr.config.ExternalPort != 0 {
+		uri.Port = nr.config.ExternalPort
 	}
 }
 
 // rewriteContactHeaderOptimized optimizes Contact header rewriting
 func (nr *NATRewriter) rewriteContactHeaderOptimized(message *SIPMessage, externalIP string) {
 	contactHeaders, exists := message.Headers["contact"]
-	headerKey := "contact"
 	if !exists || len(contactHeaders) == 0 {
-		if contactHeaders, exists = message.Headers["Contact"]; exists && len(contactHeaders) > 0 {
-			headerKey = "Contact"
-		} else {
-			return
-		}
+		return
 	}
 
 	for i, contact := range contactHeaders {
 		if newContact := nr.fastStringReplace(contact, externalIP); newContact != contact {
-			message.Headers[headerKey][i] = newContact
+			message.Headers["contact"][i] = newContact
 		}
 	}
 }
@@ -282,18 +359,13 @@ func (nr *NATRewriter) rewriteContactHeaderOptimized(message *SIPMessage, extern
 // rewriteRecordRouteHeadersOptimized optimizes Record-Route header rewriting
 func (nr *NATRewriter) rewriteRecordRouteHeadersOptimized(message *SIPMessage, externalIP string) {
 	rrHeaders, exists := message.Headers["record-route"]
-	headerKey := "record-route"
 	if !exists || len(rrHeaders) == 0 {
-		if rrHeaders, exists = message.Headers["Record-Route"]; exists && len(rrHeaders) > 0 {
-			headerKey = "Record-Route"
-		} else {
-			return
-		}
+		return
 	}
 
 	for i, rr := range rrHeaders {
 		if newRR := nr.fastStringReplace(rr, externalIP); newRR != rr {
-			message.Headers[headerKey][i] = newRR
+			message.Headers["record-route"][i] = newRR
 		}
 	}
 }
@@ -339,6 +411,22 @@ func (nr *NATRewriter) fastStringReplace(input, externalIP string) string {
 	}
 
 	return result
+}
+
+func (nr *NATRewriter) shouldRewriteHost(host string) bool {
+	if host == "" {
+		return false
+	}
+
+	if strings.EqualFold(host, nr.config.InternalIP) {
+		return true
+	}
+
+	if nr.config.ForceRewrite {
+		return containsPrivateIP(host)
+	}
+
+	return false
 }
 
 // containsPrivateIP quickly checks if string contains private IP without allocation
@@ -535,16 +623,16 @@ func (nr *NATRewriter) setExternalIPUnsafe(ip string) {
 func (nr *NATRewriter) detectExternalIPBackground() error {
 	// Create STUN client
 	stunClient := NewSTUNClient(nil, nr.logger)
-	
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// Try STUN detection
 	externalIP, err := stunClient.GetExternalIP(ctx)
 	if err != nil {
 		nr.logger.WithError(err).Warn("STUN-based external IP detection failed")
-		
+
 		// Try HTTP fallback
 		httpClient := NewHTTPFallbackClient(nr.logger)
 		externalIP, err = httpClient.GetExternalIP(ctx)
@@ -552,15 +640,15 @@ func (nr *NATRewriter) detectExternalIPBackground() error {
 			return fmt.Errorf("all external IP detection methods failed: %w", err)
 		}
 	}
-	
+
 	// Validate the detected IP
 	if net.ParseIP(externalIP) == nil {
 		return fmt.Errorf("invalid external IP detected: %s", externalIP)
 	}
-	
+
 	// Update the external IP
 	nr.SetExternalIP(externalIP)
-	
+
 	nr.logger.WithField("external_ip", externalIP).Info("Successfully detected external IP")
 	return nil
 }

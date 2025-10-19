@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -61,20 +63,75 @@ func (p *OpenAIProvider) Initialize() error {
 
 // StreamToText streams audio data to OpenAI
 func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	// Construct the OpenAI Whisper API request
-	apiURL := p.config.BaseURL + "/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, audioStream)
+	apiURL := strings.TrimRight(p.config.BaseURL, "/") + "/audio/transcriptions"
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		defer pw.Close()
+
+		writeField := func(field, value string) error {
+			if value == "" {
+				return nil
+			}
+			if err := writer.WriteField(field, value); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		if err := writeField("model", p.config.Model); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write model field: %w", err))
+			return
+		}
+		if err := writeField("response_format", p.config.ResponseFormat); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write response_format field: %w", err))
+			return
+		}
+		if err := writeField("language", p.config.Language); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write language field: %w", err))
+			return
+		}
+		if err := writeField("prompt", p.config.Prompt); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to write prompt field: %w", err))
+			return
+		}
+		if p.config.Temperature > 0 {
+			if err := writeField("temperature", strconv.FormatFloat(p.config.Temperature, 'f', -1, 64)); err != nil {
+				pw.CloseWithError(fmt.Errorf("failed to write temperature field: %w", err))
+				return
+			}
+		}
+
+		fileWriter, err := writer.CreateFormFile("file", fmt.Sprintf("%s.wav", callUUID))
+		if err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to create file part: %w", err))
+			return
+		}
+
+		if _, err := io.Copy(fileWriter, audioStream); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to copy audio stream: %w", err))
+			return
+		}
+
+		if err := writer.Close(); err != nil {
+			pw.CloseWithError(fmt.Errorf("failed to finalize multipart payload: %w", err))
+			return
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, pr)
 	if err != nil {
 		return fmt.Errorf("failed to create OpenAI request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Add organization header if provided
 	if p.config.OrganizationID != "" {
 		req.Header.Set("OpenAI-Organization", p.config.OrganizationID)
 	}
-	req.Header.Set("Content-Type", "audio/wav")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -84,7 +141,8 @@ func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("OpenAI Whisper API returned non-200 status code: %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("OpenAI Whisper API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 
 	var result map[string]interface{}

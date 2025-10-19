@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConvertRSParticipantToParticipant(t *testing.T) {
@@ -92,11 +93,25 @@ func TestCreateMetadataResponse(t *testing.T) {
 	assert.NotEmpty(t, metadata, "Metadata response should not be empty")
 	assert.Contains(t, metadata, `xmlns="urn:ietf:params:xml:ns:recording:1"`, "Metadata should contain namespace")
 	assert.Contains(t, metadata, `session="session123"`, "Metadata should contain session ID")
-	// The state is actually converted to "active" in the implementation
-	assert.Contains(t, metadata, `state="active"`, "Metadata should contain state")
+	assert.Contains(t, metadata, `state="recording"`, "Metadata should preserve provided state")
 	assert.Contains(t, metadata, `<participant id="participant1">`, "Metadata should contain participant")
 	assert.Contains(t, metadata, "<name>John Doe</name>", "Metadata should contain participant name")
 	assert.Contains(t, metadata, "<aor>sip:john@example.com</aor>", "Metadata should contain participant AOR")
+
+	// Ensure original metadata was not mutated
+	assert.Equal(t, "recording", rsMetadata.State, "Original metadata state should remain unchanged")
+}
+
+func TestCreateMetadataResponseDefaults(t *testing.T) {
+	rsMetadata := &RSMetadata{
+		SessionID: "session123",
+	}
+
+	metadata, err := CreateMetadataResponse(rsMetadata)
+	require.NoError(t, err, "CreateMetadataResponse should succeed without explicit state")
+
+	assert.Contains(t, metadata, `state="active"`, "Metadata should default state to active")
+	assert.Contains(t, metadata, `sequence="1"`, "Metadata should default sequence to 1")
 }
 
 func TestRecordingSession(t *testing.T) {
@@ -141,4 +156,41 @@ func TestRecordingSession(t *testing.T) {
 	assert.Equal(t, "sip", commID.Type, "Communication ID type should match")
 	assert.Equal(t, "sip:john@example.com", commID.Value, "Communication ID value should match")
 	assert.Equal(t, "from", commID.Purpose, "Communication ID purpose should match")
+}
+
+func TestValidateSiprecMessageReasonMap(t *testing.T) {
+	metadata := &RSMetadata{
+		SessionID: "session-1",
+		State:     "active",
+		Reason:    "error",
+		SessionRecordingAssoc: RSAssociation{
+			SessionID: "session-1",
+		},
+	}
+
+	result := ValidateSiprecMessage(metadata)
+	require.NotEmpty(t, result.Errors)
+	assert.Contains(t, result.Errors[0], "not valid for state", "Should reject invalid reason/state combinations")
+}
+
+func TestValidateSiprecMessagePolicyAcknowledgementWarnings(t *testing.T) {
+	metadata := &RSMetadata{
+		SessionID: "session-2",
+		State:     "active",
+		SessionRecordingAssoc: RSAssociation{
+			SessionID: "session-2",
+		},
+		PolicyUpdates: []PolicyUpdate{
+			{
+				PolicyID:     "policyA",
+				Status:       "acknowledged",
+				Acknowledged: false,
+			},
+		},
+	}
+
+	result := ValidateSiprecMessage(metadata)
+	require.Empty(t, result.Errors, "Should not treat missing acknowledgement as hard error")
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, result.Warnings[0], "policyA", "Should highlight acknowledgement inconsistency in warning")
 }
