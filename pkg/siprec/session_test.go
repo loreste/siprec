@@ -4,7 +4,362 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestUpdateRecordingSessionExtendedMetadata(t *testing.T) {
+	existing := &RecordingSession{
+		ID:                "session-extended",
+		RecordingState:    "active",
+		ExtendedMetadata:  make(map[string]string),
+		SessionGroupRoles: make(map[string]string),
+		PolicyStates:      make(map[string]PolicyAckStatus),
+	}
+
+	expires := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	metadata := &RSMetadata{
+		State:     "paused",
+		Reason:    "resource-exhausted",
+		ReasonRef: "urn:ietf:params:xml:ns:recording:1:reason:resource-exhausted",
+		Expires:   expires,
+		SessionGroupAssociations: []SessionGroupAssociation{
+			{SessionGroupID: "groupA", SessionID: "session-extended", Role: "primary"},
+		},
+		PolicyUpdates: []PolicyUpdate{
+			{PolicyID: "policy-1", Status: "applied", Acknowledged: false},
+		},
+		Participants: []RSParticipant{},
+		SessionRecordingAssoc: RSAssociation{
+			SessionID: "session-extended",
+		},
+	}
+
+	UpdateRecordingSession(existing, metadata)
+
+	assert.Equal(t, "paused", existing.RecordingState, "Recording state should update from metadata")
+	assert.Equal(t, "resource-exhausted", existing.StateReason, "State reason should be captured")
+	assert.Equal(t, "urn:ietf:params:xml:ns:recording:1:reason:resource-exhausted", existing.StateReasonRef)
+	require.False(t, existing.StateExpires.IsZero(), "State expiration should be parsed")
+	assert.Equal(t, expires, existing.ExtendedMetadata["state_expires"])
+	assert.Equal(t, "primary", existing.SessionGroupRoles["groupA"])
+
+	policyState, ok := existing.PolicyStates["policy-1"]
+	require.True(t, ok, "Policy state should be recorded")
+	assert.Equal(t, "applied", policyState.Status)
+}
+
+func TestUpdateRecordingSessionNilChecks(t *testing.T) {
+	// Test with nil existing session
+	UpdateRecordingSession(nil, &RSMetadata{State: "active"})
+	// Should not panic
+
+	// Test with nil metadata
+	existing := &RecordingSession{ID: "test"}
+	UpdateRecordingSession(existing, nil)
+	// Should not panic
+
+	// Test with both nil
+	UpdateRecordingSession(nil, nil)
+	// Should not panic
+}
+
+func TestUpdateRecordingSessionParticipants(t *testing.T) {
+	existing := &RecordingSession{
+		ID:               "session-1",
+		ExtendedMetadata: make(map[string]string),
+		Participants: []Participant{
+			{ID: "part1", Name: "John Doe", DisplayName: "John"},
+		},
+	}
+
+	metadata := &RSMetadata{
+		Participants: []RSParticipant{
+			{ID: "part1", Name: "John Smith", NameID: "Johnny"}, // Update existing
+			{ID: "part2", Name: "Jane Doe", NameID: "Jane"},     // Add new
+		},
+	}
+
+	UpdateRecordingSession(existing, metadata)
+
+	// Should have both participants
+	assert.Len(t, existing.Participants, 2)
+	
+	// Find updated participant
+	var updatedPart Participant
+	for _, p := range existing.Participants {
+		if p.ID == "part1" {
+			updatedPart = p
+			break
+		}
+	}
+	assert.Equal(t, "John Smith", updatedPart.Name)
+	assert.Equal(t, "Johnny", updatedPart.DisplayName)
+}
+
+func TestUpdateRecordingSessionSequenceNumber(t *testing.T) {
+	existing := &RecordingSession{
+		ID:               "session-1",
+		SequenceNumber:   5,
+		ExtendedMetadata: make(map[string]string),
+	}
+
+	// Test sequence increment
+	metadata := &RSMetadata{Sequence: 7}
+	UpdateRecordingSession(existing, metadata)
+	assert.Equal(t, 7, existing.SequenceNumber)
+
+	// Test lower sequence number (should not go backwards)
+	metadata2 := &RSMetadata{Sequence: 3}
+	UpdateRecordingSession(existing, metadata2)
+	assert.Equal(t, 8, existing.SequenceNumber) // Should increment from 7 to 8
+}
+
+func TestDetectParticipantChanges(t *testing.T) {
+	existing := &RecordingSession{
+		ID: "session-1",
+		Participants: []Participant{
+			{ID: "part1", Name: "John Doe", DisplayName: "John"},
+			{ID: "part2", Name: "Jane Doe", DisplayName: "Jane"},
+			{ID: "part3", Name: "Bob Smith", DisplayName: "Bob"},
+		},
+	}
+
+	metadata := &RSMetadata{
+		Participants: []RSParticipant{
+			{ID: "part1", Name: "John Smith", NameID: "Johnny"}, // Modified
+			{ID: "part2", Name: "Jane Doe", NameID: "Jane"},      // Unchanged
+			{ID: "part4", Name: "Alice Brown", NameID: "Alice"},  // Added
+			// part3 is removed
+		},
+	}
+
+	added, removed, modified := DetectParticipantChanges(existing, metadata)
+
+	// Verify added participants
+	assert.Len(t, added, 1)
+	assert.Equal(t, "part4", added[0].ID)
+	assert.Equal(t, "Alice Brown", added[0].Name)
+
+	// Verify removed participants
+	assert.Len(t, removed, 1)
+	assert.Equal(t, "part3", removed[0].ID)
+	assert.Equal(t, "Bob Smith", removed[0].Name)
+
+	// Verify modified participants
+	assert.Len(t, modified, 1)
+	assert.Equal(t, "part1", modified[0].ID)
+	assert.Equal(t, "John Smith", modified[0].Name)
+	assert.Equal(t, "Johnny", modified[0].DisplayName)
+}
+
+func TestDetectParticipantChangesWithAOR(t *testing.T) {
+	existing := &RecordingSession{
+		ID: "session-1",
+		Participants: []Participant{
+			{
+				ID:          "part1",
+				Name:        "John Doe",
+				DisplayName: "John",
+				CommunicationIDs: []CommunicationID{
+					{Type: "sip", Value: "sip:john@example.com"},
+				},
+			},
+		},
+	}
+
+	metadata := &RSMetadata{
+		Participants: []RSParticipant{
+			{
+				ID:     "part1",
+				Name:   "John Doe",
+				NameID: "John",
+				Aor: []Aor{
+					{Value: "sip:john@example.com"},
+					{Value: "sip:john@work.com"}, // Added new AOR
+				},
+			},
+		},
+	}
+
+	added, removed, modified := DetectParticipantChanges(existing, metadata)
+
+	// No added or removed
+	assert.Len(t, added, 0)
+	assert.Len(t, removed, 0)
+
+	// Should detect modification due to AOR change
+	assert.Len(t, modified, 1)
+	assert.Equal(t, "part1", modified[0].ID)
+	assert.Len(t, modified[0].CommunicationIDs, 2)
+}
+
+func TestGetParticipantIDs(t *testing.T) {
+	participants := []Participant{
+		{ID: "part1", Name: "John"},
+		{ID: "part2", Name: "Jane"},
+		{ID: "part3", Name: "Bob"},
+	}
+
+	ids := GetParticipantIDs(participants)
+	
+	assert.Len(t, ids, 3)
+	assert.Contains(t, ids, "part1")
+	assert.Contains(t, ids, "part2")
+	assert.Contains(t, ids, "part3")
+}
+
+func TestGetParticipantIDsEmpty(t *testing.T) {
+	ids := GetParticipantIDs([]Participant{})
+	assert.Len(t, ids, 0)
+}
+
+func TestUpdateRecordingSessionPolicyUpdates(t *testing.T) {
+	existing := &RecordingSession{
+		ID:               "session-1",
+		ExtendedMetadata: make(map[string]string),
+		PolicyStates:     make(map[string]PolicyAckStatus),
+	}
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	metadata := &RSMetadata{
+		PolicyUpdates: []PolicyUpdate{
+			{PolicyID: "policy1", Status: "APPLIED", Acknowledged: true, Timestamp: timestamp},
+			{PolicyID: "policy2", Status: "failed", Acknowledged: false, Timestamp: ""},
+		},
+	}
+
+	UpdateRecordingSession(existing, metadata)
+
+	// Check first policy
+	policy1, ok := existing.PolicyStates["policy1"]
+	require.True(t, ok)
+	assert.Equal(t, "applied", policy1.Status) // Should be lowercase
+	assert.True(t, policy1.Acknowledged)
+	assert.Equal(t, timestamp, policy1.RawTimestamp)
+
+	// Check second policy (without timestamp)
+	policy2, ok := existing.PolicyStates["policy2"]
+	require.True(t, ok)
+	assert.Equal(t, "failed", policy2.Status)
+	assert.False(t, policy2.Acknowledged)
+	assert.Empty(t, policy2.RawTimestamp)
+	assert.False(t, policy2.ReportedAt.IsZero())
+
+	// Check extended metadata
+	assert.Equal(t, "applied", existing.ExtendedMetadata["policy_policy1_status"])
+	assert.Equal(t, "true", existing.ExtendedMetadata["policy_policy1_status_ack"])
+	assert.Equal(t, timestamp, existing.ExtendedMetadata["policy_policy1_status_timestamp"])
+	
+	assert.Equal(t, "failed", existing.ExtendedMetadata["policy_policy2_status"])
+	assert.Equal(t, "false", existing.ExtendedMetadata["policy_policy2_status_ack"])
+	_, hasTimestamp := existing.ExtendedMetadata["policy_policy2_status_timestamp"]
+	assert.False(t, hasTimestamp) // Should not have timestamp key when empty
+}
+
+func TestUpdateRecordingSessionSessionGroups(t *testing.T) {
+	existing := &RecordingSession{
+		ID:                "session-1",
+		ExtendedMetadata:  make(map[string]string),
+		SessionGroupRoles: make(map[string]string),
+		SessionGroups: []SessionGroupAssociation{
+			{SessionGroupID: "old-group", Role: "old-role"},
+		},
+	}
+
+	metadata := &RSMetadata{
+		SessionGroupAssociations: []SessionGroupAssociation{
+			{SessionGroupID: "group1", SessionID: "session-1", Role: "primary"},
+			{SessionGroupID: "group2", SessionID: "session-1", Role: "secondary"},
+		},
+	}
+
+	UpdateRecordingSession(existing, metadata)
+
+	// Should replace old groups
+	assert.Len(t, existing.SessionGroups, 2)
+	assert.Equal(t, "primary", existing.SessionGroupRoles["group1"])
+	assert.Equal(t, "secondary", existing.SessionGroupRoles["group2"])
+	
+	// Old group should be removed
+	_, hasOld := existing.SessionGroupRoles["old-group"]
+	assert.False(t, hasOld)
+
+	// Check extended metadata
+	assert.Equal(t, "primary", existing.ExtendedMetadata["session_group_group1"])
+	assert.Equal(t, "secondary", existing.ExtendedMetadata["session_group_group2"])
+}
+
+func TestUpdateRecordingSessionStateChanges(t *testing.T) {
+	testCases := []struct {
+		name            string
+		initialState    string
+		newState        string
+		expectedState   string
+		expectUpdate    bool
+	}{
+		{
+			name:          "State change from active to paused",
+			initialState:  "active",
+			newState:      "paused",
+			expectedState: "paused",
+			expectUpdate:  true,
+		},
+		{
+			name:          "Empty state should not update",
+			initialState:  "active",
+			newState:      "",
+			expectedState: "active",
+			expectUpdate:  false,
+		},
+		{
+			name:          "State change to failed",
+			initialState:  "active",
+			newState:      "failed",
+			expectedState: "failed",
+			expectUpdate:  true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := &RecordingSession{
+				ID:               "session-1",
+				RecordingState:   tc.initialState,
+				ExtendedMetadata: make(map[string]string),
+			}
+
+			metadata := &RSMetadata{
+				State: tc.newState,
+			}
+
+			UpdateRecordingSession(existing, metadata)
+			assert.Equal(t, tc.expectedState, existing.RecordingState)
+		})
+	}
+}
+
+func TestUpdateRecordingSessionTimestamps(t *testing.T) {
+	beforeUpdate := time.Now()
+	time.Sleep(10 * time.Millisecond) // Ensure time difference
+
+	existing := &RecordingSession{
+		ID:               "session-1",
+		ExtendedMetadata: make(map[string]string),
+		AssociatedTime:   time.Time{},
+		UpdatedAt:        time.Time{},
+	}
+
+	metadata := &RSMetadata{
+		State: "active",
+	}
+
+	UpdateRecordingSession(existing, metadata)
+
+	assert.True(t, existing.AssociatedTime.After(beforeUpdate))
+	assert.True(t, existing.UpdatedAt.After(beforeUpdate))
+}
 
 func TestCreateFailoverMetadata(t *testing.T) {
 	// Create a sample recording session

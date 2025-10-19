@@ -10,15 +10,22 @@ import (
 // RecordingSession represents a SIPREC recording session
 // Enhanced to support RFC 6341 and RFC 7866
 type RecordingSession struct {
-	ID               string
-	SIPID            string // SIP Call-ID associated with this recording session
-	Participants     []Participant
-	AssociatedTime   time.Time
-	SequenceNumber   int
-	RecordingType    string // full, selective, etc.
-	RecordingState   string // recording, paused, etc.
-	Direction        string // Direction of the recording (inbound, outbound, unknown)
-	MediaStreamTypes []string
+	ID                string
+	SIPID             string // SIP Call-ID associated with this recording session
+	Participants      []Participant
+	AssociatedTime    time.Time
+	SequenceNumber    int
+	RecordingType     string // full, selective, etc.
+	RecordingState    string // recording, paused, etc.
+	Direction         string // Direction of the recording (inbound, outbound, unknown)
+	StateReason       string
+	StateReasonRef    string
+	StateExpires      time.Time
+	MediaStreamTypes  []string
+	SessionGroups     []SessionGroupAssociation
+	PolicyUpdates     []PolicyUpdate
+	SessionGroupRoles map[string]string
+	PolicyStates      map[string]PolicyAckStatus
 	// RFC 6341 fields
 	PolicyID           string            // Recording policy identifier
 	RetentionPeriod    time.Duration     // How long recording should be kept
@@ -98,19 +105,44 @@ type CommunicationID struct {
 // RSMetadata represents the root element of the rs-metadata XML document
 // Follows the schema defined in RFC 7865 and RFC 7866
 type RSMetadata struct {
-	XMLName               xml.Name        `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
-	SessionID             string          `xml:"session,attr"`
-	State                 string          `xml:"state,attr"`
-	Reason                string          `xml:"reason,attr,omitempty"`    // Why recording state changed (RFC 7866)
-	Sequence              int             `xml:"sequence,attr,omitempty"`  // For state transitions (RFC 7866)
-	ReasonRef             string          `xml:"reasonref,attr,omitempty"` // URI reference for reason (RFC 7866)
-	Expires               string          `xml:"expires,attr,omitempty"`   // When recording expires (ISO datetime)
-	MediaLabel            string          `xml:"label,attr,omitempty"`     // For selective recording (RFC 7866)
-	Direction             string          `xml:"direction,attr,omitempty"` // Direction of the recording
-	Group                 []Group         `xml:"group"`
-	Participants          []RSParticipant `xml:"participant"`
-	Streams               []Stream        `xml:"stream"`
-	SessionRecordingAssoc RSAssociation   `xml:"sessionrecordingassoc"`
+	XMLName                  xml.Name                  `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
+	SessionID                string                    `xml:"session,attr"`
+	State                    string                    `xml:"state,attr"`
+	Reason                   string                    `xml:"reason,attr,omitempty"`    // Why recording state changed (RFC 7866)
+	Sequence                 int                       `xml:"sequence,attr,omitempty"`  // For state transitions (RFC 7866)
+	ReasonRef                string                    `xml:"reasonref,attr,omitempty"` // URI reference for reason (RFC 7866)
+	Expires                  string                    `xml:"expires,attr,omitempty"`   // When recording expires (ISO datetime)
+	MediaLabel               string                    `xml:"label,attr,omitempty"`     // For selective recording (RFC 7866)
+	Direction                string                    `xml:"direction,attr,omitempty"` // Direction of the recording
+	Group                    []Group                   `xml:"group"`
+	Participants             []RSParticipant           `xml:"participant"`
+	Streams                  []Stream                  `xml:"stream"`
+	SessionRecordingAssoc    RSAssociation             `xml:"sessionrecordingassoc"`
+	SessionGroupAssociations []SessionGroupAssociation `xml:"sessiongroupassoc"`
+	PolicyUpdates            []PolicyUpdate            `xml:"policy"`
+}
+
+// SessionGroupAssociation captures membership of a recording session in a session group.
+type SessionGroupAssociation struct {
+	SessionGroupID string `xml:"sessiongroupid,attr"`
+	SessionID      string `xml:"sessionid,attr"`
+	Role           string `xml:"role,attr,omitempty"`
+}
+
+// PolicyUpdate captures policy acknowledgement state exchanged via metadata.
+type PolicyUpdate struct {
+	PolicyID     string `xml:"policyid,attr"`
+	Status       string `xml:"status,attr"`
+	Acknowledged bool   `xml:"acknowledged,attr"`
+	Timestamp    string `xml:"timestamp,attr,omitempty"`
+}
+
+// PolicyAckStatus captures acknowledgement state for a policy update.
+type PolicyAckStatus struct {
+	Status       string
+	Acknowledged bool
+	ReportedAt   time.Time
+	RawTimestamp string
 }
 
 // Group represents a group of participants in rs-metadata

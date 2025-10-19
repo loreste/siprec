@@ -72,6 +72,7 @@ type EncryptionManager interface {
 	// Stream encryption for real-time data
 	CreateEncryptionStream(sessionID string) (cipher.Stream, error)
 	CreateDecryptionStream(sessionID string, keyID string) (cipher.Stream, error)
+	CleanupSession(sessionID string)
 
 	// Configuration
 	IsEncryptionEnabled() bool
@@ -80,13 +81,17 @@ type EncryptionManager interface {
 
 // EncryptionInfo provides information about encryption for a session
 type EncryptionInfo struct {
-	SessionID           string    `json:"session_id"`
-	RecordingEncrypted  bool      `json:"recording_encrypted"`
-	MetadataEncrypted   bool      `json:"metadata_encrypted"`
-	Algorithm           string    `json:"algorithm"`
-	KeyID               string    `json:"key_id"`
-	KeyVersion          int       `json:"key_version"`
-	EncryptionStartedAt time.Time `json:"encryption_started_at"`
+	SessionID           string     `json:"session_id"`
+	RecordingEncrypted  bool       `json:"recording_encrypted"`
+	MetadataEncrypted   bool       `json:"metadata_encrypted"`
+	Algorithm           string     `json:"algorithm"`
+	KeyID               string     `json:"key_id"`
+	KeyVersion          int        `json:"key_version"`
+	EncryptionStartedAt time.Time  `json:"encryption_started_at"`
+	StreamEncryption    bool       `json:"stream_encryption"`
+	StreamNonce         []byte     `json:"-"`
+	StreamNonceHash     string     `json:"stream_nonce_hash,omitempty"`
+	StreamCreatedAt     *time.Time `json:"stream_created_at,omitempty"`
 }
 
 // KeyStore interface for different key storage backends

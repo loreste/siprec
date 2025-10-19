@@ -111,6 +111,9 @@ func (sm *SessionManager) CreateSession(sessionID string, metadata *RSMetadata) 
 		RecordingState:     "active",
 		SequenceNumber:     1,
 		AssociatedTime:     time.Now(),
+		ExtendedMetadata:   make(map[string]string),
+		SessionGroupRoles:  make(map[string]string),
+		PolicyStates:       make(map[string]PolicyAckStatus),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 		IsValid:            true,
@@ -351,7 +354,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 	if cleanupInterval <= 0 {
 		cleanupInterval = 5 * time.Minute // Safe default
 	}
-	
+
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/chacha20"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -30,6 +31,18 @@ type Manager struct {
 	// Session encryption info
 	sessionInfo map[string]*EncryptionInfo
 	sessionMu   sync.RWMutex
+
+	// Stream session state
+	streamInfo map[string]*streamState
+	streamMu   sync.RWMutex
+}
+
+// streamState tracks metadata required to recreate stream ciphers
+type streamState struct {
+	keyID     string
+	algorithm string
+	nonce     []byte
+	createdAt time.Time
 }
 
 // NewManager creates a new encryption manager
@@ -45,7 +58,7 @@ func NewManager(config *EncryptionConfig, keyStore KeyStore, logger *logrus.Logg
 		if err != nil {
 			return nil, fmt.Errorf("failed to create KMS provider: %w", err)
 		}
-		
+
 		keyStore, err = NewFileKeyStore(config.MasterKeyPath, kmsProvider, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create key store: %w", err)
@@ -58,6 +71,7 @@ func NewManager(config *EncryptionConfig, keyStore KeyStore, logger *logrus.Logg
 		logger:      logger,
 		keyCache:    make(map[string]*EncryptionKey),
 		sessionInfo: make(map[string]*EncryptionInfo),
+		streamInfo:  make(map[string]*streamState),
 	}
 
 	// Initialize with active keys if encryption is enabled
@@ -332,26 +346,116 @@ func (m *Manager) CreateEncryptionStream(sessionID string) (cipher.Stream, error
 		return nil, fmt.Errorf("recording encryption is disabled")
 	}
 
-	_, err := m.GetActiveKey(m.config.Algorithm)
+	key, err := m.GetActiveKey(m.config.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get encryption key: %w", err)
 	}
 
-	// For stream ciphers, we need a different approach than AEAD
-	// This is a simplified implementation
-	return nil, fmt.Errorf("stream encryption not yet implemented")
+	stream, nonce, err := m.newStreamCipher(key, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create encryption stream: %w", err)
+	}
+
+	// Track stream state so decryption stream can be recreated
+	m.streamMu.Lock()
+	m.streamInfo[sessionID] = &streamState{
+		keyID:     key.ID,
+		algorithm: key.Algorithm,
+		nonce:     append([]byte(nil), nonce...),
+		createdAt: time.Now(),
+	}
+	m.streamMu.Unlock()
+
+	// Update session encryption info to reflect stream usage
+	m.updateSessionEncryptionInfo(sessionID, true, false, key)
+	m.updateStreamEncryptionInfo(sessionID, key, nonce)
+
+	m.logger.WithFields(logrus.Fields{
+		"session_id": sessionID,
+		"key_id":     key.ID,
+		"algorithm":  key.Algorithm,
+	}).Debug("Created encryption stream")
+
+	return stream, nil
 }
 
 // CreateDecryptionStream creates a stream cipher for real-time decryption
 func (m *Manager) CreateDecryptionStream(sessionID string, keyID string) (cipher.Stream, error) {
-	key, err := m.getKeyByID(keyID)
+	m.streamMu.RLock()
+	state, exists := m.streamInfo[sessionID]
+	m.streamMu.RUnlock()
+	if !exists {
+		rawInfo, infoExists := m.getRawEncryptionInfo(sessionID)
+		if !infoExists || !rawInfo.StreamEncryption || len(rawInfo.StreamNonce) == 0 {
+			return nil, fmt.Errorf("stream state not found for session %s", sessionID)
+		}
+
+		if keyID != "" && keyID != rawInfo.KeyID {
+			return nil, fmt.Errorf("stream state key mismatch for session %s", sessionID)
+		}
+
+		key, err := m.getKeyByID(rawInfo.KeyID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get decryption key: %w", err)
+		}
+
+		stream, _, err := m.newStreamCipher(key, rawInfo.StreamNonce)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create decryption stream: %w", err)
+		}
+
+		state = &streamState{
+			keyID:     key.ID,
+			algorithm: key.Algorithm,
+			nonce:     append([]byte(nil), rawInfo.StreamNonce...),
+			createdAt: time.Now(),
+		}
+
+		m.streamMu.Lock()
+		m.streamInfo[sessionID] = state
+		m.streamMu.Unlock()
+
+		m.logger.WithFields(logrus.Fields{
+			"session_id": sessionID,
+			"key_id":     key.ID,
+			"algorithm":  key.Algorithm,
+		}).Debug("Rehydrated decryption stream from session info")
+
+		return stream, nil
+	}
+
+	if keyID != "" && keyID != state.keyID {
+		return nil, fmt.Errorf("stream state key mismatch for session %s", sessionID)
+	}
+
+	key, err := m.getKeyByID(state.keyID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decryption key: %w", err)
 	}
 
-	// This is a simplified implementation
-	_ = key
-	return nil, fmt.Errorf("stream decryption not yet implemented")
+	stream, _, err := m.newStreamCipher(key, state.nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create decryption stream: %w", err)
+	}
+
+	m.logger.WithFields(logrus.Fields{
+		"session_id": sessionID,
+		"key_id":     key.ID,
+		"algorithm":  key.Algorithm,
+	}).Debug("Created decryption stream")
+
+	return stream, nil
+}
+
+// CleanupSession releases cached encryption metadata for a session
+func (m *Manager) CleanupSession(sessionID string) {
+	m.sessionMu.Lock()
+	delete(m.sessionInfo, sessionID)
+	m.sessionMu.Unlock()
+
+	m.streamMu.Lock()
+	delete(m.streamInfo, sessionID)
+	m.streamMu.Unlock()
 }
 
 // IsEncryptionEnabled returns whether encryption is enabled
@@ -362,10 +466,9 @@ func (m *Manager) IsEncryptionEnabled() bool {
 // GetEncryptionInfo returns encryption information for a session
 func (m *Manager) GetEncryptionInfo(sessionID string) (*EncryptionInfo, error) {
 	m.sessionMu.RLock()
-	defer m.sessionMu.RUnlock()
-
 	info, exists := m.sessionInfo[sessionID]
 	if !exists {
+		m.sessionMu.RUnlock()
 		return &EncryptionInfo{
 			SessionID:          sessionID,
 			RecordingEncrypted: false,
@@ -373,7 +476,10 @@ func (m *Manager) GetEncryptionInfo(sessionID string) (*EncryptionInfo, error) {
 		}, nil
 	}
 
-	return info, nil
+	sanitized := cloneEncryptionInfo(info, true)
+	m.sessionMu.RUnlock()
+
+	return sanitized, nil
 }
 
 // Helper methods
@@ -551,6 +657,110 @@ func (m *Manager) updateSessionEncryptionInfo(sessionID string, recordingEncrypt
 	info.Algorithm = key.Algorithm
 	info.KeyID = key.ID
 	info.KeyVersion = key.Version
+}
+
+func (m *Manager) updateStreamEncryptionInfo(sessionID string, key *EncryptionKey, nonce []byte) {
+	m.sessionMu.Lock()
+	defer m.sessionMu.Unlock()
+
+	info, exists := m.sessionInfo[sessionID]
+	if !exists {
+		info = &EncryptionInfo{
+			SessionID:           sessionID,
+			EncryptionStartedAt: time.Now(),
+		}
+		m.sessionInfo[sessionID] = info
+	}
+
+	info.StreamEncryption = true
+	info.StreamNonce = append([]byte(nil), nonce...)
+	now := time.Now()
+	info.StreamCreatedAt = &now
+	info.Algorithm = key.Algorithm
+	info.KeyID = key.ID
+	info.KeyVersion = key.Version
+	hash := sha256.Sum256(info.StreamNonce)
+	info.StreamNonceHash = hex.EncodeToString(hash[:])
+}
+
+func (m *Manager) getRawEncryptionInfo(sessionID string) (*EncryptionInfo, bool) {
+	m.sessionMu.RLock()
+	info, exists := m.sessionInfo[sessionID]
+	m.sessionMu.RUnlock()
+	if !exists {
+		return nil, false
+	}
+
+	return cloneEncryptionInfo(info, false), true
+}
+
+func (m *Manager) newStreamCipher(key *EncryptionKey, providedNonce []byte) (cipher.Stream, []byte, error) {
+	switch key.Algorithm {
+	case "AES-256-GCM", "AES-256-CBC":
+		block, err := aes.NewCipher(key.KeyData)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		}
+
+		nonce := providedNonce
+		if nonce == nil {
+			nonce = make([]byte, aes.BlockSize)
+			if _, err := rand.Read(nonce); err != nil {
+				return nil, nil, fmt.Errorf("failed to generate stream nonce: %w", err)
+			}
+		} else if len(nonce) != aes.BlockSize {
+			return nil, nil, fmt.Errorf("invalid nonce size for AES stream: %d", len(nonce))
+		} else {
+			nonce = append([]byte(nil), nonce...)
+		}
+
+		stream := cipher.NewCTR(block, nonce)
+		return stream, nonce, nil
+
+	case "ChaCha20-Poly1305":
+		nonce := providedNonce
+		if nonce == nil {
+			nonce = make([]byte, chacha20.NonceSize)
+			if _, err := rand.Read(nonce); err != nil {
+				return nil, nil, fmt.Errorf("failed to generate stream nonce: %w", err)
+			}
+		} else if len(nonce) != chacha20.NonceSize {
+			return nil, nil, fmt.Errorf("invalid nonce size for ChaCha20 stream: %d", len(nonce))
+		} else {
+			nonce = append([]byte(nil), nonce...)
+		}
+
+		stream, err := chacha20.NewUnauthenticatedCipher(key.KeyData, nonce)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create ChaCha20 stream: %w", err)
+		}
+
+		return stream, nonce, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported stream algorithm: %s", key.Algorithm)
+	}
+}
+
+func cloneEncryptionInfo(info *EncryptionInfo, sanitize bool) *EncryptionInfo {
+	if info == nil {
+		return nil
+	}
+
+	copyInfo := *info
+	if info.StreamCreatedAt != nil {
+		ts := *info.StreamCreatedAt
+		copyInfo.StreamCreatedAt = &ts
+	}
+
+	if info.StreamNonce != nil {
+		copyInfo.StreamNonce = append([]byte(nil), info.StreamNonce...)
+	}
+
+	if sanitize {
+		copyInfo.StreamNonce = nil
+	}
+
+	return &copyInfo
 }
 
 func (m *Manager) encryptBackup(data []byte) ([]byte, error) {

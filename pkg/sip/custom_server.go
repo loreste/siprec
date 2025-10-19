@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emiago/sipgo"
+	sipparser "github.com/emiago/sipgo/sip"
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -45,6 +47,13 @@ type CustomSIPServer struct {
 
 	// Port manager for dynamic port allocation
 	PortManager *media.PortManager
+
+	// SIP message parser
+	sipParser *sipparser.Parser
+
+	// sipgo components for standards-compliant dialog/transaction handling
+	ua        *sipgo.UserAgent
+	sipServer *sipgo.Server
 }
 
 // SIPConnection represents an active TCP/TLS connection
@@ -60,13 +69,16 @@ type SIPConnection struct {
 
 // SIPMessage represents a parsed SIP message
 type SIPMessage struct {
-	Method     string
-	RequestURI string
-	Version    string
-	Headers    map[string][]string
-	Body       []byte
-	RawMessage []byte
-	Connection *SIPConnection
+	Method      string
+	RequestURI  string
+	Version     string
+	Headers     map[string][]string
+	Body        []byte
+	RawMessage  []byte
+	Connection  *SIPConnection
+	Parsed      sipparser.Message
+	Request     *sipparser.Request
+	Transaction sipparser.ServerTransaction
 
 	// Parsed SIP fields for easier access
 	CallID      string
@@ -75,6 +87,10 @@ type SIPMessage struct {
 	CSeq        string
 	Branch      string
 	ContentType string
+	StatusCode  int
+	Reason      string
+
+	HeaderOrder []headerEntry
 
 	// Vendor-specific fields for enterprise compatibility
 	UserAgent       string
@@ -92,6 +108,7 @@ type CallState struct {
 	RemoteTag         string
 	LocalCSeq         int
 	RemoteCSeq        int
+	PendingAckCSeq    int
 	CreatedAt         time.Time
 	LastActivity      time.Time
 	SDP               []byte
@@ -100,13 +117,19 @@ type CallState struct {
 	RTPForwarder      *media.RTPForwarder      // RTP forwarder for this call
 	AllocatedPortPair *media.PortPair          // Port pair reserved for non-SIPREC calls
 	TraceScope        *tracing.CallScope       // Per-call tracing scope
+	OriginalInvite    *SIPMessage              // Stored original INVITE for cancellations
+}
+
+type headerEntry struct {
+	Name  string
+	Key   string
+	Index int
 }
 
 // NewCustomSIPServer creates a new custom SIP server
 func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServer {
 	ctx, cancel := context.WithCancel(context.Background())
-
-	return &CustomSIPServer{
+	server := &CustomSIPServer{
 		logger:       logger,
 		handler:      handler,
 		listeners:    make([]net.Listener, 0),
@@ -116,7 +139,96 @@ func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServe
 		shutdownCtx:  ctx,
 		shutdownFunc: cancel,
 		PortManager:  media.GetPortManager(),
+		sipParser:    sipparser.NewParser(),
 	}
+	server.initializeTransactionLayer()
+	return server
+}
+
+func (s *CustomSIPServer) initializeTransactionLayer() {
+	ua, err := sipgo.NewUA()
+	if err != nil {
+		s.logger.WithError(err).Fatal("Failed to create SIP user agent for transaction layer")
+	}
+
+	s.ua = ua
+
+	server, err := sipgo.NewServer(ua)
+	if err != nil {
+		s.logger.WithError(err).Fatal("Failed to create SIP server for transaction handling")
+	}
+
+	s.sipServer = server
+
+	// Register request handlers
+	server.OnInvite(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "INVITE")
+	})
+	server.OnPrack(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "PRACK")
+	})
+	server.OnAck(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "ACK")
+	})
+	server.OnBye(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "BYE")
+	})
+	server.OnCancel(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "CANCEL")
+	})
+	server.OnOptions(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "OPTIONS")
+	})
+	server.OnSubscribe(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "SUBSCRIBE")
+	})
+	// Default handler for unsupported methods
+	server.OnNoRoute(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		msg := s.wrapRequest(req, tx)
+		s.logger.WithField("method", msg.Method).Warn("Received unsupported SIP method")
+		s.sendResponse(msg, 501, "Not Implemented", nil, nil)
+	})
+}
+
+func (s *CustomSIPServer) handleTransactionRequest(req *sipparser.Request, tx sipparser.ServerTransaction, method string) {
+	message := s.wrapRequest(req, tx)
+
+	switch strings.ToUpper(method) {
+	case "INVITE":
+		s.handleInviteMessage(message)
+	case "PRACK":
+		s.handlePrackMessage(message)
+	case "ACK":
+		s.handleAckMessage(message)
+	case "BYE":
+		s.handleByeMessage(message)
+	case "CANCEL":
+		s.handleCancelMessage(message)
+	case "OPTIONS":
+		s.handleOptionsMessage(message)
+	case "SUBSCRIBE":
+		s.handleSubscribeMessage(message)
+	default:
+		s.logger.WithField("method", method).Warn("Unhandled SIP method in transaction handler")
+		s.sendResponse(message, 501, "Not Implemented", nil, nil)
+	}
+}
+
+func (s *CustomSIPServer) wrapRequest(req *sipparser.Request, tx sipparser.ServerTransaction) *SIPMessage {
+	connection := &SIPConnection{
+		conn:         nil,
+		reader:       nil,
+		writer:       nil,
+		remoteAddr:   req.Source(),
+		transport:    strings.ToLower(req.Transport()),
+		lastActivity: time.Now(),
+	}
+
+	message := newSIPMessageFromSipgo(req, connection)
+	message.Request = req
+	message.Transaction = tx
+	message.RawMessage = []byte(req.String())
+	return message
 }
 
 // ListenAndServe starts the server on the specified protocol and address
@@ -134,424 +246,100 @@ func (s *CustomSIPServer) ListenAndServe(ctx context.Context, protocol, address 
 
 // ListenAndServeUDP starts UDP listener
 func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string) error {
-	addr, err := net.ResolveUDPAddr("udp", address)
-	if err != nil {
-		return fmt.Errorf("failed to resolve UDP address %s: %w", address, err)
+	if s.sipServer == nil {
+		return fmt.Errorf("SIP server not initialized")
 	}
-
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on UDP %s: %w", address, err)
-	}
-	defer conn.Close()
-
-	s.logger.WithField("address", address).Info("Custom SIP server listening on UDP")
-
-	// Handle UDP packets
-	buffer := make([]byte, 65536) // Large buffer for UDP
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Debug("UDP listener shutting down")
-			return nil
-		default:
-			// Set read timeout
-			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-			n, clientAddr, err := conn.ReadFromUDP(buffer)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue // Timeout is expected, check context again
-				}
-				s.logger.WithError(err).Error("UDP read error")
-				continue
-			}
-
-			// Process UDP message
-			go s.handleUDPMessage(conn, clientAddr, buffer[:n])
-		}
-	}
+	s.logger.WithField("address", address).Info("Custom SIP server listening on UDP via sipgo transaction layer")
+	return s.sipServer.ListenAndServe(ctx, "udp", address)
 }
 
 // ListenAndServeTCP starts TCP listener
 func (s *CustomSIPServer) ListenAndServeTCP(ctx context.Context, address string) error {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("failed to listen on TCP %s: %w", address, err)
+	if s.sipServer == nil {
+		return fmt.Errorf("SIP server not initialized")
 	}
-	defer listener.Close()
-
-	s.listeners = append(s.listeners, listener)
-	s.logger.WithField("address", address).Info("Custom SIP server listening on TCP")
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Debug("TCP listener shutting down")
-			return nil
-		default:
-			// Set accept timeout
-			if tcpListener, ok := listener.(*net.TCPListener); ok {
-				tcpListener.SetDeadline(time.Now().Add(1 * time.Second))
-			}
-
-			conn, err := listener.Accept()
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue // Timeout is expected, check context again
-				}
-				s.logger.WithError(err).Error("TCP accept error")
-				continue
-			}
-
-			// Handle TCP connection
-			go s.handleTCPConnection(ctx, conn, "tcp")
-		}
-	}
+	s.logger.WithField("address", address).Info("Custom SIP server listening on TCP via sipgo transaction layer")
+	return s.sipServer.ListenAndServe(ctx, "tcp", address)
 }
 
 // ListenAndServeTLS starts TLS listener
 func (s *CustomSIPServer) ListenAndServeTLS(ctx context.Context, address string, tlsConfig *tls.Config) error {
-	listener, err := tls.Listen("tcp", address, tlsConfig)
-	if err != nil {
-		return fmt.Errorf("failed to listen on TLS %s: %w", address, err)
+	if s.sipServer == nil {
+		return fmt.Errorf("SIP server not initialized")
 	}
-	defer listener.Close()
-
-	s.tlsListeners = append(s.tlsListeners, listener)
-	s.logger.WithField("address", address).Info("Custom SIP server listening on TLS")
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Debug("TLS listener shutting down")
-			return nil
-		default:
-			// Set accept timeout
-			if tcpListener, ok := listener.(*net.TCPListener); ok {
-				tcpListener.SetDeadline(time.Now().Add(1 * time.Second))
-			}
-
-			conn, err := listener.Accept()
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue // Timeout is expected, check context again
-				}
-				s.logger.WithError(err).Error("TLS accept error")
-				continue
-			}
-
-			// Handle TLS connection
-			go s.handleTCPConnection(ctx, conn, "tls")
-		}
-	}
+	s.logger.WithField("address", address).Info("Custom SIP server listening on TLS via sipgo transaction layer")
+	return s.sipServer.ListenAndServeTLS(ctx, "tls", address, tlsConfig)
 }
 
-// handleUDPMessage processes UDP SIP messages
-func (s *CustomSIPServer) handleUDPMessage(conn *net.UDPConn, clientAddr *net.UDPAddr, data []byte) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.WithFields(logrus.Fields{
-				"panic":  r,
-				"client": clientAddr.String(),
-			}).Error("Recovered from panic in UDP message handler")
-		}
-	}()
+func newSIPMessageFromSipgo(msg sipparser.Message, conn *SIPConnection) *SIPMessage {
+	out := &SIPMessage{
+		Headers:     make(map[string][]string),
+		HeaderOrder: make([]headerEntry, 0, 16),
+		Connection:  conn,
+		Body:        append([]byte(nil), msg.Body()...),
+		Parsed:      msg,
+	}
+	out.Version = "SIP/2.0"
 
-	// Validate message size
-	if err := security.ValidateSize(data, security.MaxSIPMessageSize, "UDP SIP message"); err != nil {
-		s.logger.WithError(err).WithField("client", clientAddr.String()).Warn("Rejected oversized UDP message")
-		return
+	switch m := msg.(type) {
+	case *sipparser.Request:
+		out.Method = string(m.Method)
+		out.RequestURI = m.Recipient.String()
+		out.Version = m.SipVersion
+	case *sipparser.Response:
+		out.Method = strconv.Itoa(m.StatusCode)
+		out.StatusCode = m.StatusCode
+		out.Reason = m.Reason
+		out.Version = m.SipVersion
 	}
 
-	// Parse SIP message
-	message, err := s.parseSIPMessage(data, nil)
-	if err != nil {
-		s.logger.WithError(err).WithField("client", clientAddr.String()).Error("Failed to parse UDP SIP message")
-		return
-	}
-
-	message.Connection = &SIPConnection{
-		conn:         &udpConn{conn: conn, addr: clientAddr},
-		remoteAddr:   clientAddr.String(),
-		transport:    "udp",
-		lastActivity: time.Now(),
-	}
-
-	// Process the message
-	s.processSIPMessage(message)
-}
-
-// handleTCPConnection handles TCP/TLS connections
-func (s *CustomSIPServer) handleTCPConnection(ctx context.Context, conn net.Conn, transport string) {
-	defer conn.Close()
-
-	connID := fmt.Sprintf("%s-%s", transport, conn.RemoteAddr().String())
-
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.WithFields(logrus.Fields{
-				"panic":         r,
-				"connection_id": connID,
-				"transport":     transport,
-			}).Error("Recovered from panic in TCP connection handler")
-		}
-	}()
-
-	sipConn := &SIPConnection{
-		conn:         conn,
-		reader:       bufio.NewReader(conn),
-		writer:       bufio.NewWriter(conn),
-		remoteAddr:   conn.RemoteAddr().String(),
-		transport:    transport,
-		lastActivity: time.Now(),
-	}
-
-	// Register connection
-	s.connMutex.Lock()
-	s.connections[connID] = sipConn
-	s.connMutex.Unlock()
-
-	defer func() {
-		// Unregister connection
-		s.connMutex.Lock()
-		delete(s.connections, connID)
-		s.connMutex.Unlock()
-
-		if r := recover(); r != nil {
-			s.logger.WithField("recover", r).Error("Recovered from panic in TCP connection handler")
-		}
-	}()
-
-	s.logger.WithFields(logrus.Fields{
-		"connection_id": connID,
-		"transport":     transport,
-		"remote_addr":   conn.RemoteAddr().String(),
-	}).Debug("New TCP connection established")
-
-	// Read SIP messages from connection
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			// Set read timeout (configurable with fallback)
-			timeout := 30 * time.Second
-			if s.handler != nil && s.handler.Config != nil && s.handler.Config.SessionTimeout > 0 {
-				timeout = s.handler.Config.SessionTimeout
-			}
-			conn.SetReadDeadline(time.Now().Add(timeout))
-
-			// Read SIP message
-			message, err := s.readSIPMessageFromTCP(sipConn)
-			if err != nil {
-				if err == io.EOF {
-					s.logger.WithField("connection_id", connID).Debug("TCP connection closed by client")
-					return
-				}
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// Check for connection timeout
-					if time.Since(sipConn.lastActivity) > 5*time.Minute {
-						s.logger.WithField("connection_id", connID).Debug("TCP connection timed out")
-						return
-					}
-					continue
-				}
-				s.logger.WithError(err).WithField("connection_id", connID).Error("Failed to read TCP SIP message")
-				return
-			}
-
-			message.Connection = sipConn
-			sipConn.lastActivity = time.Now()
-
-			// Process the message
-			go s.processSIPMessage(message)
-		}
-	}
-}
-
-// readSIPMessageFromTCP reads a complete SIP message from TCP connection
-func (s *CustomSIPServer) readSIPMessageFromTCP(conn *SIPConnection) (*SIPMessage, error) {
-	var buffer []byte
-	var contentLength int = -1
-	headerComplete := false
-	headerSize := 0
-
-	// Starting to read SIP message from TCP - debug log removed for cleaner output
-
-	// Read headers line by line
-	for {
-		line, err := conn.reader.ReadBytes('\n')
-		if err != nil {
-			s.logger.WithError(err).Debug("Error reading line from TCP connection")
-			return nil, err
-		}
-
-		// Check header size limit
-		headerSize += len(line)
-		if headerSize > security.MaxSIPHeaderSize {
-			return nil, fmt.Errorf("SIP header size %d exceeds maximum %d", headerSize, security.MaxSIPHeaderSize)
-		}
-
-		buffer = append(buffer, line...)
-
-		// Convert to string for processing - handle both \r\n and \n endings
-		lineStr := string(line)
-		lineStr = strings.TrimRight(lineStr, "\r\n")
-
-		// Debug log for message reading - only log short lines and important headers
-		if len(lineStr) <= 50 || strings.Contains(strings.ToLower(lineStr), "content-length") {
-			s.logger.WithField("line", lineStr).Debug("Read SIP header line")
-		}
-
-		// Check for end of headers
-		if lineStr == "" {
-			headerComplete = true
-			s.logger.WithFields(logrus.Fields{
-				"headers_size":   len(buffer),
-				"content_length": contentLength,
-			}).Debug("Headers complete, reading body")
-			break
-		}
-
-		// Parse Content-Length header
-		if strings.HasPrefix(strings.ToLower(lineStr), "content-length:") {
-			parts := strings.SplitN(lineStr, ":", 2)
-			if len(parts) == 2 {
-				if cl, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-					contentLength = cl
-					// Validate content length
-					if contentLength > security.MaxSIPBodySize {
-						return nil, fmt.Errorf("content-length %d exceeds maximum %d", contentLength, security.MaxSIPBodySize)
-					}
-					s.logger.WithField("content_length", contentLength).Debug("Parsed Content-Length header")
-				}
+	if headerHolder, ok := msg.(interface{ Headers() []sipparser.Header }); ok {
+		for _, h := range headerHolder.Headers() {
+			name := h.Name()
+			key := strings.ToLower(name)
+			value := h.Value()
+			idx := len(out.Headers[key])
+			out.Headers[key] = append(out.Headers[key], value)
+			out.HeaderOrder = append(out.HeaderOrder, headerEntry{
+				Name:  name,
+				Key:   key,
+				Index: idx,
+			})
+			
+			// Capture Content-Type if present
+			if name == "Content-Type" {
+				out.ContentType = value
 			}
 		}
 	}
 
-	// Read body if Content-Length is specified
-	if headerComplete && contentLength > 0 {
-		s.logger.WithField("content_length", contentLength).Debug("Reading message body")
+	if callID := msg.CallID(); callID != nil {
+		out.CallID = callID.Value()
+	}
 
-		body := make([]byte, contentLength)
-		bytesRead, err := io.ReadFull(conn.reader, body)
-		if err != nil {
-			s.logger.WithError(err).WithFields(logrus.Fields{
-				"expected": contentLength,
-				"read":     bytesRead,
-			}).Error("Error reading message body")
-			return nil, err
+	if from := msg.From(); from != nil && from.Params != nil {
+		if tag, ok := from.Params.Get("tag"); ok {
+			out.FromTag = tag
 		}
-
-		buffer = append(buffer, body...)
-		s.logger.WithFields(logrus.Fields{
-			"body_size":          len(body),
-			"total_message_size": len(buffer),
-		}).Debug("Successfully read complete SIP message")
 	}
 
-	// Parse the complete message
-	message, err := s.parseSIPMessage(buffer, conn)
-	if err != nil {
-		s.logger.WithError(err).WithField("message_size", len(buffer)).Error("Failed to parse SIP message")
-		return nil, err
-	}
-
-	s.logger.WithFields(logrus.Fields{
-		"method":         message.Method,
-		"message_size":   len(buffer),
-		"content_length": contentLength,
-	}).Debug("Successfully parsed SIP message")
-
-	return message, nil
-}
-
-// parseSIPMessage parses raw SIP message bytes
-func (s *CustomSIPServer) parseSIPMessage(data []byte, conn *SIPConnection) (*SIPMessage, error) {
-	message := &SIPMessage{
-		Headers:    make(map[string][]string),
-		RawMessage: data,
-		Connection: conn,
-	}
-
-	lines := strings.Split(string(data), "\r\n")
-	if len(lines) == 0 {
-		return nil, fmt.Errorf("empty SIP message")
-	}
-
-	// Parse request line
-	requestLine := strings.TrimSpace(lines[0])
-	parts := strings.Split(requestLine, " ")
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("invalid SIP request line: %s", requestLine)
-	}
-
-	message.Method = parts[0]
-	message.RequestURI = parts[1]
-	message.Version = parts[2]
-
-	// Parse headers
-	headerEnd := 1
-	for i := 1; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			headerEnd = i + 1
-			break
+	if to := msg.To(); to != nil && to.Params != nil {
+		if tag, ok := to.Params.Get("tag"); ok {
+			out.ToTag = tag
 		}
+	}
 
-		if !strings.Contains(line, ":") {
-			continue
+	if cseq := msg.CSeq(); cseq != nil {
+		out.CSeq = cseq.Value()
+	}
+
+	if via := msg.Via(); via != nil && via.Params != nil {
+		if branch, ok := via.Params.Get("branch"); ok {
+			out.Branch = branch
 		}
-
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		headerName := strings.TrimSpace(strings.ToLower(parts[0]))
-		headerValue := strings.TrimSpace(parts[1])
-
-		if _, exists := message.Headers[headerName]; !exists {
-			message.Headers[headerName] = make([]string, 0)
-		}
-		message.Headers[headerName] = append(message.Headers[headerName], headerValue)
 	}
 
-	// Extract body
-	if headerEnd < len(lines) {
-		bodyLines := lines[headerEnd:]
-		bodyStr := strings.Join(bodyLines, "\r\n")
-		message.Body = []byte(bodyStr)
-	}
-
-	// Parse common SIP fields for easier access
-	message.CallID = s.getHeaderValue(message, "call-id")
-	message.CSeq = s.getHeaderValue(message, "cseq")
-	message.ContentType = s.getHeaderValue(message, "content-type")
-
-	// Extract tags from From and To headers
-	fromHeader := s.getHeaderValue(message, "from")
-	if fromHeader != "" {
-		message.FromTag = extractTag(fromHeader)
-	}
-
-	toHeader := s.getHeaderValue(message, "to")
-	if toHeader != "" {
-		message.ToTag = extractTag(toHeader)
-	}
-
-	// Extract branch from Via header
-	viaHeader := s.getHeaderValue(message, "via")
-	if viaHeader != "" {
-		message.Branch = extractBranch(viaHeader)
-	}
-
-	// Extract vendor-specific information for enterprise compatibility
-	s.extractVendorInformation(message)
-
-	return message, nil
+	return out
 }
 
 // processSIPMessage processes a parsed SIP message
@@ -586,6 +374,12 @@ func (s *CustomSIPServer) processSIPMessage(message *SIPMessage) {
 		s.handleByeMessage(message)
 	case "ACK":
 		s.handleAckMessage(message)
+	case "CANCEL":
+		s.handleCancelMessage(message)
+	case "PRACK":
+		s.handlePrackMessage(message)
+	case "SUBSCRIBE":
+		s.handleSubscribeMessage(message)
 	default:
 		logger.WithField("method", message.Method).Warn("Unsupported SIP method")
 		s.sendResponse(message, 501, "Not Implemented", nil, nil)
@@ -598,7 +392,7 @@ func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 	logger.Info("Received OPTIONS request")
 
 	headers := map[string]string{
-		"Allow":     "INVITE, ACK, BYE, CANCEL, OPTIONS",
+		"Allow":     "INVITE, ACK, BYE, CANCEL, PRACK, OPTIONS",
 		"Supported": "replaces, siprec",
 	}
 
@@ -614,6 +408,11 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 	// Check if this is a re-INVITE (session update)
 	existingCallState := s.getCallState(message.CallID)
 	isReInvite := existingCallState != nil
+
+	// Send 100 Trying for initial INVITEs to acknowledge receipt
+	if !isReInvite {
+		s.sendResponse(message, 100, "Trying", nil, nil)
+	}
 
 	// Check if this is a SIPREC request
 	contentType := s.getHeader(message, "content-type")
@@ -665,21 +464,31 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Create or update call state
 	callState := &CallState{
-		CallID:       message.CallID,
-		State:        "trying",
-		RemoteTag:    message.FromTag,
-		LocalTag:     generateTag(),
-		RemoteCSeq:   extractCSeqNumber(message.CSeq),
-		CreatedAt:    time.Now(),
-		LastActivity: time.Now(),
-		IsRecording:  true,
-		TraceScope:   callScope,
+		CallID:         message.CallID,
+		State:          "trying",
+		RemoteTag:      message.FromTag,
+		LocalTag:       generateTag(),
+		RemoteCSeq:     extractCSeqNumber(message.CSeq),
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+		IsRecording:    true,
+		TraceScope:     callScope,
+		OriginalInvite: message,
 	}
 
 	// Store call state
 	s.callMutex.Lock()
 	s.callStates[message.CallID] = callState
 	s.callMutex.Unlock()
+
+	// Send 180 Ringing to establish dialog-state per RFC 3261
+	var provisionalHeaders map[string]string
+	if contact := s.getHeader(message, "contact"); contact != "" {
+		provisionalHeaders = map[string]string{"Contact": contact}
+	}
+	s.sendResponse(message, 180, "Ringing", provisionalHeaders, nil)
+	callState.State = "early"
+	callState.LastActivity = time.Now()
 
 	success := false
 	var inviteErr error
@@ -716,6 +525,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			inviteErr = err
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to parse SIPREC metadata")
+			s.notifyMetadataEvent(callCtx, nil, message.CallID, "metadata.error", map[string]interface{}{
+				"stage": "parse_metadata",
+				"error": err.Error(),
+			})
 			audit.Log(callCtx, s.logger, &audit.Event{
 				Category: "sip",
 				Action:   "invite",
@@ -739,6 +552,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			inviteErr = err
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to create recording session")
+			s.notifyMetadataEvent(callCtx, nil, message.CallID, "metadata.error", map[string]interface{}{
+				"stage": "create_session",
+				"error": err.Error(),
+			})
 			audit.Log(callCtx, s.logger, &audit.Event{
 				Category: "sip",
 				Action:   "invite",
@@ -762,15 +579,30 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 			callScope.Metadata().SetUsers(audit.UsersFromSession(recordingSession))
 		}
-		callScope.SetAttributes(
+		callAttributes := []attribute.KeyValue{
 			attribute.String("recording.session_id", recordingSession.ID),
 			attribute.Int("recording.participants", len(recordingSession.Participants)),
-		)
+			attribute.String("recording.state", recordingSession.RecordingState),
+		}
+		if recordingSession.StateReason != "" {
+			callAttributes = append(callAttributes, attribute.String("recording.state_reason", recordingSession.StateReason))
+		}
+		if !recordingSession.StateExpires.IsZero() {
+			callAttributes = append(callAttributes, attribute.String("recording.state_expires", recordingSession.StateExpires.Format(time.RFC3339)))
+		}
+		callScope.SetAttributes(callAttributes...)
 		logger.WithFields(logrus.Fields{
 			"session_id":        recordingSession.ID,
 			"participant_count": len(recordingSession.Participants),
 			"recording_state":   recordingSession.RecordingState,
 		}).Info("Successfully created recording session from SIPREC metadata")
+
+		if len(parsedMetadata.SessionGroupAssociations) > 0 {
+			logger.WithField("session_groups", parsedMetadata.SessionGroupAssociations).Info("Session group associations received")
+		}
+		if len(parsedMetadata.PolicyUpdates) > 0 {
+			logger.WithField("policy_updates", parsedMetadata.PolicyUpdates).Info("Policy updates acknowledged")
+		}
 	}
 
 	// Create RTP forwarder for this SIPREC call
@@ -785,6 +617,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			inviteErr = err
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
+			s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
+				"stage": "rtp_forwarder",
+				"error": err.Error(),
+			})
 			audit.Log(callCtx, s.logger, &audit.Event{
 				Category: "sip",
 				Action:   "invite",
@@ -809,6 +645,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			inviteErr = fmt.Errorf("media configuration missing")
 			callScope.RecordError(inviteErr)
 			logger.Error("Media configuration missing; cannot start RTP forwarding")
+			s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
+				"stage": "media_config",
+				"error": inviteErr.Error(),
+			})
 			audit.Log(callCtx, s.logger, &audit.Event{
 				Category: "sip",
 				Action:   "invite",
@@ -841,6 +681,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			if err := receivedSDP.Unmarshal(sdpData); err != nil {
 				logger.WithError(err).Warn("Failed to parse received SDP, using default")
 				receivedSDP = nil
+			} else {
+				media.ConfigureForwarderFromSDP(rtpForwarder, receivedSDP, s.logger)
 			}
 		}
 
@@ -872,7 +714,9 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Create clean SDP response using existing media config
 	responseHeaders := map[string]string{
-		"Contact": s.getHeader(message, "contact"),
+		"Contact":   s.getHeader(message, "contact"),
+		"Supported": "siprec",
+		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
 
 	// If we have a recording session, generate proper SIPREC response with metadata
@@ -882,6 +726,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			inviteErr = err
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to generate SIPREC response")
+			s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
+				"stage": "generate_response",
+				"error": err.Error(),
+			})
 			audit.Log(callCtx, s.logger, &audit.Event{
 				Category:  "sip",
 				Action:    "invite",
@@ -900,22 +748,27 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		// Set content type for multipart response
 		responseHeaders["Content-Type"] = contentType
 
-		// Update call state to connected
-		callState.State = "connected"
+		// Update call state to await ACK
+		callState.State = "awaiting_ack"
+		callState.PendingAckCSeq = callState.RemoteCSeq
 		callState.LastActivity = time.Now()
 
 		// Send multipart response with both SDP and rs-metadata
 		s.sendResponse(message, 200, "OK", responseHeaders, []byte(multipartBody))
+		s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.accepted", map[string]interface{}{
+			"transport": transport,
+		})
 	} else {
 		// Regular response without SIPREC metadata
-		callState.State = "connected"
+		callState.State = "awaiting_ack"
+		callState.PendingAckCSeq = callState.RemoteCSeq
 		callState.LastActivity = time.Now()
 		s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	}
 
 	success = true
 	if callState.TraceScope != nil {
-		callState.TraceScope.SetAttributes(attribute.String("siprec.state", "connected"))
+		callState.TraceScope.SetAttributes(attribute.String("siprec.state", "awaiting_ack"))
 		callState.TraceScope.Span().AddEvent("siprec.invite.accepted", trace.WithAttributes(
 			attribute.Bool("siprec.has_metadata", recordingSession != nil),
 		))
@@ -963,6 +816,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		attribute.Int("siprec.reinvite_body_bytes", len(message.Body)),
 	))
 	defer reinviteSpan.End()
+	metadataRefreshed := false
 
 	// Extract new metadata from re-INVITE
 	sdpData, rsMetadata := s.extractSiprecContent(message.Body, message.ContentType)
@@ -974,6 +828,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			reinviteSpan.RecordError(err)
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to parse SIPREC metadata in re-INVITE")
+			s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.error", map[string]interface{}{
+				"stage":   "parse_metadata",
+				"error":   err.Error(),
+				"context": "reinvite",
+			})
 			audit.Log(reinviteCtx, s.logger, &audit.Event{
 				Category: "sip",
 				Action:   "reinvite",
@@ -995,6 +854,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 				reinviteSpan.RecordError(err)
 				callScope.RecordError(err)
 				logger.WithError(err).Error("Failed to update recording session")
+				s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.error", map[string]interface{}{
+					"stage":   "update_session",
+					"error":   err.Error(),
+					"context": "reinvite",
+				})
 				audit.Log(reinviteCtx, s.logger, &audit.Event{
 					Category:  "sip",
 					Action:    "reinvite",
@@ -1016,6 +880,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 				reinviteSpan.RecordError(err)
 				callScope.RecordError(err)
 				logger.WithError(err).Error("Failed to create recording session from re-INVITE")
+				s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.error", map[string]interface{}{
+					"stage":   "create_session",
+					"error":   err.Error(),
+					"context": "reinvite",
+				})
 				audit.Log(reinviteCtx, s.logger, &audit.Event{
 					Category: "sip",
 					Action:   "reinvite",
@@ -1033,10 +902,18 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			if callScope.Metadata() != nil {
 				callScope.Metadata().SetSessionID(recordingSession.ID)
 			}
-			callScope.SetAttributes(
+			reinviteAttributes := []attribute.KeyValue{
 				attribute.String("recording.session_id", recordingSession.ID),
 				attribute.Int("recording.participants", len(recordingSession.Participants)),
-			)
+				attribute.String("recording.state", recordingSession.RecordingState),
+			}
+			if recordingSession.StateReason != "" {
+				reinviteAttributes = append(reinviteAttributes, attribute.String("recording.state_reason", recordingSession.StateReason))
+			}
+			if !recordingSession.StateExpires.IsZero() {
+				reinviteAttributes = append(reinviteAttributes, attribute.String("recording.state_expires", recordingSession.StateExpires.Format(time.RFC3339)))
+			}
+			callScope.SetAttributes(reinviteAttributes...)
 		}
 
 		logger.WithFields(logrus.Fields{
@@ -1044,6 +921,15 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			"new_state":  callState.RecordingSession.RecordingState,
 			"sequence":   callState.RecordingSession.SequenceNumber,
 		}).Info("Updated recording session from SIPREC re-INVITE")
+
+		if len(parsedMetadata.SessionGroupAssociations) > 0 {
+			logger.WithField("session_groups", parsedMetadata.SessionGroupAssociations).Info("Session group associations updated")
+		}
+		if len(parsedMetadata.PolicyUpdates) > 0 {
+			logger.WithField("policy_updates", parsedMetadata.PolicyUpdates).Info("Policy updates refreshed")
+		}
+
+		metadataRefreshed = true
 
 		if callScope.Metadata() != nil && callState.RecordingSession != nil {
 			if tenant := audit.TenantFromSession(callState.RecordingSession); tenant != "" {
@@ -1066,7 +952,9 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 	// Generate response using existing RTP forwarder
 	responseHeaders := map[string]string{
-		"Contact": s.getHeader(message, "contact"),
+		"Contact":   s.getHeader(message, "contact"),
+		"Supported": "siprec",
+		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
 
 	var responseSDP []byte
@@ -1078,6 +966,8 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			if err := receivedSDP.Unmarshal(sdpData); err != nil {
 				logger.WithError(err).Warn("Failed to parse received SDP in re-INVITE, using default")
 				receivedSDP = nil
+			} else {
+				media.ConfigureForwarderFromSDP(callState.RTPForwarder, receivedSDP, s.logger)
 			}
 		}
 
@@ -1096,6 +986,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			reinviteSpan.RecordError(err)
 			callScope.RecordError(err)
 			logger.WithError(err).Error("Failed to generate SIPREC response for re-INVITE")
+			s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.error", map[string]interface{}{
+				"stage":   "generate_response",
+				"error":   err.Error(),
+				"context": "reinvite",
+			})
 			audit.Log(reinviteCtx, s.logger, &audit.Event{
 				Category:  "sip",
 				Action:    "reinvite",
@@ -1112,13 +1007,19 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		}
 
 		responseHeaders["Content-Type"] = contentType
+		callState.State = "awaiting_ack"
+		callState.PendingAckCSeq = callState.RemoteCSeq
+		callState.LastActivity = time.Now()
 		s.sendResponse(message, 200, "OK", responseHeaders, []byte(multipartBody))
 	} else {
+		callState.State = "awaiting_ack"
+		callState.PendingAckCSeq = callState.RemoteCSeq
+		callState.LastActivity = time.Now()
 		s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	}
 
 	callScope.Span().AddEvent("siprec.reinvite.processed", trace.WithAttributes(
-		attribute.Bool("siprec.metadata_updated", rsMetadata != nil),
+		attribute.Bool("siprec.metadata_updated", metadataRefreshed),
 	))
 	audit.Log(reinviteCtx, s.logger, &audit.Event{
 		Category:  "sip",
@@ -1127,10 +1028,14 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		CallID:    message.CallID,
 		SessionID: sessionIDFromState(callState),
 		Details: map[string]interface{}{
-			"metadata_updated": rsMetadata != nil,
+			"metadata_updated": metadataRefreshed,
 			"rtp_forwarder":    callState.RTPForwarder != nil,
 		},
 	})
+
+	if metadataRefreshed {
+		s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.updated", nil)
+	}
 
 	logger.WithField("call_id", message.CallID).Info("Successfully responded to SIPREC re-INVITE")
 }
@@ -1240,20 +1145,30 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 
 	// Create or update call state
 	callState := &CallState{
-		CallID:       message.CallID,
-		State:        "trying",
-		RemoteTag:    message.FromTag,
-		LocalTag:     generateTag(),
-		RemoteCSeq:   extractCSeqNumber(message.CSeq),
-		CreatedAt:    time.Now(),
-		LastActivity: time.Now(),
-		IsRecording:  false,
+		CallID:         message.CallID,
+		State:          "trying",
+		RemoteTag:      message.FromTag,
+		LocalTag:       generateTag(),
+		RemoteCSeq:     extractCSeqNumber(message.CSeq),
+		CreatedAt:      time.Now(),
+		LastActivity:   time.Now(),
+		IsRecording:    false,
+		OriginalInvite: message,
 	}
 
 	// Store call state
 	s.callMutex.Lock()
 	s.callStates[message.CallID] = callState
 	s.callMutex.Unlock()
+
+	// Establish early dialog with 180 Ringing
+	var provisionalHeaders map[string]string
+	if contact := s.getHeader(message, "contact"); contact != "" {
+		provisionalHeaders = map[string]string{"Contact": contact}
+	}
+	s.sendResponse(message, 180, "Ringing", provisionalHeaders, nil)
+	callState.State = "early"
+	callState.LastActivity = time.Now()
 
 	// For regular calls, we should generate proper SDP response
 	// Parse received SDP if available
@@ -1289,7 +1204,8 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	}
 
 	// Update call state
-	callState.State = "connected"
+	callState.State = "awaiting_ack"
+	callState.PendingAckCSeq = callState.RemoteCSeq
 	callState.SDP = responseSDP
 	callState.LastActivity = time.Now()
 
@@ -1328,6 +1244,8 @@ func (s *CustomSIPServer) handleRegularReInvite(message *SIPMessage, callState *
 	callState.LastActivity = time.Now()
 
 	// Simple response for regular re-INVITE
+	callState.State = "awaiting_ack"
+	callState.PendingAckCSeq = callState.RemoteCSeq
 	s.sendResponse(message, 200, "OK", nil, nil)
 	logger.WithField("call_id", message.CallID).Info("Successfully responded to regular re-INVITE")
 }
@@ -1337,8 +1255,19 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "BYE")
 	logger.Info("Received BYE request")
 
+	seq, method := parseCSeq(message.CSeq)
+	if method != "" && method != "BYE" {
+		logger.WithField("cseq_method", method).Warn("BYE request with mismatched CSeq method")
+	}
+
 	var callScope *tracing.CallScope
 	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("BYE received without established dialog")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
 	if callState != nil {
 		callScope = callState.TraceScope
 	} else if scope, ok := tracing.GetCallScope(message.CallID); ok {
@@ -1359,6 +1288,69 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	}
 	defer byeSpan.End()
 
+	sessionID := sessionIDFromState(callState)
+
+	if callState.PendingAckCSeq != 0 {
+		logger.WithField("pending_ack_cseq", callState.PendingAckCSeq).Warn("BYE received before ACK completed")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		audit.Log(byeCtx, s.logger, &audit.Event{
+			Category:  "sip",
+			Action:    "bye",
+			Outcome:   audit.OutcomeFailure,
+			CallID:    message.CallID,
+			SessionID: sessionID,
+			Details: map[string]interface{}{
+				"reason": "ack_pending",
+			},
+		})
+		return
+	}
+
+	if callState.State != "connected" && callState.State != "terminating" {
+		logger.WithField("state", callState.State).Warn("BYE received in invalid dialog state")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		audit.Log(byeCtx, s.logger, &audit.Event{
+			Category:  "sip",
+			Action:    "bye",
+			Outcome:   audit.OutcomeFailure,
+			CallID:    message.CallID,
+			SessionID: sessionID,
+			Details: map[string]interface{}{
+				"reason": "invalid_state",
+				"state":  callState.State,
+			},
+		})
+		return
+	}
+
+	if seq != 0 && seq <= callState.RemoteCSeq {
+		logger.WithFields(logrus.Fields{
+			"received_cseq": seq,
+			"last_cseq":     callState.RemoteCSeq,
+		}).Warn("BYE received with non-incrementing CSeq")
+		s.sendResponse(message, 400, "Bad Request", nil, nil)
+		audit.Log(byeCtx, s.logger, &audit.Event{
+			Category:  "sip",
+			Action:    "bye",
+			Outcome:   audit.OutcomeFailure,
+			CallID:    message.CallID,
+			SessionID: sessionID,
+			Details: map[string]interface{}{
+				"reason": "cseq_regression",
+				"cseq":   seq,
+			},
+		})
+		return
+	}
+
+	s.callMutex.Lock()
+	if seq != 0 {
+		callState.RemoteCSeq = seq
+	}
+	callState.State = "terminating"
+	callState.LastActivity = time.Now()
+	s.callMutex.Unlock()
+
 	// Clean up call state and recording session if exists
 	if callState != nil {
 		if callState.RecordingSession != nil {
@@ -1374,41 +1366,9 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 				"duration":        time.Since(callState.RecordingSession.StartTime),
 			}).Info("Recording session terminated due to BYE")
 		}
-
-		// Clean up RTP forwarder if exists
-		if callState.RTPForwarder != nil {
-			logger.WithFields(logrus.Fields{
-				"call_id":   message.CallID,
-				"rtp_port":  callState.RTPForwarder.LocalPort,
-				"rtcp_port": callState.RTPForwarder.RTCPPort,
-			}).Debug("Cleaning up RTP forwarder")
-
-			// Signal forwarding to stop
-			close(callState.RTPForwarder.StopChan)
-
-			// Perform thorough cleanup
-			callState.RTPForwarder.Cleanup()
-			callState.RTPForwarder = nil
-		}
-
-		if callState.AllocatedPortPair != nil {
-			media.GetPortManager().ReleasePortPair(callState.AllocatedPortPair)
-			callState.AllocatedPortPair = nil
-		}
-
-		// Update call state
-		callState.State = "terminated"
-		callState.LastActivity = time.Now()
-
-		// Remove from active call states
-		s.callMutex.Lock()
-		delete(s.callStates, message.CallID)
-		s.callMutex.Unlock()
-
-		logger.WithField("call_id", message.CallID).Info("Call state cleaned up")
-	}
-
-	if callScope != nil {
+		s.finalizeCall(message.CallID, callState, "terminated")
+		logger.WithField("call_id", message.CallID).Info("Call state cleaned up after BYE")
+	} else if callScope != nil {
 		callScope.Span().AddEvent("siprec.call.terminated", trace.WithAttributes(
 			attribute.String("termination.reason", "bye"),
 		))
@@ -1425,146 +1385,440 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 		Action:    "bye",
 		Outcome:   auditOutcome,
 		CallID:    message.CallID,
-		SessionID: sessionIDFromState(callState),
+		SessionID: sessionID,
 		Details: map[string]interface{}{
 			"call_state_present": callState != nil,
 		},
 	})
 
 	s.sendResponse(message, 200, "OK", nil, nil)
+	if callState.TraceScope != nil {
+		callState.TraceScope.Span().AddEvent("siprec.bye.acknowledged", trace.WithAttributes(
+			attribute.Int("sip.cseq", seq),
+		))
+	}
 	logger.Info("Successfully responded to BYE request")
+}
+
+// handleCancelMessage handles CANCEL requests
+func (s *CustomSIPServer) handleCancelMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "CANCEL")
+	logger.Info("Received CANCEL request")
+
+	callState := s.getCallState(message.CallID)
+	cancelCtx := tracing.ContextForCall(message.CallID)
+	_, cancelSpan := tracing.StartSpan(cancelCtx, "siprec.cancel", trace.WithAttributes(
+		attribute.String("sip.method", "CANCEL"),
+	))
+	defer cancelSpan.End()
+
+	s.sendResponse(message, 200, "OK", nil, nil)
+
+	if callState == nil {
+		logger.Warn("No call state found for CANCEL request")
+		return
+	}
+
+	if callState.State == "connected" || callState.State == "terminated" {
+		logger.WithField("call_state", callState.State).Debug("Call already finalized; ignoring CANCEL")
+		return
+	}
+
+	if callState.TraceScope != nil {
+		callState.TraceScope.SetAttributes(attribute.String("siprec.state", "cancelled"))
+	}
+
+	if callState.OriginalInvite != nil {
+		s.sendResponse(callState.OriginalInvite, 487, "Request Terminated", nil, nil)
+	}
+
+	if callState.RecordingSession != nil {
+		callState.RecordingSession.RecordingState = "cancelled"
+		callState.RecordingSession.UpdatedAt = time.Now()
+		if callState.RecordingSession.ExtendedMetadata == nil {
+			callState.RecordingSession.ExtendedMetadata = make(map[string]string)
+		}
+		callState.RecordingSession.ExtendedMetadata["termination_reason"] = "cancelled"
+	}
+
+	s.finalizeCall(message.CallID, callState, "cancelled")
+	logger.WithField("call_id", message.CallID).Info("Call state cleaned up after CANCEL")
+
+	audit.Log(cancelCtx, s.logger, &audit.Event{
+		Category:  "sip",
+		Action:    "cancel",
+		Outcome:   audit.OutcomeSuccess,
+		CallID:    message.CallID,
+		SessionID: sessionIDFromState(callState),
+	})
+}
+
+// handlePrackMessage handles PRACK requests
+func (s *CustomSIPServer) handlePrackMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "PRACK")
+	logger.Info("Received PRACK request")
+	if callState := s.getCallState(message.CallID); callState != nil {
+		callState.LastActivity = time.Now()
+		if callState.State == "early" {
+			callState.State = "proceeding"
+		}
+	}
+	s.sendResponse(message, 200, "OK", nil, nil)
 }
 
 // handleAckMessage handles ACK requests
 func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "ACK")
 	logger.Debug("Received ACK request")
-	// ACK doesn't require a response
+
+	seq, method := parseCSeq(message.CSeq)
+	if method != "" && method != "ACK" {
+		logger.WithField("cseq_method", method).Warn("ACK request with mismatched CSeq method")
+	}
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("ACK received without existing dialog state")
+		return
+	}
+
+	s.callMutex.Lock()
+	defer s.callMutex.Unlock()
+
+	currentState, exists := s.callStates[message.CallID]
+	if !exists {
+		logger.WithField("call_id", message.CallID).Warn("ACK received but call state removed")
+		return
+	}
+
+	if currentState.PendingAckCSeq != 0 && seq != 0 && seq != currentState.PendingAckCSeq {
+		logger.WithFields(logrus.Fields{
+			"expected_cseq": currentState.PendingAckCSeq,
+			"received_cseq": seq,
+		}).Warn("ACK CSeq does not match pending INVITE transaction")
+	}
+
+	currentState.PendingAckCSeq = 0
+	if seq != 0 {
+		currentState.RemoteCSeq = seq
+	}
+	currentState.State = "connected"
+	currentState.LastActivity = time.Now()
+
+	if currentState.TraceScope != nil {
+		currentState.TraceScope.SetAttributes(attribute.String("siprec.state", "connected"))
+		currentState.TraceScope.Span().AddEvent("siprec.ack.received", trace.WithAttributes(
+			attribute.Int("sip.cseq", seq),
+		))
+	}
+}
+
+// handleSubscribeMessage processes SUBSCRIBE requests used for metadata notifications
+func (s *CustomSIPServer) handleSubscribeMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "SUBSCRIBE")
+	logger.Info("Received SUBSCRIBE request")
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("SUBSCRIBE received for unknown Call-ID")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
+	callbackURL := strings.TrimSpace(s.getHeader(message, "x-callback-url"))
+	if callbackURL == "" {
+		callbackURL = strings.TrimSpace(s.getHeader(message, "callback-url"))
+	}
+	if callbackURL == "" && len(message.Body) > 0 {
+		body := strings.TrimSpace(string(message.Body))
+		lowerBody := strings.ToLower(body)
+		if strings.HasPrefix(lowerBody, "http://") || strings.HasPrefix(lowerBody, "https://") {
+			callbackURL = body
+		}
+	}
+
+	if callbackURL == "" {
+		logger.Warn("SUBSCRIBE request missing callback URL")
+		s.sendResponse(message, 400, "Bad Request - Missing Callback-URL", nil, nil)
+		return
+	}
+
+	if s.handler != nil && s.handler.Notifier != nil {
+		s.handler.Notifier.RegisterCallEndpoint(message.CallID, callbackURL)
+	}
+
+	if callState.RecordingSession != nil {
+		callState.RecordingSession.Callbacks = append(callState.RecordingSession.Callbacks, callbackURL)
+	}
+
+	callState.LastActivity = time.Now()
+	logger.WithFields(logrus.Fields{
+		"call_id":      message.CallID,
+		"callback_url": callbackURL,
+	}).Info("Registered metadata callback via SUBSCRIBE")
+
+	responseHeaders := map[string]string{
+		"Expires": "300",
+	}
+	s.sendResponse(message, 202, "Accepted", responseHeaders, nil)
 }
 
 // sendResponse sends a SIP response
 func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reasonPhrase string, headers map[string]string, body []byte) {
-	// Create a response message for NAT rewriting
-	responseMessage := &SIPMessage{
-		Method:     "RESPONSE",
-		RequestURI: "",
-		Version:    message.Version,
-		Headers:    make(map[string][]string),
-		Body:       body,
-		Connection: message.Connection,
-		CallID:     message.CallID,
+	if message == nil {
+		s.logger.Warn("Attempted to send response for nil message")
+		return
 	}
 
-	// Copy Via headers
-	if viaHeaders, exists := message.Headers["via"]; exists {
-		responseMessage.Headers["via"] = make([]string, len(viaHeaders))
-		copy(responseMessage.Headers["via"], viaHeaders)
+	if message.Transaction == nil {
+		s.logger.WithFields(logrus.Fields{
+			"call_id": message.CallID,
+			"method":  message.Method,
+		}).Warn("No server transaction available to send response")
+		return
 	}
 
-	// Copy other essential headers
-	essentialHeaders := []string{"from", "to", "call-id", "cseq"}
-	for _, headerName := range essentialHeaders {
-		if headerValues, exists := message.Headers[headerName]; exists {
-			responseMessage.Headers[headerName] = make([]string, len(headerValues))
-			copy(responseMessage.Headers[headerName], headerValues)
+	req := message.Request
+	if req == nil {
+		if parsedReq, ok := message.Parsed.(*sipparser.Request); ok {
+			req = parsedReq
+		}
+	}
 
-			// Add tag to To header if it's a 200 OK response and no tag exists
-			if headerName == "to" && statusCode == 200 {
-				for i, value := range responseMessage.Headers[headerName] {
-					if !strings.Contains(value, "tag=") {
-						// Check if we have a call state with a local tag
-						if callState := s.getCallState(message.CallID); callState != nil && callState.LocalTag != "" {
-							responseMessage.Headers[headerName][i] = value + fmt.Sprintf(";tag=%s", callState.LocalTag)
-						} else {
-							responseMessage.Headers[headerName][i] = value + fmt.Sprintf(";tag=%s", generateTag())
-						}
-					}
+	if req == nil {
+		s.logger.WithFields(logrus.Fields{
+			"call_id": message.CallID,
+			"method":  message.Method,
+		}).Warn("Unable to build SIP response without original request context")
+		return
+	}
+
+	resp := sipparser.NewResponseFromRequest(req, statusCode, reasonPhrase, body)
+
+	// Ensure To-tag aligns with dialog state
+	if message.CallID != "" {
+		if callState := s.getCallState(message.CallID); callState != nil && callState.LocalTag != "" {
+			if to := resp.To(); to != nil {
+				if to.Params == nil {
+					to.Params = sipparser.HeaderParams{}
 				}
+				to.Params.Add("tag", callState.LocalTag)
 			}
 		}
 	}
 
-	// Add custom headers
+	if len(body) > 0 {
+		resp.SetBody(body)
+	}
+
+	if len(body) > 0 {
+		// Check if Content-Type header exists
+		if len(resp.GetHeaders("Content-Type")) == 0 {
+			resp.ReplaceHeader(sipparser.NewHeader("Content-Type", "application/sdp"))
+		}
+	}
+
 	for name, value := range headers {
-		if value != "" {
-			headerName := strings.ToLower(name)
-			if _, exists := responseMessage.Headers[headerName]; !exists {
-				responseMessage.Headers[headerName] = make([]string, 0)
-			}
-			responseMessage.Headers[headerName] = append(responseMessage.Headers[headerName], value)
+		if value == "" {
+			continue
+		}
+		if len(resp.GetHeaders(name)) > 0 {
+			resp.ReplaceHeader(sipparser.NewHeader(name, value))
+		} else {
+			resp.AppendHeader(sipparser.NewHeader(name, value))
 		}
 	}
 
-	// Set Content-Type if body exists
-	if body != nil {
-		responseMessage.Headers["content-type"] = []string{"application/sdp"}
-	}
-
-	// Apply NAT rewriting if handler has NAT rewriter configured
 	if s.handler != nil && s.handler.NATRewriter != nil {
-		if err := s.handler.NATRewriter.RewriteOutgoingMessage(responseMessage); err != nil {
+		if err := s.handler.NATRewriter.RewriteOutgoingResponse(resp); err != nil {
 			s.logger.WithError(err).Debug("Failed to apply NAT rewriting to outgoing response")
 		}
 	}
 
-	// Build the response string from the (possibly rewritten) response message
-	var response strings.Builder
+	if err := message.Transaction.Respond(resp); err != nil {
+		s.logger.WithError(err).WithFields(logrus.Fields{
+			"call_id": message.CallID,
+			"method":  message.Method,
+			"status":  statusCode,
+		}).Error("Failed to send SIP response over transaction layer")
+	}
+}
 
-	// Status line
-	response.WriteString(fmt.Sprintf("%s %d %s\r\n", responseMessage.Version, statusCode, reasonPhrase))
-
-	// Write Via headers
-	if viaHeaders, exists := responseMessage.Headers["via"]; exists {
-		for _, via := range viaHeaders {
-			response.WriteString(fmt.Sprintf("Via: %s\r\n", via))
-		}
+func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reason string) {
+	if callState == nil {
+		return
 	}
 
-	// Write other essential headers
-	for _, headerName := range essentialHeaders {
-		if headerValues, exists := responseMessage.Headers[headerName]; exists {
-			for _, value := range headerValues {
-				response.WriteString(fmt.Sprintf("%s: %s\r\n", strings.Title(headerName), value))
+	notifyCtx := context.Background()
+	if callState.TraceScope != nil {
+		notifyCtx = callState.TraceScope.Context()
+	}
+
+	if callState.RecordingSession != nil {
+		now := time.Now()
+		if reason != "" {
+			switch reason {
+			case "terminated":
+				callState.RecordingSession.RecordingState = "terminated"
+			case "cancelled":
+				if callState.RecordingSession.RecordingState == "" || callState.RecordingSession.RecordingState == "active" {
+					callState.RecordingSession.RecordingState = "cancelled"
+				}
+			default:
+				if callState.RecordingSession.RecordingState == "" {
+					callState.RecordingSession.RecordingState = reason
+				}
 			}
 		}
-	}
-
-	// Write custom headers
-	for headerName, headerValues := range responseMessage.Headers {
-		// Skip headers we've already written
-		if headerName == "via" || contains(essentialHeaders, headerName) || headerName == "content-type" || headerName == "content-length" {
-			continue
+		callState.RecordingSession.EndTime = now
+		callState.RecordingSession.UpdatedAt = now
+		if callState.RecordingSession.ExtendedMetadata == nil {
+			callState.RecordingSession.ExtendedMetadata = make(map[string]string)
 		}
-		for _, value := range headerValues {
-			response.WriteString(fmt.Sprintf("%s: %s\r\n", strings.Title(headerName), value))
+		callState.RecordingSession.ExtendedMetadata["termination_reason"] = reason
+	}
+
+	if callState.RTPForwarder != nil {
+		callState.RTPForwarder.Stop()
+		callState.RTPForwarder.Cleanup()
+		callState.RTPForwarder = nil
+	}
+
+	callState.PendingAckCSeq = 0
+
+	if callState.AllocatedPortPair != nil {
+		media.GetPortManager().ReleasePortPair(callState.AllocatedPortPair)
+		callState.AllocatedPortPair = nil
+	}
+
+	callState.State = "terminated"
+	callState.LastActivity = time.Now()
+
+	s.callMutex.Lock()
+	delete(s.callStates, callID)
+	s.callMutex.Unlock()
+
+	if callState.TraceScope != nil {
+		callState.TraceScope.Span().AddEvent("siprec.call.terminated", trace.WithAttributes(
+			attribute.String("termination.reason", reason),
+		))
+		callState.TraceScope.End(nil)
+		callState.TraceScope = nil
+	}
+
+	if s.handler != nil && s.handler.Notifier != nil {
+		s.handler.Notifier.ClearCallEndpoints(callID)
+		s.notifyMetadataEvent(notifyCtx, callState.RecordingSession, callID, "metadata.terminated", map[string]interface{}{
+			"termination_reason": reason,
+		})
+	}
+}
+
+func (s *CustomSIPServer) notifyMetadataEvent(ctx context.Context, session *siprec.RecordingSession, callID, event string, extra map[string]interface{}) {
+	if s.handler == nil || s.handler.Notifier == nil {
+		return
+	}
+
+	metadata := s.buildNotificationMetadata(session)
+	if len(extra) > 0 {
+		if metadata == nil {
+			metadata = make(map[string]interface{}, len(extra))
+		}
+		for k, v := range extra {
+			metadata[k] = v
 		}
 	}
 
-	// Content headers
-	if responseMessage.Body != nil {
-		if contentType, exists := responseMessage.Headers["content-type"]; exists && len(contentType) > 0 {
-			response.WriteString(fmt.Sprintf("Content-Type: %s\r\n", contentType[0]))
-		} else {
-			response.WriteString("Content-Type: application/sdp\r\n")
+	s.handler.Notifier.Notify(ctx, session, callID, event, metadata)
+}
+
+func (s *CustomSIPServer) buildNotificationMetadata(session *siprec.RecordingSession) map[string]interface{} {
+	if session == nil {
+		return nil
+	}
+
+	snapshot := map[string]interface{}{
+		"sequence":     session.SequenceNumber,
+		"direction":    session.Direction,
+		"participants": len(session.Participants),
+	}
+
+	if session.StateReason != "" {
+		snapshot["state_reason"] = session.StateReason
+	}
+	if session.StateReasonRef != "" {
+		snapshot["state_reason_ref"] = session.StateReasonRef
+	}
+	if !session.StateExpires.IsZero() {
+		snapshot["state_expires"] = session.StateExpires.Format(time.RFC3339)
+	}
+	if len(session.MediaStreamTypes) > 0 {
+		snapshot["media_streams"] = session.MediaStreamTypes
+	}
+	if len(session.SessionGroupRoles) > 0 {
+		snapshot["session_groups"] = session.SessionGroupRoles
+	}
+	if len(session.PolicyStates) > 0 {
+		policyStates := make(map[string]map[string]interface{}, len(session.PolicyStates))
+		for policyID, state := range session.PolicyStates {
+			entry := map[string]interface{}{
+				"status":       state.Status,
+				"acknowledged": state.Acknowledged,
+			}
+			if !state.ReportedAt.IsZero() {
+				entry["timestamp"] = state.ReportedAt.Format(time.RFC3339)
+			}
+			if state.RawTimestamp != "" {
+				entry["raw_timestamp"] = state.RawTimestamp
+			}
+			policyStates[policyID] = entry
 		}
-		response.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(responseMessage.Body)))
-	} else {
-		response.WriteString("Content-Length: 0\r\n")
+		snapshot["policies"] = policyStates
 	}
 
-	// End of headers
-	response.WriteString("\r\n")
+	return snapshot
+}
 
-	// Body
-	if responseMessage.Body != nil {
-		response.Write(responseMessage.Body)
-	}
-
-	// Send response
-	responseBytes := []byte(response.String())
-
-	if err := s.writeToConnection(message.Connection, responseBytes); err != nil {
-		s.logger.WithError(err).Error("Failed to send SIP response")
+func defaultReasonPhrase(status int) string {
+	switch status {
+	case 100:
+		return "Trying"
+	case 180:
+		return "Ringing"
+	case 183:
+		return "Session Progress"
+	case 200:
+		return "OK"
+	case 202:
+		return "Accepted"
+	case 400:
+		return "Bad Request"
+	case 401:
+		return "Unauthorized"
+	case 403:
+		return "Forbidden"
+	case 404:
+		return "Not Found"
+	case 405:
+		return "Method Not Allowed"
+	case 415:
+		return "Unsupported Media Type"
+	case 480:
+		return "Temporarily Unavailable"
+	case 486:
+		return "Busy Here"
+	case 500:
+		return "Server Internal Error"
+	case 501:
+		return "Not Implemented"
+	case 503:
+		return "Service Unavailable"
+	case 504:
+		return "Server Time-out"
+	case 603:
+		return "Decline"
+	default:
+		return "SIP Response"
 	}
 }
 
@@ -1573,26 +1827,6 @@ func sessionIDFromState(callState *CallState) string {
 		return callState.RecordingSession.ID
 	}
 	return ""
-}
-
-// writeToConnection writes data to a SIP connection
-func (s *CustomSIPServer) writeToConnection(conn *SIPConnection, data []byte) error {
-	conn.mutex.Lock()
-	defer conn.mutex.Unlock()
-
-	switch conn.transport {
-	case "udp":
-		if udpConn, ok := conn.conn.(*udpConn); ok {
-			_, err := udpConn.conn.WriteToUDP(data, udpConn.addr)
-			return err
-		}
-		return fmt.Errorf("invalid UDP connection type")
-	case "tcp", "tls":
-		conn.writer.Write(data)
-		return conn.writer.Flush()
-	default:
-		return fmt.Errorf("unsupported transport: %s", conn.transport)
-	}
 }
 
 // getHeaderValue gets a header value from the message
@@ -1609,15 +1843,6 @@ func (s *CustomSIPServer) getHeader(message *SIPMessage, name string) string {
 }
 
 // contains checks if a slice contains a string
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
 // extractTag extracts tag parameter from SIP header
 func extractTag(header string) string {
 	// Look for ;tag=value
@@ -1653,6 +1878,67 @@ func extractCSeqNumber(cseq string) int {
 		}
 	}
 	return 0
+}
+
+// parseCSeq extracts both the sequence number and method from a CSeq header
+func parseCSeq(cseq string) (int, string) {
+	parts := strings.Fields(cseq)
+	if len(parts) == 0 {
+		return 0, ""
+	}
+
+	number := 0
+	if num, err := strconv.Atoi(parts[0]); err == nil {
+		number = num
+	}
+
+	method := ""
+	if len(parts) > 1 {
+		method = strings.ToUpper(parts[1])
+	}
+
+	return number, method
+}
+
+// ensureHeaderHasTag guarantees that the SIP header contains a local tag parameter
+func ensureHeaderHasTag(headerValue, tag string) string {
+	if tag == "" {
+		return headerValue
+	}
+
+	if strings.Contains(strings.ToLower(headerValue), "tag=") {
+		return headerValue
+	}
+
+	if strings.Contains(headerValue, ">") {
+		parts := strings.SplitN(headerValue, ">", 2)
+		suffix := ""
+		if len(parts) > 1 {
+			suffix = strings.TrimLeft(parts[1], " ")
+			if strings.HasPrefix(suffix, ";") {
+				suffix = suffix[1:]
+			}
+			if suffix != "" {
+				suffix = ";" + suffix
+			}
+		}
+		return fmt.Sprintf("%s>;tag=%s%s", parts[0], tag, suffix)
+	}
+
+	trimmed := strings.TrimSpace(headerValue)
+	if trimmed == "" {
+		return fmt.Sprintf(";tag=%s", tag)
+	}
+
+	if strings.HasSuffix(trimmed, ";") {
+		return fmt.Sprintf("%s tag=%s", headerValue, tag)
+	}
+
+	if strings.Contains(trimmed, ";") {
+		return fmt.Sprintf("%s;tag=%s", trimmed, tag)
+	}
+
+	return fmt.Sprintf("%s;tag=%s", headerValue, tag)
 }
 
 // generateTag generates a random tag for SIP headers
@@ -1740,20 +2026,13 @@ func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType str
 		return nil, fmt.Errorf("failed to unmarshal SIPREC metadata XML: %w", err)
 	}
 
-	// Validate the metadata using the existing validation function
-	deficiencies := siprec.ValidateSiprecMessage(&metadata)
-	if len(deficiencies) > 0 {
-		// Check for critical deficiencies
-		for _, deficiency := range deficiencies {
-			if strings.Contains(deficiency, "missing session ID") ||
-				strings.Contains(deficiency, "missing recording state") ||
-				strings.Contains(deficiency, "invalid recording state") {
-				return nil, fmt.Errorf("critical SIPREC metadata validation failure: %v", deficiencies)
-			}
-		}
+	validation := siprec.ValidateSiprecMessage(&metadata)
+	if len(validation.Errors) > 0 {
+		return nil, fmt.Errorf("critical SIPREC metadata validation failure: %v", validation.Errors)
+	}
 
-		// Log warnings for non-critical issues
-		s.logger.WithField("deficiencies", deficiencies).Warning("SIPREC metadata validation warnings")
+	if len(validation.Warnings) > 0 {
+		s.logger.WithField("warnings", validation.Warnings).Warn("SIPREC metadata validation warnings")
 	}
 
 	return &metadata, nil
@@ -1763,17 +2042,44 @@ func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType str
 func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *siprec.RSMetadata, logger *logrus.Entry) (*siprec.RecordingSession, error) {
 	// Create the recording session object
 	session := &siprec.RecordingSession{
-		ID:               metadata.SessionID,
-		SIPID:            sipCallID,
-		AssociatedTime:   time.Now(),
-		SequenceNumber:   metadata.Sequence,
-		RecordingState:   metadata.State,
-		Direction:        metadata.Direction,
-		StartTime:        time.Now(),
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
-		IsValid:          true,
-		ExtendedMetadata: make(map[string]string),
+		ID:                metadata.SessionID,
+		SIPID:             sipCallID,
+		AssociatedTime:    time.Now(),
+		SequenceNumber:    metadata.Sequence,
+		RecordingState:    metadata.State,
+		Direction:         metadata.Direction,
+		StartTime:         time.Now(),
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+		IsValid:           true,
+		ExtendedMetadata:  make(map[string]string),
+		SessionGroupRoles: make(map[string]string),
+		PolicyStates:      make(map[string]siprec.PolicyAckStatus),
+	}
+
+	if s.handler != nil && len(s.handler.Config.MetadataCallbackURLs) > 0 {
+		session.Callbacks = append(session.Callbacks, s.handler.Config.MetadataCallbackURLs...)
+	}
+
+	session.StateReason = strings.TrimSpace(metadata.Reason)
+	session.StateReasonRef = strings.TrimSpace(metadata.ReasonRef)
+
+	if session.StateReason != "" {
+		session.ExtendedMetadata["state_reason"] = session.StateReason
+		session.ExtendedMetadata["reason"] = session.StateReason
+	}
+	if session.StateReasonRef != "" {
+		session.ExtendedMetadata["state_reason_ref"] = session.StateReasonRef
+		session.ExtendedMetadata["reason_ref"] = session.StateReasonRef
+	}
+	if expires := strings.TrimSpace(metadata.Expires); expires != "" {
+		session.ExtendedMetadata["state_expires"] = expires
+		session.ExtendedMetadata["expires"] = expires
+		if parsed, err := time.Parse(time.RFC3339, expires); err == nil {
+			session.StateExpires = parsed
+		} else {
+			logger.WithError(err).Debug("Failed to parse metadata expires timestamp")
+		}
 	}
 
 	// Convert participants from metadata
@@ -1816,6 +2122,46 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 		session.MediaStreamTypes = append(session.MediaStreamTypes, stream.Type)
 	}
 
+	// Handle session group associations
+	if len(metadata.SessionGroupAssociations) > 0 {
+		session.SessionGroups = append(session.SessionGroups, metadata.SessionGroupAssociations...)
+		for _, assoc := range metadata.SessionGroupAssociations {
+			session.SessionGroupRoles[assoc.SessionGroupID] = assoc.Role
+			key := fmt.Sprintf("session_group_%s", assoc.SessionGroupID)
+			session.ExtendedMetadata[key] = assoc.Role
+		}
+	}
+
+	// Handle policy updates/acknowledgements
+	if len(metadata.PolicyUpdates) > 0 {
+		session.PolicyUpdates = append(session.PolicyUpdates, metadata.PolicyUpdates...)
+		for _, policy := range metadata.PolicyUpdates {
+			rawTimestamp := strings.TrimSpace(policy.Timestamp)
+			reportedAt := time.Now()
+			if rawTimestamp != "" {
+				if parsed, err := time.Parse(time.RFC3339, rawTimestamp); err == nil {
+					reportedAt = parsed
+				} else {
+					logger.WithError(err).Debugf("Failed to parse policy timestamp for %s", policy.PolicyID)
+				}
+			}
+			statusValue := strings.ToLower(strings.TrimSpace(policy.Status))
+			session.PolicyStates[policy.PolicyID] = siprec.PolicyAckStatus{
+				Status:       statusValue,
+				Acknowledged: policy.Acknowledged,
+				ReportedAt:   reportedAt,
+				RawTimestamp: rawTimestamp,
+			}
+
+			statusKey := fmt.Sprintf("policy_%s_status", policy.PolicyID)
+			session.ExtendedMetadata[statusKey] = statusValue
+			session.ExtendedMetadata[statusKey+"_ack"] = strconv.FormatBool(policy.Acknowledged)
+			if rawTimestamp != "" {
+				session.ExtendedMetadata[statusKey+"_timestamp"] = rawTimestamp
+			}
+		}
+	}
+
 	// Set default values if not provided
 	if session.RecordingState == "" {
 		session.RecordingState = "active"
@@ -1826,15 +2172,6 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 	}
 
 	// Store additional metadata
-	if metadata.Reason != "" {
-		session.ExtendedMetadata["reason"] = metadata.Reason
-	}
-	if metadata.ReasonRef != "" {
-		session.ExtendedMetadata["reason_ref"] = metadata.ReasonRef
-	}
-	if metadata.Expires != "" {
-		session.ExtendedMetadata["expires"] = metadata.Expires
-	}
 	if metadata.MediaLabel != "" {
 		session.ExtendedMetadata["media_label"] = metadata.MediaLabel
 	}
@@ -1856,6 +2193,8 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 		"stream_count":      len(session.MediaStreamTypes),
 		"recording_state":   session.RecordingState,
 		"direction":         session.Direction,
+		"session_groups":    len(session.SessionGroups),
+		"policy_updates":    len(session.PolicyUpdates),
 	}).Info("Created recording session from SIPREC metadata")
 
 	return session, nil
@@ -1864,11 +2203,25 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 // generateSiprecResponse creates a proper SIPREC multipart response with SDP and rs-metadata
 func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.RecordingSession, logger *logrus.Entry) (string, string, error) {
 	// Create response metadata from the recording session
+	state := session.RecordingState
+	if state == "" {
+		state = "active"
+	}
 	responseMetadata := &siprec.RSMetadata{
 		SessionID: session.ID,
-		State:     "active",                   // Set to active since we're accepting the session
-		Sequence:  session.SequenceNumber + 1, // Increment sequence for response
+		State:     state,
+		Sequence:  session.SequenceNumber + 1,
 		Direction: session.Direction,
+	}
+
+	if session.StateReason != "" {
+		responseMetadata.Reason = session.StateReason
+	}
+	if session.StateReasonRef != "" {
+		responseMetadata.ReasonRef = session.StateReasonRef
+	}
+	if !session.StateExpires.IsZero() {
+		responseMetadata.Expires = session.StateExpires.Format(time.RFC3339)
 	}
 
 	// Copy participants from session
@@ -1903,6 +2256,14 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 		responseMetadata.Participants = append(responseMetadata.Participants, rsParticipant)
 	}
 
+	if len(session.SessionGroups) > 0 {
+		responseMetadata.SessionGroupAssociations = append(responseMetadata.SessionGroupAssociations, session.SessionGroups...)
+	}
+
+	if len(session.PolicyUpdates) > 0 {
+		responseMetadata.PolicyUpdates = append(responseMetadata.PolicyUpdates, session.PolicyUpdates...)
+	}
+
 	// Add session recording association
 	responseMetadata.SessionRecordingAssoc = siprec.RSAssociation{
 		SessionID: session.ID,
@@ -1925,6 +2286,15 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create metadata response: %w", err)
 	}
+
+	// Update session sequencing and state to reflect response sent
+	if responseMetadata.Sequence > 0 {
+		session.SequenceNumber = responseMetadata.Sequence
+	}
+	if responseMetadata.State != "" {
+		session.RecordingState = responseMetadata.State
+	}
+	session.UpdatedAt = time.Now()
 
 	// Create multipart response
 	contentType, multipartBody := siprec.CreateMultipartResponse(string(sdp), metadataXML)
@@ -2031,13 +2401,12 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 		listener.Close()
 	}
 
-	// Close all active connections
-	s.connMutex.Lock()
-	for connID, conn := range s.connections {
-		conn.conn.Close()
-		s.logger.WithField("connection_id", connID).Debug("Closed connection during shutdown")
+	// Close sipgo user agent and transport
+	if s.ua != nil {
+		if err := s.ua.Close(); err != nil {
+			s.logger.WithError(err).Warn("Failed to close SIP user agent cleanly")
+		}
 	}
-	s.connMutex.Unlock()
 
 	// Log port manager statistics
 	if s.PortManager != nil {
