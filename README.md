@@ -23,16 +23,27 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **⚡ Streaming Response Support** - Real-time callback-based transcription with interim and final results
 - **👥 Speaker Diarization** - Multi-speaker identification and word-level speaker tagging
 - **🛡️ PII Detection & Redaction** - Automatic detection and redaction of SSNs, credit cards, and other sensitive data from transcriptions and audio
-- **🎵 Audio Processing** - Advanced VAD, noise reduction, and multi-channel mixing
+- **🎵 Advanced Audio Processing** - Comprehensive audio enhancement pipeline:
+  - Spectral subtraction noise suppression with adaptive learning
+  - Automatic Gain Control (AGC) with attack/release control
+  - Echo cancellation with double-talk detection
+  - Multi-channel recording with synchronization
+  - Audio fingerprinting for duplicate detection
+  - Parametric equalizer with presets
+  - Dynamic range compression
 - **🌐 WebSocket Streaming** - Real-time transcription delivery with circuit breaker patterns
 - **📊 Quality Metrics** - Audio quality monitoring and adaptive processing with performance optimization
 - **🔄 Provider Interface Standardization** - Unified callback interface across all STT providers
+- **🏥 Provider Health Monitoring** - Automatic health checks, circuit breakers, and intelligent failover
 
 ### Enterprise Features
 - **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
 - **📨 Message Queue** - AMQP integration with delivery guarantees, multi-endpoint fan-out, connection pooling, and TLS support
-- **📈 Monitoring** - Comprehensive metrics, health checks, and operational visibility
+- **📈 Monitoring** - Comprehensive metrics, health checks, and operational visibility with Prometheus integration
 - **☁️ Cloud Ready** - Optimized for GCP, AWS, Azure with automatic configuration
+- **⚠️ Advanced Warning System** - Intelligent warning collection with severity levels and automatic resolution
+- **✅ Configuration Validation** - Comprehensive startup validation with detailed error reporting
+- **🔄 Provider Resilience** - Automatic failover with score-based provider selection
 
 ## 🚀 Quick Start
 
@@ -146,6 +157,13 @@ AMQP_TLS_CA_FILE=/etc/rabbitmq/ca.pem
 # Audio Processing
 VAD_ENABLED=true
 NOISE_REDUCTION_ENABLED=true
+AUDIO_ENHANCEMENT_ENABLED=true      # Enable audio enhancement pipeline
+NOISE_SUPPRESSION_LEVEL=0.7         # Noise suppression level (0-1)
+AGC_ENABLED=true                    # Enable automatic gain control
+AGC_TARGET_LEVEL=-18                # Target level in dB
+ECHO_CANCELLATION_ENABLED=true      # Enable echo cancellation
+MULTI_CHANNEL_ENABLED=false         # Enable multi-channel recording
+FINGERPRINTING_ENABLED=true         # Enable audio fingerprinting
 
 # Pause/Resume Control API
 PAUSE_RESUME_ENABLED=true          # Enable pause/resume API

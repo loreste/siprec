@@ -5,11 +5,12 @@ Comprehensive overview of SIPREC Server features and capabilities.
 ## Core Features
 
 - [SIPREC Protocol Support](SIPREC.md) - Full RFC 7865/7866 compliance
-- [Audio Processing](AUDIO_PROCESSING.md) - Advanced audio processing pipeline
-- [Speech-to-Text Integration](STT_PROVIDERS.md) - Multiple STT provider support
+- [Audio Processing Pipeline](AUDIO_PROCESSING_GUIDE.md) - Comprehensive audio enhancement with noise suppression, AGC, echo cancellation
+- [Speech-to-Text Integration](STT_PROVIDERS.md) - Multiple STT provider support with automatic failover
+- [Provider Health Monitoring](HEALTH_MONITORING.md) - Circuit breakers, health checks, and intelligent failover
 - [PII Detection & Redaction](PII_DETECTION.md) - Automatic PII detection and redaction for transcriptions and audio
 - [WebSocket API](WEBSOCKET_API.md) - Real-time streaming transcriptions
-- [Message Queue Integration](AMQP_GUIDE.md) - AMQP/RabbitMQ integration
+- [Message Queue Integration](AMQP_GUIDE.md) - AMQP/RabbitMQ integration with multi-endpoint support
 - [Pause/Resume Control](PAUSE_RESUME_API.md) - Real-time session control via REST API
 
 ## Protocol Support
@@ -37,25 +38,42 @@ Comprehensive overview of SIPREC Server features and capabilities.
 
 ## Audio Processing Pipeline
 
-1. **Voice Activity Detection (VAD)**
-   - Energy-based detection
-   - Configurable thresholds
-   - Reduces processing overhead
+### Core Processing Features
+1. **Noise Suppression**
+   - Spectral subtraction with adaptive learning
+   - Musical noise reduction
+   - Voice Activity Detection (VAD) integration
+   - Configurable suppression levels (0-1)
 
-2. **Noise Reduction**
-   - Spectral subtraction
-   - Adaptive filtering
-   - Preserves speech quality
+2. **Automatic Gain Control (AGC)**
+   - Dynamic level adjustment
+   - Attack/release control
+   - Noise gate integration
+   - Target level configuration
 
-3. **Audio Buffering**
-   - Adaptive jitter buffer
-   - Packet loss concealment
-   - Reordering support
+3. **Echo Cancellation**
+   - Adaptive NLMS algorithm
+   - Double-talk detection
+   - Residual echo suppression
+   - Comfort noise generation
 
-4. **Multi-channel Support**
-   - Separate participant channels
+4. **Multi-channel Recording**
+   - Stereo and multi-channel support
    - Channel synchronization
-   - Stereo output option
+   - Telephony separation (caller/callee)
+   - Configurable mixing options
+
+5. **Audio Fingerprinting**
+   - Duplicate detection
+   - Landmark-based algorithm
+   - Configurable retention
+   - Match confidence scoring
+
+6. **Additional Processing**
+   - Parametric equalizer with presets
+   - Dynamic range compression
+   - De-esser for sibilance reduction
+   - High-pass filtering
 
 ## STT Provider Integration
 
@@ -96,11 +114,26 @@ Comprehensive overview of SIPREC Server features and capabilities.
 
 ## Monitoring & Observability
 
-- Prometheus metrics
-- Health check endpoints
-- Structured logging
+### Metrics & Monitoring
+- Prometheus metrics integration
+- Provider health metrics
+- Audio quality metrics
+- Circuit breaker status
 - Performance profiling
+
+### Health Management
+- Automatic health checks
+- Provider scoring system
+- Circuit breaker patterns
+- Intelligent failover
+- Warning system with severity levels
+
+### Observability Features
+- Structured logging
 - Debug endpoints
+- Real-time status monitoring
+- Configuration validation
+- Runtime diagnostics
 
 ## Security Features
 
