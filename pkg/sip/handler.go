@@ -55,6 +55,12 @@ type Config struct {
 	// Higher values reduce lock contention but increase memory usage
 	// Must be a power of 2 (16, 32, 64, etc.)
 	ShardCount int
+
+	// HTTP endpoints that should receive metadata lifecycle notifications
+	MetadataCallbackURLs []string
+
+	// Timeout for delivering metadata notifications
+	MetadataNotifyTimeout time.Duration
 }
 
 // Handler for SIP requests - now works with CustomSIPServer
@@ -79,6 +85,9 @@ type Handler struct {
 
 	// Custom SIP server for handling SIPREC with metadata
 	Server *CustomSIPServer
+
+	// Metadata notifier for SIPREC state changes
+	Notifier *MetadataNotifier
 }
 
 // CallData holds information about an active call
@@ -151,6 +160,11 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 		Config:      config,
 		STTCallback: sttCallback,
 		ActiveCalls: activeCalls,
+	}
+
+	handler.Notifier = NewMetadataNotifier(logger, config.MetadataCallbackURLs, config.MetadataNotifyTimeout)
+	if len(config.MetadataCallbackURLs) > 0 {
+		logger.WithField("endpoint_count", len(config.MetadataCallbackURLs)).Info("Metadata callbacks configured")
 	}
 
 	// Initialize NAT rewriter if NAT configuration is provided

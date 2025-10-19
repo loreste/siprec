@@ -118,6 +118,54 @@ config := &stt.DeepgramConfig{
 - Cost-effective high-accuracy transcription
 - Applications requiring low latency
 
+### ElevenLabs Speech-to-Text
+
+**Features:**
+- High-accuracy multilingual transcription backed by ElevenLabs audio models
+- Speaker diarization controls with optional paragraph grouping
+- Word-level timestamps, durations, and confidence metrics
+- Smart punctuation and formatting with toggleable options
+- Configurable HTTP timeouts for strict latency guarantees
+
+**Configuration:**
+```bash
+STT_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=xi-your-api-key
+ELEVENLABS_MODEL_ID=eleven_monolingual_v1
+ELEVENLABS_LANGUAGE=en
+ELEVENLABS_ENABLE_TIMESTAMPS=true
+ELEVENLABS_ENABLE_DIARIZATION=false
+```
+
+**Best for:**
+- Teams standardising on the ElevenLabs AI platform
+- Contact centres that need timestamped transcripts for QA tooling
+- Hybrid transcription strategies requiring configurable formatting outputs
+
+### Speechmatics
+
+**Features:**
+- Enterprise-grade transcription with domain-specific Speechmatics models
+- Optional speaker diarization and channel separation for conferencing audio
+- Full punctuation control and language selection across global dialects
+- REST-based job submission with transcript polling for resilient integrations
+- Configurable timeout handling to align with batch-processing SLAs
+
+**Configuration:**
+```bash
+STT_PROVIDER=speechmatics
+SPEECHMATICS_API_KEY=smk-your-api-token
+SPEECHMATICS_LANGUAGE=en-US
+SPEECHMATICS_MODEL=universal
+SPEECHMATICS_ENABLE_DIARIZATION=false
+SPEECHMATICS_TIMEOUT=60s
+```
+
+**Best for:**
+- Enterprises already invested in Speechmatics AI services
+- Compliance-driven deployments requiring channel-separated transcripts
+- Batch processing workflows that prefer REST/HTTP-based integrations
+
 ### OpenAI Whisper
 
 **Features:**
@@ -293,15 +341,18 @@ retryConfig := &stt.RetryConfig{
 The provider manager coordinates registration, metrics, and fallback between vendors. The order passed to `NewProviderManager` controls failover behaviour.
 
 ```go
-fallbackOrder := []string{"google-enhanced", "deepgram-enhanced", "openai"}
+fallbackOrder := []string{"google-enhanced", "deepgram-enhanced", "speechmatics", "openai"}
 manager := stt.NewProviderManager(logger, "google-enhanced", fallbackOrder)
 
 googleProvider := stt.NewGoogleProviderEnhanced(logger)
 deepgramProvider := stt.NewDeepgramProviderEnhanced(logger)
+speechmaticsProvider := stt.NewSpeechmaticsProvider(logger, transcriptionSvc, speechmaticsConfig)
 openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, openaiConfig)
 
 manager.RegisterProvider(googleProvider)
 manager.RegisterProvider(deepgramProvider)
+manager.RegisterProvider(speechmaticsProvider)
+manager.RegisterProvider(elevenLabsProvider)
 manager.RegisterProvider(openaiProvider)
 ```
 
@@ -324,15 +375,26 @@ if err := manager.StreamToProvider(ctx, "google-enhanced", audioStream, callUUID
 }
 ```
 
+### Adding Additional Providers
+
+Custom speech vendors can be integrated by implementing the `stt.Provider` (or `stt.StreamingProvider`) interface and registering the implementation with the provider manager. Common steps include:
+- Creating a new provider under `pkg/stt`
+- Wiring configuration via the loader in `pkg/config/config.go`
+- Adding a registration branch inside `cmd/siprec/main.go`
+
+Registered providers automatically participate in metrics, tracing, and the failover workflow, keeping downstream consumers agnostic to vendor choice.
+
 ## Best Practices
 
 ### Provider Selection
 
 1. **Google Enhanced**: Best for production environments requiring high accuracy and real-time processing
 2. **Deepgram Enhanced**: Optimal for cost-effective real-time transcription with advanced features
-3. **OpenAI Whisper**: Ideal for multi-language support and offline processing
-4. **Amazon Transcribe**: Suitable for AWS-integrated environments
-5. **Azure Speech**: Best for Microsoft ecosystem integration
+3. **Speechmatics**: Strong fit for Speechmatics customers needing diarization/channel separation
+4. **ElevenLabs STT**: Excellent for ElevenLabs-native workflows requiring timestamped transcripts
+5. **OpenAI Whisper**: Ideal for multi-language support and offline processing
+6. **Amazon Transcribe**: Suitable for AWS-integrated environments
+7. **Azure Speech**: Best for Microsoft ecosystem integration
 
 ### Configuration Guidelines
 

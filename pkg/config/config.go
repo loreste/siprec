@@ -169,11 +169,13 @@ type STTConfig struct {
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
 
 	// Provider-specific configurations
-	Google   GoogleSTTConfig   `json:"google"`
-	Deepgram DeepgramSTTConfig `json:"deepgram"`
-	Azure    AzureSTTConfig    `json:"azure"`
-	Amazon   AmazonSTTConfig   `json:"amazon"`
-	OpenAI   OpenAISTTConfig   `json:"openai"`
+	Google       GoogleSTTConfig       `json:"google"`
+	Deepgram     DeepgramSTTConfig     `json:"deepgram"`
+	Azure        AzureSTTConfig        `json:"azure"`
+	Amazon       AmazonSTTConfig       `json:"amazon"`
+	OpenAI       OpenAISTTConfig       `json:"openai"`
+	ElevenLabs   ElevenLabsSTTConfig   `json:"elevenlabs"`
+	Speechmatics SpeechmaticsSTTConfig `json:"speechmatics"`
 }
 
 // GoogleSTTConfig holds Google Speech-to-Text configuration
@@ -286,6 +288,69 @@ type DeepgramSTTConfig struct {
 
 	// Maximum number of language alternatives to return
 	MaxLanguageAlternatives int `json:"max_language_alternatives" env:"DEEPGRAM_MAX_LANG_ALTERNATIVES" default:"3"`
+}
+
+// ElevenLabsSTTConfig holds ElevenLabs Speech-to-Text configuration
+type ElevenLabsSTTConfig struct {
+	// Whether ElevenLabs STT is enabled
+	Enabled bool `json:"enabled" env:"ELEVENLABS_STT_ENABLED" default:"false"`
+
+	// ElevenLabs API key
+	APIKey string `json:"api_key" env:"ELEVENLABS_API_KEY"`
+
+	// Base API URL
+	BaseURL string `json:"base_url" env:"ELEVENLABS_API_URL" default:"https://api.elevenlabs.io"`
+
+	// STT model identifier
+	ModelID string `json:"model_id" env:"ELEVENLABS_MODEL_ID" default:"eleven_monolingual_v1"`
+
+	// Target language hint
+	Language string `json:"language" env:"ELEVENLABS_LANGUAGE" default:"en"`
+
+	// Enable speaker diarization
+	EnableDiarization bool `json:"enable_diarization" env:"ELEVENLABS_ENABLE_DIARIZATION" default:"false"`
+
+	// Enable word timestamps
+	EnableTimestamps bool `json:"enable_timestamps" env:"ELEVENLABS_ENABLE_TIMESTAMPS" default:"true"`
+
+	// Enable smart formatting / punctuation
+	EnablePunctuation bool `json:"enable_punctuation" env:"ELEVENLABS_ENABLE_PUNCTUATION" default:"true"`
+
+	// Group sentences into paragraphs
+	EnableParagraphs bool `json:"enable_paragraphs" env:"ELEVENLABS_ENABLE_PARAGRAPHS" default:"false"`
+
+	// Request timeout for API calls
+	Timeout time.Duration `json:"timeout" env:"ELEVENLABS_TIMEOUT" default:"45s"`
+}
+
+// SpeechmaticsSTTConfig holds Speechmatics Speech-to-Text configuration
+type SpeechmaticsSTTConfig struct {
+	// Whether Speechmatics STT is enabled
+	Enabled bool `json:"enabled" env:"SPEECHMATICS_STT_ENABLED" default:"false"`
+
+	// Speechmatics auth token
+	APIKey string `json:"api_key" env:"SPEECHMATICS_API_KEY"`
+
+	// Base API URL
+	BaseURL string `json:"base_url" env:"SPEECHMATICS_API_URL" default:"https://asr.api.speechmatics.com/v2"`
+
+	// Language code (e.g., en-US)
+	Language string `json:"language" env:"SPEECHMATICS_LANGUAGE" default:"en-US"`
+
+	// Model (e.g., universal, meetings, etc.)
+	Model string `json:"model" env:"SPEECHMATICS_MODEL" default:"universal"`
+
+	// Enable speaker diarization
+	EnableDiarization bool `json:"enable_diarization" env:"SPEECHMATICS_ENABLE_DIARIZATION" default:"false"`
+
+	// Enable punctuation
+	EnablePunctuation bool `json:"enable_punctuation" env:"SPEECHMATICS_ENABLE_PUNCTUATION" default:"true"`
+
+	// Enable channel separation
+	EnableChannelSeparation bool `json:"enable_channel_separation" env:"SPEECHMATICS_CHANNEL_SEPARATION" default:"false"`
+
+	// Request timeout
+	Timeout time.Duration `json:"timeout" env:"SPEECHMATICS_TIMEOUT" default:"60s"`
 }
 
 // AzureSTTConfig holds Azure Speech Services configuration
@@ -434,6 +499,9 @@ type MessagingConfig struct {
 	PublishSentimentUpdates   bool `json:"publish_sentiment_updates" env:"PUBLISH_SENTIMENT_UPDATES" default:"true"`
 	PublishKeywordDetections  bool `json:"publish_keyword_detections" env:"PUBLISH_KEYWORD_DETECTIONS" default:"true"`
 	PublishSpeakerChanges     bool `json:"publish_speaker_changes" env:"PUBLISH_SPEAKER_CHANGES" default:"true"`
+
+	// Additional real-time AMQP fan-out targets
+	RealtimeEndpoints []RealtimeAMQPEndpointConfig `json:"realtime_amqp_endpoints"`
 }
 
 // AMQPConfig holds comprehensive AMQP configuration
@@ -538,6 +606,21 @@ type AMQPTLSConfig struct {
 	KeyFile    string `json:"key_file" env:"AMQP_TLS_KEY_FILE"`
 	CAFile     string `json:"ca_file" env:"AMQP_TLS_CA_FILE"`
 	SkipVerify bool   `json:"skip_verify" env:"AMQP_TLS_SKIP_VERIFY" default:"false"`
+}
+
+// RealtimeAMQPEndpointConfig configures an additional AMQP sink for live transcriptions.
+type RealtimeAMQPEndpointConfig struct {
+	Name           string        `json:"name"`
+	Enabled        bool          `json:"enabled" default:"true"`
+	UseEnhanced    bool          `json:"use_enhanced" default:"true"`
+	URL            string        `json:"url"`
+	QueueName      string        `json:"queue_name"`
+	ExchangeName   string        `json:"exchange_name"`
+	RoutingKey     string        `json:"routing_key"`
+	AMQP           AMQPConfig    `json:"amqp"`
+	TLS            AMQPTLSConfig `json:"tls"`
+	PublishPartial *bool         `json:"publish_partial"`
+	PublishFinal   *bool         `json:"publish_final"`
 }
 
 // CircuitBreakerConfig holds circuit breaker configurations
@@ -1098,7 +1181,7 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 	// Load supported vendors - check both STT_VENDORS and SUPPORTED_VENDORS for compatibility
 	vendorsStr := getEnv("STT_VENDORS", "")
 	if vendorsStr == "" {
-		vendorsStr = getEnv("SUPPORTED_VENDORS", "google,openai")
+		vendorsStr = getEnv("SUPPORTED_VENDORS", "google,deepgram,elevenlabs,speechmatics,openai")
 	}
 	if vendorsStr == "" {
 		config.SupportedVendors = []string{"google", "openai"}
@@ -1172,6 +1255,14 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 
 	if err := loadOpenAISTTConfig(logger, &config.OpenAI); err != nil {
 		return fmt.Errorf("failed to load OpenAI STT config: %w", err)
+	}
+
+	if err := loadElevenLabsSTTConfig(logger, &config.ElevenLabs); err != nil {
+		return fmt.Errorf("failed to load ElevenLabs STT config: %w", err)
+	}
+
+	if err := loadSpeechmaticsSTTConfig(logger, &config.Speechmatics); err != nil {
+		return fmt.Errorf("failed to load Speechmatics STT config: %w", err)
 	}
 
 	return nil
@@ -1259,6 +1350,37 @@ func loadMessagingConfig(logger *logrus.Logger, config *MessagingConfig) error {
 	config.PublishSentimentUpdates = getEnvBool("PUBLISH_SENTIMENT_UPDATES", true)
 	config.PublishKeywordDetections = getEnvBool("PUBLISH_KEYWORD_DETECTIONS", true)
 	config.PublishSpeakerChanges = getEnvBool("PUBLISH_SPEAKER_CHANGES", true)
+
+	// Apply defaults for additional endpoints defined via configuration file
+	for i := range config.RealtimeEndpoints {
+		endpoint := &config.RealtimeEndpoints[i]
+		if endpoint.Name == "" {
+			endpoint.Name = fmt.Sprintf("realtime_amqp_%d", i+1)
+		}
+		if endpoint.QueueName == "" {
+			endpoint.QueueName = config.RealtimeQueueName
+		}
+		if endpoint.ExchangeName == "" {
+			endpoint.ExchangeName = config.RealtimeExchangeName
+		}
+		if endpoint.RoutingKey == "" {
+			endpoint.RoutingKey = config.RealtimeRoutingKey
+		}
+
+		// If the endpoint relies on enhanced client but lacks explicit hosts, inherit from global config
+		if endpoint.UseEnhanced {
+			if len(endpoint.AMQP.Hosts) == 0 {
+				endpoint.AMQP = config.AMQP
+			}
+			if endpoint.AMQP.LoadBalancing.Strategy == "" {
+				endpoint.AMQP.LoadBalancing = config.AMQP.LoadBalancing
+			}
+			// Allow TLS overrides via endpoint.TLS when provided
+			if endpoint.TLS.Enabled {
+				endpoint.AMQP.TLS = endpoint.TLS
+			}
+		}
+	}
 
 	return nil
 }
@@ -2364,6 +2486,59 @@ func loadOpenAISTTConfig(logger *logrus.Logger, config *OpenAISTTConfig) error {
 
 	if config.Enabled && config.APIKey == "" {
 		logger.Warn("OpenAI STT enabled but OPENAI_API_KEY is not set")
+	}
+
+	return nil
+}
+
+// loadElevenLabsSTTConfig loads ElevenLabs STT configuration
+func loadElevenLabsSTTConfig(logger *logrus.Logger, config *ElevenLabsSTTConfig) error {
+	config.Enabled = getEnvBool("ELEVENLABS_STT_ENABLED", false)
+	config.APIKey = getEnv("ELEVENLABS_API_KEY", "")
+	config.BaseURL = getEnv("ELEVENLABS_API_URL", "https://api.elevenlabs.io")
+	config.ModelID = getEnv("ELEVENLABS_MODEL_ID", "eleven_monolingual_v1")
+	config.Language = getEnv("ELEVENLABS_LANGUAGE", "en")
+	config.EnableDiarization = getEnvBool("ELEVENLABS_ENABLE_DIARIZATION", false)
+	config.EnableTimestamps = getEnvBool("ELEVENLABS_ENABLE_TIMESTAMPS", true)
+	config.EnablePunctuation = getEnvBool("ELEVENLABS_ENABLE_PUNCTUATION", true)
+	config.EnableParagraphs = getEnvBool("ELEVENLABS_ENABLE_PARAGRAPHS", false)
+
+	timeoutStr := getEnv("ELEVENLABS_TIMEOUT", "45s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		logger.Warn("Invalid ELEVENLABS_TIMEOUT value, using default: 45s")
+		timeout = 45 * time.Second
+	}
+	config.Timeout = timeout
+
+	if config.Enabled && config.APIKey == "" {
+		logger.Warn("ElevenLabs STT enabled but ELEVENLABS_API_KEY is not set")
+	}
+
+	return nil
+}
+
+// loadSpeechmaticsSTTConfig loads Speechmatics STT configuration
+func loadSpeechmaticsSTTConfig(logger *logrus.Logger, config *SpeechmaticsSTTConfig) error {
+	config.Enabled = getEnvBool("SPEECHMATICS_STT_ENABLED", false)
+	config.APIKey = getEnv("SPEECHMATICS_API_KEY", "")
+	config.BaseURL = getEnv("SPEECHMATICS_API_URL", "https://asr.api.speechmatics.com/v2")
+	config.Language = getEnv("SPEECHMATICS_LANGUAGE", "en-US")
+	config.Model = getEnv("SPEECHMATICS_MODEL", "universal")
+	config.EnableDiarization = getEnvBool("SPEECHMATICS_ENABLE_DIARIZATION", false)
+	config.EnablePunctuation = getEnvBool("SPEECHMATICS_ENABLE_PUNCTUATION", true)
+	config.EnableChannelSeparation = getEnvBool("SPEECHMATICS_CHANNEL_SEPARATION", false)
+
+	timeoutStr := getEnv("SPEECHMATICS_TIMEOUT", "60s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		logger.Warn("Invalid SPEECHMATICS_TIMEOUT value, using default: 60s")
+		timeout = 60 * time.Second
+	}
+	config.Timeout = timeout
+
+	if config.Enabled && config.APIKey == "" {
+		logger.Warn("Speechmatics STT enabled but SPEECHMATICS_API_KEY is not set")
 	}
 
 	return nil

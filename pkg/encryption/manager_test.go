@@ -179,12 +179,12 @@ func TestEncryptDecryptMetadata(t *testing.T) {
 	// Test decryption
 	decryptedMetadata, err := manager.DecryptMetadata(sessionID, encryptedData)
 	assert.NoError(t, err)
-	
+
 	// JSON unmarshaling converts types, so we need to check individual fields
 	assert.Equal(t, testMetadata["session_id"], decryptedMetadata["session_id"])
 	assert.Equal(t, testMetadata["codec"], decryptedMetadata["codec"])
 	assert.Equal(t, float64(testMetadata["sample_rate"].(int)), decryptedMetadata["sample_rate"])
-	
+
 	// Check participants array
 	participants := decryptedMetadata["participants"].([]interface{})
 	assert.Len(t, participants, 2)
@@ -286,6 +286,191 @@ func TestChaCha20Poly1305Encryption(t *testing.T) {
 	decryptedData, err := manager.DecryptRecording(sessionID, encryptedData)
 	assert.NoError(t, err)
 	assert.Equal(t, testData, decryptedData)
+}
+
+func TestStreamEncryptionAndDecryption(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	cases := []struct {
+		name      string
+		algorithm string
+	}{
+		{"AES-256 stream", "AES-256-GCM"},
+		{"ChaCha20 stream", "ChaCha20-Poly1305"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &EncryptionConfig{
+				EnableRecordingEncryption: true,
+				Algorithm:                 tt.algorithm,
+				KeySize:                   32,
+			}
+
+			keyStore := NewMemoryKeyStore()
+			manager, err := NewManager(config, keyStore, logger)
+			require.NoError(t, err)
+
+			sessionID := fmt.Sprintf("stream-session-%s", tt.algorithm)
+			stream, err := manager.CreateEncryptionStream(sessionID)
+			require.NoError(t, err)
+			require.NotNil(t, stream)
+
+			info, err := manager.GetEncryptionInfo(sessionID)
+			require.NoError(t, err)
+			require.NotNil(t, info)
+			assert.True(t, info.StreamEncryption)
+			assert.Nil(t, info.StreamNonce)
+			assert.NotEmpty(t, info.StreamNonceHash)
+			assert.Equal(t, tt.algorithm, info.Algorithm)
+
+			rawInfo, exists := manager.getRawEncryptionInfo(sessionID)
+			require.True(t, exists)
+			assert.NotEmpty(t, rawInfo.StreamNonce)
+			assert.Equal(t, info.StreamNonceHash, rawInfo.StreamNonceHash)
+			assert.Equal(t, tt.algorithm, rawInfo.Algorithm)
+
+			plaintext := []byte("real-time audio sample data")
+			ciphertext := make([]byte, len(plaintext))
+			stream.XORKeyStream(ciphertext, plaintext)
+			assert.NotEqual(t, plaintext, ciphertext)
+
+			decStream, err := manager.CreateDecryptionStream(sessionID, info.KeyID)
+			require.NoError(t, err)
+			require.NotNil(t, decStream)
+
+			decrypted := make([]byte, len(ciphertext))
+			decStream.XORKeyStream(decrypted, ciphertext)
+			assert.Equal(t, plaintext, decrypted)
+
+			manager.CleanupSession(sessionID)
+
+			_, err = manager.CreateDecryptionStream(sessionID, info.KeyID)
+			require.Error(t, err)
+
+			cleanInfo, err := manager.GetEncryptionInfo(sessionID)
+			require.NoError(t, err)
+			assert.False(t, cleanInfo.StreamEncryption)
+			assert.Nil(t, cleanInfo.StreamNonce)
+			assert.Empty(t, cleanInfo.StreamNonceHash)
+		})
+	}
+}
+
+func TestStreamSessionCleanup(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	config := &EncryptionConfig{
+		EnableRecordingEncryption: true,
+		Algorithm:                 "AES-256-GCM",
+		KeySize:                   32,
+	}
+
+	keyStore := NewMemoryKeyStore()
+	manager, err := NewManager(config, keyStore, logger)
+	require.NoError(t, err)
+
+	sessionIDs := []string{"cleanup-one", "cleanup-two", "cleanup-three"}
+
+	for _, id := range sessionIDs {
+		stream, err := manager.CreateEncryptionStream(id)
+		require.NoError(t, err)
+		require.NotNil(t, stream)
+	}
+
+	for _, id := range sessionIDs {
+		manager.CleanupSession(id)
+
+		_, err := manager.CreateDecryptionStream(id, "")
+		assert.Error(t, err)
+
+		info, err := manager.GetEncryptionInfo(id)
+		require.NoError(t, err)
+		assert.False(t, info.StreamEncryption)
+		assert.Nil(t, info.StreamNonce)
+		assert.Empty(t, info.StreamNonceHash)
+	}
+}
+
+func TestStreamRecoveryFromSessionInfo(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	config := &EncryptionConfig{
+		EnableRecordingEncryption: true,
+		Algorithm:                 "AES-256-GCM",
+		KeySize:                   32,
+	}
+
+	keyStore := NewMemoryKeyStore()
+	manager, err := NewManager(config, keyStore, logger)
+	require.NoError(t, err)
+
+	sessionID := "rehydrate-session"
+	stream, err := manager.CreateEncryptionStream(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, stream)
+
+	// Drop in-memory stream state to simulate restart
+	manager.streamMu.Lock()
+	delete(manager.streamInfo, sessionID)
+	manager.streamMu.Unlock()
+
+	rawInfo, exists := manager.getRawEncryptionInfo(sessionID)
+	require.True(t, exists)
+	require.NotEmpty(t, rawInfo.StreamNonce)
+
+	recoveredStream, err := manager.CreateDecryptionStream(sessionID, rawInfo.KeyID)
+	require.NoError(t, err)
+	require.NotNil(t, recoveredStream)
+
+	plaintext := []byte("resumed audio payload")
+	ciphertext := make([]byte, len(plaintext))
+	stream.XORKeyStream(ciphertext, plaintext)
+
+	decrypted := make([]byte, len(ciphertext))
+	recoveredStream.XORKeyStream(decrypted, ciphertext)
+	assert.Equal(t, plaintext, decrypted)
+}
+
+func TestStreamEncryptionSurvivesKeyRotation(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	config := &EncryptionConfig{
+		EnableRecordingEncryption: true,
+		Algorithm:                 "AES-256-GCM",
+		KeySize:                   32,
+		KeyRotationInterval:       1 * time.Millisecond,
+	}
+
+	keyStore := NewMemoryKeyStore()
+	manager, err := NewManager(config, keyStore, logger)
+	require.NoError(t, err)
+
+	sessionID := "rotation-session"
+	stream, err := manager.CreateEncryptionStream(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, stream)
+
+	plaintext := []byte("rotation audio payload")
+	ciphertext := make([]byte, len(plaintext))
+	stream.XORKeyStream(ciphertext, plaintext)
+
+	// Allow the active key to expire and rotate
+	time.Sleep(2 * time.Millisecond)
+	err = manager.RotateKeys()
+	require.NoError(t, err)
+
+	decStream, err := manager.CreateDecryptionStream(sessionID, "")
+	require.NoError(t, err)
+	require.NotNil(t, decStream)
+
+	decrypted := make([]byte, len(ciphertext))
+	decStream.XORKeyStream(decrypted, ciphertext)
+	assert.Equal(t, plaintext, decrypted)
 }
 
 func TestEncryptionInfo(t *testing.T) {

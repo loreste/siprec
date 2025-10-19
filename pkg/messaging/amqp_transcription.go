@@ -15,12 +15,12 @@ import (
 // AMQPTranscriptionListener implements the TranscriptionListener interface
 // for sending transcriptions to an AMQP message queue
 type AMQPTranscriptionListener struct {
-	logger *logrus.Logger
+	logger logrus.FieldLogger
 	client AMQPClientInterface
 }
 
 // NewAMQPTranscriptionListener creates a new AMQP transcription listener
-func NewAMQPTranscriptionListener(logger *logrus.Logger, client AMQPClientInterface) *AMQPTranscriptionListener {
+func NewAMQPTranscriptionListener(logger logrus.FieldLogger, client AMQPClientInterface) *AMQPTranscriptionListener {
 	return &AMQPTranscriptionListener{
 		logger: logger,
 		client: client,
@@ -100,4 +100,38 @@ func (l *AMQPTranscriptionListener) OnTranscription(callUUID string, transcripti
 		publishSpan.RecordError(context.DeadlineExceeded)
 		publishSpan.SetStatus(codes.Error, "publish timeout")
 	}
+}
+
+// FilteredTranscriptionListener wraps a listener and filters on final/partial events.
+type FilteredTranscriptionListener struct {
+	delegate       transcriptionListener
+	publishPartial bool
+	publishFinal   bool
+}
+
+type transcriptionListener interface {
+	OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{})
+}
+
+// NewFilteredTranscriptionListener creates a filtered listener.
+func NewFilteredTranscriptionListener(delegate transcriptionListener, publishPartial, publishFinal bool) *FilteredTranscriptionListener {
+	return &FilteredTranscriptionListener{
+		delegate:       delegate,
+		publishPartial: publishPartial,
+		publishFinal:   publishFinal,
+	}
+}
+
+// OnTranscription applies filtering before delegating.
+func (l *FilteredTranscriptionListener) OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{}) {
+	if isFinal {
+		if !l.publishFinal {
+			return
+		}
+	} else {
+		if !l.publishPartial {
+			return
+		}
+	}
+	l.delegate.OnTranscription(callUUID, transcription, isFinal, metadata)
 }

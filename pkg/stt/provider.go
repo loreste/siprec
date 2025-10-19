@@ -124,13 +124,18 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 	streamSeekable, _ := audioStream.(io.Seeker)
 	seekableWarningLogged := false
 
-	for idx, vendor := range attempts {
-		provider, exists := m.GetProvider(vendor)
-		if !exists {
-			continue
-		}
+		for idx, vendor := range attempts {
+			provider, exists := m.GetProvider(vendor)
+			if !exists {
+				m.logger.WithFields(logrus.Fields{
+					"call_uuid": callUUID,
+					"provider":  vendor,
+					"attempt":   idx + 1,
+				}).Warn("STT provider not registered; skipping")
+				continue
+			}
 
-		if idx > 0 {
+			if idx > 0 {
 			if streamSeekable == nil {
 				if !seekableWarningLogged {
 					m.logger.WithFields(logrus.Fields{
@@ -256,10 +261,15 @@ func (m *ProviderManager) buildAttemptOrder(requested string) []string {
 	seen := make(map[string]bool)
 	order := make([]string, 0, len(m.fallbackOrder)+2)
 
-	add := func(v string) {
+	add := func(v string, requireRegistered bool) {
 		candidate := strings.TrimSpace(v)
 		if candidate == "" {
 			return
+		}
+		if requireRegistered {
+			if _, ok := m.providers[candidate]; !ok {
+				return
+			}
 		}
 		if !seen[candidate] {
 			order = append(order, candidate)
@@ -267,12 +277,46 @@ func (m *ProviderManager) buildAttemptOrder(requested string) []string {
 		}
 	}
 
-	add(requested)
-	add(m.defaultProvider)
+	add(requested, false)
+	add(m.defaultProvider, true)
 
 	for _, vendor := range m.fallbackOrder {
-		add(vendor)
+		add(vendor, true)
 	}
 
 	return order
+}
+
+// Shutdown gracefully shuts down all registered providers
+func (m *ProviderManager) Shutdown(ctx context.Context) error {
+	m.logger.Info("Starting shutdown of all STT providers...")
+	
+	shutdownErrors := []error{}
+	
+	for name, provider := range m.providers {
+		// Check if provider implements EnhancedStreamingProvider with Shutdown method
+		if enhancedProvider, ok := provider.(EnhancedStreamingProvider); ok {
+			m.logger.WithField("provider", name).Debug("Shutting down enhanced provider")
+			
+			// Create a timeout context for each provider shutdown
+			providerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			
+			if err := enhancedProvider.Shutdown(providerCtx); err != nil {
+				m.logger.WithError(err).WithField("provider", name).Error("Failed to shutdown provider")
+				shutdownErrors = append(shutdownErrors, err)
+			} else {
+				m.logger.WithField("provider", name).Info("Provider shut down successfully")
+			}
+		}
+	}
+	
+	if len(shutdownErrors) > 0 {
+		m.logger.WithField("error_count", len(shutdownErrors)).Warn("Some providers failed to shutdown cleanly")
+		// Return the first error, but log all of them
+		return shutdownErrors[0]
+	}
+	
+	m.logger.Info("All STT providers shut down successfully")
+	return nil
 }

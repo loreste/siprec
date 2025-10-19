@@ -19,7 +19,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🔗 SIP Integration** - Custom SIP server implementation optimized for TCP transport and large metadata
 
 ### Transcription & Processing
-- **🎙️ Real-time Streaming Transcription** - Enhanced multi-provider STT with full WebSocket streaming support (Google, Deepgram, OpenAI, Azure, Amazon)
+- **🎙️ Real-time Streaming Transcription** - Enhanced multi-provider STT with full WebSocket streaming support (Google, Deepgram, Speechmatics, ElevenLabs, OpenAI, Azure, Amazon)
 - **⚡ Streaming Response Support** - Real-time callback-based transcription with interim and final results
 - **👥 Speaker Diarization** - Multi-speaker identification and word-level speaker tagging
 - **🛡️ PII Detection & Redaction** - Automatic detection and redaction of SSNs, credit cards, and other sensitive data from transcriptions and audio
@@ -30,7 +30,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 
 ### Enterprise Features
 - **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
-- **📨 Message Queue** - AMQP integration with delivery guarantees and circuit breakers
+- **📨 Message Queue** - AMQP integration with delivery guarantees, multi-endpoint fan-out, connection pooling, and TLS support
 - **📈 Monitoring** - Comprehensive metrics, health checks, and operational visibility
 - **☁️ Cloud Ready** - Optimized for GCP, AWS, Azure with automatic configuration
 
@@ -113,8 +113,19 @@ TLS_KEY_PATH=/path/to/key.pem      # TLS private key
 ENABLE_SRTP=true                   # Enable SRTP for media
 
 # Transcription
-STT_DEFAULT_VENDOR=google          # STT provider
+STT_DEFAULT_VENDOR=google-enhanced           # Default STT provider
+STT_PROVIDERS=google-enhanced,deepgram-enhanced,speechmatics,elevenlabs,openai
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# Speechmatics (optional)
+SPEECHMATICS_STT_ENABLED=true
+SPEECHMATICS_API_KEY=your-speechmatics-token
+SPEECHMATICS_LANGUAGE=en-US
+
+# ElevenLabs (optional)
+ELEVENLABS_STT_ENABLED=true
+ELEVENLABS_API_KEY=xi-your-api-key
+ELEVENLABS_LANGUAGE=en
 
 # Recording
 RECORDING_DIR=/var/lib/siprec/recordings
@@ -122,10 +133,15 @@ RECORDING_MAX_DURATION=4h
 ENABLE_RECORDING_ENCRYPTION=false
 
 # STT Provider
-STT_PROVIDERS=google-enhanced  # Enhanced providers: google-enhanced, deepgram-enhanced, openai, azure, amazon
 STT_ENABLE_DIARIZATION=true    # Enable speaker diarization
 STT_ENABLE_WORD_TIMESTAMPS=true # Enable word-level timestamps
 STT_ENABLE_STREAMING=true      # Enable real-time streaming transcription
+
+# AMQP (Message Queue)
+AMQP_URL=amqps://guest:guest@rabbitmq.internal:5671/
+AMQP_QUEUE_NAME=siprec.transcriptions
+AMQP_TLS_ENABLED=true
+AMQP_TLS_CA_FILE=/etc/rabbitmq/ca.pem
 
 # Audio Processing
 VAD_ENABLED=true
@@ -148,6 +164,9 @@ PII_CONTEXT_LENGTH=10              # Context characters around detected PII
 ```
 
 For detailed configuration, see [Configuration Guide](docs/configuration/README.md).
+Additional examples for multi-provider STT, Speechmatics/ElevenLabs setup, and multi-endpoint AMQP fan-out (including TLS) are covered in:
+- [STT Providers Guide](docs/features/STT_PROVIDERS.md)
+- [AMQP Transcription Guide](docs/features/AMQP_GUIDE.md)
 
 ## 📖 Documentation
 

@@ -209,7 +209,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.True(t, config.Recording.Storage.KeepLocal)
 
 	// Verify STT defaults
-	assert.Equal(t, []string{"google", "openai"}, config.STT.SupportedVendors)
+	assert.ElementsMatch(t, []string{"google", "deepgram", "elevenlabs", "speechmatics", "openai"}, config.STT.SupportedVendors)
 	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "OPUS"}, config.STT.SupportedCodecs)
 	assert.Equal(t, "google", config.STT.DefaultVendor)
 
