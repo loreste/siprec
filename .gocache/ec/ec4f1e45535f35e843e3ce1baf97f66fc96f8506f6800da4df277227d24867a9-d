@@ -1,0 +1,3 @@
+./cloud_speech.pb.go
+./cloud_speech_adaptation.pb.go
+./resource.pb.go

@@ -1,0 +1,14 @@
+./allocator.go
+./auth.go
+./channel.go
+./confirms.go
+./connection.go
+./consumers.go
+./delivery.go
+./doc.go
+./read.go
+./return.go
+./spec091.go
+./types.go
+./uri.go
+./write.go

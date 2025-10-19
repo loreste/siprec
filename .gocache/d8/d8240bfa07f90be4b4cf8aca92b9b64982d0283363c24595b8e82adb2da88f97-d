@@ -1,0 +1,3 @@
+./integration.go
+./manager.go
+./redis_store.go

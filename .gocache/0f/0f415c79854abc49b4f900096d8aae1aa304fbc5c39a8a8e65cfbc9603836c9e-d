@@ -1,0 +1,7 @@
+./error.go
+./reader.go
+./shared.go
+./signer.go
+./stream_writer.go
+./transport.go
+./writer.go

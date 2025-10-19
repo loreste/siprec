@@ -1,0 +1,16 @@
+./api.go
+./body_hash.go
+./bucket_location.go
+./customizations.go
+./doc.go
+./doc_custom.go
+./endpoint.go
+./endpoint_builder.go
+./errors.go
+./host_style_bucket.go
+./platform_handlers_go1.6.go
+./service.go
+./sse.go
+./statusok_error.go
+./unmarshal_error.go
+./waiters.go

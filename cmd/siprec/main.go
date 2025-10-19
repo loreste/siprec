@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,12 +17,18 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/backup"
+	"siprec-server/pkg/cdr"
+	"siprec-server/pkg/compliance"
 	"siprec-server/pkg/config"
+	"siprec-server/pkg/database"
+	"siprec-server/pkg/elasticsearch"
 	"siprec-server/pkg/encryption"
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
 	"siprec-server/pkg/pii"
+	"siprec-server/pkg/realtime/analytics"
+	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/session"
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
@@ -54,8 +62,46 @@ var (
 	piiDetector *pii.PIIDetector
 	piiFilter   *stt.PIITranscriptionFilter
 
-	tracingShutdown = func(ctx context.Context) error { return nil }
+	tracingShutdown     = func(ctx context.Context) error { return nil }
+	analyticsDispatcher *analytics.Dispatcher
+	dbConn              *database.MySQLDatabase
+	dbRepo              *database.Repository
+	cdrService          *cdr.CDRService
+	gdprService         *compliance.GDPRService
 )
+
+type analyticsAudioListener struct {
+	dispatcher *analytics.Dispatcher
+	ctx        context.Context
+}
+
+func (l *analyticsAudioListener) OnAudioMetrics(callUUID string, metrics media.AudioMetrics) {
+	if l == nil || l.dispatcher == nil {
+		return
+	}
+	analyticsMetrics := analytics.AudioMetrics{
+		MOS:        metrics.MOS,
+		VoiceRatio: metrics.VoiceRatio,
+		NoiseFloor: metrics.NoiseFloor,
+		PacketLoss: metrics.PacketLoss,
+		JitterMs:   metrics.JitterMs,
+		Timestamp:  metrics.Timestamp,
+	}
+	l.dispatcher.HandleAudioMetrics(l.ctx, callUUID, &analyticsMetrics, nil)
+}
+
+func (l *analyticsAudioListener) OnAcousticEvent(callUUID string, event media.AcousticEvent) {
+	if l == nil || l.dispatcher == nil {
+		return
+	}
+	analyticsEvent := analytics.AcousticEvent{
+		Type:       event.Type,
+		Confidence: event.Confidence,
+		Timestamp:  event.Timestamp,
+		Details:    event.Details,
+	}
+	l.dispatcher.HandleAudioMetrics(l.ctx, callUUID, nil, []analytics.AcousticEvent{analyticsEvent})
+}
 
 type amqpTranscriptionEndpoint struct {
 	name           string
@@ -240,6 +286,15 @@ func main() {
 			}
 		}
 
+		if dbConn != nil {
+			logger.Debug("Closing database connection...")
+			if err := dbConn.Close(); err != nil {
+				logger.WithError(err).Error("Error closing database connection")
+			} else {
+				logger.Info("Database connection closed")
+			}
+		}
+
 		// Allow some time for final cleanup to complete
 		select {
 		case <-shutdownCtx.Done():
@@ -275,6 +330,8 @@ func initialize() error {
 	// Convert to legacy config for backward compatibility
 	legacyConfig = appConfig.ToLegacyConfig(logger)
 
+	applyComplianceModes(appConfig, logger)
+
 	// Apply logging configuration
 	if err := appConfig.ApplyLogging(logger); err != nil {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
@@ -286,6 +343,33 @@ func initialize() error {
 		return fmt.Errorf("failed to initialize tracing: %w", err)
 	}
 	tracingShutdown = shutdownTracing
+
+	if appConfig.Database.Enabled {
+		dbConn, dbRepo, err = database.InitializeDatabase(logger)
+		if err != nil {
+			if errors.Is(err, database.ErrMySQLDisabled) {
+				logger.Warn("Database enabled but binary built without MySQL support; continuing without database persistence")
+			} else {
+				return fmt.Errorf("failed to initialize database: %w", err)
+			}
+		} else {
+			logger.Info("Database connection established")
+			cdrService = cdr.NewCDRService(dbRepo, cdr.CDRConfig{}, logger)
+			logger.Info("CDR service initialized")
+		}
+	} else {
+		logger.Debug("Database persistence disabled by configuration")
+	}
+
+	gdprService = nil
+	if appConfig.Compliance.GDPR.Enabled {
+		if dbRepo == nil {
+			logger.Warn("GDPR tools enabled but database repository unavailable; export/erase APIs disabled")
+		} else {
+			gdprService = compliance.NewGDPRService(dbRepo, appConfig.Compliance.GDPR.ExportDir, logger)
+			logger.WithField("export_dir", appConfig.Compliance.GDPR.ExportDir).Info("GDPR service initialized")
+		}
+	}
 
 	// Initialize encryption manager
 	logger.Info("About to initialize encryption...")
@@ -442,9 +526,54 @@ func initialize() error {
 
 	// Initialize speech-to-text providers
 	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor, appConfig.STT.SupportedVendors)
+	if len(appConfig.STT.LanguageRouting) > 0 {
+		sttManager.SetLanguageRouting(appConfig.STT.LanguageRouting)
+	}
 
 	// Create transcription service before STT providers
 	transcriptionSvc = stt.NewTranscriptionService(logger)
+	if sttManager != nil {
+		languageListener := stt.NewLanguageRoutingListener(logger, sttManager)
+		transcriptionSvc.AddListener(languageListener)
+	}
+
+	// Initialize real-time analytics pipeline
+	analyticsPipeline := analytics.NewPipeline(logger, nil,
+		analytics.NewSentimentProcessor(),
+		analytics.NewKeywordProcessor([]string{"the", "and", "you", "uh", "um"}),
+		analytics.NewComplianceProcessor([]analytics.ComplianceRule{
+			{
+				ID:          "recording_disclosure",
+				Description: "Agent must disclose call recording",
+				Severity:    "high",
+				Contains:    []string{"recorded"},
+			},
+		}),
+		analytics.NewAgentMetricsProcessor([]string{"agent"}),
+	)
+	analyticsDispatcher = analytics.NewDispatcher(logger, analyticsPipeline)
+	analyticsDispatcher.AddSubscriber(&analytics.SnapshotLogger{})
+
+	if appConfig.Analytics.Enabled {
+		esClient, err := elasticsearch.NewClient(elasticsearch.Config{
+			Addresses: appConfig.Analytics.Elasticsearch.Addresses,
+			Username:  appConfig.Analytics.Elasticsearch.Username,
+			Password:  appConfig.Analytics.Elasticsearch.Password,
+			Timeout:   appConfig.Analytics.Elasticsearch.Timeout,
+		})
+		if err != nil {
+			logger.WithError(err).Warn("Failed to initialize Elasticsearch analytics client")
+		} else {
+			writer := analytics.NewElasticsearchSnapshotWriter(esClient, appConfig.Analytics.Elasticsearch.Index)
+			analyticsDispatcher.SetSnapshotWriter(writer)
+			logger.WithFields(logrus.Fields{
+				"addresses": appConfig.Analytics.Elasticsearch.Addresses,
+				"index":     appConfig.Analytics.Elasticsearch.Index,
+			}).Info("Analytics snapshots will be persisted to Elasticsearch")
+		}
+	}
+
+	analyticsListener := stt.NewAnalyticsListener(logger, analyticsDispatcher)
 
 	// Initialize PII detection if enabled
 	if appConfig.PII.Enabled {
@@ -467,9 +596,14 @@ func initialize() error {
 		if appConfig.PII.ApplyToTranscriptions {
 			piiFilter = stt.NewPIITranscriptionFilter(logger, piiDetector, true)
 			logger.Info("PII transcription filter initialized")
+			piiFilter.AddListener(analyticsListener)
 		}
 	} else {
 		logger.Info("PII detection disabled")
+	}
+
+	if piiFilter == nil {
+		transcriptionSvc.AddListener(analyticsListener)
 	}
 
 	// Log the configured STT vendors
@@ -490,7 +624,7 @@ func initialize() error {
 			}
 		case "deepgram":
 			if appConfig.STT.Deepgram.Enabled {
-				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram)
+				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram, sttManager)
 				if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Deepgram provider")
 				}
@@ -549,6 +683,7 @@ func initialize() error {
 		RTPPortMin:       appConfig.Network.RTPPortMin,
 		RTPPortMax:       appConfig.Network.RTPPortMax,
 		EnableSRTP:       appConfig.Network.EnableSRTP,
+		RequireSRTP:      appConfig.Network.RequireSRTP,
 		RecordingDir:     appConfig.Recording.Directory,
 		RecordingStorage: recordingStorage,
 		BehindNAT:        appConfig.Network.BehindNAT,
@@ -568,6 +703,11 @@ func initialize() error {
 		},
 		// PII detection configuration
 		PIIAudioEnabled: appConfig.PII.Enabled && appConfig.PII.ApplyToRecordings,
+		AudioMetricsListener: &analyticsAudioListener{
+			dispatcher: analyticsDispatcher,
+			ctx:        rootCtx,
+		},
+		AudioMetricsInterval: 5 * time.Second,
 	}
 
 	// Create SIP handler config
@@ -578,9 +718,17 @@ func initialize() error {
 	}
 
 	// Initialize SIP handler
-	sipHandler, err = sip.NewHandler(logger, sipConfig, sttManager.StreamToProvider)
+	sipHandler, err = sip.NewHandler(logger, sipConfig, sttManager)
 	if err != nil {
 		return fmt.Errorf("failed to create SIP handler: %w", err)
+	}
+
+	if cdrService != nil {
+		sipHandler.SetCDRService(cdrService)
+	}
+
+	if analyticsDispatcher != nil {
+		sipHandler.SetAnalyticsDispatcher(analyticsDispatcher)
 	}
 
 	// Register SIP handlers
@@ -608,6 +756,11 @@ func initialize() error {
 	sessionHandler := http_server.NewSessionHandler(logger, sipAdapter)
 	sessionHandler.RegisterHandlers(httpServer)
 
+	if appConfig != nil {
+		complianceHandler := http_server.NewComplianceHandler(logger, gdprService, appConfig)
+		complianceHandler.RegisterHandlers(httpServer)
+	}
+
 	// Initialize WebSocket components
 
 	// Create the WebSocket hub and start it in a goroutine
@@ -616,6 +769,19 @@ func initialize() error {
 
 	// Set the WebSocket hub reference for health checks
 	httpServer.SetWebSocketHub(wsHub)
+
+	// Setup Analytics WebSocket if analytics is enabled
+	if appConfig.Analytics.Enabled && analyticsDispatcher != nil {
+		analyticsWSHandler := http_server.NewAnalyticsWebSocketHandler(logger)
+		analyticsWSHandler.Start()
+		httpServer.SetAnalyticsWebSocketHandler(analyticsWSHandler)
+
+		// Add WebSocket subscriber to analytics dispatcher
+		wsSubscriber := analytics.NewWebSocketSubscriber(logger, analyticsWSHandler)
+		analyticsDispatcher.AddSubscriber(wsSubscriber)
+
+		logger.Info("Analytics WebSocket endpoint enabled at /ws/analytics")
+	}
 
 	// Create a bridge between transcription service and WebSocket hub
 	wsBridge := stt.NewWebSocketTranscriptionBridge(logger, wsHub)
@@ -728,38 +894,46 @@ func startSIPServer(wg *sync.WaitGroup) {
 	// Keep track of active listeners
 	var wgListeners sync.WaitGroup
 
-	// Start UDP listeners
-	for _, port := range appConfig.Network.Ports {
-		address := fmt.Sprintf("%s:%d", ip, port)
-		wgListeners.Add(1)
+	requireTLS := appConfig.Network.RequireTLSOnly
+	if !requireTLS {
+		udpPorts := appConfig.Network.GetUDPPorts()
+		tcpPorts := appConfig.Network.GetTCPPorts()
 
-		go func(address string, port int) {
-			defer wgListeners.Done()
+		// Start UDP listeners
+		for _, port := range udpPorts {
+			address := fmt.Sprintf("%s:%d", ip, port)
+			wgListeners.Add(1)
 
-			logger.WithField("address", address).Info("Starting SIP server on UDP")
-			if err := sipHandler.Server.ListenAndServe(ctx, "udp", address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on UDP")
-				errChan <- fmt.Errorf("UDP listener error: %w", err)
-				return
-			}
-		}(address, port)
-	}
+			go func(address string, port int) {
+				defer wgListeners.Done()
 
-	// Start TCP listeners
-	for _, port := range appConfig.Network.Ports {
-		address := fmt.Sprintf("%s:%d", ip, port)
-		wgListeners.Add(1)
+				logger.WithField("address", address).Info("Starting SIP server on UDP")
+				if err := sipHandler.Server.ListenAndServe(ctx, "udp", address); err != nil {
+					logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on UDP")
+					errChan <- fmt.Errorf("UDP listener error: %w", err)
+					return
+				}
+			}(address, port)
+		}
 
-		go func(address string, port int) {
-			defer wgListeners.Done()
+		// Start TCP listeners
+		for _, port := range tcpPorts {
+			address := fmt.Sprintf("%s:%d", ip, port)
+			wgListeners.Add(1)
 
-			logger.WithField("address", address).Info("Starting SIP server on TCP")
-			if err := sipHandler.Server.ListenAndServe(ctx, "tcp", address); err != nil {
-				logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on TCP")
-				errChan <- fmt.Errorf("TCP listener error: %w", err)
-				return
-			}
-		}(address, port)
+			go func(address string, port int) {
+				defer wgListeners.Done()
+
+				logger.WithField("address", address).Info("Starting SIP server on TCP")
+				if err := sipHandler.Server.ListenAndServe(ctx, "tcp", address); err != nil {
+					logger.WithError(err).WithField("port", port).Error("Failed to start SIP server on TCP")
+					errChan <- fmt.Errorf("TCP listener error: %w", err)
+					return
+				}
+			}(address, port)
+		}
+	} else {
+		logger.Info("TLS-only SIP mode enabled; skipping UDP/TCP listeners")
 	}
 
 	// Check if TLS can be started
@@ -857,6 +1031,8 @@ func startSIPServer(wg *sync.WaitGroup) {
 				}
 			}()
 		}
+	} else if requireTLS {
+		errChan <- fmt.Errorf("TLS-only mode enabled but TLS listener could not be started")
 	}
 
 	// Keep server running until an error occurs or context is cancelled
@@ -961,6 +1137,79 @@ func boolWithDefault(flag *bool, fallback bool) bool {
 		return fallback
 	}
 	return *flag
+}
+
+func applyComplianceModes(cfg *config.Config, logger *logrus.Logger) {
+	if cfg == nil {
+		return
+	}
+
+	if cfg.Compliance.PCI.Enabled {
+		logger.Info("PCI compliance mode enabled; applying required safeguards")
+
+		if !cfg.PII.Enabled {
+			cfg.PII.Enabled = true
+			logger.Info("PII detection enabled for PCI compliance")
+		}
+
+		requiredTypes := []string{"credit_card", "ssn"}
+		typeSet := make(map[string]struct{}, len(cfg.PII.EnabledTypes)+len(requiredTypes))
+		normalizedTypes := make([]string, 0, len(cfg.PII.EnabledTypes))
+
+		for _, t := range cfg.PII.EnabledTypes {
+			trimmed := strings.ToLower(strings.TrimSpace(t))
+			if trimmed == "" {
+				continue
+			}
+			if _, exists := typeSet[trimmed]; exists {
+				continue
+			}
+			typeSet[trimmed] = struct{}{}
+			normalizedTypes = append(normalizedTypes, trimmed)
+		}
+
+		for _, required := range requiredTypes {
+			if _, exists := typeSet[required]; !exists {
+				normalizedTypes = append(normalizedTypes, required)
+				typeSet[required] = struct{}{}
+				logger.WithField("pii_type", required).Info("Added required PII detection type for PCI compliance")
+			}
+		}
+
+		cfg.PII.EnabledTypes = normalizedTypes
+
+		if !cfg.PII.ApplyToTranscriptions {
+			cfg.PII.ApplyToTranscriptions = true
+			logger.Info("Enabled transcription redaction for PCI compliance")
+		}
+
+		if !cfg.PII.ApplyToRecordings {
+			cfg.PII.ApplyToRecordings = true
+			logger.Info("Enabled recording redaction markers for PCI compliance")
+		}
+
+		if strings.TrimSpace(cfg.PII.RedactionChar) == "" {
+			cfg.PII.RedactionChar = "*"
+			logger.Info("Set default PII redaction character")
+		}
+
+		if !cfg.Encryption.EnableRecordingEncryption {
+			cfg.Encryption.EnableRecordingEncryption = true
+			logger.Info("Enabled recording encryption for PCI compliance")
+		}
+
+		if !cfg.Network.EnableTLS {
+			logger.Warn("PCI compliance mode enabled but TLS is disabled; enable TLS to avoid compliance violations")
+		} else if !cfg.Network.RequireTLSOnly {
+			logger.Warn("PCI compliance mode enabled; consider enabling SIP_REQUIRE_TLS to restrict transport to TLS")
+		}
+	}
+
+	if cfg.Compliance.Audit.TamperProof {
+		writer := compliance.NewAuditChainWriter(cfg.Compliance.Audit.LogPath)
+		audit.SetChainWriter(writer)
+		logger.WithField("log_path", cfg.Compliance.Audit.LogPath).Info("Tamper-proof audit chain writer enabled")
+	}
 }
 
 // initializeEncryption initializes the encryption subsystem

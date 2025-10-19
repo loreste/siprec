@@ -1,0 +1,8 @@
+./dispatcher.go
+./es_snapshot_store.go
+./mock_store.go
+./pipeline.go
+./processors.go
+./subscribers.go
+./types.go
+./websocket_subscriber.go

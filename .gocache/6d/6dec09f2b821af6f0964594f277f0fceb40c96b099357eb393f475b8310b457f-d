@@ -1,0 +1,6 @@
+./adaptation_client.go
+./auxiliary.go
+./auxiliary_go123.go
+./doc.go
+./speech_client.go
+./version.go

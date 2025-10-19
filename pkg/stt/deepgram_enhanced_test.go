@@ -474,29 +474,22 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set up callback to capture results
-	var results []struct {
+	type result struct {
 		transcription string
 		isFinal       bool
 		metadata      map[string]interface{}
 	}
-	var resultsMutex sync.Mutex
-	var callbackWG sync.WaitGroup
+
+	resultsCh := make(chan result, 4) // small buffer to avoid blocking the callback
 
 	provider.SetCallback(func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
-		resultsMutex.Lock()
-		results = append(results, struct {
-			transcription string
-			isFinal       bool
-			metadata      map[string]interface{}
-		}{transcription, isFinal, metadata})
-		resultsMutex.Unlock()
-
 		assert.Equal(t, "test-ws-call", callUUID)
-		callbackWG.Done()
+		select {
+		case resultsCh <- result{transcription: transcription, isFinal: isFinal, metadata: metadata}:
+		default:
+			t.Errorf("results channel is full, dropping event")
+		}
 	})
-
-	// Expect interim, final, and utterance end callbacks
-	callbackWG.Add(3)
 
 	// Create audio stream
 	audioData := strings.NewReader("mock audio data for websocket")
@@ -508,11 +501,17 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 	err = provider.streamWithWebSocket(ctx, audioData, "test-ws-call")
 	assert.NoError(t, err)
 
-	// Wait for callbacks
-	callbackWG.Wait()
+	expectedEvents := 3
+	results := make([]result, 0, expectedEvents)
+	for i := 0; i < expectedEvents; i++ {
+		select {
+		case evt := <-resultsCh:
+			results = append(results, evt)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out waiting for WebSocket callback %d/%d", i+1, expectedEvents)
+		}
+	}
 
-	// Verify results
-	resultsMutex.Lock()
 	assert.Len(t, results, 3)
 
 	// Check interim result
@@ -529,7 +528,6 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 	assert.Equal(t, "", results[2].transcription)
 	assert.True(t, results[2].isFinal)
 	assert.Equal(t, "utterance_end", results[2].metadata["event_type"])
-	resultsMutex.Unlock()
 
 	// Verify connection count
 	assert.Equal(t, 0, provider.GetActiveConnections()) // Should be 0 after cleanup

@@ -1,0 +1,5 @@
+./compute.go
+./detect.go
+./doc.go
+./filetypes.go
+./selfsignedjwt.go

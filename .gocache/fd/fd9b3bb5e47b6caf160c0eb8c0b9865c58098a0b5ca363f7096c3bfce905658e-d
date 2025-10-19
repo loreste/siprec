@@ -1,0 +1,7 @@
+./client.go
+./dialog.go
+./dialog_client.go
+./dialog_server.go
+./dialog_ua.go
+./server.go
+./ua.go

@@ -45,6 +45,8 @@ type StreamBuffer struct {
 	TotalDuration  time.Duration
 	WordCount      int
 	ProviderStats  map[string]*ProviderStatistics
+	LastSpeaker    string
+	SpeakerStats   map[string]*SpeakerStat
 }
 
 // InterimResult represents an interim transcription result
@@ -76,6 +78,7 @@ type WordTiming struct {
 	StartTime  time.Time `json:"start_time"`
 	EndTime    time.Time `json:"end_time"`
 	Confidence float64   `json:"confidence"`
+	Speaker    string    `json:"speaker,omitempty"`
 }
 
 // ProviderStatistics tracks statistics for each provider
@@ -101,6 +104,14 @@ type StreamingMetrics struct {
 	ErrorRate           float64       `json:"error_rate"`
 	ThroughputPerSecond float64       `json:"throughput_per_second"`
 	mutex               sync.RWMutex
+}
+
+// SpeakerStat tracks aggregated speaker information.
+type SpeakerStat struct {
+	TotalDuration  time.Duration `json:"total_duration"`
+	Segments       int           `json:"segments"`
+	LastConfidence float64       `json:"last_confidence"`
+	LastUpdated    time.Time     `json:"last_updated"`
 }
 
 // DefaultStreamingConfig returns default configuration for streaming enhancements
@@ -243,11 +254,30 @@ func (s *StreamingTranscriptionService) processFinalResult(buffer *StreamBuffer,
 		}
 		if speakerID, ok := metadata["speaker_id"].(string); ok {
 			result.SpeakerID = speakerID
+		} else if normalized := normalizeSpeaker(metadata); normalized != "" {
+			result.SpeakerID = normalized
+			metadata["speaker_id"] = normalized
 		}
 
 		// Extract word timing if available
 		if words, ok := metadata["words"].([]interface{}); ok {
 			result.WordTiming = s.extractWordTiming(words)
+		}
+
+		if speaker := normalizeSpeaker(metadata); speaker != "" {
+			metadata["speaker"] = speaker
+		}
+	}
+
+	if result.SpeakerID == "" {
+		if speaker := normalizeSpeaker(metadata); speaker != "" {
+			result.SpeakerID = speaker
+		}
+	}
+
+	if len(result.WordTiming) > 0 && result.SpeakerID == "" {
+		if result.WordTiming[0].Speaker != "" {
+			result.SpeakerID = result.WordTiming[0].Speaker
 		}
 	}
 
@@ -262,6 +292,8 @@ func (s *StreamingTranscriptionService) processFinalResult(buffer *StreamBuffer,
 
 	// Clear interim results that are now superseded
 	buffer.InterimResults = buffer.InterimResults[:0]
+
+	s.updateSpeakerStats(buffer, result)
 
 	s.logger.WithFields(logrus.Fields{
 		"call_uuid":  buffer.CallUUID,
@@ -281,6 +313,12 @@ func (s *StreamingTranscriptionService) processInterimResult(buffer *StreamBuffe
 		Metadata:    metadata,
 		Sequence:    len(buffer.InterimResults),
 		ProcessedAt: time.Now(),
+	}
+
+	if metadata != nil {
+		if speaker := normalizeSpeaker(metadata); speaker != "" {
+			metadata["speaker"] = speaker
+		}
 	}
 
 	// Add to buffer
@@ -397,6 +435,13 @@ func (s *StreamingTranscriptionService) extractWordTiming(words []interface{}) [
 			if confidence, ok := wordMap["confidence"].(float64); ok {
 				wordTiming.Confidence = confidence
 			}
+			if speaker, ok := wordMap["speaker"].(string); ok {
+				wordTiming.Speaker = speaker
+			} else if speakerTag, ok := wordMap["speaker_tag"].(float64); ok {
+				wordTiming.Speaker = formatSpeakerID(speakerTag)
+			} else if speakerTagInt, ok := wordMap["speaker_tag"].(int); ok {
+				wordTiming.Speaker = formatSpeakerID(float64(speakerTagInt))
+			}
 
 			timing = append(timing, wordTiming)
 		}
@@ -425,12 +470,108 @@ func (s *StreamingTranscriptionService) enhanceMetadata(original map[string]inte
 		"last_activity": buffer.LastActivity,
 	}
 
+	if speaker := normalizeSpeaker(enhanced); speaker != "" {
+		enhanced["speaker"] = speaker
+	} else if buffer.LastSpeaker != "" {
+		enhanced["speaker"] = buffer.LastSpeaker
+	}
+
+	if len(buffer.SpeakerStats) > 0 {
+		enhanced["speaker_stats"] = buffer.SpeakerStats
+	}
+
 	// Add provider statistics
 	if len(buffer.ProviderStats) > 0 {
 		enhanced["provider_stats"] = buffer.ProviderStats
 	}
 
 	return enhanced
+}
+
+func normalizeSpeaker(metadata map[string]interface{}) string {
+	if metadata == nil {
+		return ""
+	}
+	if v, ok := metadata["speaker"]; ok {
+		if speaker := fmt.Sprint(v); speaker != "" {
+			return speaker
+		}
+	}
+	if v, ok := metadata["speaker_id"]; ok {
+		switch val := v.(type) {
+		case string:
+			if val != "" {
+				return val
+			}
+		case float64:
+			return formatSpeakerID(val)
+		case int:
+			return fmt.Sprintf("%d", val)
+		default:
+			if speaker := fmt.Sprint(val); speaker != "" {
+				return speaker
+			}
+		}
+	}
+	if v, ok := metadata["speaker_tag"]; ok {
+		switch val := v.(type) {
+		case float64:
+			return formatSpeakerID(val)
+		case int:
+			return fmt.Sprintf("%d", val)
+		default:
+			if speaker := fmt.Sprint(val); speaker != "" {
+				return speaker
+			}
+		}
+	}
+	return ""
+}
+
+func formatSpeakerID(tag float64) string {
+	return fmt.Sprintf("%.0f", tag)
+}
+
+func (s *StreamingTranscriptionService) updateSpeakerStats(buffer *StreamBuffer, result FinalResult) {
+	if buffer.SpeakerStats == nil {
+		buffer.SpeakerStats = make(map[string]*SpeakerStat)
+	}
+
+	durationBySpeaker := make(map[string]time.Duration)
+
+	for _, wt := range result.WordTiming {
+		speaker := wt.Speaker
+		if speaker == "" {
+			speaker = result.SpeakerID
+		}
+		if speaker == "" {
+			continue
+		}
+		if wt.StartTime.IsZero() || wt.EndTime.IsZero() || !wt.EndTime.After(wt.StartTime) {
+			continue
+		}
+		durationBySpeaker[speaker] += wt.EndTime.Sub(wt.StartTime)
+	}
+
+	if len(durationBySpeaker) == 0 && result.SpeakerID != "" && !result.StartTime.IsZero() && !result.EndTime.IsZero() && result.EndTime.After(result.StartTime) {
+		durationBySpeaker[result.SpeakerID] = result.EndTime.Sub(result.StartTime)
+	}
+
+	now := time.Now()
+	for speaker, dur := range durationBySpeaker {
+		stat := buffer.SpeakerStats[speaker]
+		if stat == nil {
+			stat = &SpeakerStat{}
+			buffer.SpeakerStats[speaker] = stat
+		}
+		stat.TotalDuration += dur
+		stat.Segments++
+		if result.Confidence > 0 {
+			stat.LastConfidence = result.Confidence
+		}
+		stat.LastUpdated = now
+		buffer.LastSpeaker = speaker
+	}
 }
 
 // updateProviderStats updates statistics for a provider
@@ -476,6 +617,7 @@ func (s *StreamingTranscriptionService) getOrCreateBuffer(callUUID string) *Stre
 		FinalResults:   make([]FinalResult, 0),
 		LastActivity:   time.Now(),
 		ProviderStats:  make(map[string]*ProviderStatistics),
+		SpeakerStats:   make(map[string]*SpeakerStat),
 	}
 
 	s.buffers[callUUID] = buffer
@@ -586,7 +728,7 @@ func (s *StreamingTranscriptionService) GetStreamBuffer(callUUID string) (*Strea
 func (s *StreamingTranscriptionService) GetMetrics() StreamingMetrics {
 	s.metrics.mutex.RLock()
 	defer s.metrics.mutex.RUnlock()
-	
+
 	// Return a copy without the mutex to avoid copying the lock
 	return StreamingMetrics{
 		TotalCalls:          s.metrics.TotalCalls,

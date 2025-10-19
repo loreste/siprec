@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/security"
 	"siprec-server/pkg/security/audit"
@@ -50,6 +51,9 @@ type CustomSIPServer struct {
 
 	// SIP message parser
 	sipParser *sipparser.Parser
+
+	tlsConfig   *tls.Config
+	tlsConfigMu sync.RWMutex
 
 	// sipgo components for standards-compliant dialog/transaction handling
 	ua        *sipgo.UserAgent
@@ -239,6 +243,12 @@ func (s *CustomSIPServer) ListenAndServe(ctx context.Context, protocol, address 
 		return s.ListenAndServeUDP(ctx, address)
 	case "tcp":
 		return s.ListenAndServeTCP(ctx, address)
+	case "tls":
+		cfg := s.getTLSConfig()
+		if cfg == nil {
+			return fmt.Errorf("tls config not set")
+		}
+		return s.ListenAndServeTLS(ctx, address, cfg)
 	default:
 		return fmt.Errorf("unsupported protocol: %s", protocol)
 	}
@@ -267,8 +277,31 @@ func (s *CustomSIPServer) ListenAndServeTLS(ctx context.Context, address string,
 	if s.sipServer == nil {
 		return fmt.Errorf("SIP server not initialized")
 	}
+	if tlsConfig != nil {
+		s.SetTLSConfig(tlsConfig)
+	}
+	cfg := tlsConfig
+	if cfg == nil {
+		cfg = s.getTLSConfig()
+		if cfg == nil {
+			return fmt.Errorf("TLS config required for TLS listener")
+		}
+	}
 	s.logger.WithField("address", address).Info("Custom SIP server listening on TLS via sipgo transaction layer")
-	return s.sipServer.ListenAndServeTLS(ctx, "tls", address, tlsConfig)
+	return s.sipServer.ListenAndServeTLS(ctx, "tls", address, cfg)
+}
+
+// SetTLSConfig stores the TLS configuration for future TLS listeners.
+func (s *CustomSIPServer) SetTLSConfig(cfg *tls.Config) {
+	s.tlsConfigMu.Lock()
+	s.tlsConfig = cfg
+	s.tlsConfigMu.Unlock()
+}
+
+func (s *CustomSIPServer) getTLSConfig() *tls.Config {
+	s.tlsConfigMu.RLock()
+	defer s.tlsConfigMu.RUnlock()
+	return s.tlsConfig
 }
 
 func newSIPMessageFromSipgo(msg sipparser.Message, conn *SIPConnection) *SIPMessage {
@@ -305,7 +338,7 @@ func newSIPMessageFromSipgo(msg sipparser.Message, conn *SIPConnection) *SIPMess
 				Key:   key,
 				Index: idx,
 			})
-			
+
 			// Capture Content-Type if present
 			if name == "Content-Type" {
 				out.ContentType = value
@@ -597,6 +630,36 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			"recording_state":   recordingSession.RecordingState,
 		}).Info("Successfully created recording session from SIPREC metadata")
 
+		if svc := s.handler.CDRService(); svc != nil {
+			transport := ""
+			if message.Connection != nil {
+				transport = message.Connection.transport
+			}
+			remoteAddr := ""
+			if message.Connection != nil {
+				remoteAddr = message.Connection.remoteAddr
+			}
+			if err := svc.StartSession(recordingSession.ID, message.CallID, remoteAddr, transport); err != nil {
+				logger.WithError(err).Warn("Failed to start CDR session")
+			} else {
+				update := cdr.CDRUpdate{}
+				hasUpdates := false
+				if pc := len(recordingSession.Participants); pc > 0 {
+					update.ParticipantCount = &pc
+					hasUpdates = true
+				}
+				if sc := len(recordingSession.MediaStreamTypes); sc > 0 {
+					update.StreamCount = &sc
+					hasUpdates = true
+				}
+				if hasUpdates {
+					if err := svc.UpdateSession(recordingSession.ID, update); err != nil {
+						logger.WithError(err).Warn("Failed to update CDR session metadata")
+					}
+				}
+			}
+		}
+
 		if len(parsedMetadata.SessionGroupAssociations) > 0 {
 			logger.WithField("session_groups", parsedMetadata.SessionGroupAssociations).Info("Session group associations received")
 		}
@@ -683,6 +746,26 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				receivedSDP = nil
 			} else {
 				media.ConfigureForwarderFromSDP(rtpForwarder, receivedSDP, s.logger)
+				if s.handler.Config.MediaConfig.RequireSRTP && (len(rtpForwarder.SRTPMasterKey) == 0 || len(rtpForwarder.SRTPMasterSalt) == 0) {
+					inviteErr = fmt.Errorf("srtp required but not negotiated")
+					callScope.RecordError(inviteErr)
+					logger.WithError(inviteErr).Error("Call rejected: SRTP required")
+					s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
+						"stage": "srtp_requirement",
+						"error": inviteErr.Error(),
+					})
+					audit.Log(callCtx, s.logger, &audit.Event{
+						Category: "sip",
+						Action:   "invite",
+						Outcome:  audit.OutcomeFailure,
+						CallID:   message.CallID,
+						Details: map[string]interface{}{
+							"stage": "srtp_requirement",
+						},
+					})
+					s.sendResponse(message, 488, "Not Acceptable Here - SRTP required", nil, nil)
+					return
+				}
 			}
 		}
 
@@ -968,6 +1051,29 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 				receivedSDP = nil
 			} else {
 				media.ConfigureForwarderFromSDP(callState.RTPForwarder, receivedSDP, s.logger)
+				if s.handler.Config.MediaConfig.RequireSRTP && (len(callState.RTPForwarder.SRTPMasterKey) == 0 || len(callState.RTPForwarder.SRTPMasterSalt) == 0) {
+					err := fmt.Errorf("srtp required but not negotiated")
+					reinviteSpan.RecordError(err)
+					callScope.RecordError(err)
+					logger.WithError(err).Error("Rejecting re-INVITE: SRTP required")
+					s.notifyMetadataEvent(reinviteCtx, callState.RecordingSession, message.CallID, "metadata.error", map[string]interface{}{
+						"stage":   "srtp_requirement",
+						"error":   err.Error(),
+						"context": "reinvite",
+					})
+					audit.Log(reinviteCtx, s.logger, &audit.Event{
+						Category:  "sip",
+						Action:    "reinvite",
+						Outcome:   audit.OutcomeFailure,
+						CallID:    message.CallID,
+						SessionID: sessionIDFromState(callState),
+						Details: map[string]interface{}{
+							"stage": "srtp_requirement",
+						},
+					})
+					s.sendResponse(message, 488, "Not Acceptable Here - SRTP required", nil, nil)
+					return
+				}
 			}
 		}
 
@@ -1134,6 +1240,24 @@ func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSessio
 		"sequence":          session.SequenceNumber,
 		"participant_count": len(session.Participants),
 	}).Info("Recording session updated successfully")
+
+	if svc := s.handler.CDRService(); svc != nil {
+		update := cdr.CDRUpdate{}
+		hasUpdates := false
+		if pc := len(session.Participants); pc > 0 {
+			update.ParticipantCount = &pc
+			hasUpdates = true
+		}
+		if sc := len(session.MediaStreamTypes); sc > 0 {
+			update.StreamCount = &sc
+			hasUpdates = true
+		}
+		if hasUpdates {
+			if err := svc.UpdateSession(session.ID, update); err != nil {
+				logger.WithError(err).Warn("Failed to update CDR session after metadata refresh")
+			}
+		}
+	}
 
 	return nil
 }
@@ -1698,12 +1822,45 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	delete(s.callStates, callID)
 	s.callMutex.Unlock()
 
+	if s.handler != nil {
+		s.handler.ClearSTTRouting(callID)
+	}
+
+	if svc := s.handler.CDRService(); svc != nil && callState.RecordingSession != nil {
+		status := "completed"
+		recordingState := strings.ToLower(callState.RecordingSession.RecordingState)
+		switch recordingState {
+		case "cancelled":
+			status = "partial"
+		case "failed", "error":
+			status = "failed"
+		}
+		reasonLower := strings.ToLower(reason)
+		switch reasonLower {
+		case "cancelled":
+			status = "partial"
+		case "failed", "error":
+			status = "failed"
+		}
+		var errMsg *string
+		if status == "failed" && reason != "" {
+			errMsg = &reason
+		}
+		if err := svc.EndSession(callState.RecordingSession.ID, status, errMsg); err != nil {
+			s.logger.WithError(err).WithField("session_id", callState.RecordingSession.ID).Warn("Failed to record CDR for terminated session")
+		}
+	}
+
 	if callState.TraceScope != nil {
 		callState.TraceScope.Span().AddEvent("siprec.call.terminated", trace.WithAttributes(
 			attribute.String("termination.reason", reason),
 		))
 		callState.TraceScope.End(nil)
 		callState.TraceScope = nil
+	}
+
+	if s.handler != nil && s.handler.analyticsDispatcher != nil {
+		s.handler.analyticsDispatcher.CompleteCall(context.Background(), callID)
 	}
 
 	if s.handler != nil && s.handler.Notifier != nil {

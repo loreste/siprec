@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Analytics Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .connection-status {
+            text-align: center;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .connected {
+            background: rgba(76, 175, 80, 0.3);
+        }
+        .disconnected {
+            background: rgba(244, 67, 54, 0.3);
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .widget {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+        .widget h3 {
+            margin-top: 0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+            padding-bottom: 10px;
+        }
+        .sentiment-indicator {
+            font-size: 48px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .sentiment-positive { color: #4CAF50; }
+        .sentiment-neutral { color: #FFC107; }
+        .sentiment-negative { color: #f44336; }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .metric-value {
+            font-weight: bold;
+        }
+        .keyword-tag {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 5px 10px;
+            border-radius: 15px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .violation {
+            background: rgba(244, 67, 54, 0.3);
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .transcription-box {
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .event-log {
+            max-height: 300px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .event-item {
+            margin: 5px 0;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input, button {
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            border: none;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            font-size: 14px;
+        }
+        button:hover {
+            background: rgba(255, 255, 255, 1);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Real-time Call Analytics Dashboard</h1>
+        
+        <div class="controls">
+            <input type="text" id="callIdInput" placeholder="Filter by Call ID (optional)">
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="clearDashboard()">Clear</button>
+        </div>
+        
+        <div id="connectionStatus" class="connection-status disconnected">
+            ⚡ Disconnected
+        </div>
+        
+        <div class="dashboard">
+            <!-- Sentiment Widget -->
+            <div class="widget">
+                <h3>😊 Sentiment Analysis</h3>
+                <div id="sentimentIndicator" class="sentiment-indicator sentiment-neutral">😐</div>
+                <div class="metric">
+                    <span>Score:</span>
+                    <span id="sentimentScore" class="metric-value">0.0</span>
+                </div>
+                <div class="metric">
+                    <span>Trend:</span>
+                    <span id="sentimentTrend" class="metric-value">→</span>
+                </div>
+            </div>
+            
+            <!-- Keywords Widget -->
+            <div class="widget">
+                <h3>🔤 Top Keywords</h3>
+                <div id="keywordsList"></div>
+            </div>
+            
+            <!-- Agent Metrics Widget -->
+            <div class="widget">
+                <h3>📊 Agent Metrics</h3>
+                <div class="metric">
+                    <span>Talk Time:</span>
+                    <span id="talkTime" class="metric-value">0s</span>
+                </div>
+                <div class="metric">
+                    <span>Silence Ratio:</span>
+                    <span id="silenceRatio" class="metric-value">0%</span>
+                </div>
+                <div class="metric">
+                    <span>Talk Speed:</span>
+                    <span id="talkSpeed" class="metric-value">0 wpm</span>
+                </div>
+                <div class="metric">
+                    <span>Interruptions:</span>
+                    <span id="interruptions" class="metric-value">0</span>
+                </div>
+            </div>
+            
+            <!-- Compliance Widget -->
+            <div class="widget">
+                <h3>⚠️ Compliance Alerts</h3>
+                <div id="complianceList"></div>
+            </div>
+            
+            <!-- Quality Score Widget -->
+            <div class="widget">
+                <h3>⭐ Call Quality</h3>
+                <div style="text-align: center;">
+                    <div style="font-size: 48px;" id="qualityScore">0.0</div>
+                    <div>Quality Score</div>
+                </div>
+            </div>
+            
+            <!-- Live Transcription Widget -->
+            <div class="widget">
+                <h3>💬 Live Transcription</h3>
+                <div id="transcriptionBox" class="transcription-box"></div>
+            </div>
+            
+            <!-- Event Log Widget -->
+            <div class="widget" style="grid-column: 1 / -1;">
+                <h3>📝 Event Log</h3>
+                <div id="eventLog" class="event-log"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        let reconnectTimer = null;
+        
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('Already connected');
+                return;
+            }
+            
+            const callId = document.getElementById('callIdInput').value;
+            const wsUrl = `ws://localhost:8080/ws/analytics${callId ? '?call_id=' + callId : ''}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('Connected to analytics WebSocket');
+                updateConnectionStatus(true);
+                addEvent('Connected to server', 'info');
+            };
+            
+            ws.onclose = () => {
+                console.log('Disconnected from analytics WebSocket');
+                updateConnectionStatus(false);
+                addEvent('Disconnected from server', 'warning');
+                
+                // Auto-reconnect after 5 seconds
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connect, 5000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                addEvent('Connection error', 'error');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (error) {
+                    console.error('Failed to parse message:', error);
+                }
+            };
+        }
+        
+        function disconnect() {
+            clearTimeout(reconnectTimer);
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function handleMessage(data) {
+            console.log('Received:', data);
+            
+            switch (data.type) {
+                case 'connected':
+                    addEvent(`Connected: ${JSON.stringify(data.event)}`, 'success');
+                    break;
+                    
+                case 'analytics_update':
+                    updateDashboard(data.data);
+                    break;
+                    
+                case 'transcription':
+                    updateTranscription(data.event);
+                    break;
+                    
+                case 'sentiment_alert':
+                    addEvent(`Sentiment Alert: ${data.event.message}`, 'warning');
+                    break;
+                    
+                case 'compliance_violation':
+                    addComplianceViolation(data.event);
+                    break;
+                    
+                case 'quality_alert':
+                    addEvent(`Quality Alert: ${data.event.message}`, 'warning');
+                    break;
+                    
+                case 'agent_alert':
+                    addEvent(`Agent Alert: ${data.event.message}`, 'warning');
+                    break;
+                    
+                case 'keywords_update':
+                    updateKeywords(data.event.keywords);
+                    break;
+                    
+                case 'call_completed':
+                    addEvent(`Call Completed - Score: ${data.event.quality_score}`, 'success');
+                    break;
+                    
+                case 'ping':
+                    // Send pong
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'pong' }));
+                    }
+                    break;
+            }
+        }
+        
+        function updateDashboard(data) {
+            if (!data) return;
+            
+            // Update sentiment
+            if (data.sentiment_trend && data.sentiment_trend.length > 0) {
+                const latest = data.sentiment_trend[data.sentiment_trend.length - 1];
+                updateSentiment(latest);
+            }
+            
+            // Update keywords
+            if (data.keywords) {
+                updateKeywords(data.keywords);
+            }
+            
+            // Update metrics
+            if (data.metrics) {
+                updateMetrics(data.metrics);
+            }
+            
+            // Update compliance
+            if (data.compliance) {
+                updateCompliance(data.compliance);
+            }
+            
+            // Update quality score
+            if (data.quality_score !== undefined) {
+                document.getElementById('qualityScore').textContent = data.quality_score.toFixed(2);
+            }
+        }
+        
+        function updateSentiment(sentiment) {
+            const score = sentiment.score || 0;
+            const indicator = document.getElementById('sentimentIndicator');
+            const scoreEl = document.getElementById('sentimentScore');
+            
+            scoreEl.textContent = score.toFixed(2);
+            
+            if (score > 0.3) {
+                indicator.textContent = '😊';
+                indicator.className = 'sentiment-indicator sentiment-positive';
+                document.getElementById('sentimentTrend').textContent = '↗';
+            } else if (score < -0.3) {
+                indicator.textContent = '😔';
+                indicator.className = 'sentiment-indicator sentiment-negative';
+                document.getElementById('sentimentTrend').textContent = '↘';
+            } else {
+                indicator.textContent = '😐';
+                indicator.className = 'sentiment-indicator sentiment-neutral';
+                document.getElementById('sentimentTrend').textContent = '→';
+            }
+        }
+        
+        function updateKeywords(keywords) {
+            const container = document.getElementById('keywordsList');
+            container.innerHTML = '';
+            
+            if (keywords && keywords.length > 0) {
+                keywords.slice(0, 10).forEach(keyword => {
+                    const tag = document.createElement('span');
+                    tag.className = 'keyword-tag';
+                    tag.textContent = keyword;
+                    container.appendChild(tag);
+                });
+            }
+        }
+        
+        function updateMetrics(metrics) {
+            if (metrics.talk_time !== undefined) {
+                document.getElementById('talkTime').textContent = metrics.talk_time + 's';
+            }
+            if (metrics.silence_ratio !== undefined) {
+                document.getElementById('silenceRatio').textContent = (metrics.silence_ratio * 100).toFixed(1) + '%';
+            }
+            if (metrics.talk_speed !== undefined) {
+                document.getElementById('talkSpeed').textContent = metrics.talk_speed + ' wpm';
+            }
+            if (metrics.interruptions !== undefined) {
+                document.getElementById('interruptions').textContent = metrics.interruptions;
+            }
+        }
+        
+        function updateCompliance(violations) {
+            const container = document.getElementById('complianceList');
+            container.innerHTML = '';
+            
+            if (violations && violations.length > 0) {
+                violations.forEach(violation => {
+                    const div = document.createElement('div');
+                    div.className = 'violation';
+                    div.innerHTML = `
+                        <strong>${violation.description}</strong><br>
+                        Severity: ${violation.severity}
+                    `;
+                    container.appendChild(div);
+                });
+            } else {
+                container.innerHTML = '<div style="text-align: center; opacity: 0.5;">No violations detected</div>';
+            }
+        }
+        
+        function addComplianceViolation(violation) {
+            const container = document.getElementById('complianceList');
+            const div = document.createElement('div');
+            div.className = 'violation';
+            div.innerHTML = `
+                <strong>${violation.description}</strong><br>
+                Severity: ${violation.severity}
+            `;
+            container.insertBefore(div, container.firstChild);
+            
+            addEvent(`Compliance: ${violation.description}`, 'error');
+        }
+        
+        function updateTranscription(event) {
+            const box = document.getElementById('transcriptionBox');
+            const entry = document.createElement('div');
+            entry.innerHTML = `<strong>${event.speaker || 'Unknown'}:</strong> ${event.text}`;
+            box.appendChild(entry);
+            box.scrollTop = box.scrollHeight;
+            
+            // Limit to last 20 entries
+            while (box.children.length > 20) {
+                box.removeChild(box.firstChild);
+            }
+        }
+        
+        function addEvent(message, type = 'info') {
+            const log = document.getElementById('eventLog');
+            const entry = document.createElement('div');
+            entry.className = 'event-item';
+            entry.innerHTML = `<strong>${new Date().toLocaleTimeString()}:</strong> ${message}`;
+            entry.style.borderLeft = `3px solid ${getEventColor(type)}`;
+            log.insertBefore(entry, log.firstChild);
+            
+            // Limit to last 50 entries
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+        
+        function getEventColor(type) {
+            switch(type) {
+                case 'success': return '#4CAF50';
+                case 'error': return '#f44336';
+                case 'warning': return '#FFC107';
+                default: return '#2196F3';
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const status = document.getElementById('connectionStatus');
+            if (connected) {
+                status.textContent = '⚡ Connected';
+                status.className = 'connection-status connected';
+            } else {
+                status.textContent = '⚡ Disconnected';
+                status.className = 'connection-status disconnected';
+            }
+        }
+        
+        function clearDashboard() {
+            document.getElementById('keywordsList').innerHTML = '';
+            document.getElementById('complianceList').innerHTML = '';
+            document.getElementById('transcriptionBox').innerHTML = '';
+            document.getElementById('eventLog').innerHTML = '';
+            document.getElementById('qualityScore').textContent = '0.0';
+            updateSentiment({ score: 0 });
+            updateMetrics({
+                talk_time: 0,
+                silence_ratio: 0,
+                talk_speed: 0,
+                interruptions: 0
+            });
+        }
+        
+        // Auto-connect on load
+        window.onload = () => {
+            setTimeout(connect, 1000);
+        };
+        
+        // Cleanup on unload
+        window.onbeforeunload = () => {
+            disconnect();
+        };
+    </script>
+</body>
+</html>
