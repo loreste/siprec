@@ -25,15 +25,16 @@ type MetricsProvider interface {
 
 // Server represents the HTTP server for health checks and metrics
 type Server struct {
-	config             *Config
-	logger             *logrus.Logger
-	httpServer         *http.Server
-	metricsProvider    MetricsProvider
-	startTime          time.Time
-	additionalHandlers map[string]http.HandlerFunc
-	sipHandler         interface{} // Reference to SIP handler
-	wsHub              *TranscriptionHub
-	amqpClient         interface{} // Reference to AMQP client
+	config                *Config
+	logger                *logrus.Logger
+	httpServer            *http.Server
+	metricsProvider       MetricsProvider
+	startTime             time.Time
+	additionalHandlers    map[string]http.HandlerFunc
+	sipHandler            interface{} // Reference to SIP handler
+	wsHub                 *TranscriptionHub
+	amqpClient            interface{} // Reference to AMQP client
+	analyticsWSHandler    *AnalyticsWebSocketHandler
 }
 
 // NewServer creates a new HTTP server instance
@@ -113,6 +114,24 @@ func (s *Server) SetSIPHandler(handler interface{}) {
 // SetWebSocketHub sets the WebSocket hub reference for health checks
 func (s *Server) SetWebSocketHub(hub *TranscriptionHub) {
 	s.wsHub = hub
+}
+
+// SetAnalyticsWebSocketHandler sets the analytics WebSocket handler
+func (s *Server) SetAnalyticsWebSocketHandler(handler *AnalyticsWebSocketHandler) {
+	s.analyticsWSHandler = handler
+	
+	// Register the WebSocket endpoint
+	if s.httpServer != nil && s.httpServer.Handler != nil {
+		if mux, ok := s.httpServer.Handler.(*http.ServeMux); ok {
+			mux.HandleFunc("/ws/analytics", handler.ServeHTTP)
+			s.logger.Info("Analytics WebSocket endpoint registered at /ws/analytics")
+		}
+	}
+}
+
+// GetAnalyticsWebSocketHandler returns the analytics WebSocket handler
+func (s *Server) GetAnalyticsWebSocketHandler() *AnalyticsWebSocketHandler {
+	return s.analyticsWSHandler
 }
 
 // SetAMQPClient sets the AMQP client reference for health checks

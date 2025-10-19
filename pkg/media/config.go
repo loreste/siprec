@@ -1,11 +1,14 @@
 package media
 
+import "time"
+
 // Config holds media-related configuration
 type Config struct {
 	// RTP configuration
-	RTPPortMin int
-	RTPPortMax int
-	EnableSRTP bool
+	RTPPortMin  int
+	RTPPortMax  int
+	EnableSRTP  bool
+	RequireSRTP bool
 
 	// Recording configuration
 	RecordingDir     string
@@ -28,6 +31,10 @@ type Config struct {
 
 	// PII detection configuration
 	PIIAudioEnabled bool
+
+	// Audio metrics publishing
+	AudioMetricsListener AudioMetricsListener
+	AudioMetricsInterval time.Duration
 }
 
 // AudioProcessingConfig holds audio processing settings

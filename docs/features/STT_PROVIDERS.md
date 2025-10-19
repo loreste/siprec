@@ -20,6 +20,17 @@ The SIPREC server supports multiple speech-to-text providers with both basic and
 | Performance Metrics | ❌ | ✅ |
 | Memory Optimization | ❌ | ✅ |
 
+## Language Routing
+
+The application supports intelligent routing of calls to specific STT providers based on language detection:
+
+```bash
+# Route languages to specific providers
+LANGUAGE_ROUTING=en-US:google,es-ES:deepgram,fr-FR:speechmatics,de-DE:elevenlabs
+```
+
+This ensures optimal transcription quality by using providers that excel with specific languages.
+
 ## Supported Providers
 
 ### Google Cloud Speech-to-Text (Enhanced)

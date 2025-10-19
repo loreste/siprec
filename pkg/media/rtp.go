@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	mathrand "math/rand"
 	"net"
 	"os"
@@ -29,6 +30,145 @@ import (
 func init() {
 	// Initialize the random number generator
 	mathrand.Seed(time.Now().UnixNano())
+}
+
+type audioMetricsCollector struct {
+	callID      string
+	forwarder   *RTPForwarder
+	listener    AudioMetricsListener
+	interval    time.Duration
+	logger      *logrus.Logger
+	dtmfCh      chan AcousticEvent
+	lastSilence time.Time
+	lastHold    time.Time
+}
+
+func newAudioMetricsCollector(callID string, forwarder *RTPForwarder, listener AudioMetricsListener, interval time.Duration, dtmfCh chan AcousticEvent, logger *logrus.Logger) *audioMetricsCollector {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	return &audioMetricsCollector{
+		callID:    callID,
+		forwarder: forwarder,
+		listener:  listener,
+		interval:  interval,
+		logger:    logger,
+		dtmfCh:    dtmfCh,
+	}
+}
+
+func (c *audioMetricsCollector) run(ctx context.Context) {
+	tp := time.NewTicker(c.interval)
+	defer tp.Stop()
+	windowStart := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-c.dtmfCh:
+			c.listener.OnAcousticEvent(c.callID, event)
+		case <-tp.C:
+			c.collect(windowStart)
+			windowStart = time.Now()
+		}
+	}
+}
+
+func (c *audioMetricsCollector) collect(windowStart time.Time) {
+	if c.listener == nil || c.forwarder == nil {
+		return
+	}
+
+	pm, ok := c.forwarder.AudioProcessor.(*audio.ProcessingManager)
+	if !ok || pm == nil {
+		return
+	}
+
+	stats := pm.GetStats()
+	packetLoss, jitterSeconds, _ := c.forwarder.RTPStats.Snapshot()
+	metrics := AudioMetrics{
+		VoiceRatio:  stats.VoiceRatio,
+		NoiseFloor:  stats.NoiseFloor,
+		PacketLoss:  packetLoss,
+		JitterMs:    jitterSeconds * 1000,
+		Timestamp:   time.Now(),
+		WindowStart: windowStart,
+		WindowEnd:   time.Now(),
+	}
+	metrics.MOS = calculateMOS(metrics.VoiceRatio, metrics.NoiseFloor, metrics.PacketLoss, metrics.JitterMs)
+	if stats.PacketsPerSecond > 0 {
+		if metrics.Details == nil {
+			metrics.Details = make(map[string]any)
+		}
+		metrics.Details["packets_per_second"] = stats.PacketsPerSecond
+	}
+
+	c.listener.OnAudioMetrics(c.callID, metrics)
+
+	events := c.detectAcousticEvents(metrics, stats)
+	for _, event := range events {
+		c.listener.OnAcousticEvent(c.callID, event)
+	}
+}
+
+func (c *audioMetricsCollector) detectAcousticEvents(metrics AudioMetrics, stats audio.AudioProcessingStats) []AcousticEvent {
+	var events []AcousticEvent
+	now := time.Now()
+
+	if metrics.VoiceRatio < 0.05 {
+		if now.Sub(c.lastSilence) > 15*time.Second {
+			c.lastSilence = now
+			events = append(events, AcousticEvent{
+				Type:       "silence",
+				Confidence: 0.9,
+				Timestamp:  now,
+				Details: map[string]interface{}{
+					"voice_ratio": metrics.VoiceRatio,
+				},
+			})
+		}
+	} else if metrics.VoiceRatio < 0.3 && metrics.NoiseFloor > -45 {
+		if now.Sub(c.lastHold) > 20*time.Second {
+			c.lastHold = now
+			events = append(events, AcousticEvent{
+				Type:       "hold_music",
+				Confidence: 0.6,
+				Timestamp:  now,
+				Details: map[string]interface{}{
+					"voice_ratio": metrics.VoiceRatio,
+					"noise_floor": metrics.NoiseFloor,
+				},
+			})
+		}
+	}
+
+	return events
+}
+
+func calculateMOS(voiceRatio, noiseFloor, packetLoss, jitterMs float64) float64 {
+	voiceQuality := clamp(voiceRatio, 0, 1)
+	noiseQuality := 1.0
+	if noiseFloor != 0 {
+		normalized := clamp((noiseFloor+120)/100, 0, 1)
+		noiseQuality = clamp(1-normalized, 0, 1)
+	}
+	lossQuality := clamp(1-(packetLoss*4), 0, 1)
+	jitterQuality := clamp(1-(math.Min(jitterMs, 200)/200), 0, 1)
+
+	score := 0.4*voiceQuality + 0.3*noiseQuality + 0.2*lossQuality + 0.1*jitterQuality
+	mos := 1 + 4*score
+	return clamp(mos, 1, 5)
+}
+
+func clamp(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 // StartRTPForwarding starts forwarding RTP packets for a call
@@ -222,6 +362,13 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}).Info("Audio processing initialized")
 		}
 
+		var dtmfCh chan AcousticEvent
+		if config.AudioMetricsListener != nil {
+			dtmfCh = make(chan AcousticEvent, 16)
+			collector := newAudioMetricsCollector(callUUID, forwarder, config.AudioMetricsListener, config.AudioMetricsInterval, dtmfCh, forwarder.Logger)
+			go collector.run(ctx)
+		}
+
 		mainPr, mainPw := io.Pipe()
 		recordingWriter := NewPausableWriter(forwarder.WAVWriter)
 		recordingReader := io.TeeReader(mainPr, recordingWriter)
@@ -231,7 +378,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		forwarder.Logger.WithField("call_uuid", callUUID).Debug("Starting transcription stream")
 		rtpSpan.AddEvent("stt.dispatch", trace.WithAttributes(attribute.String("stt.vendor", config.DefaultVendor)))
-		go sttProvider(ctx, config.DefaultVendor, transcriptionReader, callUUID)
+		go sttProvider(ctx, "", transcriptionReader, callUUID)
 
 		go MonitorRTPTimeout(forwarder, callUUID)
 		go startRTCPSender(ctx, forwarder)
@@ -279,6 +426,20 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			payload := rtpPacket.Payload
 			if len(payload) == 0 {
 				return
+			}
+
+			if dtmfCh != nil && (rtpPacket.PayloadType == 101 || strings.EqualFold(forwarder.CodecName, "TELEPHONE-EVENT")) {
+				select {
+				case dtmfCh <- AcousticEvent{
+					Type:       "dtmf",
+					Confidence: 0.9,
+					Timestamp:  time.Now(),
+					Details: map[string]interface{}{
+						"payload_type": rtpPacket.PayloadType,
+					},
+				}:
+				default:
+				}
 			}
 
 			codecName := forwarder.CodecName

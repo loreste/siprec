@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -67,6 +68,9 @@ func main() {
 	handler, err := sip.NewHandler(logger, sipConfig, nil)
 	if err != nil {
 		log.Fatalf("Failed to create SIP handler: %v", err)
+	}
+	handler.STTCallback = func(ctx context.Context, vendor string, reader io.Reader, callUUID string) error {
+		return nil
 	}
 
 	// Verify NAT rewriter is initialized

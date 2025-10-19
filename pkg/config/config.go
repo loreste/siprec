@@ -34,6 +34,31 @@ type Config struct {
 	PauseResume    PauseResumeConfig    `json:"pause_resume"`
 	PII            PIIConfig            `json:"pii"`
 	Tracing        TracingConfig        `json:"tracing"`
+	Analytics      AnalyticsConfig      `json:"analytics"`
+	Database       DatabaseConfig       `json:"database"`
+	Compliance     ComplianceConfig     `json:"compliance"`
+}
+
+// DatabaseConfig controls database persistence
+type DatabaseConfig struct {
+	Enabled bool `json:"enabled" env:"DATABASE_ENABLED" default:"false"`
+}
+
+// ComplianceConfig groups compliance-related settings.
+type ComplianceConfig struct {
+	PCI struct {
+		Enabled bool `json:"enabled" env:"COMPLIANCE_PCI_ENABLED" default:"false"`
+	} `json:"pci"`
+
+	GDPR struct {
+		Enabled   bool   `json:"enabled" env:"COMPLIANCE_GDPR_ENABLED" default:"false"`
+		ExportDir string `json:"export_dir" env:"COMPLIANCE_GDPR_EXPORT_DIR" default:"./exports"`
+	} `json:"gdpr"`
+
+	Audit struct {
+		TamperProof bool   `json:"tamper_proof" env:"COMPLIANCE_AUDIT_TAMPER_PROOF" default:"false"`
+		LogPath     string `json:"log_path" env:"COMPLIANCE_AUDIT_LOG_PATH" default:"./logs/audit-chain.log"`
+	} `json:"audit"`
 }
 
 // NetworkConfig holds network-related configurations
@@ -76,6 +101,10 @@ type NetworkConfig struct {
 
 	// Whether the server is behind NAT
 	BehindNAT bool `json:"behind_nat" env:"BEHIND_NAT" default:"false"`
+
+	// Whether only TLS (SIPS) connections should be accepted
+	RequireTLSOnly bool `json:"require_tls_only" env:"SIP_REQUIRE_TLS" default:"false"`
+	RequireSRTP    bool `json:"require_srtp" env:"SIP_REQUIRE_SRTP" default:"false"`
 
 	// STUN servers for NAT traversal
 	STUNServers []string `json:"stun_servers" env:"STUN_SERVER"`
@@ -176,6 +205,9 @@ type STTConfig struct {
 	OpenAI       OpenAISTTConfig       `json:"openai"`
 	ElevenLabs   ElevenLabsSTTConfig   `json:"elevenlabs"`
 	Speechmatics SpeechmaticsSTTConfig `json:"speechmatics"`
+
+	// Language-specific routing (language code -> provider name)
+	LanguageRouting map[string]string `json:"language_routing"`
 }
 
 // GoogleSTTConfig holds Google Speech-to-Text configuration
@@ -787,6 +819,19 @@ type PauseResumeConfig struct {
 	APIKey string `json:"api_key" env:"PAUSE_RESUME_API_KEY"`
 }
 
+// AnalyticsConfig controls analytics persistence and exports
+type AnalyticsConfig struct {
+	Enabled bool `json:"enabled" env:"ANALYTICS_ENABLED" default:"false"`
+
+	Elasticsearch struct {
+		Addresses []string      `json:"addresses" env:"ELASTICSEARCH_ADDRESSES" default:"http://localhost:9200"`
+		Index     string        `json:"index" env:"ELASTICSEARCH_INDEX" default:"call-analytics"`
+		Username  string        `json:"username" env:"ELASTICSEARCH_USERNAME"`
+		Password  string        `json:"password" env:"ELASTICSEARCH_PASSWORD"`
+		Timeout   time.Duration `json:"timeout" env:"ELASTICSEARCH_TIMEOUT" default:"10s"`
+	}
+}
+
 // PIIConfig holds configuration for PII (Personally Identifiable Information) detection
 type PIIConfig struct {
 	// Whether PII detection is enabled
@@ -944,6 +989,21 @@ func Load(logger *logrus.Logger) (*Config, error) {
 		return nil, errors.Wrap(err, "failed to load PII detection configuration")
 	}
 
+	// Load analytics configuration
+	if err := loadAnalyticsConfig(logger, &config.Analytics); err != nil {
+		return nil, errors.Wrap(err, "failed to load analytics configuration")
+	}
+
+	// Load database configuration
+	if err := loadDatabaseConfig(logger, &config.Database); err != nil {
+		return nil, errors.Wrap(err, "failed to load database configuration")
+	}
+
+	// Load compliance configuration
+	if err := loadComplianceConfig(logger, &config.Compliance); err != nil {
+		return nil, errors.Wrap(err, "failed to load compliance configuration")
+	}
+
 	// Validate the complete configuration
 	if err := validateConfig(logger, config); err != nil {
 		return nil, errors.Wrap(err, "configuration validation failed")
@@ -1050,10 +1110,17 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	config.EnableTLS = getEnvBool("ENABLE_TLS", false)
 	config.EnableSRTP = getEnvBool("ENABLE_SRTP", false)
 	config.BehindNAT = getEnvBool("BEHIND_NAT", false)
+	config.RequireTLSOnly = getEnvBool("SIP_REQUIRE_TLS", false)
+	config.RequireSRTP = getEnvBool("SIP_REQUIRE_SRTP", false)
 
 	// If TLS is enabled, ensure certificates are provided
 	if config.EnableTLS && (config.TLSCertFile == "" || config.TLSKeyFile == "") {
 		return errors.New("TLS is enabled but certificate or key file is missing. Please provide both TLS_CERT_PATH and TLS_KEY_PATH environment variables")
+	}
+
+	if config.RequireSRTP && !config.EnableSRTP {
+		logger.Info("SIP_REQUIRE_SRTP enabled; enabling SRTP")
+		config.EnableSRTP = true
 	}
 
 	// Load STUN servers
@@ -1263,6 +1330,30 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 
 	if err := loadSpeechmaticsSTTConfig(logger, &config.Speechmatics); err != nil {
 		return fmt.Errorf("failed to load Speechmatics STT config: %w", err)
+	}
+
+	// Load language routing mapping (e.g., "en-US:google,es-ES:deepgram")
+	routingEnv := getEnv("LANGUAGE_ROUTING", "")
+	config.LanguageRouting = make(map[string]string)
+	if routingEnv != "" {
+		routes := strings.Split(routingEnv, ",")
+		for _, route := range routes {
+			parts := strings.SplitN(strings.TrimSpace(route), ":", 2)
+			if len(parts) != 2 {
+				logger.WithField("entry", route).Warn("Invalid LANGUAGE_ROUTING entry, expected language:provider")
+				continue
+			}
+			lang := strings.ToLower(strings.TrimSpace(parts[0]))
+			provider := strings.TrimSpace(parts[1])
+			if lang == "" || provider == "" {
+				logger.WithField("entry", route).Warn("Invalid LANGUAGE_ROUTING entry, language or provider empty")
+				continue
+			}
+			config.LanguageRouting[lang] = provider
+		}
+		if len(config.LanguageRouting) > 0 {
+			logger.WithField("language_routing", config.LanguageRouting).Info("Configured STT language routing")
+		}
 	}
 
 	return nil
@@ -1927,6 +2018,19 @@ func validateConfig(logger *logrus.Logger, config *Config) error {
 		return errors.New(fmt.Sprintf("port conflict: TLS port %d conflicts with HTTP port", config.Network.TLSPort))
 	}
 
+	if config.Network.RequireTLSOnly {
+		if !config.Network.EnableTLS {
+			return errors.New("SIP_REQUIRE_TLS is enabled but TLS is disabled. Please set ENABLE_TLS=true and configure TLS certificates")
+		}
+		if len(config.Network.Ports) > 0 {
+			logger.Warn("SIP_REQUIRE_TLS enabled; UDP/TCP listeners will be skipped in favor of TLS-only mode")
+		}
+	}
+
+	if config.Network.RequireSRTP && !config.Network.EnableSRTP {
+		return errors.New("SIP_REQUIRE_SRTP is enabled but SRTP is disabled. Set ENABLE_SRTP=true")
+	}
+
 	// Validate RTP port range
 	if config.Network.RTPPortMax <= config.Network.RTPPortMin {
 		return errors.New("invalid RTP port range: RTP_PORT_MAX must be greater than RTP_PORT_MIN")
@@ -1959,6 +2063,15 @@ func validateConfig(logger *logrus.Logger, config *Config) error {
 			return errors.Wrap(err, fmt.Sprintf("cannot write to log file: %s", config.Logging.OutputFile))
 		}
 		f.Close()
+	}
+
+	if config.Analytics.Enabled {
+		if len(config.Analytics.Elasticsearch.Addresses) == 0 {
+			return errors.New("analytics enabled but ELASTICSEARCH_ADDRESSES is empty")
+		}
+		if strings.TrimSpace(config.Analytics.Elasticsearch.Index) == "" {
+			return errors.New("analytics enabled but ELASTICSEARCH_INDEX is empty")
+		}
 	}
 
 	return nil
@@ -2618,6 +2731,90 @@ func loadPIIConfig(logger *logrus.Logger, config *PIIConfig) error {
 		}).Info("PII detection enabled")
 	} else {
 		logger.Debug("PII detection disabled")
+	}
+
+	return nil
+}
+
+// loadAnalyticsConfig loads analytics persistence configuration
+func loadAnalyticsConfig(logger *logrus.Logger, config *AnalyticsConfig) error {
+	config.Enabled = getEnvBool("ANALYTICS_ENABLED", false)
+
+	addressesStr := getEnv("ELASTICSEARCH_ADDRESSES", "http://localhost:9200")
+	if addressesStr != "" {
+		parts := strings.Split(addressesStr, ",")
+		var addresses []string
+		for _, addr := range parts {
+			trimmed := strings.TrimSpace(addr)
+			if trimmed != "" {
+				addresses = append(addresses, trimmed)
+			}
+		}
+		if len(addresses) > 0 {
+			config.Elasticsearch.Addresses = addresses
+		}
+	}
+	if len(config.Elasticsearch.Addresses) == 0 {
+		config.Elasticsearch.Addresses = []string{"http://localhost:9200"}
+	}
+
+	config.Elasticsearch.Index = getEnv("ELASTICSEARCH_INDEX", "call-analytics")
+	config.Elasticsearch.Username = getEnv("ELASTICSEARCH_USERNAME", "")
+	config.Elasticsearch.Password = getEnv("ELASTICSEARCH_PASSWORD", "")
+
+	timeoutStr := getEnv("ELASTICSEARCH_TIMEOUT", "10s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		logger.WithError(err).Warn("Invalid ELASTICSEARCH_TIMEOUT value, using default 10s")
+		timeout = 10 * time.Second
+	}
+	config.Elasticsearch.Timeout = timeout
+
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"addresses": config.Elasticsearch.Addresses,
+			"index":     config.Elasticsearch.Index,
+		}).Info("Analytics persistence enabled")
+	} else {
+		logger.Debug("Analytics persistence disabled")
+	}
+
+	return nil
+}
+
+func loadDatabaseConfig(logger *logrus.Logger, config *DatabaseConfig) error {
+	config.Enabled = getEnvBool("DATABASE_ENABLED", false)
+
+	if config.Enabled {
+		logger.Info("Database persistence enabled")
+	} else {
+		logger.Debug("Database persistence disabled")
+	}
+
+	return nil
+}
+
+func loadComplianceConfig(logger *logrus.Logger, config *ComplianceConfig) error {
+	if config == nil {
+		return nil
+	}
+
+	if config.PCI.Enabled {
+		logger.Info("PCI compliance mode enabled")
+	}
+
+	if config.GDPR.Enabled {
+		if config.GDPR.ExportDir == "" {
+			config.GDPR.ExportDir = "./exports"
+		}
+		logger.WithField("export_dir", config.GDPR.ExportDir).Info("GDPR tools enabled")
+	}
+
+	if config.Audit.TamperProof {
+		if config.Audit.LogPath == "" {
+			config.Audit.LogPath = "./logs/audit-chain.log"
+		}
+		logger.WithField("log_path", config.Audit.LogPath).Info("Tamper-proof audit logging enabled")
 	}
 
 	return nil

@@ -243,7 +243,7 @@ func deepgramStreamingExample(logger *logrus.Logger) {
 	}
 
 	// Create Deepgram provider
-	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
+	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig, nil)
 
 	// Set up callback for real-time results
 	var wg sync.WaitGroup
@@ -356,7 +356,7 @@ func multiProviderStreamingExample(logger *logrus.Logger) {
 		}),
 		stt.NewDeepgramProvider(logger, transcriptionSvc, &config.DeepgramSTTConfig{
 			Enabled: true, APIKey: "demo-key", Language: "en-US", Model: "nova-2",
-		}),
+		}, nil),
 		stt.NewOpenAIProvider(logger, transcriptionSvc, &config.OpenAISTTConfig{
 			Enabled: true, APIKey: "demo-key", BaseURL: "https://api.openai.com/v1", Model: "whisper-1",
 		}),

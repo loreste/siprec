@@ -54,7 +54,7 @@ func basicDeepgramExample(logger *logrus.Logger) {
 	}
 
 	// Create basic Deepgram provider
-	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
+	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig, nil)
 
 	// Set callback for transcription results
 	var wg sync.WaitGroup
@@ -131,7 +131,7 @@ func enhancedDeepgramExample(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	transcriptionSvc := stt.NewTranscriptionService(logger)
-	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig)
+	provider := stt.NewDeepgramProvider(logger, transcriptionSvc, deepgramConfig, nil)
 
 	// Set callback for rich transcription results
 	var results []string
@@ -218,7 +218,7 @@ func websocketStreamingExample(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	transcriptionWSService := stt.NewTranscriptionService(logger)
-	provider := stt.NewDeepgramProvider(logger, transcriptionWSService, deepgramWSConfig)
+	provider := stt.NewDeepgramProvider(logger, transcriptionWSService, deepgramWSConfig, nil)
 
 	// Track interim and final results separately
 	var interimCount, finalCount int
@@ -291,7 +291,7 @@ func providerManagerExample(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	transcriptionPMService := stt.NewTranscriptionService(logger)
-	deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionPMService, deepgramPMConfig)
+	deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionPMService, deepgramPMConfig, nil)
 	if err := manager.RegisterProvider(deepgramProvider); err != nil {
 		log.Printf("Failed to register Deepgram provider: %v", err)
 		return
@@ -374,7 +374,7 @@ func advancedFeaturesExample(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	transcriptionAdvService := stt.NewTranscriptionService(logger)
-	provider := stt.NewDeepgramProvider(logger, transcriptionAdvService, deepgramAdvConfig)
+	provider := stt.NewDeepgramProvider(logger, transcriptionAdvService, deepgramAdvConfig, nil)
 
 	// Detailed callback to showcase all features
 	var wg sync.WaitGroup
@@ -478,7 +478,7 @@ func demoErrorHandling(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	demoTranscriptionService := stt.NewTranscriptionService(logger)
-	provider := stt.NewDeepgramProvider(logger, demoTranscriptionService, demoConfig)
+	provider := stt.NewDeepgramProvider(logger, demoTranscriptionService, demoConfig, nil)
 
 	// Test basic functionality
 	fmt.Println("🔧 Testing basic provider functionality...")
@@ -506,7 +506,7 @@ func demoConfigurationUpdates(logger *logrus.Logger) {
 		Model:    "nova-2",
 	}
 	configTranscriptionService := stt.NewTranscriptionService(logger)
-	_ = stt.NewDeepgramProvider(logger, configTranscriptionService, initialConfig)
+	_ = stt.NewDeepgramProvider(logger, configTranscriptionService, initialConfig, nil)
 
 	// Show initial config
 	fmt.Printf("📋 Initial Model: %s, Language: %s\n", initialConfig.Model, initialConfig.Language)

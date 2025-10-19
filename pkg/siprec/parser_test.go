@@ -1,6 +1,7 @@
 package siprec
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 	"time"
@@ -160,6 +161,7 @@ func TestRecordingSession(t *testing.T) {
 
 func TestValidateSiprecMessageReasonMap(t *testing.T) {
 	metadata := &RSMetadata{
+		XMLName:   xml.Name{Space: "urn:ietf:params:xml:ns:recording:1", Local: "recording"},
 		SessionID: "session-1",
 		State:     "active",
 		Reason:    "error",
@@ -175,10 +177,21 @@ func TestValidateSiprecMessageReasonMap(t *testing.T) {
 
 func TestValidateSiprecMessagePolicyAcknowledgementWarnings(t *testing.T) {
 	metadata := &RSMetadata{
+		XMLName:   xml.Name{Space: "urn:ietf:params:xml:ns:recording:1", Local: "recording"},
 		SessionID: "session-2",
 		State:     "active",
 		SessionRecordingAssoc: RSAssociation{
 			SessionID: "session-2",
+		},
+		Participants: []RSParticipant{
+			{
+				ID:   "participant-1",
+				Name: "Agent Smith",
+				Aor: []Aor{
+					{Value: "sip:agent@example.com"},
+				},
+				Role: "active",
+			},
 		},
 		PolicyUpdates: []PolicyUpdate{
 			{

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
+	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
+	"siprec-server/pkg/realtime/analytics"
 	"siprec-server/pkg/siprec"
+	"siprec-server/pkg/stt"
 	"siprec-server/pkg/telemetry/tracing"
 
 	"github.com/sirupsen/logrus"
@@ -88,6 +92,10 @@ type Handler struct {
 
 	// Metadata notifier for SIPREC state changes
 	Notifier *MetadataNotifier
+
+	analyticsDispatcher *analytics.Dispatcher
+	cdrService          *cdr.CDRService
+	sttManager          *stt.ProviderManager
 }
 
 // CallData holds information about an active call
@@ -139,7 +147,7 @@ type DialogInfo struct {
 }
 
 // NewHandler creates a new SIP handler
-func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.Context, string, io.Reader, string) error) (*Handler, error) {
+func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderManager) (*Handler, error) {
 	if config == nil {
 		return nil, errors.New("configuration cannot be nil")
 	}
@@ -158,8 +166,16 @@ func NewHandler(logger *logrus.Logger, config *Config, sttCallback func(context.
 	handler := &Handler{
 		Logger:      logger,
 		Config:      config,
-		STTCallback: sttCallback,
 		ActiveCalls: activeCalls,
+		sttManager:  sttManager,
+	}
+
+	if sttManager != nil {
+		handler.STTCallback = handler.routeSTTCallThroughManager
+	} else {
+		handler.STTCallback = func(ctx context.Context, vendor string, reader io.Reader, callUUID string) error {
+			return stt.ErrNoProviderAvailable
+		}
 	}
 
 	handler.Notifier = NewMetadataNotifier(logger, config.MetadataCallbackURLs, config.MetadataNotifyTimeout)
@@ -220,6 +236,46 @@ func (h *Handler) SetupHandlers() {
 	// Handler setup is now done by CustomSIPServer directly
 	// The custom server calls appropriate handler methods based on SIP method
 	h.Logger.Info("SIP request handlers configured via CustomSIPServer")
+}
+
+// SetAnalyticsDispatcher registers the analytics dispatcher used for per-call analytics.
+func (h *Handler) SetAnalyticsDispatcher(dispatcher *analytics.Dispatcher) {
+	h.analyticsDispatcher = dispatcher
+}
+
+// SetCDRService registers the CDR persistence service used for call completion events.
+func (h *Handler) SetCDRService(service *cdr.CDRService) {
+	h.cdrService = service
+}
+
+// CDRService returns the configured CDR service.
+func (h *Handler) CDRService() *cdr.CDRService {
+	return h.cdrService
+}
+
+// ClearSTTRouting removes call-specific STT routing information.
+func (h *Handler) ClearSTTRouting(callUUID string) {
+	if h.sttManager != nil {
+		h.sttManager.ClearCallRoute(callUUID)
+	}
+}
+
+// routeSTTCallThroughManager resolves the appropriate provider and streams audio.
+func (h *Handler) routeSTTCallThroughManager(ctx context.Context, vendor string, reader io.Reader, callUUID string) error {
+	if h.sttManager == nil {
+		return stt.ErrNoProviderAvailable
+	}
+
+	resolved := h.sttManager.SelectProviderForCall(callUUID, vendor)
+	if !strings.EqualFold(resolved, vendor) {
+		h.Logger.WithFields(logrus.Fields{
+			"call_uuid": callUUID,
+			"requested": vendor,
+			"resolved":  resolved,
+		}).Info("Routing STT stream to provider")
+	}
+
+	return h.sttManager.StreamToProvider(ctx, resolved, reader, callUUID)
 }
 
 // UpdateActivity updates the last activity timestamp for a call

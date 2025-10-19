@@ -36,6 +36,28 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **🔄 Provider Interface Standardization** - Unified callback interface across all STT providers
 - **🏥 Provider Health Monitoring** - Automatic health checks, circuit breakers, and intelligent failover
 
+### Analytics & Intelligence
+- **📊 Real-time Analytics** - Live call analytics with sentiment analysis, keyword extraction, and compliance monitoring
+- **🔍 Elasticsearch Integration** - Scalable analytics storage with full-text search capabilities
+- **🌊 WebSocket Analytics Stream** - Real-time analytics updates with event-driven alerts
+- **📈 Audio Metrics** - MOS scoring, packet loss analysis, jitter monitoring, and quality degradation detection
+- **🎯 Event Detection** - Acoustic event detection including music, silence, and speech patterns
+- **⚠️ Intelligent Alerting** - Automatic detection of quality issues, sentiment changes, and compliance violations
+
+### Data Persistence & Storage
+- **💾 Database Support** - Optional MySQL/MariaDB persistence with full CRUD operations
+- **☁️ Cloud Storage** - Multi-cloud storage support (AWS S3, Google Cloud Storage, Azure Blob)
+- **🔍 Full-text Search** - Database-backed search across transcriptions and metadata
+- **📦 Automatic Archival** - Configurable retention policies with automatic cloud upload
+- **🗄️ CDR Generation** - Call Detail Records with comprehensive metadata
+
+### Compliance & Security
+- **🔒 PCI DSS Compliance** - PCI compliance mode with automatic security hardening
+- **🇪🇺 GDPR Support** - Data privacy controls with export and deletion capabilities  
+- **📝 Audit Logging** - Tamper-proof audit logs with blockchain-style chaining
+- **🔐 Encryption at Rest** - Optional recording encryption with key management
+- **🛡️ Security Enforcement** - Configurable TLS/SRTP requirements with certificate validation
+
 ### Enterprise Features
 - **🔐 Security** - End-to-end encryption with TLS/SRTP and configurable key rotation
 - **📨 Message Queue** - AMQP integration with delivery guarantees, multi-endpoint fan-out, connection pooling, and TLS support
@@ -44,6 +66,7 @@ A high-performance, enterprise-grade SIP recording (SIPREC) server that implemen
 - **⚠️ Advanced Warning System** - Intelligent warning collection with severity levels and automatic resolution
 - **✅ Configuration Validation** - Comprehensive startup validation with detailed error reporting
 - **🔄 Provider Resilience** - Automatic failover with score-based provider selection
+- **🌍 Language Routing** - Intelligent routing of calls to STT providers based on language detection
 
 ## 🚀 Quick Start
 
@@ -99,6 +122,29 @@ go build -o siprec ./cmd/siprec
 ./siprec
 ```
 
+### Optional MySQL Support
+
+MySQL persistence is delivered via an optional build tag so tenants that do not
+require it can keep images lean:
+
+```bash
+# Build without MySQL (default)
+make build
+
+# Build with MySQL enabled
+make build-mysql
+
+# Run unit tests with MySQL enabled
+make test-mysql
+
+# Or call go build/test directly
+GO_BUILD_TAGS=mysql make build
+GO_BUILD_TAGS=mysql make test
+```
+
+Executables built without the `mysql` tag will return a clear
+`mysql support not enabled` error if MySQL is requested at runtime.
+
 ## ⚙️ Configuration
 
 ### Environment Variables
@@ -113,6 +159,7 @@ INTERNAL_IP=auto                   # Auto-detect internal IP
 PORTS=5060,5061                    # SIP listening ports
 RTP_PORT_MIN=16384                 # RTP port range start
 RTP_PORT_MAX=32768                 # RTP port range end
+SIP_REQUIRE_TLS=false              # Set true to enforce TLS-only SIP listeners
 
 # STUN Configuration
 STUN_SERVER=stun:stun.l.google.com:19302
@@ -122,6 +169,8 @@ ENABLE_TLS=true                    # Enable TLS for SIP
 TLS_CERT_PATH=/path/to/cert.pem    # TLS certificate
 TLS_KEY_PATH=/path/to/key.pem      # TLS private key
 ENABLE_SRTP=true                   # Enable SRTP for media
+SIP_REQUIRE_SRTP=false             # Require inbound calls to negotiate SRTP
+SIP_REQUIRE_TLS=false              # Enforce TLS-only SIP listeners (no UDP/TCP)
 
 # Transcription
 STT_DEFAULT_VENDOR=google-enhanced           # Default STT provider
@@ -147,12 +196,67 @@ ENABLE_RECORDING_ENCRYPTION=false
 STT_ENABLE_DIARIZATION=true    # Enable speaker diarization
 STT_ENABLE_WORD_TIMESTAMPS=true # Enable word-level timestamps
 STT_ENABLE_STREAMING=true      # Enable real-time streaming transcription
+# Route languages to providers (language:provider comma-separated)
+LANGUAGE_ROUTING=en-US:google,es-ES:deepgram
 
 # AMQP (Message Queue)
 AMQP_URL=amqps://guest:guest@rabbitmq.internal:5671/
 AMQP_QUEUE_NAME=siprec.transcriptions
 AMQP_TLS_ENABLED=true
 AMQP_TLS_CA_FILE=/etc/rabbitmq/ca.pem
+
+# Database Persistence (optional, requires build tag `mysql`)
+DATABASE_ENABLED=false
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=siprec
+DB_USERNAME=siprec
+DB_PASSWORD=secret
+DB_MAX_CONNECTIONS=25
+DB_MAX_IDLE_CONNECTIONS=5
+DB_CONNECTION_LIFETIME=5m
+
+# Cloud Storage (optional)
+RECORDING_STORAGE_ENABLED=false
+RECORDING_STORAGE_KEEP_LOCAL=true
+
+# AWS S3
+RECORDING_STORAGE_S3_ENABLED=false
+RECORDING_STORAGE_S3_BUCKET=siprec-recordings
+RECORDING_STORAGE_S3_REGION=us-east-1
+RECORDING_STORAGE_S3_ACCESS_KEY=your-access-key-here
+RECORDING_STORAGE_S3_SECRET_KEY=your-secret-key-here
+RECORDING_STORAGE_S3_PREFIX=recordings/
+
+# Google Cloud Storage
+RECORDING_STORAGE_GCS_ENABLED=false
+RECORDING_STORAGE_GCS_BUCKET=siprec-recordings
+RECORDING_STORAGE_GCS_PROJECT_ID=your-project-id
+RECORDING_STORAGE_GCS_CREDENTIALS_PATH=/path/to/service-account.json
+
+# Azure Blob Storage
+RECORDING_STORAGE_AZURE_ENABLED=false
+RECORDING_STORAGE_AZURE_ACCOUNT_NAME=youraccountname
+RECORDING_STORAGE_AZURE_ACCOUNT_KEY=youraccountkey
+RECORDING_STORAGE_AZURE_CONTAINER=siprec-recordings
+
+# Compliance Features
+COMPLIANCE_PCI_ENABLED=false              # Enable PCI compliance mode
+COMPLIANCE_GDPR_ENABLED=false             # Enable GDPR features
+COMPLIANCE_GDPR_EXPORT_DIR=./exports      # Directory for GDPR exports
+COMPLIANCE_AUDIT_ENABLED=true             # Enable audit logging
+COMPLIANCE_AUDIT_TAMPER_PROOF=false       # Enable tamper-proof audit logs
+COMPLIANCE_AUDIT_LOG_PATH=./logs/audit.log
+
+# Real-time Analytics
+ANALYTICS_ENABLED=false
+ANALYTICS_ELASTICSEARCH_ADDRESSES=http://localhost:9200
+ANALYTICS_ELASTICSEARCH_INDEX=call-analytics
+ANALYTICS_ELASTICSEARCH_USERNAME=elastic
+ANALYTICS_ELASTICSEARCH_PASSWORD=changeme
+ANALYTICS_WEBSOCKET_ENABLED=true          # Enable WebSocket analytics streaming
+ANALYTICS_BUFFER_SIZE=1000                # Analytics buffer size
+ANALYTICS_FLUSH_INTERVAL=5s               # Analytics flush interval
 
 # Audio Processing
 VAD_ENABLED=true
@@ -224,6 +328,9 @@ SIPREC Server is built with a modular architecture:
 - `GET /metrics` - Prometheus metrics
 - `GET /api/sessions` - Active sessions
 - `GET /api/sessions/stats` - Session statistics
+- `GET /api/sessions/{id}` - Session details
+- `GET /api/sessions/search` - Search sessions (requires MySQL)
+- `GET /api/transcriptions/search` - Search transcriptions (requires MySQL)
 
 ### Pause/Resume Control API
 
@@ -261,8 +368,79 @@ curl -X POST http://localhost:8080/api/sessions/pause-all \
 ### WebSocket
 
 - `WS /ws/transcriptions` - Real-time transcription stream
+- `WS /ws/analytics` - Real-time analytics stream with event filtering
+
+#### WebSocket Analytics Events
+
+```javascript
+// Connect to analytics WebSocket
+const ws = new WebSocket('ws://localhost:8080/ws/analytics?call_id=session-123');
+
+// Receive real-time updates
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  switch(data.type) {
+    case 'analytics_snapshot':
+      // Full analytics update
+      console.log('Quality Score:', data.quality_score);
+      console.log('Sentiment:', data.sentiment_trend);
+      break;
+    case 'sentiment_alert':
+      // Negative sentiment detected
+      console.log('Alert:', data.message);
+      break;
+    case 'audio_quality_alert':
+      // Audio quality degraded
+      console.log('MOS:', data.mos, 'Packet Loss:', data.packet_loss);
+      break;
+    case 'compliance_violation':
+      // Compliance rule violated
+      console.log('Violation:', data.rule_id, data.severity);
+      break;
+  }
+};
+```
 
 ## 🧪 Testing
+
+### Comprehensive Test Suite
+
+The application includes a complete testing framework with unit tests, integration tests, and end-to-end tests.
+
+#### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make coverage
+
+# Run tests with MySQL support
+make test-mysql
+
+# Run specific test packages
+go test -v ./pkg/siprec/...
+go test -v ./pkg/stt/...
+
+# Run integration tests
+make test-integration
+
+# Run end-to-end tests  
+make test-e2e
+
+# Generate coverage report
+make coverage-html
+open coverage.html
+```
+
+#### Test Coverage Areas
+
+- **Unit Tests**: Core business logic, parsers, processors
+- **Integration Tests**: STT providers, database, message queue
+- **E2E Tests**: Complete call flows, SIPREC protocol
+- **Performance Tests**: Load testing, concurrent sessions
+- **Compliance Tests**: PCI/GDPR requirements validation
 
 ### Validate Installation
 ```bash
@@ -287,51 +465,149 @@ curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadat
 
 ### Load Testing
 ```bash
-# Run test suite
-go test -v ./...
+# Run performance benchmarks
+go test -bench=. ./pkg/siprec/...
 
-# Run E2E tests
-./run_test.sh
+# Simulate concurrent calls
+./test/load/simulate_calls.sh 100
 
 # SIPREC simulation
-./test/e2e/siprec_simulation_test.go
+go run ./test/e2e/siprec_simulation_test.go
 ```
 
 ## 🏢 Production Deployment
 
 ### System Requirements
 - **OS**: Ubuntu 20.04+, Debian 11+, CentOS 8+, RHEL 8+
-- **Memory**: 4GB RAM minimum, 8GB recommended
-- **CPU**: 2 cores minimum, 4 cores recommended
-- **Storage**: 50GB minimum for recordings
-- **Network**: Public IP for external access
+- **Memory**: 4GB RAM minimum, 8GB recommended (16GB for analytics)
+- **CPU**: 2 cores minimum, 4 cores recommended (8 cores for analytics)
+- **Storage**: 50GB minimum for recordings (500GB+ for long-term storage)
+- **Network**: Public IP for external access, 1Gbps recommended
+- **Database**: MySQL 8.0+ or MariaDB 10.5+ (optional)
+- **Elasticsearch**: 7.10+ for analytics (optional)
 
 ### Performance Characteristics
-- **Concurrent Sessions**: 100+ simultaneous recordings
-- **Audio Quality**: PCM/G.711/G.722 codec support
-- **Latency**: <100ms for real-time streaming transcription
-- **Throughput**: 1000+ RTP packets/second per session
-- **Streaming Support**: Real-time interim and final transcription results
-- **Provider Agnostic**: Unified interface across all STT vendors
+- **Concurrent Sessions**: 500+ simultaneous recordings (with proper resources)
+- **Audio Quality**: PCM/G.711/G.722/Opus codec support
+- **Latency**: <50ms for real-time streaming transcription
+- **Throughput**: 10,000+ RTP packets/second total capacity
+- **Analytics Processing**: Real-time with <1s latency
+- **Database Operations**: <10ms query response time
+- **Storage Upload**: Parallel upload to multiple cloud providers
 
 ### High Availability Setup
-```bash
-# Multiple instances with load balancer
-# Session state stored in external database
-# Shared storage for recordings
-# AMQP clustering for message reliability
+
+#### Active-Active Configuration
+```yaml
+# docker-compose-ha.yml
+version: '3.8'
+services:
+  siprec-1:
+    image: ghcr.io/loreste/siprec:latest
+    environment:
+      - DATABASE_ENABLED=true
+      - DB_HOST=mysql-primary
+      - REDUNDANCY_ENABLED=true
+      - REDUNDANCY_STORAGE_TYPE=redis
+      - REDIS_URL=redis://redis-cluster:6379
+    deploy:
+      replicas: 3
+      
+  mysql-primary:
+    image: mysql:8.0
+    environment:
+      - MYSQL_REPLICATION_MODE=master
+      
+  mysql-replica:
+    image: mysql:8.0
+    environment:
+      - MYSQL_REPLICATION_MODE=slave
+      
+  redis-cluster:
+    image: redis:7-alpine
+    command: redis-server --cluster-enabled yes
+```
+
+#### Load Balancing
+```nginx
+# nginx.conf
+upstream siprec_sip {
+    least_conn;
+    server siprec-1:5060 max_fails=3 fail_timeout=30s;
+    server siprec-2:5060 max_fails=3 fail_timeout=30s;
+    server siprec-3:5060 max_fails=3 fail_timeout=30s;
+}
 ```
 
 ### Monitoring & Alerting
-```bash
-# Prometheus metrics
-curl http://localhost:8080/metrics
 
-# Key metrics to monitor:
-# - siprec_active_calls
-# - siprec_rtp_packets_received
-# - siprec_transcription_errors
-# - siprec_session_duration
+#### Prometheus Configuration
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'siprec'
+    static_configs:
+      - targets: ['siprec-1:8080', 'siprec-2:8080', 'siprec-3:8080']
+    metrics_path: '/metrics'
+```
+
+#### Key Metrics to Monitor
+```bash
+# Core Metrics
+- siprec_active_calls{instance="..."}
+- siprec_rtp_packets_received_total
+- siprec_transcription_errors_total{provider="..."}
+- siprec_session_duration_seconds
+
+# Performance Metrics
+- siprec_audio_processing_latency_ms
+- siprec_stt_response_time_ms{provider="..."}
+- siprec_database_query_duration_ms
+- siprec_storage_upload_duration_seconds
+
+# Analytics Metrics
+- siprec_analytics_buffer_size
+- siprec_analytics_processing_time_ms
+- siprec_websocket_connected_clients
+- siprec_compliance_violations_total
+
+# Health Metrics
+- siprec_provider_health_score{provider="..."}
+- siprec_circuit_breaker_state{provider="..."}
+```
+
+#### Grafana Dashboard
+Import the provided dashboard from `monitoring/grafana-dashboard.json` for comprehensive visualization.
+
+### Security Hardening
+
+#### PCI DSS Compliance Mode
+```bash
+# Enable PCI compliance (auto-configures security settings)
+export COMPLIANCE_PCI_ENABLED=true
+export SIP_REQUIRE_TLS=true
+export SIP_REQUIRE_SRTP=true
+export ENABLE_RECORDING_ENCRYPTION=true
+```
+
+#### Network Security
+```bash
+# Firewall rules
+ufw allow 5060/tcp  # SIP TCP
+ufw allow 5060/udp  # SIP UDP
+ufw allow 5062/tcp  # SIP TLS
+ufw allow 16384:32768/udp  # RTP range
+ufw allow 8080/tcp  # HTTP API (restrict to internal)
+```
+
+#### Certificate Management
+```bash
+# Generate certificates
+certbot certonly --standalone -d siprec.example.com
+
+# Auto-renewal
+crontab -e
+0 0 * * 0 certbot renew --post-hook "systemctl restart siprec-server"
 ```
 
 ## 🔧 Administration
