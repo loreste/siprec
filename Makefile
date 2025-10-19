@@ -1,5 +1,10 @@
 # Makefile for SIPREC Server
-.PHONY: help build test clean docker dev install lint fmt vet deps coverage benchmark docs
+.PHONY: help install deps fmt vet lint check \
+	build build-mysql build-test build-all build-race cross-build \
+	test test-mysql test-integration test-e2e test-all test-unit test-verbose \
+	coverage coverage-mysql benchmark \
+	docker-build docker-build-dev docker-test docker-push \
+	docker dev-up dev-down dev-logs dev-shell clean docs
 
 # Configuration
 PROJECT_NAME := siprec-server
@@ -29,6 +34,12 @@ GOVET := $(GOCMD) vet
 # Build flags
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
 BUILD_FLAGS := -trimpath
+GO_BUILD_TAGS ?=
+ifneq ($(strip $(GO_BUILD_TAGS)),)
+GO_TAG_ARGS := -tags "$(GO_BUILD_TAGS)"
+else
+GO_TAG_ARGS :=
+endif
 
 # Test configuration
 TEST_FLAGS := -race -timeout=5m
@@ -90,13 +101,17 @@ check: fmt vet lint ## Run all code quality checks
 build: ## Build the main binary
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(BINARY_PATH)
+	CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(BINARY_PATH)
 	@echo "Built $(BUILD_DIR)/$(BINARY_NAME)"
+
+build-mysql: ## Build the main binary with MySQL support enabled
+	@echo "Building $(BINARY_NAME) with MySQL support..."
+	$(MAKE) GO_BUILD_TAGS="mysql" build
 
 build-test: ## Build the test environment binary
 	@echo "Building $(TEST_BINARY)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(TEST_BINARY) $(TEST_PATH)
+	CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(TEST_BINARY) $(TEST_PATH)
 	@echo "Built $(BUILD_DIR)/$(TEST_BINARY)"
 
 build-all: build build-test ## Build all binaries
@@ -104,32 +119,36 @@ build-all: build build-test ## Build all binaries
 build-race: ## Build with race detection
 	@echo "Building $(BINARY_NAME) with race detection..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=1 $(GOBUILD) $(BUILD_FLAGS) -race $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-race $(BINARY_PATH)
+	CGO_ENABLED=1 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) -race $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-race $(BINARY_PATH)
 	@echo "Built $(BUILD_DIR)/$(BINARY_NAME)-race"
 
 cross-build: ## Build for multiple platforms
 	@echo "Cross-building for multiple platforms..."
 	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 $(BINARY_PATH)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 $(BINARY_PATH)
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 $(BINARY_PATH)
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 $(BINARY_PATH)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe $(BINARY_PATH)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 $(BINARY_PATH)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 $(BINARY_PATH)
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 $(BINARY_PATH)
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 $(BINARY_PATH)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe $(BINARY_PATH)
 	@echo "Cross-build completed"
 
 ##@ Testing
 
 test: ## Run unit tests
 	@echo "Running unit tests..."
-	$(GOTEST) $(TEST_FLAGS) -short ./pkg/... ./cmd/...
+	$(GOTEST) $(GO_TAG_ARGS) $(TEST_FLAGS) -short ./pkg/... ./cmd/...
+
+test-mysql: ## Run unit tests with MySQL support enabled
+	@echo "Running unit tests with MySQL support..."
+	$(MAKE) GO_BUILD_TAGS="mysql" test
 
 test-integration: ## Run integration tests
 	@echo "Running integration tests..."
-	$(GOTEST) $(TEST_FLAGS) -tags=integration ./test/integration/...
+	$(GOTEST) $(GO_TAG_ARGS) $(TEST_FLAGS) -tags=integration ./test/integration/...
 
 test-e2e: ## Run end-to-end tests
 	@echo "Running E2E tests..."
-	$(GOTEST) $(TEST_FLAGS) -tags=e2e ./test/e2e/...
+	$(GOTEST) $(GO_TAG_ARGS) $(TEST_FLAGS) -tags=e2e ./test/e2e/...
 
 test-all: ## Run all tests
 	@echo "Running all tests..."
@@ -137,7 +156,7 @@ test-all: ## Run all tests
 
 test-unit: ## Run unit tests only
 	@echo "Running unit tests only..."
-	./scripts/run-tests.sh --unit
+	$(GOTEST) $(GO_TAG_ARGS) $(TEST_FLAGS) -short ./pkg/... ./cmd/...
 
 test-verbose: ## Run tests with verbose output
 	@echo "Running tests with verbose output..."
@@ -145,14 +164,22 @@ test-verbose: ## Run tests with verbose output
 
 coverage: ## Generate test coverage report
 	@echo "Generating coverage report..."
-	$(GOTEST) $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./pkg/... ./cmd/...
+	$(GOTEST) $(GO_TAG_ARGS) $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./pkg/... ./cmd/...
 	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
 	$(GO) tool cover -func=$(COVERAGE_FILE)
 	@echo "Coverage report generated: $(COVERAGE_HTML)"
 
+coverage-mysql: ## Generate coverage report with MySQL support enabled
+	@echo "Generating coverage report with MySQL support..."
+	$(MAKE) GO_BUILD_TAGS="mysql" coverage
+
+test-coverage: coverage ## Alias for coverage
+	@echo "Coverage summary:"
+	@$(GO) tool cover -func=$(COVERAGE_FILE) | tail -1
+
 benchmark: ## Run benchmark tests
 	@echo "Running benchmark tests..."
-	$(GOTEST) -bench=. -benchmem ./pkg/... ./test/unit/...
+	$(GOTEST) $(GO_TAG_ARGS) -bench=. -benchmem ./pkg/... ./test/unit/...
 
 ##@ Docker
 

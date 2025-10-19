@@ -31,6 +31,18 @@ type Event struct {
 	Timestamp time.Time
 }
 
+// ChainWriter can persist tamper-evident audit records.
+type ChainWriter interface {
+	Append(map[string]interface{}) error
+}
+
+var chainWriter ChainWriter
+
+// SetChainWriter registers a tamper-proof audit chain writer.
+func SetChainWriter(writer ChainWriter) {
+	chainWriter = writer
+}
+
 // Log emits a structured audit record enriched with tracing metadata.
 func Log(ctx context.Context, logger *logrus.Logger, evt *Event) {
 	if logger == nil || evt == nil {
@@ -87,6 +99,17 @@ func Log(ctx context.Context, logger *logrus.Logger, evt *Event) {
 			continue
 		}
 		fields[k] = v
+	}
+
+	if chainWriter != nil {
+		payload := make(map[string]interface{}, len(fields))
+		for k, v := range fields {
+			payload[k] = v
+		}
+		payload["details"] = evt.Details
+		if err := chainWriter.Append(payload); err != nil {
+			logger.WithError(err).Warn("Failed to append audit record to chain writer")
+		}
 	}
 
 	if span := tracing.SpanFromContext(ctx); span != nil {

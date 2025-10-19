@@ -212,6 +212,8 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.ElementsMatch(t, []string{"google", "deepgram", "elevenlabs", "speechmatics", "openai"}, config.STT.SupportedVendors)
 	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "OPUS"}, config.STT.SupportedCodecs)
 	assert.Equal(t, "google", config.STT.DefaultVendor)
+	assert.Empty(t, config.STT.LanguageRouting)
+	assert.False(t, config.Network.RequireTLSOnly)
 
 	// Verify resource defaults
 	assert.Equal(t, 500, config.Resources.MaxConcurrentCalls)
@@ -225,6 +227,26 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.Equal(t, 30*time.Second, config.Redundancy.SessionTimeout)
 	assert.Equal(t, 10*time.Second, config.Redundancy.SessionCheckInterval)
 	assert.Equal(t, "memory", config.Redundancy.StorageType)
+
+	// Verify analytics defaults
+	assert.False(t, config.Analytics.Enabled)
+	assert.Equal(t, []string{"http://localhost:9200"}, config.Analytics.Elasticsearch.Addresses)
+	assert.Equal(t, "call-analytics", config.Analytics.Elasticsearch.Index)
+	assert.Equal(t, 10*time.Second, config.Analytics.Elasticsearch.Timeout)
+
+	// Verify database defaults
+	assert.False(t, config.Database.Enabled)
+
+	// Verify network enforcement defaults
+	assert.False(t, config.Network.RequireTLSOnly)
+	assert.False(t, config.Network.RequireSRTP)
+
+	// Verify compliance defaults
+	assert.False(t, config.Compliance.PCI.Enabled)
+	assert.False(t, config.Compliance.GDPR.Enabled)
+	assert.Equal(t, "./exports", config.Compliance.GDPR.ExportDir)
+	assert.False(t, config.Compliance.Audit.TamperProof)
+	assert.Equal(t, "./logs/audit-chain.log", config.Compliance.Audit.LogPath)
 }
 
 func TestLegacyCompatibility(t *testing.T) {
