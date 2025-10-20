@@ -2,6 +2,58 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.2.3] - 2025-10-19
+
+### Added
+- **Complete MySQL/MariaDB Database Support**: Optional persistence layer with build tags
+  - 30+ CRUD operations for sessions, participants, streams, transcriptions, CDRs
+  - Full-text search across all entities
+  - User management and API key authentication
+  - GDPR-compliant data deletion operations
+- **Multi-Cloud Storage Support**: Automatic recording archival
+  - AWS S3 with lifecycle policies
+  - Google Cloud Storage integration
+  - Azure Blob Storage support
+- **Real-time Analytics Platform**: Elasticsearch-powered analytics
+  - Sentiment analysis and keyword extraction
+  - Compliance monitoring and alerting
+  - WebSocket streaming for live updates
+  - Audio quality metrics (MOS scoring)
+- **Extended STT Provider Support**: 7 providers with intelligent routing
+  - ElevenLabs and Speechmatics integration
+  - Language-based provider routing
+  - Automatic failover with health monitoring
+- **Enterprise Features**:
+  - PCI DSS compliance mode with automatic security hardening
+  - OpenTelemetry integration for distributed tracing
+  - Multi-channel alerting (email, Slack, webhook)
+  - Clustering support with leader election
+  - Automated backup and recovery
+  - Performance monitoring and auto-tuning
+- **Advanced Audio Processing**:
+  - Spectral noise suppression
+  - Automatic Gain Control (AGC)
+  - Echo cancellation with double-talk detection
+  - Audio fingerprinting for duplicate detection
+- **Comprehensive Testing Suite**:
+  - Unit, integration, and E2E tests
+  - Coverage reporting with HTML output
+  - MySQL-specific test targets
+
+### Enhanced
+- Documentation completely updated with all features
+- Build system with optional MySQL support via build tags
+- Circuit breaker patterns for all external services
+- WebSocket implementation with proper cleanup
+- AMQP messaging with connection pooling and TLS
+
+### Fixed
+- Test compilation errors in audio processing
+- WebSocket null pointer dereferences
+- Parser namespace issues in tests
+- Memory leaks in audio processing pipeline
+- Build errors with missing dependencies
+
 ## [0.3.0] - 2025-07-01
 
 ### Added
