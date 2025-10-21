@@ -2383,31 +2383,45 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 
 	// Copy participants from session
 	for _, participant := range session.Participants {
+		display := participant.DisplayName
+		if display == "" {
+			display = participant.Name
+		}
+
 		rsParticipant := siprec.RSParticipant{
 			ID:          participant.ID,
 			Name:        participant.Name,
-			DisplayName: participant.DisplayName,
+			DisplayName: display,
 			Role:        participant.Role,
 		}
 
 		// Copy communication IDs
 		for _, commID := range participant.CommunicationIDs {
-			aor := siprec.Aor{
-				Value:    commID.Value,
+			aorValue := siprec.NormalizeCommunicationURI(commID)
+			rsParticipant.Aor = append(rsParticipant.Aor, siprec.Aor{
+				Value:    aorValue,
+				URI:      aorValue,
 				Display:  commID.DisplayName,
 				Priority: commID.Priority,
-			}
+			})
 
-			// Set URI format if not already set
-			if commID.Type == "sip" && !strings.HasPrefix(commID.Value, "sip:") {
-				aor.URI = "sip:" + commID.Value
-			} else if commID.Type == "tel" && !strings.HasPrefix(commID.Value, "tel:") {
-				aor.URI = "tel:" + commID.Value
-			} else {
-				aor.URI = commID.Value
+			nameEntry := siprec.RSNameID{
+				AOR:     aorValue,
+				URI:     aorValue,
+				Display: display,
 			}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, siprec.LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
+		}
 
-			rsParticipant.Aor = append(rsParticipant.Aor, aor)
+		if len(rsParticipant.NameInfos) == 0 && display != "" {
+			nameEntry := siprec.RSNameID{Display: display}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, siprec.LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
 		}
 
 		responseMetadata.Participants = append(responseMetadata.Participants, rsParticipant)
