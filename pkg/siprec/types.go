@@ -2,6 +2,7 @@ package siprec
 
 import (
 	"encoding/xml"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
@@ -105,21 +106,25 @@ type CommunicationID struct {
 // RSMetadata represents the root element of the rs-metadata XML document
 // Follows the schema defined in RFC 7865 and RFC 7866
 type RSMetadata struct {
-	XMLName                  xml.Name                  `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
-	SessionID                string                    `xml:"session,attr"`
-	State                    string                    `xml:"state,attr"`
-	Reason                   string                    `xml:"reason,attr,omitempty"`    // Why recording state changed (RFC 7866)
-	Sequence                 int                       `xml:"sequence,attr,omitempty"`  // For state transitions (RFC 7866)
-	ReasonRef                string                    `xml:"reasonref,attr,omitempty"` // URI reference for reason (RFC 7866)
-	Expires                  string                    `xml:"expires,attr,omitempty"`   // When recording expires (ISO datetime)
-	MediaLabel               string                    `xml:"label,attr,omitempty"`     // For selective recording (RFC 7866)
-	Direction                string                    `xml:"direction,attr,omitempty"` // Direction of the recording
-	Group                    []Group                   `xml:"group"`
-	Participants             []RSParticipant           `xml:"participant"`
-	Streams                  []Stream                  `xml:"stream"`
-	SessionRecordingAssoc    RSAssociation             `xml:"sessionrecordingassoc"`
-	SessionGroupAssociations []SessionGroupAssociation `xml:"sessiongroupassoc"`
-	PolicyUpdates            []PolicyUpdate            `xml:"policy"`
+	XMLName                  xml.Name                   `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
+	DataMode                 string                     `xml:"datamode,omitempty"`
+	SessionID                string                     `xml:"session,attr,omitempty"`
+	State                    string                     `xml:"state,attr,omitempty"`
+	Reason                   string                     `xml:"reason,attr,omitempty"`
+	Sequence                 int                        `xml:"sequence,attr,omitempty"`
+	ReasonRef                string                     `xml:"reasonref,attr,omitempty"`
+	Expires                  string                     `xml:"expires,attr,omitempty"`
+	MediaLabel               string                     `xml:"label,attr,omitempty"`
+	Direction                string                     `xml:"direction,attr,omitempty"`
+	Group                    []Group                    `xml:"group"`
+	Sessions                 []RSSession                `xml:"session"`
+	RecordingSessions        []RSRecordingSession       `xml:"recordingsession"`
+	Participants             []RSParticipant            `xml:"participant"`
+	Streams                  []Stream                   `xml:"stream"`
+	ParticipantStreamAssoc   []RSParticipantStreamAssoc `xml:"participantstreamassoc"`
+	SessionRecordingAssoc    RSAssociation              `xml:"sessionrecordingassoc"`
+	SessionGroupAssociations []SessionGroupAssociation  `xml:"sessiongroupassoc"`
+	PolicyUpdates            []PolicyUpdate             `xml:"policy"`
 }
 
 // SessionGroupAssociation captures membership of a recording session in a session group.
@@ -147,50 +152,264 @@ type PolicyAckStatus struct {
 
 // Group represents a group of participants in rs-metadata
 type Group struct {
-	ID              string   `xml:"id,attr"`
-	ParticipantRefs []string `xml:"participantsessionassoc"`
+	ID                   string         `xml:"group_id,attr,omitempty"`
+	LegacyID             string         `xml:"id,attr,omitempty"`
+	AssociateTime        string         `xml:"associate-time,omitempty"`
+	SessionRefs          []string       `xml:"session-ref"`
+	ParticipantRefs      []string       `xml:"participant-ref"`
+	LegacyParticipantRef []string       `xml:"participantsessionassoc"`
+	Extensions           []XMLExtension `xml:",any"`
 }
 
 // RSParticipant represents a participant in rs-metadata
 // Complies with RFC 7865 and RFC 7866
 type RSParticipant struct {
-	ID          string   `xml:"id,attr"`
-	NameID      string   `xml:"nameID,attr,omitempty"`
-	Name        string   `xml:"name,omitempty"`
-	DisplayName string   `xml:"display-name,omitempty"` // RFC 7866 - participant's display name
-	Aor         []Aor    `xml:"aor"`
-	Associate   string   `xml:"associate,attr,omitempty"` // RFC 7866 - indicates association with other participants
-	Role        string   `xml:"role,attr,omitempty"`      // RFC 7866 - role of participant (active, passive, etc.)
-	Send        []string `xml:"send,omitempty"`           // RFC 7866 - stream labels participant is sending to
-	Receive     []string `xml:"receive,omitempty"`        // RFC 7866 - stream labels participant is receiving
+	ID          string         `xml:"participant_id,attr,omitempty"`
+	LegacyID    string         `xml:"id,attr,omitempty"`
+	NameID      string         `xml:"nameID,attr,omitempty"`
+	Name        string         `xml:"name,omitempty"`
+	DisplayName string         `xml:"display-name,omitempty"`
+	Aor         []Aor          `xml:"aor"`
+	NameInfos   []RSNameID     `xml:"nameID"`
+	Associate   string         `xml:"associate,attr,omitempty"`
+	Role        string         `xml:"role,attr,omitempty"`
+	Send        []string       `xml:"send,omitempty"`
+	Receive     []string       `xml:"receive,omitempty"`
+	Extensions  []XMLExtension `xml:",any"`
 }
 
 // Aor represents an Address of Record in rs-metadata
 type Aor struct {
 	Value    string `xml:",chardata"`
-	URI      string `xml:"uri,attr,omitempty"`      // RFC 7866 - URI format of AOR
-	Display  string `xml:"display,attr,omitempty"`  // RFC 7866 - display name for AOR
-	Priority int    `xml:"priority,attr,omitempty"` // RFC 7866 - priority of AOR
+	URI      string `xml:"uri,attr,omitempty"`
+	Display  string `xml:"display,attr,omitempty"`
+	Priority int    `xml:"priority,attr,omitempty"`
 }
 
 // Stream represents a media stream in rs-metadata
 // Updated for RFC 7866 compliance
 type Stream struct {
-	Label    string `xml:"label,attr"`
-	StreamID string `xml:"streamid,attr"`
-	Mode     string `xml:"mode,attr,omitempty"` // RFC 7866 - "separate" or "mixed"
-	Type     string `xml:"type,attr,omitempty"` // RFC 7866 - media type (audio, video, text, etc.)
-	Mixing   struct {
-		MixedStreams []string `xml:"mixedstream,omitempty"` // RFC 7866 - for mixed streams
+	Label          string   `xml:"label,attr,omitempty"`
+	LabelElement   string   `xml:"label,omitempty"`
+	StreamID       string   `xml:"streamid,attr,omitempty"`
+	StreamIDAlt    string   `xml:"stream_id,attr,omitempty"`
+	ID             string   `xml:"id,attr,omitempty"`
+	Session        string   `xml:"session,attr,omitempty"`
+	Mode           string   `xml:"mode,attr,omitempty"`
+	Type           string   `xml:"type,attr,omitempty"`
+	AssociateTime  string   `xml:"associate-time,omitempty"`
+	ParticipantRef []string `xml:"participant-ref"`
+	Mixing         struct {
+		MixedStreams []string `xml:"mixedstream,omitempty"`
 	} `xml:"mixing,omitempty"`
+	Extensions []XMLExtension `xml:",any"`
 }
 
 // RSAssociation represents a session recording association in rs-metadata
 // Compliant with RFC 7866
 type RSAssociation struct {
-	SessionID   string `xml:"sessionid,attr"`
-	Group       string `xml:"group,attr,omitempty"`       // RFC 7866 - group ID for association
-	CallID      string `xml:"callid,attr,omitempty"`      // RFC 7866 - SIP Call-ID for the session
-	FixedID     string `xml:"fixedid,attr,omitempty"`     // RFC 7866 - Fixed identifier for association
-	IdentityRef string `xml:"identityref,attr,omitempty"` // RFC 7866 - reference to recording identity
+	SessionID    string `xml:"sessionid,attr,omitempty"`
+	SessionIDAlt string `xml:"session_id,attr,omitempty"`
+	Group        string `xml:"group,attr,omitempty"`
+	GroupAlt     string `xml:"group_id,attr,omitempty"`
+	CallID       string `xml:"callid,attr,omitempty"`
+	CallIDAlt    string `xml:"call_id,attr,omitempty"`
+	FixedID      string `xml:"fixedid,attr,omitempty"`
+	IdentityRef  string `xml:"identityref,attr,omitempty"`
+}
+
+// RSSession models a session element within rs-metadata per RFC 7865.
+type RSSession struct {
+	ID                 string         `xml:"session_id,attr,omitempty"`
+	LegacyID           string         `xml:"id,attr,omitempty"`
+	Type               string         `xml:"type,attr,omitempty"`
+	AssociateTime      string         `xml:"associate-time,omitempty"`
+	SIPSessionID       string         `xml:"sipSessionID,omitempty"`
+	SessionName        string         `xml:"session-name,omitempty"`
+	SessionDescription string         `xml:"session-description,omitempty"`
+	ParticipantRefs    []string       `xml:"participant-ref"`
+	GroupRefs          []string       `xml:"group-ref"`
+	StreamRefs         []string       `xml:"stream-ref"`
+	Extensions         []XMLExtension `xml:",any"`
+}
+
+// RSRecordingSession captures the recordingsession element defined in RFC 7865.
+type RSRecordingSession struct {
+	ID            string         `xml:"id,attr,omitempty"`
+	SessionID     string         `xml:"session_id,attr,omitempty"`
+	State         string         `xml:"state,omitempty"`
+	Reason        string         `xml:"reason,omitempty"`
+	AssociateTime string         `xml:"associate-time,omitempty"`
+	Extensions    []XMLExtension `xml:",any"`
+}
+
+// RSParticipantStreamAssoc captures participantstreamassoc relationships.
+type RSParticipantStreamAssoc struct {
+	ID          string         `xml:"id,attr,omitempty"`
+	Participant string         `xml:"participant,omitempty"`
+	Stream      string         `xml:"stream,omitempty"`
+	Direction   string         `xml:"direction,omitempty"`
+	Extensions  []XMLExtension `xml:",any"`
+}
+
+// RSNameID models the nameID element (with optional localized names).
+type RSNameID struct {
+	ID         string          `xml:"id,attr,omitempty"`
+	AOR        string          `xml:"aor,attr,omitempty"`
+	URI        string          `xml:"uri,attr,omitempty"`
+	Display    string          `xml:"display,attr,omitempty"`
+	Context    string          `xml:"context,attr,omitempty"`
+	Names      []LocalizedName `xml:"name"`
+	Extensions []XMLExtension  `xml:",any"`
+}
+
+// LocalizedName stores a name value with optional xml:lang attribute.
+type LocalizedName struct {
+	Lang  string `xml:"http://www.w3.org/XML/1998/namespace lang,attr,omitempty"`
+	Value string `xml:",chardata"`
+}
+
+// XMLExtension preserves arbitrary extension elements.
+type XMLExtension struct {
+	XMLName  xml.Name
+	InnerXML string `xml:",innerxml"`
+}
+
+// Normalize aligns parsed metadata with backward-compatible expectations.
+func (m *RSMetadata) Normalize() {
+	if m == nil {
+		return
+	}
+
+	for i := range m.Group {
+		if m.Group[i].ID == "" {
+			m.Group[i].ID = m.Group[i].LegacyID
+		}
+		m.Group[i].LegacyID = ""
+		if len(m.Group[i].LegacyParticipantRef) > 0 {
+			m.Group[i].ParticipantRefs = append(m.Group[i].ParticipantRefs, m.Group[i].LegacyParticipantRef...)
+			m.Group[i].LegacyParticipantRef = nil
+		}
+	}
+
+	for i := range m.Sessions {
+		if m.Sessions[i].ID == "" {
+			m.Sessions[i].ID = m.Sessions[i].LegacyID
+		}
+		m.Sessions[i].LegacyID = ""
+	}
+
+	for i := range m.RecordingSessions {
+		if m.RecordingSessions[i].SessionID == "" {
+			m.RecordingSessions[i].SessionID = m.RecordingSessions[i].ID
+		}
+		if m.RecordingSessions[i].State != "" && m.State == "" {
+			m.State = m.RecordingSessions[i].State
+		}
+		if m.RecordingSessions[i].Reason != "" && m.Reason == "" {
+			m.Reason = m.RecordingSessions[i].Reason
+		}
+	}
+
+	for i := range m.Participants {
+		p := &m.Participants[i]
+		if p.ID == "" {
+			p.ID = p.LegacyID
+		}
+		p.LegacyID = ""
+
+		if len(p.Aor) == 0 && len(p.NameInfos) > 0 {
+			for _, ni := range p.NameInfos {
+				if ni.AOR != "" || ni.URI != "" {
+					value := ni.AOR
+					if value == "" {
+						value = ni.URI
+					}
+					p.Aor = append(p.Aor, Aor{
+						Value:   value,
+						URI:     ni.URI,
+						Display: ni.Display,
+					})
+				}
+			}
+		}
+
+		if p.Name == "" && len(p.NameInfos) > 0 {
+			for _, ni := range p.NameInfos {
+				for _, name := range ni.Names {
+					if strings.TrimSpace(name.Value) != "" {
+						p.Name = strings.TrimSpace(name.Value)
+						break
+					}
+				}
+				if p.Name != "" {
+					break
+				}
+			}
+		}
+
+		if p.DisplayName == "" {
+			if p.Name != "" {
+				p.DisplayName = p.Name
+			} else if len(p.NameInfos) > 0 && strings.TrimSpace(p.NameInfos[0].Display) != "" {
+				p.DisplayName = strings.TrimSpace(p.NameInfos[0].Display)
+			}
+		}
+	}
+
+	for i := range m.Streams {
+		if m.Streams[i].StreamID == "" {
+			switch {
+			case m.Streams[i].StreamIDAlt != "":
+				m.Streams[i].StreamID = m.Streams[i].StreamIDAlt
+			case m.Streams[i].ID != "":
+				m.Streams[i].StreamID = m.Streams[i].ID
+			}
+		}
+		if m.Streams[i].Label == "" {
+			m.Streams[i].Label = m.Streams[i].LabelElement
+		}
+		m.Streams[i].StreamIDAlt = ""
+		m.Streams[i].ID = ""
+		m.Streams[i].LabelElement = ""
+	}
+
+	if m.SessionRecordingAssoc.SessionID == "" {
+		m.SessionRecordingAssoc.SessionID = m.SessionRecordingAssoc.SessionIDAlt
+	}
+	if m.SessionRecordingAssoc.Group == "" {
+		m.SessionRecordingAssoc.Group = m.SessionRecordingAssoc.GroupAlt
+	}
+	if m.SessionRecordingAssoc.CallID == "" {
+		m.SessionRecordingAssoc.CallID = m.SessionRecordingAssoc.CallIDAlt
+	}
+	m.SessionRecordingAssoc.SessionIDAlt = ""
+	m.SessionRecordingAssoc.GroupAlt = ""
+	m.SessionRecordingAssoc.CallIDAlt = ""
+
+	if m.SessionID == "" {
+		m.SessionID = m.SessionRecordingAssoc.SessionID
+	}
+	if m.SessionID == "" && len(m.Sessions) > 0 {
+		m.SessionID = m.Sessions[0].ID
+	}
+	if m.SessionID == "" && len(m.RecordingSessions) > 0 {
+		if m.RecordingSessions[0].SessionID != "" {
+			m.SessionID = m.RecordingSessions[0].SessionID
+		} else if m.RecordingSessions[0].ID != "" {
+			m.SessionID = m.RecordingSessions[0].ID
+		}
+	}
+}
+
+// UnmarshalXML customizes decoding to ensure normalization post-unmarshal.
+func (m *RSMetadata) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type alias RSMetadata
+	var aux alias
+	if err := d.DecodeElement(&aux, &start); err != nil {
+		return err
+	}
+	*m = RSMetadata(aux)
+	m.Normalize()
+	return nil
 }
