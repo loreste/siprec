@@ -231,6 +231,8 @@ func CreateMetadataResponse(metadata *RSMetadata) (string, error) {
 		response.Sequence = 1
 	}
 
+	response.Normalize()
+
 	metadataBytes, err := xml.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("error marshaling response metadata: %w", err)
@@ -777,10 +779,23 @@ func GenerateErrorResponse(errorCode int, errorReason string, requestSessionID s
 		Aor: []Aor{
 			{
 				Value: "sip:recording-server@unknown",
+				URI:   "sip:recording-server@unknown",
+			},
+		},
+		NameInfos: []RSNameID{
+			{
+				AOR: "sip:recording-server@unknown",
+				URI: "sip:recording-server@unknown",
+				Names: []LocalizedName{
+					{Value: "Recording Server"},
+				},
+				Display: "Recording Server",
 			},
 		},
 	}
 	metadata.Participants = append(metadata.Participants, minimalParticipant)
+
+	metadata.Normalize()
 
 	return metadata
 }

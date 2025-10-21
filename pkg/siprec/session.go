@@ -265,7 +265,8 @@ func updateParticipants(existingParticipants []Participant, newParticipants []RS
 			newParticipant := Participant{
 				ID:          np.ID,
 				Name:        np.Name,
-				DisplayName: np.NameID,
+				DisplayName: np.DisplayName,
+				Role:        np.Role,
 			}
 
 			// Add communication IDs
@@ -293,7 +294,8 @@ func ConvertRSParticipantToParticipant(p RSParticipant) Participant {
 	participant := Participant{
 		ID:          p.ID,
 		Name:        p.Name,
-		DisplayName: p.NameID,
+		DisplayName: p.DisplayName,
+		Role:        p.Role,
 	}
 
 	// Add communication IDs
@@ -302,6 +304,32 @@ func ConvertRSParticipantToParticipant(p RSParticipant) Participant {
 			Type:  "sip",
 			Value: aor.Value,
 		})
+	}
+
+	if len(participant.CommunicationIDs) == 0 {
+		for _, ni := range p.NameInfos {
+			value := ni.AOR
+			if value == "" {
+				value = ni.URI
+			}
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			participant.CommunicationIDs = append(participant.CommunicationIDs, CommunicationID{
+				Type:  "sip",
+				Value: value,
+			})
+		}
+	}
+
+	if participant.DisplayName == "" {
+		if p.NameID != "" {
+			participant.DisplayName = p.NameID
+		} else if p.Name != "" {
+			participant.DisplayName = p.Name
+		} else if len(p.NameInfos) > 0 && strings.TrimSpace(p.NameInfos[0].Display) != "" {
+			participant.DisplayName = strings.TrimSpace(p.NameInfos[0].Display)
+		}
 	}
 
 	return participant
@@ -336,25 +364,53 @@ func CreateFailoverMetadata(originalSession *RecordingSession) *RSMetadata {
 
 	// Add participant information
 	for _, participant := range originalSession.Participants {
+		display := participant.DisplayName
+		if display == "" {
+			display = participant.Name
+		}
+
 		rsParticipant := RSParticipant{
 			ID:          participant.ID,
 			Name:        participant.Name,
-			NameID:      participant.DisplayName,
-			DisplayName: participant.DisplayName,
+			DisplayName: display,
 			Role:        participant.Role,
 		}
 
 		// Add communication identifiers
 		for _, commID := range participant.CommunicationIDs {
+			aorValue := NormalizeCommunicationURI(commID)
 			rsParticipant.Aor = append(rsParticipant.Aor, Aor{
-				Value:    commID.Value,
+				Value:    aorValue,
+				URI:      aorValue,
 				Display:  commID.DisplayName,
 				Priority: commID.Priority,
 			})
+
+			nameEntry := RSNameID{
+				AOR:     aorValue,
+				URI:     aorValue,
+				Display: display,
+			}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
+		}
+
+		if len(rsParticipant.NameInfos) == 0 && display != "" {
+			nameEntry := RSNameID{
+				Display: display,
+			}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
 		}
 
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
+
+	metadata.Normalize()
 
 	return metadata
 }
@@ -401,21 +457,41 @@ func GenerateStateChangeMetadata(session *RecordingSession, newState string, rea
 
 	// Include minimal participant information (required by RFC 7866)
 	for _, participant := range session.Participants {
+		display := participant.DisplayName
+		if display == "" {
+			display = participant.Name
+		}
+
 		rsParticipant := RSParticipant{
-			ID:     participant.ID,
-			NameID: participant.DisplayName,
-			Role:   participant.Role,
+			ID:          participant.ID,
+			Name:        participant.Name,
+			DisplayName: display,
+			Role:        participant.Role,
 		}
 
 		// Add at least one communication identifier
 		if len(participant.CommunicationIDs) > 0 {
+			first := participant.CommunicationIDs[0]
+			aorValue := NormalizeCommunicationURI(first)
 			rsParticipant.Aor = append(rsParticipant.Aor, Aor{
-				Value: participant.CommunicationIDs[0].Value,
+				Value: aorValue,
+				URI:   aorValue,
 			})
+			nameEntry := RSNameID{
+				AOR:     aorValue,
+				URI:     aorValue,
+				Display: display,
+			}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
 		}
 
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
+
+	metadata.Normalize()
 
 	return metadata
 }
@@ -745,14 +821,28 @@ func SendRecordingIndicator(session *RecordingSession, participantID string, ind
 
 	// Add communication identifiers
 	for _, commID := range targetParticipant.CommunicationIDs {
+		aorValue := NormalizeCommunicationURI(commID)
 		rsParticipant.Aor = append(rsParticipant.Aor, Aor{
-			Value:    commID.Value,
+			Value:    aorValue,
+			URI:      aorValue,
 			Display:  commID.DisplayName,
 			Priority: commID.Priority,
 		})
+
+		nameEntry := RSNameID{
+			AOR:     aorValue,
+			URI:     aorValue,
+			Display: rsParticipant.DisplayName,
+		}
+		if targetParticipant.Name != "" {
+			nameEntry.Names = append(nameEntry.Names, LocalizedName{Value: targetParticipant.Name})
+		}
+		rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
 	}
 
 	metadata.Participants = append(metadata.Participants, rsParticipant)
+
+	metadata.Normalize()
 
 	return metadata
 }
@@ -773,6 +863,26 @@ func NotifyAllParticipants(session *RecordingSession, recordingActive bool) []*R
 	}
 
 	return notifications
+}
+
+func NormalizeCommunicationURI(commID CommunicationID) string {
+	value := strings.TrimSpace(commID.Value)
+	if value == "" {
+		return ""
+	}
+
+	switch strings.ToLower(strings.TrimSpace(commID.Type)) {
+	case "sip":
+		if !strings.HasPrefix(strings.ToLower(value), "sip:") {
+			value = "sip:" + value
+		}
+	case "tel":
+		if !strings.HasPrefix(strings.ToLower(value), "tel:") {
+			value = "tel:" + value
+		}
+	}
+
+	return value
 }
 
 // GenerateSessionUpdateNotification creates metadata for session updates
@@ -802,24 +912,43 @@ func GenerateSessionUpdateNotification(session *RecordingSession, updateReason s
 
 	// Add essential participant information
 	for _, participant := range session.Participants {
+		display := participant.DisplayName
+		if display == "" {
+			display = participant.Name
+		}
+
 		rsParticipant := RSParticipant{
-			ID:     participant.ID,
-			NameID: participant.DisplayName,
-			Role:   participant.Role,
+			ID:          participant.ID,
+			Name:        participant.Name,
+			DisplayName: display,
+			Role:        participant.Role,
 		}
 
 		// Add at least one communication identifier for each participant
 		if len(participant.CommunicationIDs) > 0 {
 			commID := participant.CommunicationIDs[0]
+			aorValue := NormalizeCommunicationURI(commID)
 			rsParticipant.Aor = append(rsParticipant.Aor, Aor{
-				Value:    commID.Value,
+				Value:    aorValue,
+				URI:      aorValue,
 				Display:  commID.DisplayName,
 				Priority: commID.Priority,
 			})
+			nameEntry := RSNameID{
+				AOR:     aorValue,
+				URI:     aorValue,
+				Display: display,
+			}
+			if participant.Name != "" {
+				nameEntry.Names = append(nameEntry.Names, LocalizedName{Value: participant.Name})
+			}
+			rsParticipant.NameInfos = append(rsParticipant.NameInfos, nameEntry)
 		}
 
 		metadata.Participants = append(metadata.Participants, rsParticipant)
 	}
+
+	metadata.Normalize()
 
 	return metadata
 }
