@@ -156,7 +156,7 @@ func TestConfigLoading(t *testing.T) {
 func TestDefaultConfiguration(t *testing.T) {
 	// Ensure no environment variables are set
 	vars := []string{
-		"EXTERNAL_IP", "INTERNAL_IP", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
+		"EXTERNAL_IP", "INTERNAL_IP", "SIP_HOST", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
 		"RTP_PORT_MAX", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 		"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
 		"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
@@ -183,6 +183,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	// IP should be either "auto", "127.0.0.1", or a valid detected IP
 	assert.True(t, config.Network.ExternalIP == "auto" || config.Network.ExternalIP == "127.0.0.1" || len(config.Network.ExternalIP) > 0, "External IP should be set")
 	assert.True(t, config.Network.InternalIP == "auto" || config.Network.InternalIP == "127.0.0.1" || len(config.Network.InternalIP) > 0, "Internal IP should be set")
+	assert.Equal(t, "0.0.0.0", config.Network.Host, "Host should default to 0.0.0.0")
 	assert.ElementsMatch(t, []int{5060, 5061}, config.Network.Ports)
 	assert.False(t, config.Network.EnableSRTP)
 	assert.Equal(t, 10000, config.Network.RTPPortMin)
