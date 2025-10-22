@@ -2799,21 +2799,23 @@ func loadComplianceConfig(logger *logrus.Logger, config *ComplianceConfig) error
 		return nil
 	}
 
+	// Apply defaults regardless of whether features are enabled
+	if config.GDPR.ExportDir == "" {
+		config.GDPR.ExportDir = "./exports"
+	}
+	if config.Audit.LogPath == "" {
+		config.Audit.LogPath = "./logs/audit-chain.log"
+	}
+
 	if config.PCI.Enabled {
 		logger.Info("PCI compliance mode enabled")
 	}
 
 	if config.GDPR.Enabled {
-		if config.GDPR.ExportDir == "" {
-			config.GDPR.ExportDir = "./exports"
-		}
 		logger.WithField("export_dir", config.GDPR.ExportDir).Info("GDPR tools enabled")
 	}
 
 	if config.Audit.TamperProof {
-		if config.Audit.LogPath == "" {
-			config.Audit.LogPath = "./logs/audit-chain.log"
-		}
 		logger.WithField("log_path", config.Audit.LogPath).Info("Tamper-proof audit logging enabled")
 	}
 

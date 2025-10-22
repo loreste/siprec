@@ -35,6 +35,7 @@ var allowedRecordingStates = map[string]struct{}{
 	"completed":    {},
 	"terminated":   {},
 	"error":        {},
+	"unknown":      {},
 }
 
 // Allowed reason codes when signalling state changes.
@@ -474,9 +475,13 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 		result.addError("session ID exceeds maximum allowed length")
 	}
 
+	// RFC 7865 (base SIPREC metadata spec) does not require the state attribute.
+	// RFC 7866 extends RFC 7865 with recording session state management.
+	// Allow missing state for RFC 7865-only implementations and default to "unknown".
 	state := strings.ToLower(strings.TrimSpace(rsMetadata.State))
 	if state == "" {
-		result.addError("missing recording state")
+		result.addWarning("missing recording state attribute; defaulting to unknown")
+		state = "unknown"
 	} else if _, ok := allowedRecordingStates[state]; !ok {
 		result.addError(fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
 	}
@@ -638,14 +643,16 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	assoc := rsMetadata.SessionRecordingAssoc
 	if (assoc == RSAssociation{}) {
-		result.addError("missing session recording association")
-	} else if strings.TrimSpace(assoc.SessionID) == "" {
-		result.addError("missing session ID in recording association")
-	} else if sessionID != "" && strings.TrimSpace(assoc.SessionID) != sessionID {
-		result.addWarning(fmt.Sprintf("recording association sessionid (%s) does not match metadata session (%s)", assoc.SessionID, sessionID))
-	}
-	if assoc.CallID == "" && assoc.FixedID == "" {
-		result.addWarning("session association missing both call-ID and fixed-ID")
+		result.addWarning("missing session recording association element")
+	} else {
+		if strings.TrimSpace(assoc.SessionID) == "" {
+			result.addError("missing session ID in recording association")
+		} else if sessionID != "" && strings.TrimSpace(assoc.SessionID) != sessionID {
+			result.addWarning(fmt.Sprintf("recording association sessionid (%s) does not match metadata session (%s)", assoc.SessionID, sessionID))
+		}
+		if assoc.CallID == "" && assoc.FixedID == "" {
+			result.addWarning("session association missing both call-ID and fixed-ID")
+		}
 	}
 
 	for _, groupAssoc := range rsMetadata.SessionGroupAssociations {
