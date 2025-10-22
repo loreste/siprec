@@ -102,14 +102,15 @@ func UpdateRecordingSession(existing *RecordingSession, rsMetadata *RSMetadata) 
 		}
 	}
 
-	// Update sequence number
-	nextSequence := existing.SequenceNumber + 1
-	if rsMetadata.Sequence > nextSequence {
-		nextSequence = rsMetadata.Sequence
-	} else if rsMetadata.Sequence > existing.SequenceNumber {
-		nextSequence = rsMetadata.Sequence
+	// Update sequence number respecting explicit metadata when provided
+	if rsMetadata.Sequence > 0 {
+		if rsMetadata.Sequence >= existing.SequenceNumber {
+			existing.SequenceNumber = rsMetadata.Sequence
+		}
+	} else if existing.SequenceNumber == 0 {
+		// Bootstrap sequence when metadata omitted it entirely
+		existing.SequenceNumber = 1
 	}
-	existing.SequenceNumber = nextSequence
 
 	// Update associated time
 	existing.AssociatedTime = time.Now()
