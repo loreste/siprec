@@ -58,6 +58,11 @@ type CustomSIPServer struct {
 	// sipgo components for standards-compliant dialog/transaction handling
 	ua        *sipgo.UserAgent
 	sipServer *sipgo.Server
+
+	// Listener address tracking for building accurate Contact headers
+	listenMu    sync.RWMutex
+	listenHosts map[string]string
+	listenPorts map[string]int
 }
 
 // SIPConnection represents an active TCP/TLS connection
@@ -144,12 +149,19 @@ func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServe
 		shutdownFunc: cancel,
 		PortManager:  media.GetPortManager(),
 		sipParser:    sipparser.NewParser(),
+		listenHosts:  make(map[string]string),
+		listenPorts:  make(map[string]int),
 	}
 	server.initializeTransactionLayer()
 	return server
 }
 
 func (s *CustomSIPServer) initializeTransactionLayer() {
+	// Set UDP MTU to 4096 bytes to handle large SIPREC metadata
+	// This prevents "size of packet larger than MTU" errors on UDP transport
+	// See: https://github.com/loreste/siprec/issues/4
+	sipparser.UDPMTUSize = 4096
+
 	ua, err := sipgo.NewUA()
 	if err != nil {
 		s.logger.WithError(err).Fatal("Failed to create SIP user agent for transaction layer")
@@ -192,6 +204,143 @@ func (s *CustomSIPServer) initializeTransactionLayer() {
 		s.logger.WithField("method", msg.Method).Warn("Received unsupported SIP method")
 		s.sendResponse(msg, 501, "Not Implemented", nil, nil)
 	})
+}
+
+func (s *CustomSIPServer) setListenAddress(transport, address string) {
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		s.logger.WithError(err).Debugf("Failed to parse listen address %q", address)
+		return
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		s.logger.WithError(err).Debugf("Failed to parse listen port from %q", address)
+		return
+	}
+
+	if port <= 0 {
+		return
+	}
+
+	transport = strings.ToLower(transport)
+	s.listenMu.Lock()
+	s.listenHosts[transport] = host
+	s.listenPorts[transport] = port
+	s.listenMu.Unlock()
+}
+
+func (s *CustomSIPServer) resolveContactAddress(transport string, message *SIPMessage) (string, int) {
+	transport = strings.ToLower(transport)
+
+	s.listenMu.RLock()
+	host := s.listenHosts[transport]
+	port := s.listenPorts[transport]
+	s.listenMu.RUnlock()
+
+	if s.handler != nil && s.handler.Config != nil {
+		if nat := s.handler.Config.NATConfig; nat != nil {
+			if nat.ExternalIP != "" && !strings.EqualFold(nat.ExternalIP, "auto") {
+				host = nat.ExternalIP
+			} else if host == "" && nat.InternalIP != "" && !strings.EqualFold(nat.InternalIP, "auto") {
+				host = nat.InternalIP
+			}
+
+			if nat.ExternalPort > 0 {
+				port = nat.ExternalPort
+			} else if port == 0 && nat.InternalPort > 0 {
+				port = nat.InternalPort
+			}
+		}
+
+		if port == 0 && len(s.handler.Config.SIPPorts) > 0 {
+			port = s.handler.Config.SIPPorts[0]
+		}
+	}
+
+	if (host == "" || host == "0.0.0.0" || host == "::" || host == "[::]") && message != nil && message.Request != nil {
+		uri := message.Request.Recipient
+		if uri.Host != "" {
+			host = uri.Host
+		}
+		if uri.Port > 0 {
+			port = uri.Port
+		}
+	}
+
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = s.detectLocalHost()
+	}
+
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+
+	if port == 0 {
+		port = 5060
+	}
+
+	return host, port
+}
+
+func (s *CustomSIPServer) detectLocalHost() string {
+	if s.handler != nil && s.handler.Config != nil && s.handler.Config.NATConfig != nil {
+		if ip := s.handler.Config.NATConfig.InternalIP; ip != "" && !strings.EqualFold(ip, "auto") {
+			return ip
+		}
+	}
+	return "127.0.0.1"
+}
+
+func (s *CustomSIPServer) buildContactHeader(message *SIPMessage) string {
+	transport := "udp"
+	if message != nil {
+		if message.Connection != nil && message.Connection.transport != "" {
+			transport = message.Connection.transport
+		} else if message.Request != nil {
+			if reqTransport := message.Request.Transport(); reqTransport != "" {
+				transport = strings.ToLower(reqTransport)
+			}
+		}
+	}
+
+	host, port := s.resolveContactAddress(transport, message)
+
+	contact := fmt.Sprintf("<sip:%s", host)
+	if port > 0 {
+		contact = fmt.Sprintf("%s:%d", contact, port)
+	}
+	contact += ">"
+
+	if message != nil {
+		if suffix := extractContactParameters(s.getHeader(message, "contact")); suffix != "" {
+			if strings.HasPrefix(suffix, ";") {
+				contact += suffix
+			} else {
+				contact += ";" + suffix
+			}
+		}
+	}
+
+	return contact
+}
+
+func extractContactParameters(contact string) string {
+	contact = strings.TrimSpace(contact)
+	if contact == "" {
+		return ""
+	}
+
+	if idx := strings.Index(contact, ">"); idx != -1 && idx+1 < len(contact) {
+		return strings.TrimSpace(contact[idx+1:])
+	}
+
+	// Handle cases without angle brackets but with parameters
+	if idx := strings.Index(contact, " "); idx != -1 && idx+1 < len(contact) {
+		return strings.TrimSpace(contact[idx+1:])
+	}
+
+	return ""
 }
 
 func (s *CustomSIPServer) handleTransactionRequest(req *sipparser.Request, tx sipparser.ServerTransaction, method string) {
@@ -259,6 +408,7 @@ func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string)
 	if s.sipServer == nil {
 		return fmt.Errorf("SIP server not initialized")
 	}
+	s.setListenAddress("udp", address)
 	s.logger.WithField("address", address).Info("Custom SIP server listening on UDP via sipgo transaction layer")
 	return s.sipServer.ListenAndServe(ctx, "udp", address)
 }
@@ -268,6 +418,7 @@ func (s *CustomSIPServer) ListenAndServeTCP(ctx context.Context, address string)
 	if s.sipServer == nil {
 		return fmt.Errorf("SIP server not initialized")
 	}
+	s.setListenAddress("tcp", address)
 	s.logger.WithField("address", address).Info("Custom SIP server listening on TCP via sipgo transaction layer")
 	return s.sipServer.ListenAndServe(ctx, "tcp", address)
 }
@@ -287,6 +438,7 @@ func (s *CustomSIPServer) ListenAndServeTLS(ctx context.Context, address string,
 			return fmt.Errorf("TLS config required for TLS listener")
 		}
 	}
+	s.setListenAddress("tls", address)
 	s.logger.WithField("address", address).Info("Custom SIP server listening on TLS via sipgo transaction layer")
 	return s.sipServer.ListenAndServeTLS(ctx, "tls", address, cfg)
 }
@@ -515,9 +667,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	s.callMutex.Unlock()
 
 	// Send 180 Ringing to establish dialog-state per RFC 3261
-	var provisionalHeaders map[string]string
-	if contact := s.getHeader(message, "contact"); contact != "" {
-		provisionalHeaders = map[string]string{"Contact": contact}
+	contactHeader := s.buildContactHeader(message)
+	provisionalHeaders := map[string]string{}
+	if contactHeader != "" {
+		provisionalHeaders["Contact"] = contactHeader
 	}
 	s.sendResponse(message, 180, "Ringing", provisionalHeaders, nil)
 	callState.State = "early"
@@ -797,7 +950,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Create clean SDP response using existing media config
 	responseHeaders := map[string]string{
-		"Contact":   s.getHeader(message, "contact"),
+		"Contact":   s.buildContactHeader(message),
 		"Supported": "siprec",
 		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
@@ -1035,7 +1188,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 	// Generate response using existing RTP forwarder
 	responseHeaders := map[string]string{
-		"Contact":   s.getHeader(message, "contact"),
+		"Contact":   s.buildContactHeader(message),
 		"Supported": "siprec",
 		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
@@ -1289,8 +1442,10 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 
 	// Establish early dialog with 180 Ringing
 	var provisionalHeaders map[string]string
-	if contact := s.getHeader(message, "contact"); contact != "" {
-		provisionalHeaders = map[string]string{"Contact": contact}
+	contactHeader := s.buildContactHeader(message)
+	provisionalHeaders = map[string]string{}
+	if contactHeader != "" {
+		provisionalHeaders["Contact"] = contactHeader
 	}
 	s.sendResponse(message, 180, "Ringing", provisionalHeaders, nil)
 	callState.State = "early"
@@ -1343,7 +1498,7 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 
 	// Send response with SDP
 	responseHeaders := map[string]string{
-		"Contact": s.getHeader(message, "contact"),
+		"Contact": s.buildContactHeader(message),
 	}
 	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	logger.Info("Successfully responded to regular INVITE with SDP")
