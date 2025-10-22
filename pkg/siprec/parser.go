@@ -234,7 +234,7 @@ func CreateMetadataResponse(metadata *RSMetadata) (string, error) {
 
 	response.Normalize()
 
-	metadataBytes, err := xml.MarshalIndent(response, "", "  ")
+	metadataBytes, err := xml.Marshal(response)
 	if err != nil {
 		return "", fmt.Errorf("error marshaling response metadata: %w", err)
 	}
