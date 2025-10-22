@@ -884,7 +884,7 @@ func initialize() error {
 func startSIPServer(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	ip := "0.0.0.0" // Listen on all interfaces
+	ip := appConfig.Network.Host // Use configured SIP host or default 0.0.0.0
 	ctx, cancel := context.WithCancel(rootCtx)
 	defer cancel()
 
@@ -1056,6 +1056,7 @@ func logStartupConfig() {
 	logger.WithFields(logrus.Fields{
 		"external_ip": appConfig.Network.ExternalIP,
 		"internal_ip": appConfig.Network.InternalIP,
+		"sip_host":    appConfig.Network.Host,
 		"sip_ports":   appConfig.Network.Ports,
 		"tls_enabled": appConfig.Network.EnableTLS,
 	}).Info("Network configuration")

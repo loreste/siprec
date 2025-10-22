@@ -5,7 +5,7 @@ Complete reference for all environment variables supported by the SIPREC Server.
 ## Core Configuration
 
 ### SIP Configuration
-- `SIP_HOST` (default: "0.0.0.0") - SIP server bind address
+- `SIP_HOST` (default: "0.0.0.0") - SIP server bind address. Set to "0.0.0.0" to listen on all interfaces, or specify a specific IP address (e.g., "127.0.0.1") to bind to a particular interface. This address will also be used in Via and Contact headers of SIP responses.
 - `SIP_PORT` (default: 5060) - SIP server port
 - `SIP_TLS_ENABLED` (default: false) - Enable SIP over TLS
 - `SIP_TLS_CERT` - Path to TLS certificate (required if TLS enabled)
