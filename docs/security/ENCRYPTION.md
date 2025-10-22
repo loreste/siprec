@@ -63,7 +63,7 @@ ENCRYPTION_SALT_SIZE=32                   # Salt size for key derivation
 PBKDF2_ITERATIONS=100000                  # PBKDF2 iteration count
 
 # Storage options
-ENCRYPTION_KEY_STORE=file                 # file, memory, or vault
+ENCRYPTION_KEY_STORE=memory               # memory (default), file, or vault
 ```
 
 ### Configuration Examples

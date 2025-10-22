@@ -725,7 +725,7 @@ type EncryptionConfig struct {
 	PBKDF2Iterations int `json:"pbkdf2_iterations" env:"PBKDF2_ITERATIONS" default:"100000"`
 
 	// Storage encryption
-	EncryptionKeyStore string `json:"encryption_key_store" env:"ENCRYPTION_KEY_STORE" default:"file"`
+	EncryptionKeyStore string `json:"encryption_key_store" env:"ENCRYPTION_KEY_STORE" default:"memory"`
 }
 
 // AsyncSTTConfig holds async STT processing configurations
@@ -1713,10 +1713,10 @@ func loadEncryptionConfig(logger *logrus.Logger, config *EncryptionConfig) error
 	}
 
 	// Load storage configuration
-	config.EncryptionKeyStore = getEnv("ENCRYPTION_KEY_STORE", "file")
-	if config.EncryptionKeyStore != "file" && config.EncryptionKeyStore != "env" && config.EncryptionKeyStore != "vault" {
-		logger.Warn("Invalid ENCRYPTION_KEY_STORE value, using default: file")
-		config.EncryptionKeyStore = "file"
+	config.EncryptionKeyStore = getEnv("ENCRYPTION_KEY_STORE", "memory")
+	if config.EncryptionKeyStore != "file" && config.EncryptionKeyStore != "env" && config.EncryptionKeyStore != "vault" && config.EncryptionKeyStore != "memory" {
+		logger.Warn("Invalid ENCRYPTION_KEY_STORE value, using default: memory")
+		config.EncryptionKeyStore = "memory"
 	}
 
 	// Log encryption status
