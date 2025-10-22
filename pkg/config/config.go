@@ -69,6 +69,9 @@ type NetworkConfig struct {
 	// Internal IP address for binding (auto = auto-detect)
 	InternalIP string `json:"internal_ip" env:"INTERNAL_IP" default:"auto"`
 
+	// SIP host address to bind to (0.0.0.0 = all interfaces)
+	Host string `json:"host" env:"SIP_HOST" default:"0.0.0.0"`
+
 	// SIP ports to listen on (both UDP and TCP)
 	Ports []int `json:"ports" env:"PORTS" default:"5060,5061"`
 
@@ -1034,6 +1037,9 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 		config.InternalIP = getInternalIP(logger)
 		logger.WithField("internal_ip", config.InternalIP).Info("Auto-detected internal IP")
 	}
+
+	// Load SIP host (bind address)
+	config.Host = getEnv("SIP_HOST", "0.0.0.0")
 
 	// Load SIP ports
 	var err error
