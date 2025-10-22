@@ -152,6 +152,32 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ## [Unreleased]
 
+### Added
+- **SIP_HOST Configuration**: Added configurable SIP server bind address
+  - Set bind address via SIP_HOST environment variable (default: "0.0.0.0")
+  - Affects Via and Contact headers in SIP responses
+  - Enables binding to specific network interfaces
+
+### Enhanced
+- **RFC 7865 Compliance**: Improved SIPREC metadata validation
+  - Missing state attribute now treated as warning instead of error
+  - Added "unknown" as valid recording state for RFC 7865-only implementations
+  - Support for participantsessionassoc elements
+  - Enhanced validation distinguishes between RFC 7865 and RFC 7866 requirements
+- **Encryption Configuration**: Changed ENCRYPTION_KEY_STORE default from "file" to "memory"
+  - Enables out-of-box operation without file path configuration
+  - Memory storage suitable for development and testing environments
+  - File and vault storage remain available for production use
+- **Message Size Optimization**: Compact XML format prevents MTU exceeded errors
+  - Changed from indented to compact XML for SIPREC metadata responses
+  - Reduces message size by 12-15% to stay within UDP MTU limits
+  - Fixes "size of packet larger than MTU" SIP 200 OK response failures
+
+### Fixed
+- SIP 200 OK responses failing due to MTU size exceeded on UDP transport
+- SIPREC metadata with missing state attribute incorrectly rejected as critical error
+- App startup failures when ENCRYPTION_KEY_STORE not configured
+
 ### Added - Resource Optimization & Advanced Features
 - **Advanced Resource Optimization**: Comprehensive memory and CPU optimization for 1000+ concurrent sessions
 - **Memory Pool Management**: Intelligent buffer pooling reducing GC pressure by 50-70%
