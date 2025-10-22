@@ -106,25 +106,26 @@ type CommunicationID struct {
 // RSMetadata represents the root element of the rs-metadata XML document
 // Follows the schema defined in RFC 7865 and RFC 7866
 type RSMetadata struct {
-	XMLName                  xml.Name                   `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
-	DataMode                 string                     `xml:"datamode,omitempty"`
-	SessionID                string                     `xml:"session,attr,omitempty"`
-	State                    string                     `xml:"state,attr,omitempty"`
-	Reason                   string                     `xml:"reason,attr,omitempty"`
-	Sequence                 int                        `xml:"sequence,attr,omitempty"`
-	ReasonRef                string                     `xml:"reasonref,attr,omitempty"`
-	Expires                  string                     `xml:"expires,attr,omitempty"`
-	MediaLabel               string                     `xml:"label,attr,omitempty"`
-	Direction                string                     `xml:"direction,attr,omitempty"`
-	Group                    []Group                    `xml:"group"`
-	Sessions                 []RSSession                `xml:"session"`
-	RecordingSessions        []RSRecordingSession       `xml:"recordingsession"`
-	Participants             []RSParticipant            `xml:"participant"`
-	Streams                  []Stream                   `xml:"stream"`
-	ParticipantStreamAssoc   []RSParticipantStreamAssoc `xml:"participantstreamassoc"`
-	SessionRecordingAssoc    RSAssociation              `xml:"sessionrecordingassoc"`
-	SessionGroupAssociations []SessionGroupAssociation  `xml:"sessiongroupassoc"`
-	PolicyUpdates            []PolicyUpdate             `xml:"policy"`
+	XMLName                  xml.Name                    `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
+	DataMode                 string                      `xml:"datamode,omitempty"`
+	SessionID                string                      `xml:"session,attr,omitempty"`
+	State                    string                      `xml:"state,attr,omitempty"`
+	Reason                   string                      `xml:"reason,attr,omitempty"`
+	Sequence                 int                         `xml:"sequence,attr,omitempty"`
+	ReasonRef                string                      `xml:"reasonref,attr,omitempty"`
+	Expires                  string                      `xml:"expires,attr,omitempty"`
+	MediaLabel               string                      `xml:"label,attr,omitempty"`
+	Direction                string                      `xml:"direction,attr,omitempty"`
+	Group                    []Group                     `xml:"group"`
+	Sessions                 []RSSession                 `xml:"session"`
+	RecordingSessions        []RSRecordingSession        `xml:"recordingsession"`
+	Participants             []RSParticipant             `xml:"participant"`
+	Streams                  []Stream                    `xml:"stream"`
+	ParticipantStreamAssoc   []RSParticipantStreamAssoc  `xml:"participantstreamassoc"`
+	ParticipantSessionAssoc  []RSParticipantSessionAssoc `xml:"participantsessionassoc"`
+	SessionRecordingAssoc    RSAssociation               `xml:"sessionrecordingassoc"`
+	SessionGroupAssociations []SessionGroupAssociation   `xml:"sessiongroupassoc"`
+	PolicyUpdates            []PolicyUpdate              `xml:"policy"`
 }
 
 // SessionGroupAssociation captures membership of a recording session in a session group.
@@ -273,6 +274,15 @@ type LocalizedName struct {
 type XMLExtension struct {
 	XMLName  xml.Name
 	InnerXML string `xml:",innerxml"`
+}
+
+// RSParticipantSessionAssoc captures participantsessionassoc relationships per RFC 7865.
+// Associates a participant with a communication session.
+type RSParticipantSessionAssoc struct {
+	ParticipantID string         `xml:"participant_id,attr,omitempty"`
+	SessionID     string         `xml:"session_id,attr,omitempty"`
+	AssociateTime string         `xml:"associate-time,omitempty"`
+	Extensions    []XMLExtension `xml:",any"`
 }
 
 // Normalize aligns parsed metadata with backward-compatible expectations.

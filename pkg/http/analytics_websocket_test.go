@@ -316,11 +316,12 @@ func TestAnalyticsWebSocketHandler_Heartbeat(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping heartbeat test in short mode")
 	}
-	
+
 	logger := logrus.New()
 	handler := NewAnalyticsWebSocketHandler(logger)
-	
+
 	// Set shorter ping interval for testing
+	handler.pingInterval = 2 * time.Second
 	handler.Start()
 	defer func() {
 		if handler.broadcast != nil {
@@ -353,12 +354,12 @@ func TestAnalyticsWebSocketHandler_Heartbeat(t *testing.T) {
 		}
 	}()
 	
-	// Wait for ping (WebSocket sends pings every 30 seconds)
+	// Wait for ping (WebSocket sends pings based on configured interval)
 	select {
 	case <-pingReceived:
 		// Success - received ping
 		assert.True(t, true)
-	case <-time.After(35 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("No ping received within expected time")
 	}
 }

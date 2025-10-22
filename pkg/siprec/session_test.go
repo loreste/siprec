@@ -85,7 +85,7 @@ func TestUpdateRecordingSessionParticipants(t *testing.T) {
 
 	// Should have both participants
 	assert.Len(t, existing.Participants, 2)
-	
+
 	// Find updated participant
 	var updatedPart Participant
 	for _, p := range existing.Participants {
@@ -105,15 +105,20 @@ func TestUpdateRecordingSessionSequenceNumber(t *testing.T) {
 		ExtendedMetadata: make(map[string]string),
 	}
 
-	// Test sequence increment
+	// Higher sequence should update to explicit value
 	metadata := &RSMetadata{Sequence: 7}
 	UpdateRecordingSession(existing, metadata)
 	assert.Equal(t, 7, existing.SequenceNumber)
 
-	// Test lower sequence number (should not go backwards)
+	// Lower sequence should be ignored to prevent overwriting newer state
 	metadata2 := &RSMetadata{Sequence: 3}
 	UpdateRecordingSession(existing, metadata2)
-	assert.Equal(t, 8, existing.SequenceNumber) // Should increment from 7 to 8
+	assert.Equal(t, 7, existing.SequenceNumber)
+
+	// Missing sequence should not change an established value
+	metadata3 := &RSMetadata{}
+	UpdateRecordingSession(existing, metadata3)
+	assert.Equal(t, 7, existing.SequenceNumber)
 }
 
 func TestDetectParticipantChanges(t *testing.T) {
@@ -129,8 +134,8 @@ func TestDetectParticipantChanges(t *testing.T) {
 	metadata := &RSMetadata{
 		Participants: []RSParticipant{
 			{ID: "part1", Name: "John Smith", NameID: "Johnny"}, // Modified
-			{ID: "part2", Name: "Jane Doe", NameID: "Jane"},      // Unchanged
-			{ID: "part4", Name: "Alice Brown", NameID: "Alice"},  // Added
+			{ID: "part2", Name: "Jane Doe", NameID: "Jane"},     // Unchanged
+			{ID: "part4", Name: "Alice Brown", NameID: "Alice"}, // Added
 			// part3 is removed
 		},
 	}
@@ -203,7 +208,7 @@ func TestGetParticipantIDs(t *testing.T) {
 	}
 
 	ids := GetParticipantIDs(participants)
-	
+
 	assert.Len(t, ids, 3)
 	assert.Contains(t, ids, "part1")
 	assert.Contains(t, ids, "part2")
@@ -251,7 +256,7 @@ func TestUpdateRecordingSessionPolicyUpdates(t *testing.T) {
 	assert.Equal(t, "applied", existing.ExtendedMetadata["policy_policy1_status"])
 	assert.Equal(t, "true", existing.ExtendedMetadata["policy_policy1_status_ack"])
 	assert.Equal(t, timestamp, existing.ExtendedMetadata["policy_policy1_status_timestamp"])
-	
+
 	assert.Equal(t, "failed", existing.ExtendedMetadata["policy_policy2_status"])
 	assert.Equal(t, "false", existing.ExtendedMetadata["policy_policy2_status_ack"])
 	_, hasTimestamp := existing.ExtendedMetadata["policy_policy2_status_timestamp"]
@@ -281,7 +286,7 @@ func TestUpdateRecordingSessionSessionGroups(t *testing.T) {
 	assert.Len(t, existing.SessionGroups, 2)
 	assert.Equal(t, "primary", existing.SessionGroupRoles["group1"])
 	assert.Equal(t, "secondary", existing.SessionGroupRoles["group2"])
-	
+
 	// Old group should be removed
 	_, hasOld := existing.SessionGroupRoles["old-group"]
 	assert.False(t, hasOld)
@@ -293,11 +298,11 @@ func TestUpdateRecordingSessionSessionGroups(t *testing.T) {
 
 func TestUpdateRecordingSessionStateChanges(t *testing.T) {
 	testCases := []struct {
-		name            string
-		initialState    string
-		newState        string
-		expectedState   string
-		expectUpdate    bool
+		name          string
+		initialState  string
+		newState      string
+		expectedState string
+		expectUpdate  bool
 	}{
 		{
 			name:          "State change from active to paused",

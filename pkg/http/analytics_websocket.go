@@ -14,13 +14,14 @@ import (
 
 // AnalyticsWebSocketHandler handles WebSocket connections for real-time analytics streaming
 type AnalyticsWebSocketHandler struct {
-	logger     *logrus.Logger
-	upgrader   websocket.Upgrader
-	clients    map[*AnalyticsClient]bool
-	clientsMu  sync.RWMutex
-	register   chan *AnalyticsClient
-	unregister chan *AnalyticsClient
-	broadcast  chan *AnalyticsMessage
+	logger       *logrus.Logger
+	upgrader     websocket.Upgrader
+	clients      map[*AnalyticsClient]bool
+	clientsMu    sync.RWMutex
+	register     chan *AnalyticsClient
+	unregister   chan *AnalyticsClient
+	broadcast    chan *AnalyticsMessage
+	pingInterval time.Duration // Configurable ping interval for testing
 }
 
 // AnalyticsClient represents a connected WebSocket client
@@ -53,10 +54,11 @@ func NewAnalyticsWebSocketHandler(logger *logrus.Logger) *AnalyticsWebSocketHand
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
-		clients:    make(map[*AnalyticsClient]bool),
-		register:   make(chan *AnalyticsClient),
-		unregister: make(chan *AnalyticsClient),
-		broadcast:  make(chan *AnalyticsMessage, 256),
+		clients:      make(map[*AnalyticsClient]bool),
+		register:     make(chan *AnalyticsClient),
+		unregister:   make(chan *AnalyticsClient),
+		broadcast:    make(chan *AnalyticsMessage, 256),
+		pingInterval: 54 * time.Second, // Default ping interval
 	}
 }
 
@@ -300,7 +302,7 @@ func (c *AnalyticsClient) readPump() {
 
 // writePump handles sending messages to the client
 func (c *AnalyticsClient) writePump() {
-	ticker := time.NewTicker(54 * time.Second)
+	ticker := time.NewTicker(c.handler.pingInterval)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()

@@ -1148,8 +1148,10 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 // updateRecordingSession updates an existing recording session with new metadata
 func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSession, metadata *siprec.RSMetadata, logger *logrus.Entry) error {
-	// Update sequence number
-	session.SequenceNumber = metadata.Sequence
+	// Update sequence number if explicitly provided; otherwise leave untouched
+	if metadata.Sequence > 0 {
+		session.SequenceNumber = metadata.Sequence
+	}
 	session.UpdatedAt = time.Now()
 
 	// Update recording state if provided
