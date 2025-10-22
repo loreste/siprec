@@ -10,6 +10,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const rfc7865SampleMetadata = `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+  <datamode>complete</datamode>
+  <group group_id="7+OTCyoxTmqmqyA/1weDAg==">
+    <associate-time>2010-12-16T23:41:07Z</associate-time>
+    <call-center xmlns='urn:ietf:params:xml:ns:callcenter'>
+      <supervisor>sip:alice@atlanta.com</supervisor>
+    </call-center>
+    <mydata xmlns='http://example.com/my'>
+      <structure>FOO!</structure>
+      <whatever>bar</whatever>
+    </mydata>
+  </group>
+  <session session_id="hVpd7YQgRW2nD22h7q60JQ==">
+    <sipSessionID>ab30317f1a784dc48ff824d0d3715d86; remote=47755a9de7794ba387653f2099600ef2</sipSessionID>
+    <group-ref>7+OTCyoxTmqmqyA/1weDAg==</group-ref>
+  </session>
+  <participant participant_id="srfBElmCRp2QB23b7Mpk0w==">
+    <nameID aor="sip:bob@biloxi.com">
+      <name xml:lang="it">Bob</name>
+    </nameID>
+  </participant>
+</recording>`
+
 func TestConvertRSParticipantToParticipant(t *testing.T) {
 	// Create test RSParticipant
 	rsParticipant := RSParticipant{
@@ -114,32 +138,8 @@ func TestCreateMetadataResponse(t *testing.T) {
 }
 
 func TestUnmarshalRFC7865Metadata(t *testing.T) {
-	const sample = `<?xml version="1.0" encoding="UTF-8"?>
-<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
-  <datamode>complete</datamode>
-  <group group_id="7+OTCyoxTmqmqyA/1weDAg==">
-    <associate-time>2010-12-16T23:41:07Z</associate-time>
-    <call-center xmlns='urn:ietf:params:xml:ns:callcenter'>
-      <supervisor>sip:alice@atlanta.com</supervisor>
-    </call-center>
-    <mydata xmlns='http://example.com/my'>
-      <structure>FOO!</structure>
-      <whatever>bar</whatever>
-    </mydata>
-  </group>
-  <session session_id="hVpd7YQgRW2nD22h7q60JQ==">
-    <sipSessionID>ab30317f1a784dc48ff824d0d3715d86; remote=47755a9de7794ba387653f2099600ef2</sipSessionID>
-    <group-ref>7+OTCyoxTmqmqyA/1weDAg==</group-ref>
-  </session>
-  <participant participant_id="srfBElmCRp2QB23b7Mpk0w==">
-    <nameID aor="sip:bob@biloxi.com">
-      <name xml:lang="it">Bob</name>
-    </nameID>
-  </participant>
-</recording>`
-
 	var metadata RSMetadata
-	require.NoError(t, xml.Unmarshal([]byte(sample), &metadata))
+	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
 
 	assert.Equal(t, "complete", metadata.DataMode)
 	require.Len(t, metadata.Group, 1)
@@ -153,6 +153,132 @@ func TestUnmarshalRFC7865Metadata(t *testing.T) {
 	require.NotEmpty(t, participant.Aor)
 	assert.Equal(t, "sip:bob@biloxi.com", participant.Aor[0].Value)
 	assert.Equal(t, "hVpd7YQgRW2nD22h7q60JQ==", metadata.SessionID)
+}
+
+func TestValidateSiprecMessageAllowsMissingState(t *testing.T) {
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
+
+	result := ValidateSiprecMessage(&metadata)
+	require.Empty(t, result.Errors, "RFC 7865 sample should not produce validation errors")
+	assert.NotEmpty(t, result.Warnings, "Missing state should yield a warning")
+	found := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "missing recording state attribute") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected warning about missing recording state")
+	assert.Equal(t, "", metadata.State, "Validation must not modify original metadata state")
+}
+
+func TestUnmarshalPreservesStateAndSequence(t *testing.T) {
+	xmlData := `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1' state='paused' sequence='27'>
+  <session session_id="abc"/>
+  <participant participant_id="p1">
+    <nameID aor="sip:alice@example.com">
+      <name>Alice</name>
+    </nameID>
+  </participant>
+</recording>`
+
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(xmlData), &metadata))
+	assert.Equal(t, "paused", metadata.State)
+	assert.Equal(t, 27, metadata.Sequence)
+
+	result := ValidateSiprecMessage(&metadata)
+	require.Empty(t, result.Errors)
+	assert.Equal(t, "paused", metadata.State, "validation should not mutate state")
+	assert.Equal(t, 27, metadata.Sequence, "validation should not mutate sequence")
+}
+
+func TestValidateRealWorldSIPRECMetadata(t *testing.T) {
+	const realWorldMetadata = `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+ <datamode>complete</datamode>
+ <session session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <sipSessionID>jcukek0rhnnsq0sqrru2rk0kkuekjej2@10.18.5.64</sipSessionID>
+ </session>
+ <participant participant_id="XHWWTVWST5G/3G6NVExIIA==">
+  <nameID aor="sip:+123@192.168.18.10;transport=udp;user=phone">
+   <name>+123</name>
+  </nameID>
+ </participant>
+ <participant participant_id="vioNTaFfTB+i4a8sSi4M+Q==">
+  <nameID aor="sip:+321@192.168.22.131;transport=udp;user=phone">
+   <name>+321</name>
+  </nameID>
+ </participant>
+ <stream stream_id="7RFzdpqQRHCi5c+zpgK48g==" session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <label>1</label>
+ </stream>
+ <stream stream_id="JoCeAfr4SAuAaPHyFcX/Yw==" session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <label>0</label>
+ </stream>
+ <sessionrecordingassoc session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <associate-time>2025-10-22T12:16:48+0300</associate-time>
+ </sessionrecordingassoc>
+ <participantsessionassoc participant_id="XHWWTVWST5G/3G6NVExIIA==" session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <associate-time>2025-10-22T12:16:48+0300</associate-time>
+ </participantsessionassoc>
+ <participantsessionassoc participant_id="vioNTaFfTB+i4a8sSi4M+Q==" session_id="y5I25Gf2RuG9NQJyJkL1rw==">
+  <associate-time>2025-10-22T12:16:48+0300</associate-time>
+ </participantsessionassoc>
+ <participantstreamassoc participant_id="XHWWTVWST5G/3G6NVExIIA==">
+  <send>7RFzdpqQRHCi5c+zpgK48g==</send>
+  <recv>JoCeAfr4SAuAaPHyFcX/Yw==</recv>
+ </participantstreamassoc>
+ <participantstreamassoc participant_id="vioNTaFfTB+i4a8sSi4M+Q==">
+  <send>JoCeAfr4SAuAaPHyFcX/Yw==</send>
+  <recv>7RFzdpqQRHCi5c+zpgK48g==</recv>
+ </participantstreamassoc>
+</recording>`
+
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(realWorldMetadata), &metadata))
+
+	assert.Equal(t, "complete", metadata.DataMode)
+	assert.Equal(t, "y5I25Gf2RuG9NQJyJkL1rw==", metadata.SessionID)
+	require.Len(t, metadata.Participants, 2)
+	require.Len(t, metadata.Streams, 2)
+	require.Len(t, metadata.ParticipantSessionAssoc, 2, "Should parse participantsessionassoc elements")
+	assert.Equal(t, "XHWWTVWST5G/3G6NVExIIA==", metadata.ParticipantSessionAssoc[0].ParticipantID)
+	assert.Equal(t, "y5I25Gf2RuG9NQJyJkL1rw==", metadata.ParticipantSessionAssoc[0].SessionID)
+
+	result := ValidateSiprecMessage(&metadata)
+	require.Empty(t, result.Errors, "Real-world SIPREC metadata should not produce validation errors")
+	assert.NotEmpty(t, result.Warnings, "Should have warnings about missing state")
+}
+
+func TestMinimalRFC7865Compliance(t *testing.T) {
+	// Test absolute minimum RFC 7865 elements: session and participant only
+	const minimalMetadata = `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+  <session session_id="minimal-session-123">
+    <sipSessionID>minimal@test.com</sipSessionID>
+  </session>
+  <participant participant_id="p1">
+    <nameID aor="sip:user@example.com">
+      <name>Test User</name>
+    </nameID>
+  </participant>
+</recording>`
+
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(minimalMetadata), &metadata))
+
+	assert.Equal(t, "minimal-session-123", metadata.SessionID)
+	require.Len(t, metadata.Participants, 1)
+	assert.Equal(t, "p1", metadata.Participants[0].ID)
+	assert.Equal(t, "Test User", metadata.Participants[0].Name)
+
+	result := ValidateSiprecMessage(&metadata)
+	require.Empty(t, result.Errors, "Minimal RFC 7865 metadata should not produce validation errors")
+	// Warnings are acceptable (missing state, missing streams, etc.)
+	assert.NotEmpty(t, result.Warnings, "Should have warnings about missing optional elements")
 }
 
 func TestCreateMetadataResponseDefaults(t *testing.T) {
