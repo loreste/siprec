@@ -159,6 +159,28 @@ All notable changes to the SIPREC server project will be documented in this file
   - Enables binding to specific network interfaces
 
 ### Enhanced
+- **Infrastructure Package Integration**: Fixed and integrated critical monitoring and resilience systems
+  - **pkg/metrics**: Fixed broken metrics system - was being referenced but never initialized
+    - Added metrics.Init() and metrics.InitEnhancedMetrics() calls
+    - Prometheus endpoint now properly exposes all RTP, SIP, STT, and AMQP metrics
+    - Fixed null/empty metrics response issue
+  - **pkg/circuitbreaker**: Integrated circuit breaker protection for all STT providers
+    - Wrapped all 7 STT providers (Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs)
+    - Automatic failure detection and recovery
+    - Prevents cascading failures when providers are unavailable
+    - Configurable thresholds and timeout periods
+  - **pkg/performance**: Integrated real-time performance monitoring
+    - Memory usage tracking with automatic GC triggering
+    - Goroutine leak detection
+    - CPU usage monitoring with configurable limits
+    - Proper initialization and graceful shutdown
+- **Contact Header Fix**: SIP Contact headers now use actual configured port
+  - Tracks listen addresses per transport (UDP/TCP/TLS)
+  - Resolves correct host:port considering NAT configuration
+  - Fixes issue where Contact showed :5060 instead of configured port
+- **UDP MTU Handling**: Increased UDP MTU to 4096 bytes for large SIPREC messages
+  - Combined with compact XML format for maximum efficiency
+  - Prevents packet fragmentation issues
 - **RFC 7865 Compliance**: Improved SIPREC metadata validation
   - Missing state attribute now treated as warning instead of error
   - Added "unknown" as valid recording state for RFC 7865-only implementations
@@ -177,6 +199,18 @@ All notable changes to the SIPREC server project will be documented in this file
 - SIP 200 OK responses failing due to MTU size exceeded on UDP transport
 - SIPREC metadata with missing state attribute incorrectly rejected as critical error
 - App startup failures when ENCRYPTION_KEY_STORE not configured
+- Broken metrics endpoint returning empty data due to uninitialized registry
+- Contact headers showing wrong port number in SIP responses
+
+### Notes
+- **Remaining Unintegrated Packages**: The following packages are implemented but not yet integrated:
+  - `pkg/alerting`: Multi-channel alerting system (requires alert rules configuration)
+  - `pkg/auth`: Authentication/authorization middleware (requires auth configuration)
+  - `pkg/clustering`: Redis-based multi-instance clustering (requires Redis setup)
+  - `pkg/failover`: Session failover system (depends on clustering)
+  - `pkg/warnings`: Centralized warning collection (optional feature)
+  - `pkg/app`, `pkg/core`, `pkg/util` (legacy): Utility packages with minimal value
+  - These packages can be integrated when their specific features are needed
 
 ### Added - Resource Optimization & Advanced Features
 - **Advanced Resource Optimization**: Comprehensive memory and CPU optimization for 1000+ concurrent sessions
