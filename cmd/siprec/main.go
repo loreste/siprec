@@ -16,6 +16,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"siprec-server/pkg/alerting"
+	"siprec-server/pkg/auth"
 	"siprec-server/pkg/backup"
 	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/circuitbreaker"
@@ -36,6 +38,7 @@ import (
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
 	"siprec-server/pkg/telemetry/tracing"
+	"siprec-server/pkg/warnings"
 )
 
 var (
@@ -73,6 +76,8 @@ var (
 	gdprService         *compliance.GDPRService
 	cbManager           *circuitbreaker.Manager
 	perfMonitor         *performance.PerformanceMonitor
+	authenticator       *auth.SimpleAuthenticator
+	alertManager        *alerting.AlertManager
 )
 
 type analyticsAudioListener struct {
@@ -315,6 +320,13 @@ func main() {
 			logger.Info("Performance monitor stopped")
 		}
 
+		// Stop alert manager
+		if alertManager != nil {
+			logger.Debug("Stopping alert manager...")
+			alertManager.Stop()
+			logger.Info("Alert manager stopped")
+		}
+
 		shutdownTraceCtx, shutdownTraceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := tracingShutdown(shutdownTraceCtx); err != nil {
 			logger.WithError(err).Warn("Failed to flush tracing spans during shutdown")
@@ -376,6 +388,48 @@ func initialize() error {
 	perfMonitor = performance.NewPerformanceMonitor(logger, perfConfig)
 	perfMonitor.Start()
 	logger.Info("Performance monitor started")
+
+	// Initialize authentication system if enabled
+	if appConfig.Auth.Enabled {
+		authenticator = auth.NewSimpleAuthenticator(
+			appConfig.Auth.JWTSecret,
+			appConfig.Auth.JWTIssuer,
+			appConfig.Auth.TokenExpiry,
+			logger,
+		)
+
+		// Override default admin password if configured
+		if appConfig.Auth.AdminPassword != "" {
+			authenticator.AddUser(appConfig.Auth.AdminUsername, appConfig.Auth.AdminPassword, "admin")
+			logger.WithField("username", appConfig.Auth.AdminUsername).Info("Admin user configured")
+		}
+
+		logger.WithFields(logrus.Fields{
+			"jwt_issuer":      appConfig.Auth.JWTIssuer,
+			"token_expiry":    appConfig.Auth.TokenExpiry,
+			"enable_api_keys": appConfig.Auth.EnableAPIKeys,
+		}).Info("Authentication system initialized")
+	} else {
+		logger.Debug("Authentication disabled")
+	}
+
+	// Initialize global warning collector
+	warnings.InitGlobalCollector(logger)
+	logger.Info("Warning collector initialized")
+
+	// Initialize alert manager if enabled
+	if appConfig.Alerting.Enabled {
+		alertConfig := alerting.AlertConfig{
+			Enabled:            true,
+			EvaluationInterval: appConfig.Alerting.EvaluationInterval,
+			Rules:              []alerting.AlertRule{}, // No rules configured yet
+			Channels:           []alerting.ChannelConfig{}, // No channels configured yet
+		}
+		alertManager = alerting.NewAlertManager(alertConfig, logger)
+		logger.WithField("evaluation_interval", appConfig.Alerting.EvaluationInterval).Info("Alert manager initialized")
+	} else {
+		logger.Debug("Alert manager disabled")
+	}
 
 	shutdownTracing, err := tracing.Init(rootCtx, appConfig.Tracing, logger)
 	if err != nil {
