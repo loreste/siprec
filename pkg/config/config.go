@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/rand"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,6 +38,8 @@ type Config struct {
 	Analytics      AnalyticsConfig      `json:"analytics"`
 	Database       DatabaseConfig       `json:"database"`
 	Compliance     ComplianceConfig     `json:"compliance"`
+	Auth           AuthConfig           `json:"auth"`
+	Alerting       AlertingConfig       `json:"alerting"`
 }
 
 // DatabaseConfig controls database persistence
@@ -862,6 +865,39 @@ type PIIConfig struct {
 	LogLevel string `json:"log_level" env:"PII_LOG_LEVEL" default:"info"`
 }
 
+// AuthConfig holds authentication and authorization configuration
+type AuthConfig struct {
+	// Whether authentication is enabled
+	Enabled bool `json:"enabled" env:"AUTH_ENABLED" default:"false"`
+
+	// JWT secret key for token signing
+	JWTSecret string `json:"jwt_secret" env:"AUTH_JWT_SECRET"`
+
+	// JWT issuer
+	JWTIssuer string `json:"jwt_issuer" env:"AUTH_JWT_ISSUER" default:"siprec-server"`
+
+	// Token expiry duration
+	TokenExpiry time.Duration `json:"token_expiry" env:"AUTH_TOKEN_EXPIRY" default:"24h"`
+
+	// Whether API key authentication is enabled
+	EnableAPIKeys bool `json:"enable_api_keys" env:"AUTH_ENABLE_API_KEYS" default:"true"`
+
+	// Default admin username
+	AdminUsername string `json:"admin_username" env:"AUTH_ADMIN_USERNAME" default:"admin"`
+
+	// Default admin password (only used if not already set)
+	AdminPassword string `json:"admin_password" env:"AUTH_ADMIN_PASSWORD"`
+}
+
+// AlertingConfig holds alerting system configuration
+type AlertingConfig struct {
+	// Whether alerting is enabled
+	Enabled bool `json:"enabled" env:"ALERTING_ENABLED" default:"false"`
+
+	// Alert evaluation interval
+	EvaluationInterval time.Duration `json:"evaluation_interval" env:"ALERTING_EVALUATION_INTERVAL" default:"30s"`
+}
+
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
 	// Get current working directory
@@ -1005,6 +1041,16 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load compliance configuration
 	if err := loadComplianceConfig(logger, &config.Compliance); err != nil {
 		return nil, errors.Wrap(err, "failed to load compliance configuration")
+	}
+
+	// Load authentication configuration
+	if err := loadAuthConfig(logger, &config.Auth); err != nil {
+		return nil, errors.Wrap(err, "failed to load authentication configuration")
+	}
+
+	// Load alerting configuration
+	if err := loadAlertingConfig(logger, &config.Alerting); err != nil {
+		return nil, errors.Wrap(err, "failed to load alerting configuration")
 	}
 
 	// Validate the complete configuration
@@ -2823,6 +2869,83 @@ func loadComplianceConfig(logger *logrus.Logger, config *ComplianceConfig) error
 
 	if config.Audit.TamperProof {
 		logger.WithField("log_path", config.Audit.LogPath).Info("Tamper-proof audit logging enabled")
+	}
+
+	return nil
+}
+
+// loadAuthConfig loads authentication and authorization configuration
+func loadAuthConfig(logger *logrus.Logger, config *AuthConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("AUTH_ENABLED", false)
+
+	// Load JWT secret - required if auth is enabled
+	config.JWTSecret = getEnv("AUTH_JWT_SECRET", "")
+	if config.Enabled && config.JWTSecret == "" {
+		logger.Warn("AUTH_ENABLED is true but AUTH_JWT_SECRET is not set, generating random secret (not suitable for production with multiple instances)")
+		// Generate a random secret for development
+		randomBytes := make([]byte, 32)
+		if _, err := rand.Read(randomBytes); err != nil {
+			return errors.Wrap(err, "failed to generate random JWT secret")
+		}
+		config.JWTSecret = fmt.Sprintf("%x", randomBytes)
+	}
+
+	// Load JWT issuer
+	config.JWTIssuer = getEnv("AUTH_JWT_ISSUER", "siprec-server")
+
+	// Load token expiry
+	tokenExpiryStr := getEnv("AUTH_TOKEN_EXPIRY", "24h")
+	var err error
+	config.TokenExpiry, err = time.ParseDuration(tokenExpiryStr)
+	if err != nil {
+		logger.Warnf("Invalid AUTH_TOKEN_EXPIRY '%s', defaulting to 24h", tokenExpiryStr)
+		config.TokenExpiry = 24 * time.Hour
+	}
+
+	// Load API key authentication flag
+	config.EnableAPIKeys = getEnvBool("AUTH_ENABLE_API_KEYS", true)
+
+	// Load admin credentials
+	config.AdminUsername = getEnv("AUTH_ADMIN_USERNAME", "admin")
+	config.AdminPassword = getEnv("AUTH_ADMIN_PASSWORD", "")
+
+	// Log configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"jwt_issuer":       config.JWTIssuer,
+			"token_expiry":     config.TokenExpiry.String(),
+			"enable_api_keys":  config.EnableAPIKeys,
+			"admin_username":   config.AdminUsername,
+			"has_admin_password": config.AdminPassword != "",
+		}).Info("Authentication enabled")
+	} else {
+		logger.Debug("Authentication disabled")
+	}
+
+	return nil
+}
+
+// loadAlertingConfig loads alerting system configuration
+func loadAlertingConfig(logger *logrus.Logger, config *AlertingConfig) error {
+	// Load enabled flag
+	config.Enabled = getEnvBool("ALERTING_ENABLED", false)
+
+	// Load evaluation interval
+	intervalStr := getEnv("ALERTING_EVALUATION_INTERVAL", "30s")
+	var err error
+	config.EvaluationInterval, err = time.ParseDuration(intervalStr)
+	if err != nil {
+		logger.Warnf("Invalid ALERTING_EVALUATION_INTERVAL '%s', defaulting to 30s", intervalStr)
+		config.EvaluationInterval = 30 * time.Second
+	}
+
+	// Log configuration
+	if config.Enabled {
+		logger.WithField("evaluation_interval", config.EvaluationInterval).Info("Alerting system enabled")
+		logger.Warn("Alerting is enabled but no alert rules or channels are configured - alerts will not be sent")
+	} else {
+		logger.Debug("Alerting system disabled")
 	}
 
 	return nil

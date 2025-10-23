@@ -174,6 +174,24 @@ All notable changes to the SIPREC server project will be documented in this file
     - Goroutine leak detection
     - CPU usage monitoring with configurable limits
     - Proper initialization and graceful shutdown
+  - **pkg/auth**: Integrated authentication and authorization system
+    - JWT token authentication with configurable expiry
+    - API key authentication for service-to-service communication
+    - Simple in-memory user management with role-based permissions
+    - Configurable admin credentials via environment variables
+    - Disabled by default, enable via AUTH_ENABLED=true
+  - **pkg/warnings**: Integrated centralized warning collection system
+    - Global warning collector for system-wide warning aggregation
+    - Severity levels (INFO, LOW, MEDIUM, HIGH, CRITICAL)
+    - Warning deduplication and suppression capabilities
+    - Automatic cleanup of old resolved warnings
+    - Recommended actions for common warning categories
+  - **pkg/alerting**: Integrated multi-channel alerting system
+    - Configurable alert evaluation with periodic rule checking
+    - Support for multiple notification channels (Slack, PagerDuty, Email, Webhook)
+    - Alert rules with thresholds and severity levels
+    - Disabled by default pending alert rules and channel configuration
+    - Enable via ALERTING_ENABLED=true
 - **Contact Header Fix**: SIP Contact headers now use actual configured port
   - Tracks listen addresses per transport (UDP/TCP/TLS)
   - Resolves correct host:port considering NAT configuration
@@ -204,13 +222,11 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ### Notes
 - **Remaining Unintegrated Packages**: The following packages are implemented but not yet integrated:
-  - `pkg/alerting`: Multi-channel alerting system (requires alert rules configuration)
-  - `pkg/auth`: Authentication/authorization middleware (requires auth configuration)
-  - `pkg/clustering`: Redis-based multi-instance clustering (requires Redis setup)
-  - `pkg/failover`: Session failover system (depends on clustering)
-  - `pkg/warnings`: Centralized warning collection (optional feature)
+  - `pkg/clustering`: Redis-based multi-instance clustering (requires Redis setup and configuration)
+  - `pkg/failover`: Session failover system (depends on clustering infrastructure)
   - `pkg/app`, `pkg/core`, `pkg/util` (legacy): Utility packages with minimal value
   - These packages can be integrated when their specific features are needed
+- **Recently Integrated Packages**: pkg/auth, pkg/warnings, and pkg/alerting are now integrated and available for use
 
 ### Added - Resource Optimization & Advanced Features
 - **Advanced Resource Optimization**: Comprehensive memory and CPU optimization for 1000+ concurrent sessions
