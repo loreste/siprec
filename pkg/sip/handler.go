@@ -12,6 +12,7 @@ import (
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/realtime/analytics"
+	sessions "siprec-server/pkg/session"
 	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/stt"
 	"siprec-server/pkg/telemetry/tracing"
@@ -46,6 +47,12 @@ type Config struct {
 
 	// NAT configuration for SIP header rewriting
 	NATConfig *NATConfig
+
+	// Shared session store backing both SIP handler and session manager
+	SessionStore sessions.SessionStore
+
+	// Node identifier used when persisting sessions (optional)
+	SessionNodeID string
 
 	// Redundancy-related configuration
 	RedundancyEnabled    bool
@@ -205,23 +212,28 @@ func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderM
 		}
 	}
 
-	// Initialize the session store if redundancy is enabled
-	if config.RedundancyEnabled {
+	// Determine if we should enable persistent session tracking
+	enablePersistence := false
+
+	if config.SessionStore != nil {
+		handler.SessionStore = NewSharedSessionStore(config.SessionStore, config.SessionNodeID, logger)
+		logger.WithField("node_id", config.SessionNodeID).Info("Using shared session manager store")
+		enablePersistence = true
+	} else if config.RedundancyEnabled {
 		switch config.RedundancyStorageType {
-		case "memory":
+		case "memory", "":
 			logger.Info("Using in-memory session store")
 			handler.SessionStore = NewMemorySessionStore()
 		default:
-			// Default to memory store for now
 			logger.Warn("Unknown storage type, using in-memory session store")
 			handler.SessionStore = NewMemorySessionStore()
 		}
+		enablePersistence = true
+	}
 
-		// Create a dedicated context for the session monitor
+	if enablePersistence {
 		handler.monitorCtx, handler.monitorCancel = context.WithCancel(context.Background())
 		handler.sessionMonitorWG.Add(1)
-
-		// Start the session monitor
 		go handler.monitorSessions(handler.monitorCtx)
 	}
 
@@ -393,13 +405,13 @@ func (h *Handler) cleanupStaleSessions() {
 		h.ActiveCalls.Delete(callUUID)
 
 		// Clean up from session store if redundancy is enabled
-		if h.Config.RedundancyEnabled {
+		if h.SessionStore != nil {
 			h.SessionStore.Delete(callUUID)
 		}
 	}
 
 	// Clean up stale sessions from the store if redundancy is enabled
-	if h.Config.RedundancyEnabled {
+	if h.SessionStore != nil {
 		storedSessions, err := h.SessionStore.List()
 		if err != nil {
 			logger.WithError(err).Error("Failed to list stored sessions")
@@ -430,7 +442,7 @@ func (h *Handler) CleanupActiveCalls() {
 	logger.Info("Cleaning up all active calls")
 
 	// Track if redundancy is enabled
-	isRedundancyEnabled := h.Config.RedundancyEnabled
+	isPersistenceEnabled := h.SessionStore != nil
 
 	// Collect all active calls first to avoid modifying map during iteration
 	var activeCallUUIDs []string
@@ -459,8 +471,8 @@ func (h *Handler) CleanupActiveCalls() {
 			callData.RecordingSession.RecordingState = "stopped"
 			callData.RecordingSession.EndTime = time.Now()
 
-			// If redundancy is enabled, update the session store
-			if isRedundancyEnabled {
+			// If persistence is enabled, update the session store
+			if isPersistenceEnabled {
 				h.SessionStore.Save(callUUID, callData)
 			}
 		}
@@ -474,7 +486,7 @@ func (h *Handler) CleanupActiveCalls() {
 	}
 
 	// Log status of persistent sessions
-	if isRedundancyEnabled {
+	if isPersistenceEnabled {
 		sessions, err := h.SessionStore.List()
 		if err != nil {
 			logger.WithError(err).Error("Failed to list persistent sessions during shutdown")
@@ -530,7 +542,7 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 	}
 
 	// Try to load from persistent store if enabled
-	if h.Config.RedundancyEnabled && h.SessionStore != nil {
+	if h.SessionStore != nil {
 		storedData, err := h.SessionStore.Load(id)
 		if err == nil && storedData != nil {
 			// Return stored session info
@@ -561,7 +573,7 @@ func (h *Handler) GetAllSessions() ([]interface{}, error) {
 	})
 
 	// Add stored sessions if redundancy is enabled
-	if h.Config.RedundancyEnabled && h.SessionStore != nil {
+	if h.SessionStore != nil {
 		storedIDs, err := h.SessionStore.List()
 		if err == nil {
 			for _, id := range storedIDs {
