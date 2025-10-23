@@ -238,6 +238,18 @@ func (s *CustomSIPServer) resolveContactAddress(transport string, message *SIPMe
 	port := s.listenPorts[transport]
 	s.listenMu.RUnlock()
 
+	// Prefer dynamically detected external IP from NAT rewriter
+	if s.handler != nil && s.handler.NATRewriter != nil {
+		if extIP := s.handler.NATRewriter.GetExternalIP(); extIP != "" {
+			host = extIP
+		}
+		if cfg := s.handler.NATRewriter.config; cfg != nil {
+			if cfg.ExternalPort > 0 {
+				port = cfg.ExternalPort
+			}
+		}
+	}
+
 	if s.handler != nil && s.handler.Config != nil {
 		if nat := s.handler.Config.NATConfig; nat != nil {
 			if nat.ExternalIP != "" && !strings.EqualFold(nat.ExternalIP, "auto") {
@@ -289,6 +301,23 @@ func (s *CustomSIPServer) detectLocalHost() string {
 			return ip
 		}
 	}
+
+	interfaces, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, addr := range interfaces {
+			if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP != nil && !ipNet.IP.IsLoopback() {
+				if ipv4 := ipNet.IP.To4(); ipv4 != nil {
+					return ipv4.String()
+				}
+			}
+		}
+		for _, addr := range interfaces {
+			if ipNet, ok := addr.(*net.IPNet); ok && ipNet.IP != nil && !ipNet.IP.IsLoopback() {
+				return ipNet.IP.String()
+			}
+		}
+	}
+
 	return "127.0.0.1"
 }
 
@@ -306,20 +335,49 @@ func (s *CustomSIPServer) buildContactHeader(message *SIPMessage) string {
 
 	host, port := s.resolveContactAddress(transport, message)
 
-	contact := fmt.Sprintf("<sip:%s", host)
+	scheme := "sip"
+	transportParam := ""
+	switch transport {
+	case "tls", "sips", "wss":
+		scheme = "sips"
+		transportParam = "transport=tls"
+	case "tcp":
+		transportParam = "transport=tcp"
+	case "ws":
+		transportParam = "transport=ws"
+	}
+
+	contact := fmt.Sprintf("<%s:%s", scheme, host)
 	if port > 0 {
 		contact = fmt.Sprintf("%s:%d", contact, port)
 	}
 	contact += ">"
 
+	params := []string{}
+
 	if message != nil {
 		if suffix := extractContactParameters(s.getHeader(message, "contact")); suffix != "" {
-			if strings.HasPrefix(suffix, ";") {
-				contact += suffix
-			} else {
-				contact += ";" + suffix
+			parts := strings.Split(suffix, ";")
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				if strings.HasPrefix(strings.ToLower(part), "transport=") {
+					// Skip existing transport parameters; we'll add the correct one later
+					continue
+				}
+				params = append(params, part)
 			}
 		}
+	}
+
+	if transportParam != "" {
+		params = append([]string{transportParam}, params...)
+	}
+
+	if len(params) > 0 {
+		contact += ";" + strings.Join(params, ";")
 	}
 
 	return contact
