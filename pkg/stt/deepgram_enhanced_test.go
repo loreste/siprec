@@ -309,15 +309,24 @@ func TestDeepgramProviderEnhanced_HTTPStreaming(t *testing.T) {
 	err = provider.StreamToText(ctx, audioData, "test-call-123")
 	assert.NoError(t, err)
 
-	// Wait for callback
-	callbackWG.Wait()
+	// Wait for callback with timeout
+	done := make(chan struct{})
+	go func() {
+		callbackWG.Wait()
+		close(done)
+	}()
 
-	// Verify results
-	assert.Equal(t, "Hello, this is a test transcription.", receivedTranscription)
-	assert.NotNil(t, receivedMetadata)
-	assert.Equal(t, "deepgram", receivedMetadata["provider"])
-	assert.Equal(t, 0.95, receivedMetadata["confidence"])
-	assert.Equal(t, "test-request-123", receivedMetadata["request_id"])
+	select {
+	case <-done:
+		// Verify results
+		assert.Equal(t, "Hello, this is a test transcription.", receivedTranscription)
+		assert.NotNil(t, receivedMetadata)
+		assert.Equal(t, "deepgram", receivedMetadata["provider"])
+		assert.Equal(t, 0.95, receivedMetadata["confidence"])
+		assert.Equal(t, "test-request-123", receivedMetadata["request_id"])
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for callback - callback was never invoked")
+	}
 }
 
 func newHTTPTestServerOrSkip(t *testing.T, handler http.Handler) *httptest.Server {
@@ -685,9 +694,19 @@ func TestDeepgramProviderEnhanced_RetryLogic(t *testing.T) {
 	assert.Equal(t, 3, attempts)                   // Should have made 3 attempts
 	assert.True(t, duration > 20*time.Millisecond) // Should have some delay from retries
 
-	// Wait for callback
-	callbackWG.Wait()
-	assert.Equal(t, "Retry successful!", receivedTranscription)
+	// Wait for callback with timeout
+	done := make(chan struct{})
+	go func() {
+		callbackWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		assert.Equal(t, "Retry successful!", receivedTranscription)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for callback - callback was never invoked")
+	}
 }
 
 func TestDeepgramProviderEnhanced_CircuitBreaker(t *testing.T) {
