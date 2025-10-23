@@ -18,6 +18,7 @@ import (
 
 	"siprec-server/pkg/backup"
 	"siprec-server/pkg/cdr"
+	"siprec-server/pkg/circuitbreaker"
 	"siprec-server/pkg/compliance"
 	"siprec-server/pkg/config"
 	"siprec-server/pkg/database"
@@ -26,6 +27,8 @@ import (
 	http_server "siprec-server/pkg/http"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/messaging"
+	"siprec-server/pkg/metrics"
+	"siprec-server/pkg/performance"
 	"siprec-server/pkg/pii"
 	"siprec-server/pkg/realtime/analytics"
 	"siprec-server/pkg/security/audit"
@@ -68,6 +71,8 @@ var (
 	dbRepo              *database.Repository
 	cdrService          *cdr.CDRService
 	gdprService         *compliance.GDPRService
+	cbManager           *circuitbreaker.Manager
+	perfMonitor         *performance.PerformanceMonitor
 )
 
 type analyticsAudioListener struct {
@@ -303,6 +308,13 @@ func main() {
 			logger.Info("All components shut down successfully")
 		}
 
+		// Stop performance monitor
+		if perfMonitor != nil {
+			logger.Debug("Stopping performance monitor...")
+			perfMonitor.Stop()
+			logger.Info("Performance monitor stopped")
+		}
+
 		shutdownTraceCtx, shutdownTraceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := tracingShutdown(shutdownTraceCtx); err != nil {
 			logger.WithError(err).Warn("Failed to flush tracing spans during shutdown")
@@ -337,6 +349,33 @@ func initialize() error {
 		return fmt.Errorf("failed to apply logging configuration: %w", err)
 	}
 	logger.WithField("level", logger.GetLevel().String()).Info("Log level set")
+
+	// Initialize metrics system
+	metrics.Init(logger)
+	logger.Info("Metrics system initialized")
+	if appConfig.HTTP.EnableMetrics {
+		metrics.InitEnhancedMetrics(logger)
+		logger.Info("Enhanced metrics initialized")
+	}
+
+	// Initialize circuit breaker manager for STT provider resilience
+	cbManager = circuitbreaker.NewManager(logger, circuitbreaker.STTConfig())
+	logger.Info("Circuit breaker manager initialized")
+
+	// Initialize performance monitor
+	perfConfig := performance.DefaultConfig()
+	if appConfig.Performance.MonitorInterval > 0 {
+		perfConfig.MonitorInterval = appConfig.Performance.MonitorInterval
+	}
+	if appConfig.Performance.MemoryLimitMB > 0 {
+		perfConfig.MemoryLimitMB = int64(appConfig.Performance.MemoryLimitMB)
+	}
+	if appConfig.Performance.CPULimit > 0 {
+		perfConfig.CPULimit = appConfig.Performance.CPULimit
+	}
+	perfMonitor = performance.NewPerformanceMonitor(logger, perfConfig)
+	perfMonitor.Start()
+	logger.Info("Performance monitor started")
 
 	shutdownTracing, err := tracing.Init(rootCtx, appConfig.Tracing, logger)
 	if err != nil {
@@ -612,56 +651,78 @@ func initialize() error {
 		"default": appConfig.STT.DefaultVendor,
 	}).Info("Initializing STT providers")
 
-	// Register providers based on configuration
+	// Register providers based on configuration with circuit breaker protection
 	for _, vendor := range appConfig.STT.SupportedVendors {
 		switch vendor {
 		case "google":
 			if appConfig.STT.Google.Enabled {
 				googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc, &appConfig.STT.Google)
-				if err := sttManager.RegisterProvider(googleProvider); err != nil {
+				// Wrap with circuit breaker for resilience
+				wrappedProvider := stt.NewCircuitBreakerWrapper(googleProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
+				} else {
+					logger.WithField("provider", "google").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "deepgram":
 			if appConfig.STT.Deepgram.Enabled {
 				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram, sttManager)
-				if err := sttManager.RegisterProvider(deepgramProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(deepgramProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Deepgram provider")
+				} else {
+					logger.WithField("provider", "deepgram").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "azure":
 			if appConfig.STT.Azure.Enabled {
 				azureProvider := stt.NewAzureSpeechProvider(logger, transcriptionSvc, &appConfig.STT.Azure)
-				if err := sttManager.RegisterProvider(azureProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(azureProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Azure Speech provider")
+				} else {
+					logger.WithField("provider", "azure").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "amazon":
 			if appConfig.STT.Amazon.Enabled {
 				amazonProvider := stt.NewAmazonTranscribeProvider(logger, transcriptionSvc, &appConfig.STT.Amazon)
-				if err := sttManager.RegisterProvider(amazonProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(amazonProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Amazon Transcribe provider")
+				} else {
+					logger.WithField("provider", "amazon").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "openai":
 			if appConfig.STT.OpenAI.Enabled {
 				openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, &appConfig.STT.OpenAI)
-				if err := sttManager.RegisterProvider(openaiProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(openaiProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register OpenAI provider")
+				} else {
+					logger.WithField("provider", "openai").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "speechmatics":
 			if appConfig.STT.Speechmatics.Enabled {
 				speechmaticsProvider := stt.NewSpeechmaticsProvider(logger, transcriptionSvc, &appConfig.STT.Speechmatics)
-				if err := sttManager.RegisterProvider(speechmaticsProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(speechmaticsProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Speechmatics provider")
+				} else {
+					logger.WithField("provider", "speechmatics").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		case "elevenlabs":
 			if appConfig.STT.ElevenLabs.Enabled {
 				elevenProvider := stt.NewElevenLabsProvider(logger, transcriptionSvc, &appConfig.STT.ElevenLabs)
-				if err := sttManager.RegisterProvider(elevenProvider); err != nil {
+				wrappedProvider := stt.NewCircuitBreakerWrapper(elevenProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register ElevenLabs provider")
+				} else {
+					logger.WithField("provider", "elevenlabs").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
 		default:
