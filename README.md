@@ -12,7 +12,8 @@ This project implements a SIPREC-compliant recording endpoint with a custom SIP 
 - **NAT rewriting** – SIP Via/Contact rewriting with automatic external IP discovery and configurable overrides for public deployments.
 - **Session management** – A shared persistence layer between the SIP handler and the session manager. Works with the in-memory store by default or any implementation of `pkg/session.SessionStore` (Redis adapter included).
 - **Pause / resume controls** – Handler-level APIs for pausing or resuming recording/transcription mid-call.
-- **Speech-to-text integration (optional)** – Pluggable STT provider manager with streaming callbacks. The handler routes audio to the selected provider when configured.
+- **Speech-to-text integration (optional)** – Pluggable STT provider manager with streaming callbacks. The handler routes audio to the selected provider when configured. Supports Google, Deepgram, Speechmatics, ElevenLabs, OpenAI, Azure, and Amazon.
+- **Real-time transcription streaming (optional)** – Publish live transcription results to AMQP/RabbitMQ message queues with circuit breaker protection, PII filtering, and multi-endpoint fan-out. See `docs/realtime-transcription.md`.
 - **Operational helpers** – HTTP health/readiness endpoints, telemetry hooks, and resource cleanup for active calls and RTP forwarders.
 
 Everything listed above is part of the executable; features that are only partially implemented or deprecated have been removed from this documentation.
