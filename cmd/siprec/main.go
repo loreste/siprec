@@ -114,10 +114,11 @@ func (l *analyticsAudioListener) OnAcousticEvent(callUUID string, event media.Ac
 }
 
 type amqpTranscriptionEndpoint struct {
-	name           string
-	client         messaging.AMQPClientInterface
-	publishPartial bool
-	publishFinal   bool
+	name              string
+	client            messaging.AMQPClientInterface
+	publishPartial    bool
+	publishFinal      bool
+	realtimePublisher *messaging.AMQPRealtimePublisher
 }
 
 func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfig, encCfg *config.EncryptionConfig) media.RecordingStorage {
@@ -259,6 +260,15 @@ func main() {
 				if endpoint.client == nil {
 					continue
 				}
+
+				if endpoint.realtimePublisher != nil && endpoint.realtimePublisher.IsStarted() {
+					if err := endpoint.realtimePublisher.Stop(); err != nil {
+						logger.WithField("amqp_endpoint", endpoint.name).WithError(err).Warn("Failed to stop realtime AMQP publisher")
+					} else {
+						logger.WithField("amqp_endpoint", endpoint.name).Info("Realtime AMQP publisher stopped")
+					}
+				}
+
 				logger.WithField("amqp_endpoint", endpoint.name).Debug("Disconnecting from AMQP endpoint...")
 				endpoint.client.Disconnect()
 				logger.WithField("amqp_endpoint", endpoint.name).Info("AMQP endpoint disconnected")
@@ -422,7 +432,7 @@ func initialize() error {
 		alertConfig := alerting.AlertConfig{
 			Enabled:            true,
 			EvaluationInterval: appConfig.Alerting.EvaluationInterval,
-			Rules:              []alerting.AlertRule{}, // No rules configured yet
+			Rules:              []alerting.AlertRule{},     // No rules configured yet
 			Channels:           []alerting.ChannelConfig{}, // No channels configured yet
 		}
 		alertManager = alerting.NewAlertManager(alertConfig, logger)
@@ -473,6 +483,58 @@ func initialize() error {
 	logger.Info("Encryption initialization completed")
 
 	amqpEndpoints = nil
+
+	createRealtimePublisher := func(endpointName string, client messaging.AMQPClientInterface, publishPartial, publishFinal bool) *messaging.AMQPRealtimePublisher {
+		if !appConfig.Messaging.EnableRealtimeAMQP || client == nil || !client.IsConnected() {
+			return nil
+		}
+
+		cfg := &messaging.AMQPRealtimeConfig{
+			BatchSize:            appConfig.Messaging.RealtimeBatchSize,
+			BatchTimeout:         appConfig.Messaging.RealtimeBatchTimeout,
+			QueueSize:            appConfig.Messaging.RealtimeQueueSize,
+			EnableBatching:       appConfig.Messaging.RealtimeBatchSize > 1,
+			EnableRetries:        appConfig.Messaging.AMQP.MaxRetries > 1,
+			MaxRetries:           appConfig.Messaging.AMQP.MaxRetries,
+			RetryDelay:           appConfig.Messaging.AMQP.RetryDelay,
+			PublishPartial:       publishPartial,
+			PublishFinal:         publishFinal,
+			PublishSentiment:     appConfig.Messaging.PublishSentimentUpdates,
+			PublishKeywords:      appConfig.Messaging.PublishKeywordDetections,
+			PublishSpeakerChange: appConfig.Messaging.PublishSpeakerChanges,
+			MessageTTL:           appConfig.Messaging.AMQP.MessageTTL,
+			EnableCompression:    false,
+			IncludeAudioData:     false,
+		}
+
+		if cfg.BatchSize <= 0 {
+			cfg.BatchSize = 1
+		}
+		if cfg.QueueSize <= 0 {
+			cfg.QueueSize = 1000
+		}
+		if cfg.BatchTimeout <= 0 {
+			cfg.BatchTimeout = time.Second
+		}
+
+		if cfg.MaxRetries <= 0 {
+			cfg.MaxRetries = 1
+		}
+		cfg.EnableRetries = cfg.MaxRetries > 1
+
+		if cfg.RetryDelay <= 0 {
+			cfg.RetryDelay = 2 * time.Second
+		}
+
+		publisher := messaging.NewAMQPRealtimePublisher(logger, client, cfg)
+		if err := publisher.Start(); err != nil {
+			logger.WithField("amqp_endpoint", endpointName).WithError(err).Warn("Failed to start realtime AMQP publisher")
+			return nil
+		}
+
+		logger.WithField("amqp_endpoint", endpointName).Info("Realtime AMQP publisher started")
+		return publisher
+	}
 
 	// Initialize AMQP client with robust error handling
 	if appConfig.Messaging.AMQPUrl != "" && appConfig.Messaging.AMQPQueueName != "" {
@@ -544,12 +606,14 @@ func initialize() error {
 	}
 
 	if amqpClient != nil && amqpClient.IsConnected() {
-		amqpEndpoints = append(amqpEndpoints, amqpTranscriptionEndpoint{
+		primaryEndpoint := amqpTranscriptionEndpoint{
 			name:           "primary",
 			client:         amqpClient,
 			publishPartial: appConfig.Messaging.PublishPartialTranscripts,
 			publishFinal:   appConfig.Messaging.PublishFinalTranscripts,
-		})
+		}
+		primaryEndpoint.realtimePublisher = createRealtimePublisher(primaryEndpoint.name, primaryEndpoint.client, primaryEndpoint.publishPartial, primaryEndpoint.publishFinal)
+		amqpEndpoints = append(amqpEndpoints, primaryEndpoint)
 	}
 
 	if appConfig.Messaging.EnableRealtimeAMQP && len(appConfig.Messaging.RealtimeEndpoints) > 0 {
@@ -606,12 +670,19 @@ func initialize() error {
 				continue
 			}
 
-			amqpEndpoints = append(amqpEndpoints, amqpTranscriptionEndpoint{
+			endpointConfigPartial := boolWithDefault(endpointCfg.PublishPartial, appConfig.Messaging.PublishPartialTranscripts)
+			endpointConfigFinal := boolWithDefault(endpointCfg.PublishFinal, appConfig.Messaging.PublishFinalTranscripts)
+
+			endpoint := amqpTranscriptionEndpoint{
 				name:           endpointCfg.Name,
 				client:         endpointClient,
-				publishPartial: boolWithDefault(endpointCfg.PublishPartial, appConfig.Messaging.PublishPartialTranscripts),
-				publishFinal:   boolWithDefault(endpointCfg.PublishFinal, appConfig.Messaging.PublishFinalTranscripts),
-			})
+				publishPartial: endpointConfigPartial,
+				publishFinal:   endpointConfigFinal,
+			}
+
+			endpoint.realtimePublisher = createRealtimePublisher(endpoint.name, endpoint.client, endpoint.publishPartial, endpoint.publishFinal)
+
+			amqpEndpoints = append(amqpEndpoints, endpoint)
 
 			endpointLogger.Info("Realtime AMQP endpoint initialized")
 		}
@@ -983,6 +1054,19 @@ func initialize() error {
 			} else {
 				transcriptionSvc.AddListener(listener)
 				endpointLogger.Info("AMQP transcription listener registered directly")
+			}
+
+			if endpoint.realtimePublisher != nil && endpoint.realtimePublisher.IsStarted() {
+				realtimeListener := messaging.NewRealtimeTranscriptionListener(endpointLogger, endpoint.realtimePublisher)
+				if piiFilter != nil {
+					piiFilter.AddListener(realtimeListener)
+					endpointLogger.Info("Realtime AMQP listener registered with PII filter")
+				} else {
+					transcriptionSvc.AddListener(realtimeListener)
+					endpointLogger.Info("Realtime AMQP listener registered directly")
+				}
+			} else if appConfig.Messaging.EnableRealtimeAMQP {
+				endpointLogger.Debug("Realtime AMQP publisher unavailable; realtime listener not registered")
 			}
 		}
 	} else {
