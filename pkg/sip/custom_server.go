@@ -122,11 +122,12 @@ type CallState struct {
 	LastActivity      time.Time
 	SDP               []byte
 	IsRecording       bool
-	RecordingSession  *siprec.RecordingSession // SIPREC recording session with metadata
-	RTPForwarder      *media.RTPForwarder      // RTP forwarder for this call
-	AllocatedPortPair *media.PortPair          // Port pair reserved for non-SIPREC calls
-	TraceScope        *tracing.CallScope       // Per-call tracing scope
-	OriginalInvite    *SIPMessage              // Stored original INVITE for cancellations
+	RecordingSession       *siprec.RecordingSession // SIPREC recording session with metadata
+	RTPForwarder           *media.RTPForwarder      // RTP forwarder for this call
+	AllocatedPortPair      *media.PortPair          // Port pair reserved for non-SIPREC calls
+	AdditionalPortPairs    []*media.PortPair        // Additional port pairs for multi-stream SIPREC (RFC 7865)
+	TraceScope             *tracing.CallScope       // Per-call tracing scope
+	OriginalInvite         *SIPMessage              // Stored original INVITE for cancellations
 }
 
 type headerEntry struct {
@@ -981,8 +982,14 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		// Use the handler's SDP generation with the allocated port
-		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", rtpForwarder.LocalPort, rtpForwarder)
+		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", rtpForwarder.LocalPort, rtpForwarder)
 		responseSDP, _ = sdpResponse.Marshal()
+
+		// Store allocated ports for cleanup when call ends (RFC 7865 multi-stream support)
+		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
+			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
+			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Stored additional port pairs for multi-stream session")
+		}
 	} else {
 		// For non-SIPREC calls, allocate ports and generate SDP
 		// Allocate RTP/RTCP port pair following RFC 3550
@@ -1289,8 +1296,21 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		}
 
 		// Use the handler's SDP generation with the existing forwarder's port
-		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", callState.RTPForwarder.LocalPort, callState.RTPForwarder)
+		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", callState.RTPForwarder.LocalPort, callState.RTPForwarder)
 		responseSDP, _ = sdpResponse.Marshal()
+
+		// Update allocated ports if new ones were allocated during re-INVITE
+		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
+			// Release old additional ports if any
+			pm := media.GetPortManager()
+			for _, oldPort := range callState.AdditionalPortPairs {
+				if oldPort != nil {
+					pm.ReleasePortPair(oldPort)
+				}
+			}
+			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
+			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Updated additional port pairs for re-INVITE")
+		}
 	} else {
 		// Fallback to basic SDP generation if no forwarder exists
 		responseSDP = s.generateSiprecSDP(0) // 0 means allocate port dynamically
@@ -1535,8 +1555,14 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	// Generate SDP response
 	if s.handler != nil && receivedSDP != nil {
 		// Use handler's SDP generation for better compatibility
-		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
+		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
 		responseSDP, _ = sdpResponse.Marshal()
+
+		// Store allocated ports for cleanup when call ends (RFC 7865 multi-stream support)
+		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
+			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
+			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Stored additional port pairs for regular call")
+		}
 	} else {
 		// Fallback to simple SDP generation
 		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
@@ -2025,10 +2051,20 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 
 	callState.PendingAckCSeq = 0
 
+	// Release allocated port pairs
+	pm := media.GetPortManager()
 	if callState.AllocatedPortPair != nil {
-		media.GetPortManager().ReleasePortPair(callState.AllocatedPortPair)
+		pm.ReleasePortPair(callState.AllocatedPortPair)
 		callState.AllocatedPortPair = nil
 	}
+
+	// Release additional port pairs allocated for multi-stream SIPREC (RFC 7865)
+	for _, portPair := range callState.AdditionalPortPairs {
+		if portPair != nil {
+			pm.ReleasePortPair(portPair)
+		}
+	}
+	callState.AdditionalPortPairs = nil
 
 	callState.State = "terminated"
 	callState.LastActivity = time.Now()
@@ -2456,8 +2492,13 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 
 	// Convert participants from metadata
 	for _, rsParticipant := range metadata.Participants {
+		participantID := strings.TrimSpace(rsParticipant.ID)
+		if participantID == "" {
+			participantID = strings.TrimSpace(rsParticipant.LegacyID)
+		}
+
 		participant := siprec.Participant{
-			ID:              rsParticipant.ID,
+			ID:              participantID,
 			Name:            rsParticipant.Name,
 			DisplayName:     rsParticipant.DisplayName,
 			Role:            rsParticipant.Role,
