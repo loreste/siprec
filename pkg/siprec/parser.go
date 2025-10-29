@@ -448,6 +448,61 @@ func ExtractRSMetadata(contentType string, body []byte) (*RSMetadata, error) {
 	return &rsMetadata, nil
 }
 
+func normalizedParticipantID(participant RSParticipant) string {
+	candidates := []string{
+		participant.ID,
+		participant.LegacyID,
+		participant.NameID,
+	}
+	for _, candidate := range candidates {
+		if id := strings.TrimSpace(candidate); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func normalizedStreamID(stream Stream) string {
+	candidates := []string{
+		stream.StreamID,
+		stream.StreamIDAlt,
+		stream.ID,
+	}
+	for _, candidate := range candidates {
+		if id := strings.TrimSpace(candidate); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func normalizedStreamLabel(stream Stream) string {
+	candidates := []string{
+		stream.Label,
+		stream.LabelElement,
+		normalizedStreamID(stream),
+	}
+	for _, candidate := range candidates {
+		if label := strings.TrimSpace(candidate); label != "" {
+			return label
+		}
+	}
+	return ""
+}
+
+func normalizedAssocSessionID(assoc RSAssociation) string {
+	candidates := []string{
+		assoc.SessionID,
+		assoc.SessionIDAlt,
+	}
+	for _, candidate := range candidates {
+		if id := strings.TrimSpace(candidate); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
 // ValidateSiprecMessage performs a comprehensive validation of a SIPREC message
 // Returns a list of deficiencies found in the message
 func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
@@ -527,7 +582,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 		result.addWarning("no participants provided in metadata")
 	}
 	for _, participant := range rsMetadata.Participants {
-		id := strings.TrimSpace(participant.ID)
+		id := normalizedParticipantID(participant)
 		if id == "" {
 			result.addError("participant missing id attribute")
 			continue
@@ -562,11 +617,11 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	streamIDs := make(map[string]struct{}, len(rsMetadata.Streams))
 	for _, stream := range rsMetadata.Streams {
-		label := strings.TrimSpace(stream.Label)
+		label := normalizedStreamLabel(stream)
 		if label == "" {
 			result.addError("stream missing label attribute")
 		}
-		streamID := strings.TrimSpace(stream.StreamID)
+		streamID := normalizedStreamID(stream)
 		if streamID == "" {
 			result.addError("stream missing streamid attribute")
 		} else {
@@ -645,12 +700,13 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 	if (assoc == RSAssociation{}) {
 		result.addWarning("missing session recording association element")
 	} else {
-		if strings.TrimSpace(assoc.SessionID) == "" {
+		assocSessionID := normalizedAssocSessionID(assoc)
+		if assocSessionID == "" {
 			result.addError("missing session ID in recording association")
-		} else if sessionID != "" && strings.TrimSpace(assoc.SessionID) != sessionID {
-			result.addWarning(fmt.Sprintf("recording association sessionid (%s) does not match metadata session (%s)", assoc.SessionID, sessionID))
+		} else if sessionID != "" && assocSessionID != sessionID {
+			result.addWarning(fmt.Sprintf("recording association sessionid (%s) does not match metadata session (%s)", assocSessionID, sessionID))
 		}
-		if assoc.CallID == "" && assoc.FixedID == "" {
+		if strings.TrimSpace(assoc.CallID) == "" && strings.TrimSpace(assoc.CallIDAlt) == "" && strings.TrimSpace(assoc.FixedID) == "" {
 			result.addWarning("session association missing both call-ID and fixed-ID")
 		}
 	}
@@ -678,7 +734,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 	} else {
 		participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
 		for i, participant := range rsMetadata.Participants {
-			id := strings.TrimSpace(participant.ID)
+			id := normalizedParticipantID(participant)
 			if id == "" {
 				result.addError(fmt.Sprintf("participant %d missing ID", i))
 			} else {
@@ -690,15 +746,15 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 			}
 
 			if len(participant.Aor) == 0 {
-				result.addError(fmt.Sprintf("participant %s has no address of record", participant.ID))
+				result.addError(fmt.Sprintf("participant %s has no address of record", id))
 			}
 
 			for j, aor := range participant.Aor {
 				if strings.TrimSpace(aor.Value) == "" {
-					result.addError(fmt.Sprintf("participant %s has empty AOR at index %d", participant.ID, j))
+					result.addError(fmt.Sprintf("participant %s has empty AOR at index %d", id, j))
 				}
 				if aor.URI != "" && !strings.Contains(aor.URI, ":") {
-					result.addWarning(fmt.Sprintf("participant %s has invalid URI format for AOR %s", participant.ID, aor.URI))
+					result.addWarning(fmt.Sprintf("participant %s has invalid URI format for AOR %s", id, aor.URI))
 				}
 			}
 
@@ -706,19 +762,20 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 				switch participant.Role {
 				case "active", "passive", "focus", "mixer":
 				default:
-					result.addWarning(fmt.Sprintf("participant %s has unrecognised role: %s", participant.ID, participant.Role))
+					result.addWarning(fmt.Sprintf("participant %s has unrecognised role: %s", id, participant.Role))
 				}
 			}
 		}
 	}
 
 	for i, stream := range rsMetadata.Streams {
-		if strings.TrimSpace(stream.Label) == "" {
+		if normalizedStreamLabel(stream) == "" {
 			result.addError(fmt.Sprintf("stream at index %d missing label", i))
 		}
 
-		if strings.TrimSpace(stream.StreamID) == "" {
-			result.addError(fmt.Sprintf("stream with label %s missing stream ID", stream.Label))
+		streamID := normalizedStreamID(stream)
+		if streamID == "" {
+			result.addError(fmt.Sprintf("stream with label %s missing stream ID", normalizedStreamLabel(stream)))
 		}
 
 		if stream.Type != "" {

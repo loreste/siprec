@@ -113,6 +113,10 @@ type SDPOptions struct {
 
 	// SRTP key information
 	SRTPKeyInfo *SRTPKeyInfo
+
+	// AllocatedPorts tracks port pairs allocated during SDP generation
+	// Caller should release these ports when the session ends
+	AllocatedPorts []*PortPair
 }
 
 // SRTPKeyInfo holds SRTP key information
