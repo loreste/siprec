@@ -15,6 +15,29 @@ func ConfigureForwarderFromSDP(forwarder *RTPForwarder, sdpDesc *sdp.SessionDesc
 		return
 	}
 
+	applySessionAttributes(forwarder, sdpDesc, logger)
+
+	for _, md := range sdpDesc.MediaDescriptions {
+		if md.MediaName.Media != "audio" {
+			continue
+		}
+
+		applyMediaAttributes(forwarder, md, logger)
+		return
+	}
+}
+
+// ConfigureForwarderForMediaDescription applies SDP attributes from a specific media description.
+func ConfigureForwarderForMediaDescription(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, md *sdp.MediaDescription, logger *logrus.Logger) {
+	if forwarder == nil || sdpDesc == nil || md == nil {
+		return
+	}
+
+	applySessionAttributes(forwarder, sdpDesc, logger)
+	applyMediaAttributes(forwarder, md, logger)
+}
+
+func applySessionAttributes(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, logger *logrus.Logger) {
 	for _, attr := range sdpDesc.Attributes {
 		switch attr.Key {
 		case "rtcp-mux":
@@ -30,58 +53,54 @@ func ConfigureForwarderFromSDP(forwarder *RTPForwarder, sdpDesc *sdp.SessionDesc
 			parseSRTPAttributes(forwarder, attr.Value, logger)
 		}
 	}
+}
 
-	for _, md := range sdpDesc.MediaDescriptions {
-		if md.MediaName.Media != "audio" {
+func applyMediaAttributes(forwarder *RTPForwarder, md *sdp.MediaDescription, logger *logrus.Logger) {
+	for _, attr := range md.Attributes {
+		switch attr.Key {
+		case "rtcp-mux":
+			forwarder.UseRTCPMux = true
+		case "rtcp":
+			fields := strings.Fields(attr.Value)
+			if len(fields) > 0 {
+				if port, err := strconv.Atoi(fields[0]); err == nil {
+					forwarder.ExpectedRemoteRTCPPort = port
+				}
+			}
+		case "crypto":
+			parseSRTPAttributes(forwarder, attr.Value, logger)
+		}
+	}
+
+	for _, format := range md.MediaName.Formats {
+		pt, err := strconv.Atoi(strings.TrimSpace(format))
+		if err != nil {
 			continue
 		}
 
-		for _, attr := range md.Attributes {
-			switch attr.Key {
-			case "rtcp-mux":
-				forwarder.UseRTCPMux = true
-			case "rtcp":
-				fields := strings.Fields(attr.Value)
-				if len(fields) > 0 {
-					if port, err := strconv.Atoi(fields[0]); err == nil {
-						forwarder.ExpectedRemoteRTCPPort = port
-					}
+		codecName, sampleRate, channels := codecDetailsFromAttributes(md.Attributes, format)
+		if codecName == "" {
+			if info, ok := GetCodecInfo(byte(pt)); ok {
+				codecName = info.Name
+				if sampleRate == 0 {
+					sampleRate = info.SampleRate
 				}
-			case "crypto":
-				parseSRTPAttributes(forwarder, attr.Value, logger)
+				if channels == 0 {
+					channels = info.Channels
+				}
 			}
 		}
 
-		for _, format := range md.MediaName.Formats {
-			pt, err := strconv.Atoi(strings.TrimSpace(format))
-			if err != nil {
-				continue
-			}
-
-			codecName, sampleRate, channels := codecDetailsFromAttributes(md.Attributes, format)
-			if codecName == "" {
-				if info, ok := GetCodecInfo(byte(pt)); ok {
-					codecName = info.Name
-					if sampleRate == 0 {
-						sampleRate = info.SampleRate
-					}
-					if channels == 0 {
-						channels = info.Channels
-					}
-				}
-			}
-
-			forwarder.SetCodecInfo(byte(pt), codecName, sampleRate, channels)
-			if logger != nil {
-				logger.WithFields(logrus.Fields{
-					"payload_type": pt,
-					"codec":        forwarder.CodecName,
-					"sample_rate":  forwarder.SampleRate,
-					"channels":     forwarder.Channels,
-				}).Info("Configured RTP forwarder codec from SDP offer")
-			}
-			return
+		forwarder.SetCodecInfo(byte(pt), codecName, sampleRate, channels)
+		if logger != nil {
+			logger.WithFields(logrus.Fields{
+				"payload_type": pt,
+				"codec":        forwarder.CodecName,
+				"sample_rate":  forwarder.SampleRate,
+				"channels":     forwarder.Channels,
+			}).Info("Configured RTP forwarder codec from SDP offer")
 		}
+		return
 	}
 }
 

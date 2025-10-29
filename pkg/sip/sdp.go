@@ -110,8 +110,7 @@ func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToU
 
 // generateSDPResponseWithPort generates an SDP response with a specific port (for re-INVITEs)
 // This is a wrapper around the central generateSDP function
-// Returns the SDP and the options (which includes allocated ports for cleanup)
-func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescription, ipToUse string, rtpPort int, rtpForwarder *media.RTPForwarder) (*sdp.SessionDescription, *media.SDPOptions) {
+func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescription, ipToUse string, rtpPort int, rtpForwarder *media.RTPForwarder) *sdp.SessionDescription {
 	// Determine RTCP configuration
 	rtcpPort := 0
 	useRTCPMux := false
@@ -144,8 +143,65 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 		}
 	}
 
-	sdp := h.generateSDPAdvanced(receivedSDP, options)
-	return sdp, options
+	options.MediaPortPairs = []media.PortPair{
+		{
+			RTPPort:  rtpPort,
+			RTCPPort: rtcpPort,
+		},
+	}
+
+	return h.generateSDPAdvanced(receivedSDP, options)
+}
+
+// generateSDPResponseForForwarders generates an SDP response that maps each audio
+// media description to a dedicated RTP forwarder.
+func (h *Handler) generateSDPResponseForForwarders(receivedSDP *sdp.SessionDescription, ipToUse string, forwarders []*media.RTPForwarder) *sdp.SessionDescription {
+	options := &media.SDPOptions{
+		IPAddress:  ipToUse,
+		BehindNAT:  h.Config.MediaConfig.BehindNAT,
+		InternalIP: h.Config.MediaConfig.InternalIP,
+		ExternalIP: h.Config.MediaConfig.ExternalIP,
+		IncludeICE: true,
+	}
+
+	if receivedSDP == nil {
+		return h.generateDefaultSDP(options)
+	}
+
+	if len(forwarders) > 0 {
+		options.RTPPort = forwarders[0].LocalPort
+		options.RTCPPort = forwarders[0].RTCPPort
+		options.MediaPortPairs = make([]media.PortPair, len(receivedSDP.MediaDescriptions))
+
+		if h.Config.MediaConfig.EnableSRTP && forwarders[0].SRTPEnabled &&
+			len(forwarders[0].SRTPMasterKey) > 0 && len(forwarders[0].SRTPMasterSalt) > 0 {
+			options.EnableSRTP = true
+			options.SRTPKeyInfo = &media.SRTPKeyInfo{
+				MasterKey:   forwarders[0].SRTPMasterKey,
+				MasterSalt:  forwarders[0].SRTPMasterSalt,
+				Profile:     forwarders[0].SRTPProfile,
+				KeyLifetime: forwarders[0].SRTPKeyLifetime,
+			}
+		}
+	}
+
+	audioIdx := 0
+	for i, md := range receivedSDP.MediaDescriptions {
+		if md.MediaName.Media != "audio" {
+			continue
+		}
+		if audioIdx >= len(forwarders) {
+			break
+		}
+		fwd := forwarders[audioIdx]
+		options.MediaPortPairs[i] = media.PortPair{
+			RTPPort:  fwd.LocalPort,
+			RTCPPort: fwd.RTCPPort,
+		}
+		audioIdx++
+	}
+
+	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
 // Helper function to check if a string contains a substring
@@ -175,50 +231,45 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		}).Debug("Using external IP for SDP due to NAT")
 	}
 
-	// For RFC 7865 compliance, allocate unique ports for each media stream
-	// Store allocated ports for proper cleanup
-	allocatedPorts := make([]*media.PortPair, 0, len(receivedSDP.MediaDescriptions))
-	basePort := options.RTPPort
+	// Track ports for duplicate detection (RFC 7865 §7.1 compliance)
+	usedPorts := make(map[int]int) // port -> media index
 
-	for i, m := range receivedSDP.MediaDescriptions {
+	for idx, m := range receivedSDP.MediaDescriptions {
 		// Determine the RTP port to use
-		rtpPort := basePort
+		rtpPort := options.RTPPort
 		rtcpPort := options.RTCPPort
 
-		// For multiple media streams, allocate unique ports for each (RFC 7865 §7.1)
-		if len(receivedSDP.MediaDescriptions) > 1 {
-			if i == 0 && basePort > 0 {
-				// Use the base port for the first stream
-				rtpPort = basePort
-				if rtcpPort > 0 {
-					// Keep the original RTCP port if specified
-				} else {
-					rtcpPort = rtpPort + 1 // RFC 3550 convention
-				}
-			} else {
-				// Allocate a new port pair for subsequent streams
-				pm := media.GetPortManager()
-				portPair, err := pm.AllocatePortPair()
-				if err != nil {
-					h.Logger.WithError(err).Warn("Failed to allocate port pair for media stream, using base port + offset")
-					// Fallback: use base port + offset
-					rtpPort = basePort + (i * 2)
-					rtcpPort = rtpPort + 1
-				} else {
-					rtpPort = portPair.RTPPort
-					rtcpPort = portPair.RTCPPort
-					allocatedPorts = append(allocatedPorts, portPair)
-					h.Logger.WithFields(logrus.Fields{
-						"media_index": i,
-						"rtp_port":    rtpPort,
-						"rtcp_port":   rtcpPort,
-					}).Debug("Allocated unique port pair for media stream")
-				}
+		if idx < len(options.MediaPortPairs) {
+			pair := options.MediaPortPairs[idx]
+			if pair.RTPPort > 0 {
+				rtpPort = pair.RTPPort
 			}
-		} else if rtpPort <= 0 {
-			// Single media stream with no port specified
+			if pair.RTCPPort > 0 {
+				rtcpPort = pair.RTCPPort
+			}
+		}
+
+		if rtpPort <= 0 {
+			// No port specified - caller must allocate and pass in a valid RTP port
 			h.Logger.Warn("No RTP port specified in options - port allocation should be handled by caller")
-			rtpPort = 0
+		}
+		if rtcpPort <= 0 && rtpPort > 0 {
+			// Derive RTCP port using RFC 3550 convention when not explicitly provided
+			rtcpPort = rtpPort + 1
+		}
+
+		// Validate unique ports for multi-stream sessions (RFC 7865 §7.1)
+		if len(receivedSDP.MediaDescriptions) > 1 && rtpPort > 0 {
+			if prevIdx, exists := usedPorts[rtpPort]; exists {
+				h.Logger.WithFields(logrus.Fields{
+					"port":               rtpPort,
+					"current_media_idx":  idx,
+					"previous_media_idx": prevIdx,
+					"media_type":         m.MediaName.Media,
+				}).Warn("RFC 7865 violation: Multiple media streams using same RTP port - Recording Server must receive streams on different ports")
+			} else {
+				usedPorts[rtpPort] = idx
+			}
 		}
 
 		// Create new attributes, handling direction and NAT
@@ -337,13 +388,7 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			},
 			Attributes: newAttributes,
 		}
-		mediaStreams[i] = newMedia
-	}
-
-	// Store allocated ports in options for caller to track and cleanup
-	if len(allocatedPorts) > 0 {
-		options.AllocatedPorts = allocatedPorts
-		h.Logger.WithField("allocated_ports", len(allocatedPorts)).Debug("Allocated additional port pairs for multi-stream SIPREC session")
+		mediaStreams[idx] = newMedia
 	}
 
 	// Create the complete session description
