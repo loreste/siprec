@@ -385,3 +385,38 @@ func TestValidateSiprecMessagePolicyAcknowledgementWarnings(t *testing.T) {
 	require.NotEmpty(t, result.Warnings)
 	assert.Contains(t, result.Warnings[0], "policyA", "Should highlight acknowledgement inconsistency in warning")
 }
+
+func TestValidateSiprecMessageAcceptsLegacyIdentifiers(t *testing.T) {
+	metadata := &RSMetadata{
+		SessionID: "session-legacy",
+		State:     "active",
+		Participants: []RSParticipant{
+			{
+				LegacyID: "participant-a",
+				Aor: []Aor{
+					{Value: "sip:alice@example.com"},
+				},
+			},
+			{
+				ID: "participant-b",
+				Aor: []Aor{
+					{Value: "sip:bob@example.com"},
+				},
+			},
+		},
+		Streams: []Stream{
+			{
+				LabelElement: "stream-a",
+				StreamIDAlt:  "stream-a",
+				Type:         "audio",
+			},
+		},
+		SessionRecordingAssoc: RSAssociation{
+			SessionIDAlt: "session-legacy",
+			CallIDAlt:    "call-12345",
+		},
+	}
+
+	result := ValidateSiprecMessage(metadata)
+	require.Empty(t, result.Errors, "legacy identifier variants should not trigger validation errors")
+}

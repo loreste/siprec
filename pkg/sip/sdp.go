@@ -110,7 +110,8 @@ func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToU
 
 // generateSDPResponseWithPort generates an SDP response with a specific port (for re-INVITEs)
 // This is a wrapper around the central generateSDP function
-func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescription, ipToUse string, rtpPort int, rtpForwarder *media.RTPForwarder) *sdp.SessionDescription {
+// Returns the SDP and the options (which includes allocated ports for cleanup)
+func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescription, ipToUse string, rtpPort int, rtpForwarder *media.RTPForwarder) (*sdp.SessionDescription, *media.SDPOptions) {
 	// Determine RTCP configuration
 	rtcpPort := 0
 	useRTCPMux := false
@@ -143,7 +144,8 @@ func (h *Handler) generateSDPResponseWithPort(receivedSDP *sdp.SessionDescriptio
 		}
 	}
 
-	return h.generateSDPAdvanced(receivedSDP, options)
+	sdp := h.generateSDPAdvanced(receivedSDP, options)
+	return sdp, options
 }
 
 // Helper function to check if a string contains a substring
@@ -173,35 +175,79 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		}).Debug("Using external IP for SDP due to NAT")
 	}
 
-	for i, media := range receivedSDP.MediaDescriptions {
+	// For RFC 7865 compliance, allocate unique ports for each media stream
+	// Store allocated ports for proper cleanup
+	allocatedPorts := make([]*media.PortPair, 0, len(receivedSDP.MediaDescriptions))
+	basePort := options.RTPPort
+
+	for i, m := range receivedSDP.MediaDescriptions {
 		// Determine the RTP port to use
-		rtpPort := options.RTPPort
-		if rtpPort <= 0 {
-			// Use dynamic port allocation - this should be handled by the caller
-			// or passed through options. Setting to 0 to indicate allocation needed.
-			rtpPort = 0
+		rtpPort := basePort
+		rtcpPort := options.RTCPPort
+
+		// For multiple media streams, allocate unique ports for each (RFC 7865 §7.1)
+		if len(receivedSDP.MediaDescriptions) > 1 {
+			if i == 0 && basePort > 0 {
+				// Use the base port for the first stream
+				rtpPort = basePort
+				if rtcpPort > 0 {
+					// Keep the original RTCP port if specified
+				} else {
+					rtcpPort = rtpPort + 1 // RFC 3550 convention
+				}
+			} else {
+				// Allocate a new port pair for subsequent streams
+				pm := media.GetPortManager()
+				portPair, err := pm.AllocatePortPair()
+				if err != nil {
+					h.Logger.WithError(err).Warn("Failed to allocate port pair for media stream, using base port + offset")
+					// Fallback: use base port + offset
+					rtpPort = basePort + (i * 2)
+					rtcpPort = rtpPort + 1
+				} else {
+					rtpPort = portPair.RTPPort
+					rtcpPort = portPair.RTCPPort
+					allocatedPorts = append(allocatedPorts, portPair)
+					h.Logger.WithFields(logrus.Fields{
+						"media_index": i,
+						"rtp_port":    rtpPort,
+						"rtcp_port":   rtcpPort,
+					}).Debug("Allocated unique port pair for media stream")
+				}
+			}
+		} else if rtpPort <= 0 {
+			// Single media stream with no port specified
 			h.Logger.Warn("No RTP port specified in options - port allocation should be handled by caller")
+			rtpPort = 0
 		}
 
 		// Create new attributes, handling direction and NAT
 		newAttributes := []sdp.Attribute{}
 		foundDirectionAttr := false
+		var directionAttr sdp.Attribute
 
-		for _, attr := range media.Attributes {
+		for _, attr := range m.Attributes {
 			// Process direction attributes
 			switch attr.Key {
 			case "sendonly":
-				newAttributes = append(newAttributes, sdp.Attribute{Key: "recvonly"})
+				directionAttr = sdp.Attribute{Key: "recvonly"}
 				foundDirectionAttr = true
+				continue
 			case "sendrecv":
-				newAttributes = append(newAttributes, attr)
+				directionAttr = sdp.Attribute{Key: "recvonly"}
 				foundDirectionAttr = true
+				continue
 			case "inactive":
-				newAttributes = append(newAttributes, attr)
+				directionAttr = sdp.Attribute{Key: "inactive"}
 				foundDirectionAttr = true
+				continue
 			case "recvonly":
-				newAttributes = append(newAttributes, sdp.Attribute{Key: "sendonly"})
+				directionAttr = sdp.Attribute{Key: "recvonly"}
 				foundDirectionAttr = true
+				continue
+			case "rtcp":
+				// Skip RTCP attributes from offer - we'll add our own based on allocated ports
+				continue
 			default:
 				// Don't forward local network attributes in NAT scenarios
 				if options.BehindNAT && (attr.Key == "candidate" && strings.Contains(attr.Value, options.InternalIP)) {
@@ -214,14 +260,15 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 
 		// If no direction attribute found, default to recvonly
 		if !foundDirectionAttr {
-			newAttributes = append(newAttributes, sdp.Attribute{Key: "recvonly"})
+			directionAttr = sdp.Attribute{Key: "recvonly"}
 		}
+		newAttributes = append(newAttributes, directionAttr)
 
 		// Add RTCP-related attributes
 		if options.UseRTCPMux {
 			// RFC 5761 - Use rtcp-mux for NAT traversal (both RTP and RTCP on same port)
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "rtcp-mux", Value: ""})
-		} else if options.RTCPPort > 0 && options.RTCPPort != rtpPort {
+		} else if rtcpPort > 0 && rtcpPort != rtpPort {
 			// RFC 3550 - Add explicit RTCP port attribute
 			connectionAddr := options.IPAddress
 			if options.BehindNAT {
@@ -229,7 +276,7 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			}
 			newAttributes = append(newAttributes, sdp.Attribute{
 				Key:   "rtcp",
-				Value: fmt.Sprintf("%d IN IP4 %s", options.RTCPPort, connectionAddr),
+				Value: fmt.Sprintf("%d IN IP4 %s", rtcpPort, connectionAddr),
 			})
 		}
 
@@ -244,17 +291,17 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		if options.EnableSRTP && options.SRTPKeyInfo != nil {
 			// Add 'RTP/SAVP' transport if not already present
 			protoUpdated := false
-			for i, proto := range media.MediaName.Protos {
+			for j, proto := range m.MediaName.Protos {
 				if proto == "RTP/AVP" {
-					media.MediaName.Protos[i] = "RTP/SAVP"
+					m.MediaName.Protos[j] = "RTP/SAVP"
 					protoUpdated = true
 					break
 				}
 			}
 
-			if !protoUpdated && len(media.MediaName.Protos) > 0 {
+			if !protoUpdated && len(m.MediaName.Protos) > 0 {
 				// If we couldn't update an existing proto, just set the first one
-				media.MediaName.Protos[0] = "RTP/SAVP"
+				m.MediaName.Protos[0] = "RTP/SAVP"
 			}
 
 			// Add crypto attribute (RFC 4568 format: tag AES_CM_128_HMAC_SHA1_80 inline:Base64Key|Base64Salt|lifetime|MKI
@@ -272,25 +319,31 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			// Log the crypto addition
 			h.Logger.WithFields(logrus.Fields{
 				"profile": options.SRTPKeyInfo.Profile,
-				"media":   media.MediaName.Media,
+				"media":   m.MediaName.Media,
 			}).Debug("Added SRTP crypto attribute to SDP")
 		}
 
 		newMedia := &sdp.MediaDescription{
 			MediaName: sdp.MediaName{
-				Media:   media.MediaName.Media,
+				Media:   m.MediaName.Media,
 				Port:    sdp.RangedPort{Value: rtpPort},
-				Protos:  media.MediaName.Protos,
-				Formats: prioritizeCodecs(media.MediaName.Formats),
+				Protos:  m.MediaName.Protos,
+				Formats: prioritizeCodecs(m.MediaName.Formats),
 			},
 			ConnectionInformation: &sdp.ConnectionInformation{
 				NetworkType: "IN",
 				AddressType: "IP4",
 				Address:     &sdp.Address{Address: connectionAddr}, // Use NAT-aware address
 			},
-			Attributes: appendCodecAttributes(newAttributes, prioritizeCodecs(media.MediaName.Formats)),
+			Attributes: newAttributes,
 		}
 		mediaStreams[i] = newMedia
+	}
+
+	// Store allocated ports in options for caller to track and cleanup
+	if len(allocatedPorts) > 0 {
+		options.AllocatedPorts = allocatedPorts
+		h.Logger.WithField("allocated_ports", len(allocatedPorts)).Debug("Allocated additional port pairs for multi-stream SIPREC session")
 	}
 
 	// Create the complete session description
@@ -311,7 +364,7 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		},
 		TimeDescriptions:  receivedSDP.TimeDescriptions,
 		MediaDescriptions: mediaStreams,
-		Attributes:        []sdp.Attribute{{Key: "a", Value: "recording-session"}},
+		Attributes:        []sdp.Attribute{{Key: "recording-session"}},
 	}
 
 	return sessionDesc
@@ -355,7 +408,7 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 			},
 		},
 		Attributes: []sdp.Attribute{
-			{Key: "a", Value: "recording-session"},
+			{Key: "recording-session"},
 		},
 	}
 
@@ -389,7 +442,7 @@ func (h *Handler) generateDefaultSDP(options *media.SDPOptions) *sdp.SessionDesc
 		{Key: "rtpmap", Value: "8 PCMA/8000"},
 		{Key: "rtpmap", Value: "9 G722/8000"},
 		{Key: "ptime", Value: "20"},
-		{Key: "sendrecv", Value: ""},
+		{Key: "recvonly", Value: ""},
 	}
 
 	// Add SRTP crypto attributes if enabled
