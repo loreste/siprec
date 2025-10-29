@@ -142,7 +142,10 @@ a=ptime:20
 
 	options := &media.SDPOptions{
 		IPAddress: "127.0.0.1",
-		RTPPort:   16384,
+		MediaPortPairs: []media.PortPair{
+			{RTPPort: 16384, RTCPPort: 16385},
+			{RTPPort: 20000, RTCPPort: 20001},
+		},
 	}
 
 	answer := handler.generateSDPAdvanced(received, options)
@@ -176,6 +179,10 @@ a=ptime:20
 		t.Errorf("expected 2 a=recvonly attributes (one per media), got %d", recvonlyCount)
 	}
 
+	if !strings.Contains(output, "m=audio 16384") || !strings.Contains(output, "m=audio 20000") {
+		t.Fatalf("expected distinct ports for each m=audio line, got:\n%s", output)
+	}
+
 	// 3. First codec in each m=audio line should be from the offer (8 or 108)
 	// Check that PCMU (0) is not the first codec since it wasn't offered
 	lines := strings.Split(output, "\n")
@@ -202,5 +209,52 @@ a=ptime:20
 	}
 	if !strings.Contains(output, "a=recording-session") {
 		t.Errorf("output missing 'a=recording-session' attribute")
+	}
+}
+
+func TestGenerateSDPAdvancedHonorsMediaPortPairs(t *testing.T) {
+	received := &sdp.SessionDescription{}
+	const offer = `v=0
+o=ATS99 399418590 399418590 IN IP4 192.168.22.133
+s=SipCall
+t=0 0
+m=audio 11584 RTP/AVP 8 108
+c=IN IP4 192.168.82.21
+a=label:0
+a=rtpmap:8 PCMA/8000
+a=rtpmap:108 telephone-event/8000
+a=sendonly
+a=rtcp:11585
+a=ptime:20
+m=audio 15682 RTP/AVP 8 108
+c=IN IP4 192.168.82.21
+a=label:1
+a=rtpmap:8 PCMA/8000
+a=rtpmap:108 telephone-event/8000
+a=sendonly
+a=rtcp:15683
+a=ptime:20
+`
+
+	if err := received.Unmarshal([]byte(offer)); err != nil {
+		t.Fatalf("failed to parse offer: %v", err)
+	}
+
+	h := &Handler{Config: &Config{MediaConfig: &media.Config{}}, Logger: logrus.New()}
+	options := &media.SDPOptions{
+		IPAddress:      "127.0.0.1",
+		MediaPortPairs: []media.PortPair{{RTPPort: 20000, RTCPPort: 20001}, {RTPPort: 22000, RTCPPort: 22001}},
+	}
+
+	answer := h.generateSDPAdvanced(received, options)
+	if answer == nil {
+		t.Fatal("expected SDP answer, got nil")
+	}
+
+	if got := answer.MediaDescriptions[0].MediaName.Port.Value; got != 20000 {
+		t.Fatalf("expected first media port 20000, got %d", got)
+	}
+	if got := answer.MediaDescriptions[1].MediaName.Port.Value; got != 22000 {
+		t.Fatalf("expected second media port 22000, got %d", got)
 	}
 }

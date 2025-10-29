@@ -114,9 +114,17 @@ type SDPOptions struct {
 	// SRTP key information
 	SRTPKeyInfo *SRTPKeyInfo
 
-	// AllocatedPorts tracks port pairs allocated during SDP generation
-	// Caller should release these ports when the session ends
-	AllocatedPorts []*PortPair
+	// MediaPortPairs allows specifying per-media RTP/RTCP port assignments for multi-stream sessions.
+	// Required for RFC 7865 §7.1 compliance in SIPREC scenarios with multiple media streams.
+	// Each entry corresponds to a media description in the SDP offer, in the same order.
+	// If provided, the slice length should match the number of media descriptions.
+	// When empty/nil for multi-stream sessions, all streams will use RTPPort (RFC violation warning logged).
+	// Example for 2-stream SIPREC:
+	//   MediaPortPairs: []PortPair{
+	//       {RTPPort: 16384, RTCPPort: 16385},  // Stream 1
+	//       {RTPPort: 20000, RTCPPort: 20001},  // Stream 2
+	//   }
+	MediaPortPairs []PortPair
 }
 
 // SRTPKeyInfo holds SRTP key information

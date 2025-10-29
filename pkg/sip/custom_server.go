@@ -122,12 +122,13 @@ type CallState struct {
 	LastActivity      time.Time
 	SDP               []byte
 	IsRecording       bool
-	RecordingSession       *siprec.RecordingSession // SIPREC recording session with metadata
-	RTPForwarder           *media.RTPForwarder      // RTP forwarder for this call
-	AllocatedPortPair      *media.PortPair          // Port pair reserved for non-SIPREC calls
-	AdditionalPortPairs    []*media.PortPair        // Additional port pairs for multi-stream SIPREC (RFC 7865)
-	TraceScope             *tracing.CallScope       // Per-call tracing scope
-	OriginalInvite         *SIPMessage              // Stored original INVITE for cancellations
+	RecordingSession  *siprec.RecordingSession // SIPREC recording session with metadata
+	RTPForwarder      *media.RTPForwarder      // RTP forwarder for this call
+	RTPForwarders     []*media.RTPForwarder    // All RTP forwarders for multi-stream sessions
+	StreamForwarders  map[string]*media.RTPForwarder
+	AllocatedPortPair *media.PortPair    // Port pair reserved for non-SIPREC calls
+	TraceScope        *tracing.CallScope // Per-call tracing scope
+	OriginalInvite    *SIPMessage        // Stored original INVITE for cancellations
 }
 
 type headerEntry struct {
@@ -708,16 +709,18 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Create or update call state
 	callState := &CallState{
-		CallID:         message.CallID,
-		State:          "trying",
-		RemoteTag:      message.FromTag,
-		LocalTag:       generateTag(),
-		RemoteCSeq:     extractCSeqNumber(message.CSeq),
-		CreatedAt:      time.Now(),
-		LastActivity:   time.Now(),
-		IsRecording:    true,
-		TraceScope:     callScope,
-		OriginalInvite: message,
+		CallID:           message.CallID,
+		State:            "trying",
+		RemoteTag:        message.FromTag,
+		LocalTag:         generateTag(),
+		RemoteCSeq:       extractCSeqNumber(message.CSeq),
+		CreatedAt:        time.Now(),
+		LastActivity:     time.Now(),
+		IsRecording:      true,
+		TraceScope:       callScope,
+		OriginalInvite:   message,
+		RTPForwarders:    make([]*media.RTPForwarder, 0),
+		StreamForwarders: make(map[string]*media.RTPForwarder),
 	}
 
 	// Store call state
@@ -880,41 +883,21 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 	}
 
-	// Create RTP forwarder for this SIPREC call
-	var rtpForwarder *media.RTPForwarder
+	// Parse the received SDP if available
+	var receivedSDP *sdp.SessionDescription
+	if len(sdpData) > 0 {
+		parsed := &sdp.SessionDescription{}
+		if err := parsed.Unmarshal(sdpData); err != nil {
+			logger.WithError(err).Warn("Failed to parse received SDP, using default")
+		} else {
+			receivedSDP = parsed
+		}
+	}
+
+	// Create RTP forwarders for this SIPREC call
 	var responseSDP []byte
 
 	if recordingSession != nil {
-		// Create RTP forwarder for recording session
-		piiAudioEnabled := s.handler.Config.MediaConfig.PIIAudioEnabled
-		forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger, piiAudioEnabled)
-		if err != nil {
-			inviteErr = err
-			callScope.RecordError(err)
-			logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
-			s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
-				"stage": "rtp_forwarder",
-				"error": err.Error(),
-			})
-			audit.Log(callCtx, s.logger, &audit.Event{
-				Category: "sip",
-				Action:   "invite",
-				Outcome:  audit.OutcomeFailure,
-				CallID:   message.CallID,
-				Details: map[string]interface{}{
-					"stage": "rtp_forwarder",
-					"error": err.Error(),
-				},
-			})
-			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
-			return
-		}
-		rtpForwarder = forwarder
-
-		// Store the forwarder in call state for cleanup
-		callState.RTPForwarder = rtpForwarder
-		callState.SDP = message.Body // Store original SDP for reference
-
 		mediaConfig := s.handler.Config.MediaConfig
 		if mediaConfig == nil {
 			inviteErr = fmt.Errorf("media configuration missing")
@@ -946,19 +929,89 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 		}
 
-		media.StartRTPForwarding(callCtx, rtpForwarder, message.CallID, mediaConfig, sttProvider)
+		type audioStreamInfo struct {
+			index int
+			label string
+		}
 
-		// Generate SDP response using the proper handler methods with allocated port
-		// Parse the received SDP if available
-		var receivedSDP *sdp.SessionDescription
-		if len(sdpData) > 0 {
-			receivedSDP = &sdp.SessionDescription{}
-			if err := receivedSDP.Unmarshal(sdpData); err != nil {
-				logger.WithError(err).Warn("Failed to parse received SDP, using default")
-				receivedSDP = nil
-			} else {
-				media.ConfigureForwarderFromSDP(rtpForwarder, receivedSDP, s.logger)
-				if s.handler.Config.MediaConfig.RequireSRTP && (len(rtpForwarder.SRTPMasterKey) == 0 || len(rtpForwarder.SRTPMasterSalt) == 0) {
+		var audioStreams []audioStreamInfo
+		if receivedSDP != nil {
+			for idx, md := range receivedSDP.MediaDescriptions {
+				if md.MediaName.Media != "audio" {
+					continue
+				}
+				audioStreams = append(audioStreams, audioStreamInfo{
+					index: idx,
+					label: extractStreamLabel(md, len(audioStreams)),
+				})
+			}
+		}
+
+		if len(audioStreams) == 0 {
+			audioStreams = append(audioStreams, audioStreamInfo{
+				index: -1,
+				label: "leg0",
+			})
+		}
+
+		forwarders := make([]*media.RTPForwarder, 0, len(audioStreams))
+		cleanupForwarders := func() {
+			for _, fwd := range forwarders {
+				if fwd == nil {
+					continue
+				}
+				fwd.Stop()
+				fwd.Cleanup()
+			}
+		}
+
+		for range audioStreams {
+			forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger, mediaConfig.PIIAudioEnabled)
+			if err != nil {
+				cleanupForwarders()
+				inviteErr = err
+				callScope.RecordError(err)
+				logger.WithError(err).Error("Failed to create RTP forwarder for SIPREC call")
+				s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "metadata.error", map[string]interface{}{
+					"stage": "rtp_forwarder",
+					"error": err.Error(),
+				})
+				audit.Log(callCtx, s.logger, &audit.Event{
+					Category: "sip",
+					Action:   "invite",
+					Outcome:  audit.OutcomeFailure,
+					CallID:   message.CallID,
+					Details: map[string]interface{}{
+						"stage": "rtp_forwarder",
+						"error": err.Error(),
+					},
+				})
+				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+				return
+			}
+			forwarders = append(forwarders, forwarder)
+		}
+
+		callState.RTPForwarders = forwarders
+		if len(forwarders) > 0 {
+			callState.RTPForwarder = forwarders[0]
+		}
+		if callState.StreamForwarders == nil {
+			callState.StreamForwarders = make(map[string]*media.RTPForwarder)
+		}
+		callState.SDP = message.Body // Store original SDP for reference
+
+		if receivedSDP != nil {
+			for idx, stream := range audioStreams {
+				if stream.index < 0 || idx >= len(forwarders) {
+					continue
+				}
+				forwarder := forwarders[idx]
+				md := receivedSDP.MediaDescriptions[stream.index]
+				media.ConfigureForwarderForMediaDescription(forwarder, receivedSDP, md, s.logger)
+
+				if s.handler.Config.MediaConfig.RequireSRTP && (len(forwarder.SRTPMasterKey) == 0 || len(forwarder.SRTPMasterSalt) == 0) {
+					cleanupForwarders()
 					inviteErr = fmt.Errorf("srtp required but not negotiated")
 					callScope.RecordError(inviteErr)
 					logger.WithError(inviteErr).Error("Call rejected: SRTP required")
@@ -981,14 +1034,32 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 		}
 
-		// Use the handler's SDP generation with the allocated port
-		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", rtpForwarder.LocalPort, rtpForwarder)
-		responseSDP, _ = sdpResponse.Marshal()
+		for idx, forwarder := range forwarders {
+			streamID := audioStreams[idx].label
+			if streamID == "" {
+				streamID = fmt.Sprintf("leg%d", idx)
+			}
 
-		// Store allocated ports for cleanup when call ends (RFC 7865 multi-stream support)
-		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
-			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
-			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Stored additional port pairs for multi-stream session")
+			callState.StreamForwarders[streamID] = forwarder
+
+			streamCallID := fmt.Sprintf("%s_%s", message.CallID, streamID)
+			media.StartRTPForwarding(callCtx, forwarder, streamCallID, mediaConfig, sttProvider)
+		}
+
+		if receivedSDP != nil {
+			responseSDPBytes, err := s.handler.generateSDPResponseForForwarders(receivedSDP, "127.0.0.1", forwarders).Marshal()
+			if err != nil {
+				cleanupForwarders()
+				inviteErr = err
+				callScope.RecordError(err)
+				logger.WithError(err).Error("Failed to marshal SDP response")
+				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+				return
+			}
+			responseSDP = responseSDPBytes
+		} else {
+			sdpResponse := s.handler.generateSDPResponseWithPort(nil, "127.0.0.1", forwarders[0].LocalPort, forwarders[0])
+			responseSDP, _ = sdpResponse.Marshal()
 		}
 	} else {
 		// For non-SIPREC calls, allocate ports and generate SDP
@@ -1260,16 +1331,121 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 	var responseSDP []byte
 	if callState.RTPForwarder != nil {
-		// Use existing RTP forwarder for re-INVITE
-		var receivedSDP *sdp.SessionDescription
+		var parsedSDP *sdp.SessionDescription
 		if sdpData != nil && len(sdpData) > 0 {
-			receivedSDP = &sdp.SessionDescription{}
-			if err := receivedSDP.Unmarshal(sdpData); err != nil {
+			parsed := &sdp.SessionDescription{}
+			if err := parsed.Unmarshal(sdpData); err != nil {
 				logger.WithError(err).Warn("Failed to parse received SDP in re-INVITE, using default")
-				receivedSDP = nil
 			} else {
-				media.ConfigureForwarderFromSDP(callState.RTPForwarder, receivedSDP, s.logger)
-				if s.handler.Config.MediaConfig.RequireSRTP && (len(callState.RTPForwarder.SRTPMasterKey) == 0 || len(callState.RTPForwarder.SRTPMasterSalt) == 0) {
+				parsedSDP = parsed
+			}
+		}
+
+		type audioStreamInfo struct {
+			index int
+			label string
+		}
+
+		var audioStreams []audioStreamInfo
+		if parsedSDP != nil {
+			for idx, md := range parsedSDP.MediaDescriptions {
+				if md.MediaName.Media != "audio" {
+					continue
+				}
+				audioStreams = append(audioStreams, audioStreamInfo{
+					index: idx,
+					label: extractStreamLabel(md, len(audioStreams)),
+				})
+			}
+		}
+
+		if len(audioStreams) == 0 {
+			audioStreams = append(audioStreams, audioStreamInfo{index: -1, label: "leg0"})
+		}
+
+		forwarders := callState.RTPForwarders
+		if len(forwarders) == 0 && callState.RTPForwarder != nil {
+			forwarders = []*media.RTPForwarder{callState.RTPForwarder}
+		}
+
+		mediaConfig := s.handler.Config.MediaConfig
+		if mediaConfig == nil {
+			reinviteSpan.RecordError(fmt.Errorf("media configuration missing"))
+			logger.Error("Media configuration missing during re-INVITE; cannot continue")
+			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+			return
+		}
+
+		sttProvider := s.handler.STTCallback
+		if sttProvider == nil {
+			sttProvider = func(ctx context.Context, vendor string, reader io.Reader, callUUID string) error {
+				_, err := io.Copy(io.Discard, reader)
+				return err
+			}
+		}
+
+		// Allocate additional forwarders if the SRC added new streams
+		existingCount := len(forwarders)
+		for len(forwarders) < len(audioStreams) {
+			forwarder, err := media.NewRTPForwarder(30*time.Second, callState.RecordingSession, s.logger, mediaConfig.PIIAudioEnabled)
+			if err != nil {
+				logger.WithError(err).Error("Failed to create additional RTP forwarder for re-INVITE")
+				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+				return
+			}
+			forwarders = append(forwarders, forwarder)
+		}
+
+		// Tear down surplus forwarders if streams were removed
+		if len(forwarders) > len(audioStreams) {
+			for _, extra := range forwarders[len(audioStreams):] {
+				if extra == nil {
+					continue
+				}
+				extra.Stop()
+				extra.Cleanup()
+			}
+			forwarders = forwarders[:len(audioStreams)]
+		}
+
+		if callState.StreamForwarders == nil {
+			callState.StreamForwarders = make(map[string]*media.RTPForwarder)
+		}
+
+		// Start any new forwarders
+		for idx := existingCount; idx < len(forwarders); idx++ {
+			streamID := audioStreams[idx].label
+			if streamID == "" {
+				streamID = fmt.Sprintf("leg%d", idx)
+			}
+			callState.StreamForwarders[streamID] = forwarders[idx]
+			media.StartRTPForwarding(reinviteCtx, forwarders[idx], fmt.Sprintf("%s_%s", message.CallID, streamID), mediaConfig, sttProvider)
+		}
+
+		callState.RTPForwarders = forwarders
+		if len(forwarders) > 0 {
+			callState.RTPForwarder = forwarders[0]
+		}
+
+		if callState.StreamForwarders == nil {
+			callState.StreamForwarders = make(map[string]*media.RTPForwarder)
+		} else {
+			for k := range callState.StreamForwarders {
+				delete(callState.StreamForwarders, k)
+			}
+		}
+
+		if parsedSDP != nil {
+			for idx, stream := range audioStreams {
+				if stream.index < 0 || idx >= len(forwarders) {
+					continue
+				}
+				md := parsedSDP.MediaDescriptions[stream.index]
+				forwarder := forwarders[idx]
+				media.ConfigureForwarderForMediaDescription(forwarder, parsedSDP, md, s.logger)
+				callState.StreamForwarders[stream.label] = forwarder
+
+				if s.handler.Config.MediaConfig.RequireSRTP && (len(forwarder.SRTPMasterKey) == 0 || len(forwarder.SRTPMasterSalt) == 0) {
 					err := fmt.Errorf("srtp required but not negotiated")
 					reinviteSpan.RecordError(err)
 					callScope.RecordError(err)
@@ -1293,23 +1469,18 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 					return
 				}
 			}
+		} else {
+			for idx, forwarder := range forwarders {
+				label := fmt.Sprintf("leg%d", idx)
+				callState.StreamForwarders[label] = forwarder
+			}
 		}
 
-		// Use the handler's SDP generation with the existing forwarder's port
-		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", callState.RTPForwarder.LocalPort, callState.RTPForwarder)
-		responseSDP, _ = sdpResponse.Marshal()
-
-		// Update allocated ports if new ones were allocated during re-INVITE
-		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
-			// Release old additional ports if any
-			pm := media.GetPortManager()
-			for _, oldPort := range callState.AdditionalPortPairs {
-				if oldPort != nil {
-					pm.ReleasePortPair(oldPort)
-				}
-			}
-			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
-			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Updated additional port pairs for re-INVITE")
+		if parsedSDP != nil {
+			sdpResponse := s.handler.generateSDPResponseForForwarders(parsedSDP, "127.0.0.1", forwarders)
+			responseSDP, _ = sdpResponse.Marshal()
+		} else {
+			responseSDP = s.generateSiprecSDP(forwarders[0].LocalPort)
 		}
 	} else {
 		// Fallback to basic SDP generation if no forwarder exists
@@ -1502,15 +1673,17 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 
 	// Create or update call state
 	callState := &CallState{
-		CallID:         message.CallID,
-		State:          "trying",
-		RemoteTag:      message.FromTag,
-		LocalTag:       generateTag(),
-		RemoteCSeq:     extractCSeqNumber(message.CSeq),
-		CreatedAt:      time.Now(),
-		LastActivity:   time.Now(),
-		IsRecording:    false,
-		OriginalInvite: message,
+		CallID:           message.CallID,
+		State:            "trying",
+		RemoteTag:        message.FromTag,
+		LocalTag:         generateTag(),
+		RemoteCSeq:       extractCSeqNumber(message.CSeq),
+		CreatedAt:        time.Now(),
+		LastActivity:     time.Now(),
+		IsRecording:      false,
+		OriginalInvite:   message,
+		RTPForwarders:    make([]*media.RTPForwarder, 0),
+		StreamForwarders: make(map[string]*media.RTPForwarder),
 	}
 
 	// Store call state
@@ -1555,14 +1728,8 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	// Generate SDP response
 	if s.handler != nil && receivedSDP != nil {
 		// Use handler's SDP generation for better compatibility
-		sdpResponse, sdpOptions := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
+		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
 		responseSDP, _ = sdpResponse.Marshal()
-
-		// Store allocated ports for cleanup when call ends (RFC 7865 multi-stream support)
-		if sdpOptions != nil && len(sdpOptions.AllocatedPorts) > 0 {
-			callState.AdditionalPortPairs = sdpOptions.AllocatedPorts
-			logger.WithField("additional_ports", len(sdpOptions.AllocatedPorts)).Debug("Stored additional port pairs for regular call")
-		}
 	} else {
 		// Fallback to simple SDP generation
 		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
@@ -2043,11 +2210,23 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		callState.RecordingSession.ExtendedMetadata["termination_reason"] = reason
 	}
 
-	if callState.RTPForwarder != nil {
+	if len(callState.RTPForwarders) > 0 {
+		for _, forwarder := range callState.RTPForwarders {
+			if forwarder == nil {
+				continue
+			}
+			forwarder.Stop()
+			forwarder.Cleanup()
+		}
+		callState.RTPForwarders = nil
+	} else if callState.RTPForwarder != nil {
 		callState.RTPForwarder.Stop()
 		callState.RTPForwarder.Cleanup()
-		callState.RTPForwarder = nil
 	}
+
+	callState.RTPForwarder = nil
+
+	callState.StreamForwarders = nil
 
 	callState.PendingAckCSeq = 0
 
@@ -2057,14 +2236,6 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		pm.ReleasePortPair(callState.AllocatedPortPair)
 		callState.AllocatedPortPair = nil
 	}
-
-	// Release additional port pairs allocated for multi-stream SIPREC (RFC 7865)
-	for _, portPair := range callState.AdditionalPortPairs {
-		if portPair != nil {
-			pm.ReleasePortPair(portPair)
-		}
-	}
-	callState.AdditionalPortPairs = nil
 
 	callState.State = "terminated"
 	callState.LastActivity = time.Now()
@@ -2737,6 +2908,21 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 	return contentType, multipartBody, nil
 }
 
+func extractStreamLabel(md *sdp.MediaDescription, idx int) string {
+	if md == nil {
+		return fmt.Sprintf("leg%d", idx)
+	}
+	for _, attr := range md.Attributes {
+		if attr.Key == "label" {
+			value := strings.TrimSpace(attr.Value)
+			if value != "" {
+				return value
+			}
+		}
+	}
+	return fmt.Sprintf("leg%d", idx)
+}
+
 // generateSiprecSDP generates appropriate SDP response for SIPREC
 func (s *CustomSIPServer) generateSiprecSDP(rtpPort int) []byte {
 	// Generate SDP with proper session info
@@ -2792,23 +2978,23 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 	// Clean up all active calls and release their ports
 	s.callMutex.Lock()
 	for callID, callState := range s.callStates {
-		if callState.RTPForwarder != nil {
+		forwarders := callState.RTPForwarders
+		if len(forwarders) == 0 && callState.RTPForwarder != nil {
+			forwarders = []*media.RTPForwarder{callState.RTPForwarder}
+		}
+
+		for _, forwarder := range forwarders {
+			if forwarder == nil {
+				continue
+			}
 			s.logger.WithFields(logrus.Fields{
 				"call_id":   callID,
-				"rtp_port":  callState.RTPForwarder.LocalPort,
-				"rtcp_port": callState.RTPForwarder.RTCPPort,
+				"rtp_port":  forwarder.LocalPort,
+				"rtcp_port": forwarder.RTCPPort,
 			}).Debug("Cleaning up RTP forwarder during shutdown")
 
-			// Close the stop channel if it's not already closed
-			select {
-			case <-callState.RTPForwarder.StopChan:
-				// Already closed
-			default:
-				close(callState.RTPForwarder.StopChan)
-			}
-
-			// Perform cleanup
-			callState.RTPForwarder.Cleanup()
+			forwarder.Stop()
+			forwarder.Cleanup()
 		}
 
 		if callState.AllocatedPortPair != nil {
