@@ -297,6 +297,105 @@ func (s *CustomSIPServer) resolveContactAddress(transport string, message *SIPMe
 	return host, port
 }
 
+func (s *CustomSIPServer) resolveMediaIPAddress(message *SIPMessage) string {
+	candidates := make([]string, 0, 8)
+
+	if s.handler != nil {
+		if nr := s.handler.NATRewriter; nr != nil {
+			candidates = append(candidates, nr.GetExternalIP())
+			if cfg := nr.config; cfg != nil {
+				candidates = append(candidates, cfg.ExternalIP, cfg.InternalIP)
+			}
+		}
+		if cfg := s.handler.Config; cfg != nil {
+			if mediaCfg := cfg.MediaConfig; mediaCfg != nil {
+				candidates = append(candidates, mediaCfg.ExternalIP, mediaCfg.InternalIP)
+			}
+			if natCfg := cfg.NATConfig; natCfg != nil {
+				candidates = append(candidates, natCfg.ExternalIP, natCfg.InternalIP)
+			}
+		}
+	}
+
+	if message != nil && message.Connection != nil {
+		if conn := message.Connection.conn; conn != nil {
+			if addr := conn.LocalAddr(); addr != nil {
+				candidates = append(candidates, addr.String())
+			}
+		}
+
+		transport := strings.ToLower(message.Connection.transport)
+		s.listenMu.RLock()
+		if host := s.listenHosts[transport]; host != "" {
+			candidates = append(candidates, host)
+		}
+		s.listenMu.RUnlock()
+	}
+
+	for _, candidate := range candidates {
+		if ip := sanitizeMediaIPCandidate(candidate); isUsableMediaIP(ip) {
+			return ip
+		}
+	}
+
+	// Fall back to any known listen host before using loopback
+	s.listenMu.RLock()
+	for _, host := range s.listenHosts {
+		if ip := sanitizeMediaIPCandidate(host); isUsableMediaIP(ip) {
+			s.listenMu.RUnlock()
+			return ip
+		}
+	}
+	s.listenMu.RUnlock()
+
+	return "127.0.0.1"
+}
+
+func sanitizeMediaIPCandidate(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return ""
+	}
+
+	if strings.Contains(candidate, ",") {
+		parts := strings.Split(candidate, ",")
+		candidate = strings.TrimSpace(parts[0])
+	}
+
+	if strings.EqualFold(candidate, "auto") || strings.EqualFold(candidate, "unspecified") {
+		return ""
+	}
+
+	// Remove IPv6 brackets
+	if strings.HasPrefix(candidate, "[") && strings.Contains(candidate, "]") {
+		candidate = strings.Trim(candidate, "[]")
+	}
+
+	// Remove optional port portion
+	if host, _, err := net.SplitHostPort(candidate); err == nil {
+		candidate = host
+	}
+
+	if strings.EqualFold(candidate, "localhost") {
+		return ""
+	}
+
+	return candidate
+}
+
+func isUsableMediaIP(candidate string) bool {
+	if candidate == "" {
+		return false
+	}
+
+	switch candidate {
+	case "0.0.0.0", "::", "0:0:0:0:0:0:0:0":
+		return false
+	}
+
+	return true
+}
+
 func (s *CustomSIPServer) detectLocalHost() string {
 	if s.handler != nil && s.handler.Config != nil && s.handler.Config.NATConfig != nil {
 		if ip := s.handler.Config.NATConfig.InternalIP; ip != "" && !strings.EqualFold(ip, "auto") {
@@ -722,6 +821,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		RTPForwarders:    make([]*media.RTPForwarder, 0),
 		StreamForwarders: make(map[string]*media.RTPForwarder),
 	}
+	mediaIP := s.resolveMediaIPAddress(message)
 
 	// Store call state
 	s.callMutex.Lock()
@@ -886,8 +986,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	// Parse the received SDP if available
 	var receivedSDP *sdp.SessionDescription
 	if len(sdpData) > 0 {
-		parsed := &sdp.SessionDescription{}
-		if err := parsed.Unmarshal(sdpData); err != nil {
+		parsed, err := ParseSDPTolerant(sdpData, s.logger)
+		if err != nil {
 			logger.WithError(err).Warn("Failed to parse received SDP, using default")
 		} else {
 			receivedSDP = parsed
@@ -1047,7 +1147,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		if receivedSDP != nil {
-			responseSDPBytes, err := s.handler.generateSDPResponseForForwarders(receivedSDP, "127.0.0.1", forwarders).Marshal()
+			responseSDPBytes, err := s.handler.generateSDPResponseForForwarders(receivedSDP, mediaIP, forwarders).Marshal()
 			if err != nil {
 				cleanupForwarders()
 				inviteErr = err
@@ -1058,7 +1158,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 			responseSDP = responseSDPBytes
 		} else {
-			sdpResponse := s.handler.generateSDPResponseWithPort(nil, "127.0.0.1", forwarders[0].LocalPort, forwarders[0])
+			sdpResponse := s.handler.generateSDPResponseWithPort(nil, mediaIP, forwarders[0].LocalPort, forwarders[0])
 			responseSDP, _ = sdpResponse.Marshal()
 		}
 	} else {
@@ -1074,7 +1174,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		callState.AllocatedPortPair = portPair
 
 		// Generate SDP with the allocated port
-		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
+		responseSDP = s.generateSiprecSDP(mediaIP, portPair.RTPPort)
 
 		// Note: In a real implementation, you'd want to create an RTP listener
 		// on these ports and store them for cleanup later
@@ -1321,6 +1421,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	// Update call state
 	callState.RemoteCSeq = extractCSeqNumber(message.CSeq)
 	callState.LastActivity = time.Now()
+	mediaIP := s.resolveMediaIPAddress(message)
 
 	// Generate response using existing RTP forwarder
 	responseHeaders := map[string]string{
@@ -1333,8 +1434,8 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	if callState.RTPForwarder != nil {
 		var parsedSDP *sdp.SessionDescription
 		if sdpData != nil && len(sdpData) > 0 {
-			parsed := &sdp.SessionDescription{}
-			if err := parsed.Unmarshal(sdpData); err != nil {
+			parsed, err := ParseSDPTolerant(sdpData, s.logger)
+			if err != nil {
 				logger.WithError(err).Warn("Failed to parse received SDP in re-INVITE, using default")
 			} else {
 				parsedSDP = parsed
@@ -1477,14 +1578,14 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		}
 
 		if parsedSDP != nil {
-			sdpResponse := s.handler.generateSDPResponseForForwarders(parsedSDP, "127.0.0.1", forwarders)
+			sdpResponse := s.handler.generateSDPResponseForForwarders(parsedSDP, mediaIP, forwarders)
 			responseSDP, _ = sdpResponse.Marshal()
 		} else {
-			responseSDP = s.generateSiprecSDP(forwarders[0].LocalPort)
+			responseSDP = s.generateSiprecSDP(mediaIP, forwarders[0].LocalPort)
 		}
 	} else {
 		// Fallback to basic SDP generation if no forwarder exists
-		responseSDP = s.generateSiprecSDP(0) // 0 means allocate port dynamically
+		responseSDP = s.generateSiprecSDP(mediaIP, 0) // 0 means allocate port dynamically
 	}
 
 	// Generate SIPREC response if we have a recording session
@@ -1685,6 +1786,7 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 		RTPForwarders:    make([]*media.RTPForwarder, 0),
 		StreamForwarders: make(map[string]*media.RTPForwarder),
 	}
+	mediaIP := s.resolveMediaIPAddress(message)
 
 	// Store call state
 	s.callMutex.Lock()
@@ -1708,10 +1810,11 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	var responseSDP []byte
 
 	if len(message.Body) > 0 && strings.Contains(s.getHeaderValue(message, "content-type"), "application/sdp") {
-		receivedSDP = &sdp.SessionDescription{}
-		if err := receivedSDP.Unmarshal(message.Body); err != nil {
+		parsed, err := ParseSDPTolerant(message.Body, s.logger)
+		if err != nil {
 			logger.WithError(err).Warn("Failed to parse received SDP in regular INVITE")
-			receivedSDP = nil
+		} else {
+			receivedSDP = parsed
 		}
 	}
 
@@ -1728,11 +1831,11 @@ func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	// Generate SDP response
 	if s.handler != nil && receivedSDP != nil {
 		// Use handler's SDP generation for better compatibility
-		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, "127.0.0.1", portPair.RTPPort, nil)
+		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, mediaIP, portPair.RTPPort, nil)
 		responseSDP, _ = sdpResponse.Marshal()
 	} else {
 		// Fallback to simple SDP generation
-		responseSDP = s.generateSiprecSDP(portPair.RTPPort)
+		responseSDP = s.generateSiprecSDP(mediaIP, portPair.RTPPort)
 	}
 
 	// Update call state
@@ -2924,9 +3027,13 @@ func extractStreamLabel(md *sdp.MediaDescription, idx int) string {
 }
 
 // generateSiprecSDP generates appropriate SDP response for SIPREC
-func (s *CustomSIPServer) generateSiprecSDP(rtpPort int) []byte {
+func (s *CustomSIPServer) generateSiprecSDP(ip string, rtpPort int) []byte {
 	// Generate SDP with proper session info
 	timestamp := time.Now().Unix()
+
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
 
 	// Validate that we have a valid port
 	if rtpPort <= 0 {
@@ -2936,15 +3043,15 @@ func (s *CustomSIPServer) generateSiprecSDP(rtpPort int) []byte {
 	}
 
 	sdp := fmt.Sprintf(`v=0
-o=- %d %d IN IP4 127.0.0.1
+o=- %d %d IN IP4 %s
 s=SIPREC Recording Session
-c=IN IP4 127.0.0.1
+c=IN IP4 %s
 t=0 0
 m=audio %d RTP/AVP 0 8
 a=rtpmap:0 PCMU/8000
 a=rtpmap:8 PCMA/8000
 a=recvonly
-`, timestamp, timestamp, rtpPort)
+`, timestamp, timestamp, ip, ip, rtpPort)
 
 	return []byte(sdp)
 }

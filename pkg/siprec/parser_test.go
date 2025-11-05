@@ -2,6 +2,7 @@ package siprec
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -251,6 +252,22 @@ func TestValidateRealWorldSIPRECMetadata(t *testing.T) {
 	result := ValidateSiprecMessage(&metadata)
 	require.Empty(t, result.Errors, "Real-world SIPREC metadata should not produce validation errors")
 	assert.NotEmpty(t, result.Warnings, "Should have warnings about missing state")
+}
+
+func TestExtractRSMetadataHandlesCharsetContentType(t *testing.T) {
+	const boundary = "test-boundary-123"
+	const metadataXML = `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="session-1" state="active" sequence="1"/>`
+
+	body := fmt.Sprintf("--%s\r\nContent-Type: application/sdp\r\n\r\nv=0\r\n--%s\r\nContent-Type: application/rs-metadata+xml; charset=UTF-8\r\nContent-Disposition: recording-session\r\n\r\n%s\r\n--%s--\r\n", boundary, boundary, metadataXML, boundary)
+
+	ct := fmt.Sprintf("multipart/mixed; boundary=%s", boundary)
+
+	parsed, err := ExtractRSMetadata(ct, []byte(body))
+	require.NoError(t, err)
+	require.NotNil(t, parsed)
+	assert.Equal(t, "session-1", parsed.SessionID)
+	assert.Equal(t, "active", parsed.State)
 }
 
 func TestMinimalRFC7865Compliance(t *testing.T) {
