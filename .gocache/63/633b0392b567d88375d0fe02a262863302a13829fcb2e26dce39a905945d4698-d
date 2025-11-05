@@ -1,4 +1,0 @@
-=== RUN   TestComplianceStatus
---- PASS: TestComplianceStatus (0.00s)
-PASS
-ok  	siprec-server/pkg/http	0.972s

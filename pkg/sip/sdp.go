@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
@@ -21,8 +22,8 @@ func ValidateSDP(sdpData []byte) error {
 	}
 
 	// Parse the SDP to validate it
-	parsedSDP := &sdp.SessionDescription{}
-	if err := parsedSDP.Unmarshal(sdpData); err != nil {
+	parsedSDP, err := ParseSDPTolerant(sdpData, nil)
+	if err != nil {
 		return errors.Wrap(err, "invalid SDP format")
 	}
 
@@ -75,6 +76,94 @@ func ValidateSDP(sdpData []byte) error {
 	}
 
 	return nil
+}
+
+// ParseSDPTolerant attempts to parse an SDP payload while tolerating
+// non-compliant attributes that frequently appear in vendor implementations.
+// Attributes with malformed field names are dropped so the remaining structure
+// can be processed using the canonical parser.
+func ParseSDPTolerant(sdpData []byte, logger *logrus.Logger) (*sdp.SessionDescription, error) {
+	parsed := &sdp.SessionDescription{}
+	parseErr := parsed.Unmarshal(sdpData)
+	if parseErr == nil {
+		sanitized, dropped := sanitizeSDPAttributes(sdpData)
+		if dropped == 0 {
+			return parsed, nil
+		}
+
+		cleanParsed := &sdp.SessionDescription{}
+		if cleanErr := cleanParsed.Unmarshal(sanitized); cleanErr == nil {
+			if logger != nil {
+				logger.WithFields(logrus.Fields{
+					"dropped_attributes": dropped,
+				}).Warn("Removed non-compliant SDP attributes prior to processing")
+			}
+			return cleanParsed, nil
+		}
+
+		// Fall back to original parse if sanitization fails unexpectedly
+		return parsed, nil
+	}
+
+	sanitized, dropped := sanitizeSDPAttributes(sdpData)
+	if dropped == 0 {
+		return nil, parseErr
+	}
+
+	parsed = &sdp.SessionDescription{}
+	if err := parsed.Unmarshal(sanitized); err != nil {
+		return nil, errors.Wrap(parseErr, "failed to parse SDP after sanitization")
+	}
+
+	if logger != nil {
+		logger.WithError(parseErr).WithFields(logrus.Fields{
+			"dropped_attributes": dropped,
+		}).Warn("Parsed SDP after removing non-compliant attributes")
+	}
+
+	return parsed, nil
+}
+
+func sanitizeSDPAttributes(data []byte) ([]byte, int) {
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	cleaned := make([]string, 0, len(lines))
+	dropped := 0
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "a=") {
+			attribute := strings.TrimSpace(trimmed[2:])
+			key := attribute
+			if idx := strings.Index(attribute, ":"); idx != -1 {
+				key = attribute[:idx]
+			}
+			if !isValidSDPAttributeKey(strings.TrimSpace(key)) {
+				dropped++
+				continue
+			}
+		}
+		cleaned = append(cleaned, line)
+	}
+
+	return []byte(strings.Join(cleaned, "\r\n")), dropped
+}
+
+func isValidSDPAttributeKey(key string) bool {
+	if key == "" {
+		return false
+	}
+
+	for i, r := range key {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+		if i == 0 && !(unicode.IsLetter(r) || r == '_') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // generateSDP creates an SDP description based on options
