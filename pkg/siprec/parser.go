@@ -177,8 +177,19 @@ func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err 
 			break
 		}
 
-		contentType := part.Header.Get("Content-Type")
-		if contentType == "application/sdp" {
+		contentTypeHeader := strings.TrimSpace(part.Header.Get("Content-Type"))
+		if contentTypeHeader == "" {
+			continue
+		}
+
+		mediaType, _, err := mime.ParseMediaType(contentTypeHeader)
+		if err != nil {
+			// Skip parts with malformed content types but continue parsing remaining parts
+			continue
+		}
+
+		switch strings.ToLower(mediaType) {
+		case "application/sdp":
 			// Read SDP content
 			buf := new(strings.Builder)
 			_, err = io.Copy(buf, part)
@@ -186,7 +197,7 @@ func ParseSiprecInvite(req *sip.Request) (sdp string, metadata *RSMetadata, err 
 				return "", nil, fmt.Errorf("error reading SDP part: %w", err)
 			}
 			sdpContent = buf.String()
-		} else if contentType == "application/rs-metadata+xml" {
+		case "application/rs-metadata+xml":
 			// Read rs-metadata content
 			buf := new(strings.Builder)
 			_, err = io.Copy(buf, part)
@@ -325,13 +336,20 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 				WithCode("MULTIPART_PARSE_ERROR")
 		}
 
-		partContentType := part.Header.Get("Content-Type")
+		partContentType := strings.TrimSpace(part.Header.Get("Content-Type"))
 		partDisposition := part.Header.Get("Content-Disposition")
 
+		partMediaType := strings.ToLower(partContentType)
+		if partContentType != "" {
+			if mediaType, _, err := mime.ParseMediaType(partContentType); err == nil {
+				partMediaType = strings.ToLower(mediaType)
+			}
+		}
+
 		// Check for SDP part - we need to track if it's present for a valid SIPREC request
-		if partContentType == "application/sdp" {
+		if partMediaType == "application/sdp" {
 			sdpFound = true
-		} else if partContentType == "application/rs-metadata+xml" {
+		} else if partMediaType == "application/rs-metadata+xml" {
 			// Read rs-metadata content
 			buf := new(strings.Builder)
 			_, err = io.Copy(buf, part)
@@ -421,8 +439,17 @@ func ExtractRSMetadata(contentType string, body []byte) (*RSMetadata, error) {
 			return nil, fmt.Errorf("error reading multipart: %w", err)
 		}
 
-		contentType := part.Header.Get("Content-Type")
-		if contentType == "application/rs-metadata+xml" {
+		contentTypeHeader := strings.TrimSpace(part.Header.Get("Content-Type"))
+		if contentTypeHeader == "" {
+			continue
+		}
+
+		mediaType, _, err := mime.ParseMediaType(contentTypeHeader)
+		if err != nil {
+			continue
+		}
+
+		if strings.EqualFold(mediaType, "application/rs-metadata+xml") {
 			// Read rs-metadata content
 			buf := new(strings.Builder)
 			_, err = io.Copy(buf, part)

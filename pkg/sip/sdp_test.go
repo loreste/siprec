@@ -212,6 +212,108 @@ a=ptime:20
 	}
 }
 
+func TestParseSDPTolerantDropsInvalidAttributes(t *testing.T) {
+	const offer = `v=0
+o=ATS99 399418590 399418590 IN IP4 192.168.22.133
+s=SipCall
+t=0 0
+m=audio 11584 RTP/AVP 8 108
+c=IN IP4 192.168.82.21
+a=label:0
+a=rtpmap:8 PCMA/8000
+a=rtpmap:108 telephone-event/8000
+a=3gOoBTC
+a=sendonly
+a=rtcp:11585
+a=ptime:20
+`
+
+	logger := logrus.New()
+	logger.Out = io.Discard
+
+	parsed, err := ParseSDPTolerant([]byte(offer), logger)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	if len(parsed.MediaDescriptions) != 1 {
+		t.Fatalf("expected 1 media description, got %d", len(parsed.MediaDescriptions))
+	}
+
+	marshaled, err := parsed.Marshal()
+	if err != nil {
+		t.Fatalf("failed to marshal sanitized SDP: %v", err)
+	}
+
+	if strings.Contains(string(marshaled), "3gOoBTC") {
+		t.Fatalf("sanitized SDP should not contain invalid attribute, got %s", string(marshaled))
+	}
+}
+
+func TestGenerateSDPResponseForForwardersUsesProvidedIP(t *testing.T) {
+	const offer = `v=0
+o=ATS99 399418590 399418590 IN IP4 192.168.22.133
+s=SipCall
+t=0 0
+m=audio 11584 RTP/AVP 8 108
+c=IN IP4 192.168.82.21
+a=label:0
+a=rtpmap:8 PCMA/8000
+a=rtpmap:108 telephone-event/8000
+a=sendonly
+a=rtcp:11585
+a=ptime:20
+m=audio 15682 RTP/AVP 8 108
+c=IN IP4 192.168.82.21
+a=label:1
+a=rtpmap:8 PCMA/8000
+a=rtpmap:108 telephone-event/8000
+a=sendonly
+a=rtcp:15683
+a=ptime:20
+`
+
+	received := &sdp.SessionDescription{}
+	if err := received.Unmarshal([]byte(offer)); err != nil {
+		t.Fatalf("failed to parse offer: %v", err)
+	}
+
+	forwarders := []*media.RTPForwarder{
+		{LocalPort: 16384, RTCPPort: 16385},
+		{LocalPort: 20000, RTCPPort: 20001},
+	}
+
+	logger := logrus.New()
+	logger.Out = io.Discard
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{MediaConfig: &media.Config{}},
+	}
+
+	const advertisedIP = "203.0.113.10"
+	answer := handler.generateSDPResponseForForwarders(received, advertisedIP, forwarders)
+	if answer == nil {
+		t.Fatal("expected SDP answer")
+	}
+
+	if answer.ConnectionInformation == nil || answer.ConnectionInformation.Address == nil {
+		t.Fatalf("missing session connection information: %+v", answer.ConnectionInformation)
+	}
+
+	if got := answer.ConnectionInformation.Address.Address; got != advertisedIP {
+		t.Fatalf("session-level connection address mismatch: want %s got %s", advertisedIP, got)
+	}
+
+	for idx, md := range answer.MediaDescriptions {
+		if md.ConnectionInformation == nil || md.ConnectionInformation.Address == nil {
+			t.Fatalf("media %d missing connection info", idx)
+		}
+		if got := md.ConnectionInformation.Address.Address; got != advertisedIP {
+			t.Fatalf("media %d connection address mismatch: want %s got %s", idx, advertisedIP, got)
+		}
+	}
+}
+
 func TestGenerateSDPAdvancedHonorsMediaPortPairs(t *testing.T) {
 	received := &sdp.SessionDescription{}
 	const offer = `v=0
