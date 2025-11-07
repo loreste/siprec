@@ -501,6 +501,12 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 		Attributes:        []sdp.Attribute{{Key: "recording-session"}},
 	}
 
+	// Log the generated media descriptions for debugging
+	h.Logger.WithFields(logrus.Fields{
+		"input_media_count":  len(receivedSDP.MediaDescriptions),
+		"output_media_count": len(sessionDesc.MediaDescriptions),
+	}).Debug("Generated SDP response")
+
 	return sessionDesc
 }
 
