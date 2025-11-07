@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,19 +17,22 @@ import (
 
 func TestMetadataNotifierDeliversEvent(t *testing.T) {
 	ch := make(chan NotificationEvent, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		var event NotificationEvent
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
-		ch <- event
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
 
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
-	notifier := NewMetadataNotifier(logger, []string{server.URL}, time.Second)
+	callbackURL := "http://callback.local/notify"
+	notifier := NewMetadataNotifier(logger, []string{callbackURL}, time.Second)
+	notifier.client = &http.Client{
+		Timeout: time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			defer req.Body.Close()
+			var event NotificationEvent
+			require.NoError(t, json.NewDecoder(req.Body).Decode(&event))
+			ch <- event
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+		}),
+	}
 
 	session := &siprec.RecordingSession{
 		ID:                "session123",

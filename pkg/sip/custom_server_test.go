@@ -8,7 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,19 +22,22 @@ import (
 
 func TestHandleSubscribeRegistersCallback(t *testing.T) {
 	eventCh := make(chan NotificationEvent, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		var event NotificationEvent
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&event))
-		eventCh <- event
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	callbackURL := "http://callback.local/notify"
 
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
 	notifier := NewMetadataNotifier(logger, nil, time.Second)
+	notifier.client = &http.Client{
+		Timeout: time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			defer req.Body.Close()
+			var event NotificationEvent
+			require.NoError(t, json.NewDecoder(req.Body).Decode(&event))
+			eventCh <- event
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+		}),
+	}
 	handler := &Handler{
 		Logger:   logger,
 		Config:   &Config{},
@@ -73,7 +76,7 @@ func TestHandleSubscribeRegistersCallback(t *testing.T) {
 		CallID:  callID,
 		Version: "SIP/2.0",
 		Headers: map[string][]string{
-			"x-callback-url": {server.URL},
+			"x-callback-url": {callbackURL},
 			"to":             {"<sip:server@example.com>;tag=server"},
 			"from":           {"<sip:client@example.com>;tag=client"},
 			"call-id":        {callID},
@@ -88,7 +91,7 @@ func TestHandleSubscribeRegistersCallback(t *testing.T) {
 	}
 
 	sipServer.handleSubscribeMessage(message)
-	require.Contains(t, session.Callbacks, server.URL, "Callback URL should be stored on session")
+	require.Contains(t, session.Callbacks, callbackURL, "Callback URL should be stored on session")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -173,6 +176,65 @@ func TestHandleByeAllowsPendingAck(t *testing.T) {
 	_, exists := sipServer.callStates[callID]
 	sipServer.callMutex.RUnlock()
 	require.False(t, exists, "call state should be cleaned up after BYE")
+}
+
+func TestHandleSiprecReInviteUpdatesSession(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{Logger: logger, Config: &Config{MediaConfig: &media.Config{}}}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-reinvite"
+	forwarderA := &media.RTPForwarder{LocalPort: 20000, RTCPPort: 20001}
+	forwarderB := &media.RTPForwarder{LocalPort: 21000, RTCPPort: 21001}
+	callState := &CallState{
+		CallID:           callID,
+		State:            "connected",
+		RecordingSession: &siprec.RecordingSession{ID: "session-1", RecordingState: "active", ExtendedMetadata: map[string]string{}},
+		RTPForwarders:    []*media.RTPForwarder{forwarderA, forwarderB},
+		StreamForwarders: map[string]*media.RTPForwarder{"leg0": forwarderA, "leg1": forwarderB},
+	}
+
+	sipServer.callMutex.Lock()
+	sipServer.callStates[callID] = callState
+	sipServer.callMutex.Unlock()
+
+	sdp := "v=0\r\no=ATS99 399418590 399418590 IN IP4 192.168.22.133\r\ns=SipCall\r\nt=0 0\r\nm=audio 11584 RTP/AVP 8 108\r\nc=IN IP4 192.168.82.21\r\na=label:0\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:108 telephone-event/8000\r\na=sendonly\r\na=rtcp:11585\r\na=ptime:20\r\nm=audio 15682 RTP/AVP 8 108\r\nc=IN IP4 192.168.82.21\r\na=label:1\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:108 telephone-event/8000\r\na=sendonly\r\na=rtcp:15683\r\na=ptime:20\r\n"
+	metadata := `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="session-1" state="active" sequence="3">
+  <participant participant_id="p1">
+    <aor>sip:alice@example.com</aor>
+  </participant>
+  <stream label="0" streamid="stream-0" type="audio"/>
+  <stream label="1" streamid="stream-1" type="audio"/>
+</recording>`
+	boundary := "OSS-unique-boundary-42"
+	body := fmt.Sprintf("--%s\r\nContent-Type: application/sdp\r\n\r\n%s\r\n--%s\r\nContent-Type: application/rs-metadata+xml\r\n\r\n%s\r\n--%s--\r\n", boundary, sdp, boundary, metadata, boundary)
+
+	req := sipparser.NewRequest(sipparser.INVITE, sipparser.Uri{Host: "recorder"})
+	req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 192.0.2.1;branch=z9hG4bK-reinvite"))
+	req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag=src"))
+	req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>;tag=dst"))
+	req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+	req.AppendHeader(sipparser.NewHeader("CSeq", "4 INVITE"))
+	req.AppendHeader(sipparser.NewHeader("Contact", "<sip:src@example.com>"))
+
+	tx := newTestServerTransaction(req)
+	message := &SIPMessage{
+		Method:      "INVITE",
+		CallID:      callID,
+		CSeq:        "4 INVITE",
+		ContentType: fmt.Sprintf("multipart/mixed; boundary=%s", boundary),
+		Body:        []byte(body),
+		Request:     req,
+		Parsed:      req,
+		Transaction: tx,
+	}
+
+	sipServer.handleSiprecReInvite(message, callState)
+	require.NotEmpty(t, tx.responses)
+	require.Equal(t, 200, tx.responses[len(tx.responses)-1].StatusCode)
+	require.Equal(t, []string{"audio", "audio"}, callState.RecordingSession.MediaStreamTypes)
 }
 
 func TestHandleSiprecInviteRejectsMissingSDP(t *testing.T) {
