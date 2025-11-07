@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,21 +15,23 @@ func TestHTTPFallbackClientSuccess(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
-	invalidSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("not-an-ip"))
-	}))
-	defer invalidSrv.Close()
-
-	validSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("203.0.113.7"))
-	}))
-	defer validSrv.Close()
-
 	client := NewHTTPFallbackClient(logger)
-	client.services = []string{"   ", invalidSrv.URL, validSrv.URL}
+	client.services = []string{"   ", "https://invalid.service", "https://valid.service"}
 	client.timeout = time.Second
+	client.httpClient = &http.Client{
+		Timeout: time.Second,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			body := "not-an-ip"
+			if strings.Contains(req.URL.Host, "valid.service") {
+				body = "203.0.113.7"
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -48,15 +50,19 @@ func TestHTTPFallbackClientFailure(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
-	failureSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("error"))
-	}))
-	defer failureSrv.Close()
-
 	client := NewHTTPFallbackClient(logger)
-	client.services = []string{failureSrv.URL}
+	client.services = []string{"https://failure.local"}
 	client.timeout = 100 * time.Millisecond
+	client.httpClient = &http.Client{
+		Timeout: 100 * time.Millisecond,
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader("error")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
