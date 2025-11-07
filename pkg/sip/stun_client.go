@@ -135,6 +135,7 @@ type HTTPFallbackClient struct {
 	services []string
 	logger   *logrus.Logger
 	timeout  time.Duration
+	httpClient *http.Client
 }
 
 // NewHTTPFallbackClient creates a new HTTP fallback client
@@ -146,8 +147,9 @@ func NewHTTPFallbackClient(logger *logrus.Logger) *HTTPFallbackClient {
 			"https://checkip.amazonaws.com",
 			"https://icanhazip.com",
 		},
-		logger:  logger,
-		timeout: 5 * time.Second,
+		logger:     logger,
+		timeout:    5 * time.Second,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -161,7 +163,11 @@ func (hc *HTTPFallbackClient) GetExternalIP(ctx context.Context) (string, error)
 		return "", fmt.Errorf("no HTTP fallback services configured")
 	}
 
-	client := &http.Client{Timeout: hc.timeout}
+	client := hc.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: hc.timeout}
+		hc.httpClient = client
+	}
 
 	var lastErr error
 	for _, service := range hc.services {
