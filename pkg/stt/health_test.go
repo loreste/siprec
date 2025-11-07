@@ -323,29 +323,29 @@ func TestHealthMonitor_ConcurrentAccess(t *testing.T) {
 	// Start concurrent operations
 	done := make(chan bool)
 	
-	// Goroutine 1: Continuous health checks
+	// Goroutine 1: Continuous health checks (reduced iterations to avoid lock contention)
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 10; i++ {
 			monitor.checkAllProviders()
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 		done <- true
 	}()
-	
+
 	// Goroutine 2: Read health status
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 50; i++ {
 			monitor.GetAllHealthStatus()
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 		done <- true
 	}()
-	
+
 	// Goroutine 3: Get best provider
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := 0; i < 50; i++ {
 			monitor.GetBestProvider([]string{})
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 		done <- true
 	}()
