@@ -2,11 +2,14 @@ package sip
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
 	"strconv"
 	"strings"
@@ -988,10 +991,18 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	if len(sdpData) > 0 {
 		parsed, err := ParseSDPTolerant(sdpData, s.logger)
 		if err != nil {
-			logger.WithError(err).Warn("Failed to parse received SDP, using default")
+			logger.WithError(err).Warn("Failed to parse received SDP offer")
 		} else {
 			receivedSDP = parsed
 		}
+	}
+
+	if receivedSDP == nil || len(receivedSDP.MediaDescriptions) == 0 {
+		inviteErr = fmt.Errorf("invalid SIPREC offer: missing SDP media")
+		callScope.RecordError(inviteErr)
+		logger.WithError(inviteErr).Warn("Rejecting SIPREC INVITE without valid SDP")
+		s.sendResponse(message, 488, "Not Acceptable Here", nil, nil)
+		return
 	}
 
 	// Create RTP forwarders for this SIPREC call
@@ -1045,13 +1056,17 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 					label: extractStreamLabel(md, len(audioStreams)),
 				})
 			}
+			logger.WithField("audio_stream_count", len(audioStreams)).Info("Detected audio streams in received SDP")
+		} else {
+			logger.Warn("No received SDP available, will use default")
 		}
 
 		if len(audioStreams) == 0 {
-			audioStreams = append(audioStreams, audioStreamInfo{
-				index: -1,
-				label: "leg0",
-			})
+			inviteErr = fmt.Errorf("invalid SIPREC offer: no audio streams detected")
+			callScope.RecordError(inviteErr)
+			logger.WithError(inviteErr).Warn("Rejecting SIPREC INVITE without audio streams")
+			s.sendResponse(message, 488, "Not Acceptable Here", nil, nil)
+			return
 		}
 
 		forwarders := make([]*media.RTPForwarder, 0, len(audioStreams))
@@ -1147,6 +1162,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		if receivedSDP != nil {
+			logger.WithFields(logrus.Fields{
+				"forwarder_count":  len(forwarders),
+				"media_desc_count": len(receivedSDP.MediaDescriptions),
+			}).Info("Generating SDP response for multiple forwarders")
 			responseSDPBytes, err := s.handler.generateSDPResponseForForwarders(receivedSDP, mediaIP, forwarders).Marshal()
 			if err != nil {
 				cleanupForwarders()
@@ -1157,7 +1176,9 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				return
 			}
 			responseSDP = responseSDPBytes
+			logger.WithField("response_sdp_size", len(responseSDP)).Debug("Generated multi-stream SDP response")
 		} else {
+			logger.Warn("Using single-stream SDP response (receivedSDP is nil)")
 			sdpResponse := s.handler.generateSDPResponseWithPort(nil, mediaIP, forwarders[0].LocalPort, forwarders[0])
 			responseSDP, _ = sdpResponse.Marshal()
 		}
@@ -1903,6 +1924,12 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 		return
 	}
 
+	logger.WithFields(logrus.Fields{
+		"call_state":  callState.State,
+		"pending_ack": callState.PendingAckCSeq,
+		"cseq":        seq,
+	}).Debug("Processing BYE request")
+
 	if callState != nil {
 		callScope = callState.TraceScope
 	} else if scope, ok := tracing.GetCallScope(message.CallID); ok {
@@ -1926,22 +1953,10 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	sessionID := sessionIDFromState(callState)
 
 	if callState.PendingAckCSeq != 0 {
-		logger.WithField("pending_ack_cseq", callState.PendingAckCSeq).Warn("BYE received before ACK completed")
-		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
-		audit.Log(byeCtx, s.logger, &audit.Event{
-			Category:  "sip",
-			Action:    "bye",
-			Outcome:   audit.OutcomeFailure,
-			CallID:    message.CallID,
-			SessionID: sessionID,
-			Details: map[string]interface{}{
-				"reason": "ack_pending",
-			},
-		})
-		return
+		logger.WithField("pending_ack_cseq", callState.PendingAckCSeq).Warn("BYE received before ACK completed; proceeding for interoperability")
 	}
 
-	if callState.State != "connected" && callState.State != "terminating" {
+	if callState.State != "connected" && callState.State != "terminating" && callState.State != "awaiting_ack" {
 		logger.WithField("state", callState.State).Warn("BYE received in invalid dialog state")
 		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
 		audit.Log(byeCtx, s.logger, &audit.Event{
@@ -1956,6 +1971,10 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 			},
 		})
 		return
+	}
+
+	if callState.State == "awaiting_ack" {
+		logger.Warn("BYE received while awaiting ACK; treating as connected call")
 	}
 
 	if seq != 0 && seq <= callState.RemoteCSeq {
@@ -1982,6 +2001,7 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	if seq != 0 {
 		callState.RemoteCSeq = seq
 	}
+	callState.PendingAckCSeq = 0
 	callState.State = "terminating"
 	callState.LastActivity = time.Now()
 	s.callMutex.Unlock()
@@ -2104,7 +2124,7 @@ func (s *CustomSIPServer) handlePrackMessage(message *SIPMessage) {
 // handleAckMessage handles ACK requests
 func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "ACK")
-	logger.Debug("Received ACK request")
+	logger.Info("Received ACK request")
 
 	seq, method := parseCSeq(message.CSeq)
 	if method != "" && method != "ACK" {
@@ -2139,6 +2159,12 @@ func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 	}
 	currentState.State = "connected"
 	currentState.LastActivity = time.Now()
+
+	logger.WithFields(logrus.Fields{
+		"call_id": message.CallID,
+		"state":   "connected",
+		"cseq":    seq,
+	}).Info("Call state transitioned to connected after ACK")
 
 	if currentState.TraceScope != nil {
 		currentState.TraceScope.SetAttributes(attribute.String("siprec.state", "connected"))
@@ -2636,64 +2662,71 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 		return nil, nil
 	}
 
-	bodyStr := string(body)
-
-	// Extract boundary from Content-Type
-	boundary := ""
-	if strings.Contains(contentType, "boundary=") {
-		parts := strings.Split(contentType, "boundary=")
-		if len(parts) > 1 {
-			boundary = strings.TrimSpace(parts[1])
-			boundary = strings.Trim(boundary, "\"")
-		}
-	}
-
-	if boundary == "" {
-		s.logger.Debug("No boundary found in Content-Type")
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		s.logger.WithError(err).Warn("Failed to parse Content-Type for SIPREC body")
 		return nil, nil
 	}
 
-	// Split by boundary
-	parts := strings.Split(bodyStr, "--"+boundary)
+	if !strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+		s.logger.WithField("media_type", mediaType).Debug("SIPREC body missing multipart content type")
+		return nil, nil
+	}
+
+	boundary, ok := params["boundary"]
+	if !ok || boundary == "" {
+		s.logger.Warn("Multipart SIPREC body missing boundary parameter")
+		return nil, nil
+	}
+
+	mr := multipart.NewReader(bytes.NewReader(body), boundary)
 
 	var sdpData []byte
 	var rsMetadata []byte
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" || part == "--" {
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			s.logger.WithError(err).Warn("Failed to iterate multipart SIPREC body")
+			break
+		}
+
+		ct := part.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		partType, _, _ := mime.ParseMediaType(ct)
+		partType = strings.ToLower(partType)
+
+		buf := bytes.NewBuffer(nil)
+		if _, err := io.Copy(buf, part); err != nil {
+			s.logger.WithError(err).Warn("Failed to read multipart section")
 			continue
 		}
+		data := buf.Bytes()
 
-		// Split headers and content
-		sections := strings.Split(part, "\r\n\r\n")
-		if len(sections) < 2 {
-			sections = strings.Split(part, "\n\n")
-		}
-
-		if len(sections) >= 2 {
-			headers := sections[0]
-			content := strings.Join(sections[1:], "\r\n\r\n")
-
-			if strings.Contains(headers, "application/sdp") {
-				sdpData = []byte(content)
-				// Validate SDP size
-				if err := security.ValidateSize(sdpData, security.MaxSDPSize, "SDP"); err != nil {
-					s.logger.WithError(err).Warn("SDP exceeds size limit")
-					sdpData = nil
-				} else {
-					s.logger.WithField("sdp_size", len(sdpData)).Debug("Found SDP part")
-				}
-			} else if strings.Contains(headers, "application/rs-metadata+xml") {
-				rsMetadata = []byte(content)
-				// Validate metadata size
-				if err := security.ValidateSize(rsMetadata, security.MaxMetadataSize, "SIPREC metadata"); err != nil {
-					s.logger.WithError(err).Warn("SIPREC metadata exceeds size limit")
-					rsMetadata = nil
-				} else {
-					s.logger.WithField("metadata_size", len(rsMetadata)).Debug("Found rs-metadata part")
-				}
+		switch partType {
+		case "application/sdp":
+			if err := security.ValidateSize(data, security.MaxSDPSize, "SDP"); err != nil {
+				s.logger.WithError(err).Warn("SDP exceeds size limit")
+				continue
 			}
+			sdpData = append([]byte(nil), data...)
+			s.logger.WithFields(logrus.Fields{
+				"sdp_size": len(sdpData),
+			}).Debug("Extracted SDP part from SIPREC multipart")
+		case "application/rs-metadata+xml":
+			if err := security.ValidateSize(data, security.MaxMetadataSize, "SIPREC metadata"); err != nil {
+				s.logger.WithError(err).Warn("SIPREC metadata exceeds size limit")
+				continue
+			}
+			rsMetadata = append([]byte(nil), data...)
+			s.logger.WithField("metadata_size", len(rsMetadata)).Debug("Extracted rs-metadata part from SIPREC multipart")
+		default:
+			s.logger.WithField("content_type", partType).Debug("Ignoring non-SIPREC multipart section")
 		}
 	}
 
