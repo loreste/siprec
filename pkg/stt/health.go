@@ -258,75 +258,66 @@ func (h *HealthMonitor) updateCircuitBreaker(name string, err error) {
 	h.mu.Lock()
 	cb, exists := h.circuitBreakerStates[name]
 	h.mu.Unlock()
-	
+
 	if !exists {
 		return
 	}
-	
+
+	// Track state changes to apply later (avoids holding both cb.mu and h.mu)
+	var newCBState string
+
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	
 	switch cb.state {
 	case "closed":
 		if err != nil {
 			cb.failureCount++
 			cb.lastFailureTime = time.Now()
-			
+
 			if cb.failureCount >= h.circuitBreakerThreshold {
 				cb.state = "open"
 				cb.openedAt = time.Now()
+				newCBState = "open"
 				h.logger.WithFields(logrus.Fields{
 					"provider": name,
 					"failure_count": cb.failureCount,
 				}).Warn("Circuit breaker opened for provider")
-				
-				h.mu.Lock()
-				if health, exists := h.healthStatus[name]; exists {
-					health.CircuitBreakerState = "open"
-				}
-				h.mu.Unlock()
 			}
 		} else {
 			cb.failureCount = 0
 		}
-		
+
 	case "open":
 		if time.Since(cb.openedAt) > h.circuitBreakerTimeout {
 			cb.state = "half-open"
 			cb.halfOpenTests = 0
+			newCBState = "half-open"
 			h.logger.WithField("provider", name).Info("Circuit breaker entering half-open state")
-			
-			h.mu.Lock()
-			if health, exists := h.healthStatus[name]; exists {
-				health.CircuitBreakerState = "half-open"
-			}
-			h.mu.Unlock()
 		}
-		
+
 	case "half-open":
 		cb.halfOpenTests++
 		if err != nil {
 			cb.state = "open"
 			cb.openedAt = time.Now()
 			cb.failureCount++
+			newCBState = "open"
 			h.logger.WithField("provider", name).Warn("Circuit breaker re-opened after half-open test failed")
-			
-			h.mu.Lock()
-			if health, exists := h.healthStatus[name]; exists {
-				health.CircuitBreakerState = "open"
-			}
-			h.mu.Unlock()
 		} else if cb.halfOpenTests >= h.recoveryThreshold {
 			cb.state = "closed"
 			cb.failureCount = 0
+			newCBState = "closed"
 			h.logger.WithField("provider", name).Info("Circuit breaker closed after successful recovery")
-			
-			h.mu.Lock()
-			if health, exists := h.healthStatus[name]; exists {
-				health.CircuitBreakerState = "closed"
-			}
-			h.mu.Unlock()
 		}
+	}
+	cb.mu.Unlock()
+
+	// Update health status after releasing cb.mu to avoid deadlock
+	if newCBState != "" {
+		h.mu.Lock()
+		if health, exists := h.healthStatus[name]; exists {
+			health.CircuitBreakerState = newCBState
+		}
+		h.mu.Unlock()
 	}
 }
 
