@@ -67,6 +67,39 @@ func ValidateSDP(sdpData []byte) error {
 				return errors.New("audio section has no codecs specified")
 			}
 
+			// Ensure dynamic payload types advertise rtpmap per RFC 3551 §3
+			missingRTPMap := make(map[string]struct{})
+			for _, format := range md.MediaName.Formats {
+				fmtID := strings.TrimSpace(format)
+				if fmtID == "" {
+					continue
+				}
+				pt, err := strconv.Atoi(fmtID)
+				if err != nil || pt >= 96 {
+					missingRTPMap[fmtID] = struct{}{}
+				}
+			}
+			if len(missingRTPMap) > 0 {
+				for _, attr := range md.Attributes {
+					if attr.Key != "rtpmap" {
+						continue
+					}
+					fields := strings.Fields(attr.Value)
+					if len(fields) == 0 {
+						continue
+					}
+					fmtID := strings.TrimSpace(fields[0])
+					delete(missingRTPMap, fmtID)
+				}
+				if len(missingRTPMap) > 0 {
+					missing := make([]string, 0, len(missingRTPMap))
+					for fmtID := range missingRTPMap {
+						missing = append(missing, fmtID)
+					}
+					return errors.New(fmt.Sprintf("audio section missing rtpmap for payload(s): %s", strings.Join(missing, ", ")))
+				}
+			}
+
 			break
 		}
 	}
