@@ -246,11 +246,15 @@ type RSRecordingSession struct {
 
 // RSParticipantStreamAssoc captures participantstreamassoc relationships.
 type RSParticipantStreamAssoc struct {
-	ID          string         `xml:"id,attr,omitempty"`
-	Participant string         `xml:"participant,omitempty"`
-	Stream      string         `xml:"stream,omitempty"`
-	Direction   string         `xml:"direction,omitempty"`
-	Extensions  []XMLExtension `xml:",any"`
+	ID            string         `xml:"id,attr,omitempty"`
+	Participant   string         `xml:"participant,omitempty"`
+	ParticipantID string         `xml:"participant_id,attr,omitempty"`
+	Stream        string         `xml:"stream,omitempty"`
+	StreamID      string         `xml:"stream_id,attr,omitempty"`
+	Send          []string       `xml:"send"`
+	Receive       []string       `xml:"recv"`
+	Direction     string         `xml:"direction,omitempty"`
+	Extensions    []XMLExtension `xml:",any"`
 }
 
 // RSNameID models the nameID element (with optional localized names).

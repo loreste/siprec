@@ -12,7 +12,7 @@ import (
 )
 
 const rfc7865SampleMetadata = `<?xml version="1.0" encoding="UTF-8"?>
-<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1' state='active'>
   <datamode>complete</datamode>
   <group group_id="7+OTCyoxTmqmqyA/1weDAg==">
     <associate-time>2010-12-16T23:41:07Z</associate-time>
@@ -28,6 +28,7 @@ const rfc7865SampleMetadata = `<?xml version="1.0" encoding="UTF-8"?>
     <sipSessionID>ab30317f1a784dc48ff824d0d3715d86; remote=47755a9de7794ba387653f2099600ef2</sipSessionID>
     <group-ref>7+OTCyoxTmqmqyA/1weDAg==</group-ref>
   </session>
+  <sessionrecordingassoc sessionid="hVpd7YQgRW2nD22h7q60JQ=="/>
   <participant participant_id="srfBElmCRp2QB23b7Mpk0w==">
     <nameID aor="sip:bob@biloxi.com">
       <name xml:lang="it">Bob</name>
@@ -156,21 +157,13 @@ func TestUnmarshalRFC7865Metadata(t *testing.T) {
 	assert.Equal(t, "hVpd7YQgRW2nD22h7q60JQ==", metadata.SessionID)
 }
 
-func TestValidateSiprecMessageAllowsMissingState(t *testing.T) {
+func TestValidateSiprecMessageWithoutStateFails(t *testing.T) {
 	var metadata RSMetadata
 	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
+	metadata.State = ""
 
 	result := ValidateSiprecMessage(&metadata)
-	require.Empty(t, result.Errors, "RFC 7865 sample should not produce validation errors")
-	assert.NotEmpty(t, result.Warnings, "Missing state should yield a warning")
-	found := false
-	for _, warning := range result.Warnings {
-		if strings.Contains(warning, "missing recording state attribute") {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "Expected warning about missing recording state")
+	require.NotEmpty(t, result.Errors, "Missing state must be rejected")
 	assert.Equal(t, "", metadata.State, "Validation must not modify original metadata state")
 }
 
@@ -178,6 +171,7 @@ func TestUnmarshalPreservesStateAndSequence(t *testing.T) {
 	xmlData := `<?xml version="1.0" encoding="UTF-8"?>
 <recording xmlns='urn:ietf:params:xml:ns:recording:1' state='paused' sequence='27'>
   <session session_id="abc"/>
+  <sessionrecordingassoc sessionid="abc"/>
   <participant participant_id="p1">
     <nameID aor="sip:alice@example.com">
       <name>Alice</name>
@@ -198,7 +192,7 @@ func TestUnmarshalPreservesStateAndSequence(t *testing.T) {
 
 func TestValidateRealWorldSIPRECMetadata(t *testing.T) {
 	const realWorldMetadata = `<?xml version="1.0" encoding="UTF-8"?>
-<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1' state='active'>
  <datamode>complete</datamode>
  <session session_id="y5I25Gf2RuG9NQJyJkL1rw==">
   <sipSessionID>jcukek0rhnnsq0sqrru2rk0kkuekjej2@10.18.5.64</sipSessionID>
@@ -251,7 +245,7 @@ func TestValidateRealWorldSIPRECMetadata(t *testing.T) {
 
 	result := ValidateSiprecMessage(&metadata)
 	require.Empty(t, result.Errors, "Real-world SIPREC metadata should not produce validation errors")
-	assert.NotEmpty(t, result.Warnings, "Should have warnings about missing state")
+	assert.NotEmpty(t, result.Warnings, "Should still produce non-fatal warnings")
 }
 
 func TestExtractRSMetadataHandlesCharsetContentType(t *testing.T) {
@@ -273,10 +267,11 @@ func TestExtractRSMetadataHandlesCharsetContentType(t *testing.T) {
 func TestMinimalRFC7865Compliance(t *testing.T) {
 	// Test absolute minimum RFC 7865 elements: session and participant only
 	const minimalMetadata = `<?xml version="1.0" encoding="UTF-8"?>
-<recording xmlns='urn:ietf:params:xml:ns:recording:1'>
+<recording xmlns='urn:ietf:params:xml:ns:recording:1' state='active'>
   <session session_id="minimal-session-123">
     <sipSessionID>minimal@test.com</sipSessionID>
   </session>
+  <sessionrecordingassoc sessionid="minimal-session-123"/>
   <participant participant_id="p1">
     <nameID aor="sip:user@example.com">
       <name>Test User</name>
@@ -360,6 +355,9 @@ func TestValidateSiprecMessageReasonMap(t *testing.T) {
 		SessionID: "session-1",
 		State:     "active",
 		Reason:    "error",
+		Sessions: []RSSession{
+			{ID: "session-1"},
+		},
 		SessionRecordingAssoc: RSAssociation{
 			SessionID: "session-1",
 		},
@@ -375,6 +373,9 @@ func TestValidateSiprecMessagePolicyAcknowledgementWarnings(t *testing.T) {
 		XMLName:   xml.Name{Space: "urn:ietf:params:xml:ns:recording:1", Local: "recording"},
 		SessionID: "session-2",
 		State:     "active",
+		Sessions: []RSSession{
+			{ID: "session-2"},
+		},
 		SessionRecordingAssoc: RSAssociation{
 			SessionID: "session-2",
 		},
@@ -407,6 +408,9 @@ func TestValidateSiprecMessageAcceptsLegacyIdentifiers(t *testing.T) {
 	metadata := &RSMetadata{
 		SessionID: "session-legacy",
 		State:     "active",
+		Sessions: []RSSession{
+			{ID: "session-legacy"},
+		},
 		Participants: []RSParticipant{
 			{
 				LegacyID: "participant-a",
@@ -425,15 +429,49 @@ func TestValidateSiprecMessageAcceptsLegacyIdentifiers(t *testing.T) {
 			{
 				LabelElement: "stream-a",
 				StreamIDAlt:  "stream-a",
+				Session:      "session-legacy",
 				Type:         "audio",
 			},
 		},
 		SessionRecordingAssoc: RSAssociation{
-			SessionIDAlt: "session-legacy",
-			CallIDAlt:    "call-12345",
+			SessionID: "session-legacy",
+			CallIDAlt: "call-12345",
 		},
 	}
 
 	result := ValidateSiprecMessage(metadata)
 	require.Empty(t, result.Errors, "legacy identifier variants should not trigger validation errors")
+}
+
+func TestValidateSiprecMessageRejectsInvalidParticipantRole(t *testing.T) {
+	metadata := &RSMetadata{
+		SessionID: "session-role-check",
+		State:     "active",
+		Sessions: []RSSession{
+			{ID: "session-role-check"},
+		},
+		SessionRecordingAssoc: RSAssociation{
+			SessionID: "session-role-check",
+		},
+		Participants: []RSParticipant{
+			{
+				ID:   "participant-role",
+				Role: "not-a-valid-role",
+				Aor: []Aor{
+					{Value: "sip:role@test.example"},
+				},
+			},
+		},
+	}
+
+	result := ValidateSiprecMessage(metadata)
+	require.NotEmpty(t, result.Errors, "invalid participant role must be rejected")
+	roleErrorFound := false
+	for _, errMsg := range result.Errors {
+		if strings.Contains(errMsg, "invalid role") {
+			roleErrorFound = true
+			break
+		}
+	}
+	assert.True(t, roleErrorFound, "expected invalid role error")
 }

@@ -202,6 +202,10 @@ func TestHandleSiprecReInviteUpdatesSession(t *testing.T) {
 	sdp := "v=0\r\no=ATS99 399418590 399418590 IN IP4 192.168.22.133\r\ns=SipCall\r\nt=0 0\r\nm=audio 11584 RTP/AVP 8 108\r\nc=IN IP4 192.168.82.21\r\na=label:0\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:108 telephone-event/8000\r\na=sendonly\r\na=rtcp:11585\r\na=ptime:20\r\nm=audio 15682 RTP/AVP 8 108\r\nc=IN IP4 192.168.82.21\r\na=label:1\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:108 telephone-event/8000\r\na=sendonly\r\na=rtcp:15683\r\na=ptime:20\r\n"
 	metadata := `<?xml version="1.0" encoding="UTF-8"?>
 <recording xmlns="urn:ietf:params:xml:ns:recording:1" session="session-1" state="active" sequence="3">
+  <session session_id="session-1">
+    <sipSessionID>session-1@test</sipSessionID>
+  </session>
+  <sessionrecordingassoc sessionid="session-1"/>
   <participant participant_id="p1">
     <aor>sip:alice@example.com</aor>
   </participant>
@@ -252,6 +256,9 @@ func TestHandleSiprecInviteRejectsMissingSDP(t *testing.T) {
 		SessionID: "sess-1",
 		State:     "active",
 		Sequence:  1,
+		Sessions: []siprec.RSSession{
+			{ID: "sess-1"},
+		},
 		Participants: []siprec.RSParticipant{
 			{
 				ID:  "participant-1",
@@ -260,6 +267,9 @@ func TestHandleSiprecInviteRejectsMissingSDP(t *testing.T) {
 		},
 		Streams: []siprec.Stream{
 			{Label: "0", StreamID: "stream-0", Type: "audio"},
+		},
+		SessionRecordingAssoc: siprec.RSAssociation{
+			SessionID: "sess-1",
 		},
 	}
 	metadataXML, err := siprec.CreateMetadataResponse(metadata)
@@ -295,7 +305,7 @@ func TestHandleSiprecInviteRejectsMissingSDP(t *testing.T) {
 	t.Logf("SIP responses: %v", statuses)
 	last := tx.responses[len(tx.responses)-1]
 	t.Logf("Final response: %d %s", last.StatusCode, last.Reason)
-	require.Equal(t, 488, last.StatusCode)
+	require.Equal(t, 400, last.StatusCode)
 }
 
 type testServerTransaction struct {
