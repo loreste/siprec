@@ -148,7 +148,8 @@ func TestStreamToProvider(t *testing.T) {
 	audioStream := bytes.NewReader(audioData)
 	callUUID := "test-call-uuid"
 
-	specificProvider.On("StreamToText", ctx, mock.Anything, callUUID).Return(nil)
+	// Use mock.Anything for context to handle tracing wrappers
+	specificProvider.On("StreamToText", mock.Anything, mock.Anything, callUUID).Return(nil)
 
 	// Call StreamToProvider
 	err := manager.StreamToProvider(ctx, "specific", audioStream, callUUID)
@@ -174,7 +175,8 @@ func TestStreamToProviderFallback(t *testing.T) {
 	audioStream := bytes.NewReader(audioData)
 	callUUID := "test-call-uuid"
 
-	defaultProvider.On("StreamToText", ctx, mock.Anything, callUUID).Return(nil)
+	// Use mock.Anything for context to handle tracing wrappers
+	defaultProvider.On("StreamToText", mock.Anything, mock.Anything, callUUID).Return(nil)
 
 	// Call StreamToProvider with a non-existent provider, should fall back to default
 	err := manager.StreamToProvider(ctx, "nonexistent", audioStream, callUUID)
@@ -224,8 +226,9 @@ func TestStreamToProviderFallbackOrderSeekable(t *testing.T) {
 	err := manager.StreamToProvider(ctx, "primary", reader, "call-seekable")
 
 	assert.NoError(t, err)
-	primary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-seekable")
-	secondary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-seekable")
+	// Use mock.Anything for context to handle tracing wrappers
+	primary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-seekable")
+	secondary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-seekable")
 }
 
 func TestStreamToProviderFallbackNonSeekable(t *testing.T) {
@@ -251,6 +254,7 @@ func TestStreamToProviderFallbackNonSeekable(t *testing.T) {
 	err := manager.StreamToProvider(ctx, "primary", nonSeekable, "call-nonseek")
 
 	assert.ErrorIs(t, err, primaryErr)
-	primary.AssertCalled(t, "StreamToText", ctx, mock.Anything, "call-nonseek")
+	// Use mock.Anything for context to handle tracing wrappers
+	primary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-nonseek")
 	secondary.AssertNotCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-nonseek")
 }

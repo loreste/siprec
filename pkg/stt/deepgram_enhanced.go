@@ -428,7 +428,19 @@ func (p *DeepgramProviderEnhanced) streamWithHTTP(ctx context.Context, audioStre
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("deepgram API returned status %d", resp.StatusCode)
+		// Include descriptive error messages for common HTTP status codes
+		switch resp.StatusCode {
+		case http.StatusInternalServerError:
+			return fmt.Errorf("deepgram API internal server error (status %d)", resp.StatusCode)
+		case http.StatusBadGateway:
+			return fmt.Errorf("deepgram API bad gateway (status %d)", resp.StatusCode)
+		case http.StatusServiceUnavailable:
+			return fmt.Errorf("deepgram API service unavailable (status %d)", resp.StatusCode)
+		case http.StatusGatewayTimeout:
+			return fmt.Errorf("deepgram API gateway timeout (status %d)", resp.StatusCode)
+		default:
+			return fmt.Errorf("deepgram API returned status %d", resp.StatusCode)
+		}
 	}
 
 	// Parse response
@@ -772,6 +784,8 @@ func (c *DeepgramConnection) streamAudio(ctx context.Context, audioStream io.Rea
 				if err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
 					c.logger.WithError(err).Debug("Failed to send close message")
 				}
+				// Wait briefly for final responses to arrive before closing
+				time.Sleep(100 * time.Millisecond)
 				return nil
 			}
 
