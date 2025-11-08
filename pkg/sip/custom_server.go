@@ -857,6 +857,23 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 	// Extract SDP from multipart body for SIPREC
 	sdpData, rsMetadata := s.extractSiprecContent(message.Body, message.ContentType)
+
+	if len(sdpData) == 0 {
+		inviteErr = fmt.Errorf("SIPREC INVITE missing mandatory SDP part")
+		callScope.RecordError(inviteErr)
+		logger.WithError(inviteErr).Warn("Rejecting SIPREC INVITE without SDP part")
+		s.sendResponse(message, 400, "Bad Request - Missing SDP", nil, nil)
+		return
+	}
+
+	if len(rsMetadata) == 0 {
+		inviteErr = fmt.Errorf("SIPREC INVITE missing mandatory rs-metadata part")
+		callScope.RecordError(inviteErr)
+		logger.WithError(inviteErr).Warn("Rejecting SIPREC INVITE without rs-metadata part")
+		s.sendResponse(message, 400, "Bad Request - Missing SIPREC metadata", nil, nil)
+		return
+	}
+
 	if sdpData != nil {
 		callState.SDP = sdpData
 		logger.WithField("sdp_size", len(sdpData)).Debug("Extracted SDP from SIPREC multipart")

@@ -135,6 +135,15 @@ var allowedPolicyStatuses = map[string]struct{}{
 	"error":        {},
 }
 
+// Allowed participant roles per RFC 7866 §4.7 (case-insensitive).
+var allowedParticipantRoles = map[string]struct{}{
+	"active":   {},
+	"passive":  {},
+	"focus":    {},
+	"mixer":    {},
+	"observer": {},
+}
+
 func (vr *ValidationResult) addError(msg string) {
 	vr.Errors = append(vr.Errors, msg)
 }
@@ -260,21 +269,20 @@ func CreateMultipartResponse(sdp string, metadata string) (string, string) {
 	// Generate a boundary that is unlikely to appear in the content
 	boundary := "boundary_" + uuid.New().String()
 
-	// Format the multipart content with proper MIME headers
-	// Note: The handling=required parameter ensures the receiver properly processes the content
+	// Format the multipart content with CRLF separators per RFC 3261/2046
+	// Note: handling=required is set on both parts to signal mandatory processing
 	multipartContent := fmt.Sprintf(
-		`--%s
-Content-Type: application/sdp
-Content-Disposition: session;handling=required
-
-%s
---%s
-Content-Type: application/rs-metadata+xml
-Content-Disposition: recording-session
-
-%s
---%s--
-`,
+		"--%s\r\n"+
+			"Content-Type: application/sdp\r\n"+
+			"Content-Disposition: session;handling=required\r\n"+
+			"\r\n"+
+			"%s\r\n"+
+			"--%s\r\n"+
+			"Content-Type: application/rs-metadata+xml\r\n"+
+			"Content-Disposition: recording-session;handling=required\r\n"+
+			"\r\n"+
+			"%s\r\n"+
+			"--%s--\r\n",
 		boundary, sdp, boundary, metadata, boundary)
 
 	// Create the Content-Type header with proper boundary parameter
@@ -374,8 +382,9 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 	}
 
 	if !sdpFound {
-		// This is just a warning since we might still be able to process some SIPREC operations without SDP
-		fmt.Println("Warning: SIPREC request missing SDP part")
+		return nil, errors.NewInvalidInput("no SDP content found in multipart message").
+			WithCode("MISSING_SDP").
+			WithField("content_type", contentType.Value())
 	}
 
 	// Parse rs-metadata XML
@@ -557,13 +566,10 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 		result.addError("session ID exceeds maximum allowed length")
 	}
 
-	// RFC 7865 (base SIPREC metadata spec) does not require the state attribute.
-	// RFC 7866 extends RFC 7865 with recording session state management.
-	// Allow missing state for RFC 7865-only implementations and default to "unknown".
+	// RFC 7866 §4.2 requires a recording session state attribute.
 	state := strings.ToLower(strings.TrimSpace(rsMetadata.State))
 	if state == "" {
-		result.addWarning("missing recording state attribute; defaulting to unknown")
-		state = "unknown"
+		result.addError("missing recording state attribute")
 	} else if _, ok := allowedRecordingStates[state]; !ok {
 		result.addError(fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
 	}
@@ -606,7 +612,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
 	if len(rsMetadata.Participants) == 0 {
-		result.addWarning("no participants provided in metadata")
+		result.addError("no participants provided in metadata")
 	}
 	for _, participant := range rsMetadata.Participants {
 		id := normalizedParticipantID(participant)
@@ -615,16 +621,38 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 			continue
 		}
 		if _, exists := participantIDs[id]; exists {
-			result.addWarning(fmt.Sprintf("duplicate participant id detected: %s", id))
+			result.addError(fmt.Sprintf("duplicate participant id detected: %s", id))
 		}
 		participantIDs[id] = struct{}{}
 
-		if len(participant.Aor) == 0 {
-			result.addWarning(fmt.Sprintf("participant %s missing address-of-record entries", id))
-		}
+		hasContact := false
 		for _, aor := range participant.Aor {
-			if strings.TrimSpace(aor.Value) == "" {
+			value := strings.TrimSpace(aor.Value)
+			if value != "" {
+				hasContact = true
+			}
+			if value == "" {
 				result.addError(fmt.Sprintf("participant %s includes empty AOR value", id))
+			}
+			if uri := strings.TrimSpace(aor.URI); uri != "" && !strings.Contains(uri, ":") {
+				result.addWarning(fmt.Sprintf("participant %s has invalid URI format for AOR %s", id, aor.URI))
+			}
+		}
+		if !hasContact {
+			for _, ni := range participant.NameInfos {
+				if strings.TrimSpace(ni.AOR) != "" || strings.TrimSpace(ni.URI) != "" {
+					hasContact = true
+					break
+				}
+			}
+		}
+		if !hasContact {
+			result.addError(fmt.Sprintf("participant %s missing address-of-record or nameID contact info", id))
+		}
+
+		if role := strings.ToLower(strings.TrimSpace(participant.Role)); role != "" {
+			if _, ok := allowedParticipantRoles[role]; !ok {
+				result.addError(fmt.Sprintf("participant %s has invalid role: %s", id, participant.Role))
 			}
 		}
 	}
@@ -653,12 +681,22 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 			result.addError("stream missing streamid attribute")
 		} else {
 			if _, exists := streamIDs[streamID]; exists {
-				result.addWarning(fmt.Sprintf("duplicate streamid detected: %s", streamID))
+				result.addError(fmt.Sprintf("duplicate streamid detected: %s", streamID))
 			}
 			streamIDs[streamID] = struct{}{}
 		}
 		if stream.Type == "" {
 			result.addWarning(fmt.Sprintf("stream %s missing type attribute", streamID))
+		} else {
+			switch stream.Type {
+			case "audio", "video", "text", "message", "application":
+			default:
+				result.addError(fmt.Sprintf("stream %s has invalid type: %s", stream.Label, stream.Type))
+			}
+		}
+
+		if stream.Mode == "mixed" && len(stream.Mixing.MixedStreams) == 0 {
+			result.addWarning(fmt.Sprintf("mixed stream %s has no source streams defined", stream.Label))
 		}
 	}
 
@@ -704,9 +742,9 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 				result.addError(fmt.Sprintf("policy %s uses unsupported status %q", policyID, status))
 			}
 
-			if update.Timestamp != "" {
-				if _, err := time.Parse(time.RFC3339, strings.TrimSpace(update.Timestamp)); err != nil {
-					result.addWarning(fmt.Sprintf("policy %s timestamp not RFC3339: %v", policyID, err))
+			if ts := strings.TrimSpace(update.Timestamp); ts != "" {
+				if _, err := time.Parse(time.RFC3339, ts); err != nil {
+					result.addError(fmt.Sprintf("policy %s timestamp not RFC3339: %v", policyID, err))
 				}
 			}
 
@@ -725,7 +763,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	assoc := rsMetadata.SessionRecordingAssoc
 	if (assoc == RSAssociation{}) {
-		result.addWarning("missing session recording association element")
+		result.addError("missing session recording association element")
 	} else {
 		assocSessionID := normalizedAssocSessionID(assoc)
 		if assocSessionID == "" {
@@ -735,6 +773,38 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 		}
 		if strings.TrimSpace(assoc.CallID) == "" && strings.TrimSpace(assoc.CallIDAlt) == "" && strings.TrimSpace(assoc.FixedID) == "" {
 			result.addWarning("session association missing both call-ID and fixed-ID")
+		}
+	}
+
+	if len(rsMetadata.Sessions) == 0 {
+		result.addError("no <session> elements provided")
+	} else if sessionID != "" {
+		matchFound := false
+		for _, sess := range rsMetadata.Sessions {
+			sID := strings.TrimSpace(sess.ID)
+			if sID == "" {
+				sID = strings.TrimSpace(sess.LegacyID)
+			}
+			if sID == "" {
+				result.addError("session element missing session_id attribute")
+				continue
+			}
+			if sID == sessionID {
+				matchFound = true
+			}
+			for _, pref := range sess.ParticipantRefs {
+				if _, ok := participantIDs[strings.TrimSpace(pref)]; !ok && len(participantIDs) > 0 {
+					result.addError(fmt.Sprintf("session %s references unknown participant %s", sID, pref))
+				}
+			}
+			for _, sref := range sess.StreamRefs {
+				if _, ok := streamIDs[strings.TrimSpace(sref)]; !ok && len(streamIDs) > 0 {
+					result.addError(fmt.Sprintf("session %s references unknown stream %s", sID, sref))
+				}
+			}
+		}
+		if !matchFound {
+			result.addError("no session element matches recording session ID")
 		}
 	}
 
@@ -756,65 +826,65 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 		}
 	}
 
-	if len(rsMetadata.Participants) == 0 {
-		result.addError("no participants defined")
-	} else {
-		participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
-		for i, participant := range rsMetadata.Participants {
-			id := normalizedParticipantID(participant)
-			if id == "" {
-				result.addError(fmt.Sprintf("participant %d missing ID", i))
-			} else {
-				if _, exists := participantIDs[id]; exists {
-					result.addError(fmt.Sprintf("duplicate participant ID detected: %s", id))
-				} else {
-					participantIDs[id] = struct{}{}
-				}
-			}
-
-			if len(participant.Aor) == 0 {
-				result.addError(fmt.Sprintf("participant %s has no address of record", id))
-			}
-
-			for j, aor := range participant.Aor {
-				if strings.TrimSpace(aor.Value) == "" {
-					result.addError(fmt.Sprintf("participant %s has empty AOR at index %d", id, j))
-				}
-				if aor.URI != "" && !strings.Contains(aor.URI, ":") {
-					result.addWarning(fmt.Sprintf("participant %s has invalid URI format for AOR %s", id, aor.URI))
-				}
-			}
-
-			if participant.Role != "" {
-				switch participant.Role {
-				case "active", "passive", "focus", "mixer":
-				default:
-					result.addWarning(fmt.Sprintf("participant %s has unrecognised role: %s", id, participant.Role))
-				}
-			}
+	participantRefs := make(map[string]struct{}, len(rsMetadata.Participants))
+	for _, p := range rsMetadata.Participants {
+		if id := normalizedParticipantID(p); id != "" {
+			participantRefs[id] = struct{}{}
 		}
 	}
 
-	for i, stream := range rsMetadata.Streams {
-		if normalizedStreamLabel(stream) == "" {
-			result.addError(fmt.Sprintf("stream at index %d missing label", i))
+	for _, psa := range rsMetadata.ParticipantSessionAssoc {
+		pid := strings.TrimSpace(psa.ParticipantID)
+		if pid == "" {
+			result.addError("participantsessionassoc missing participant_id")
+		} else if _, ok := participantRefs[pid]; !ok {
+			result.addError(fmt.Sprintf("participantsessionassoc references unknown participant %s", pid))
+		}
+		sid := strings.TrimSpace(psa.SessionID)
+		if sid == "" {
+			result.addError("participantsessionassoc missing session_id")
+		} else if sessionID != "" && sid != sessionID {
+			result.addWarning(fmt.Sprintf("participantsessionassoc references mismatched sessionid %s (expected %s)", sid, sessionID))
+		}
+	}
+
+	for _, psa := range rsMetadata.ParticipantStreamAssoc {
+		pid := strings.TrimSpace(psa.Participant)
+		if pid == "" {
+			pid = strings.TrimSpace(psa.ParticipantID)
+		}
+		if pid == "" {
+			result.addError("participantstreamassoc missing participant reference")
+		} else if _, ok := participantRefs[pid]; !ok {
+			result.addError(fmt.Sprintf("participantstreamassoc references unknown participant %s", pid))
 		}
 
-		streamID := normalizedStreamID(stream)
-		if streamID == "" {
-			result.addError(fmt.Sprintf("stream with label %s missing stream ID", normalizedStreamLabel(stream)))
+		streamRefs := make([]string, 0, 2+len(psa.Send)+len(psa.Receive))
+		if ref := strings.TrimSpace(psa.Stream); ref != "" {
+			streamRefs = append(streamRefs, ref)
 		}
-
-		if stream.Type != "" {
-			switch stream.Type {
-			case "audio", "video", "text", "message", "application":
-			default:
-				result.addWarning(fmt.Sprintf("stream %s has invalid type: %s", stream.Label, stream.Type))
+		if ref := strings.TrimSpace(psa.StreamID); ref != "" {
+			streamRefs = append(streamRefs, ref)
+		}
+		for _, send := range psa.Send {
+			if ref := strings.TrimSpace(send); ref != "" {
+				streamRefs = append(streamRefs, ref)
+			}
+		}
+		for _, recv := range psa.Receive {
+			if ref := strings.TrimSpace(recv); ref != "" {
+				streamRefs = append(streamRefs, ref)
 			}
 		}
 
-		if stream.Mode == "mixed" && len(stream.Mixing.MixedStreams) == 0 {
-			result.addWarning(fmt.Sprintf("mixed stream %s has no source streams defined", stream.Label))
+		if len(streamRefs) == 0 {
+			result.addError("participantstreamassoc missing stream reference")
+			continue
+		}
+		for _, ref := range streamRefs {
+			if _, ok := streamIDs[ref]; !ok && len(streamIDs) > 0 {
+				result.addError(fmt.Sprintf("participantstreamassoc references unknown stream %s", ref))
+			}
 		}
 	}
 
