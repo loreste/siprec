@@ -421,27 +421,26 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 			},
 		}
 
-		// Send interim result
-		time.Sleep(100 * time.Millisecond)
+		// Send interim result immediately (no delay)
 		if err := conn.WriteJSON(interimResponse); err != nil {
 			t.Errorf("Failed to send interim result: %v", err)
 			return
 		}
 
-		// Send final result
+		// Send final result with minimal delay
 		finalResponse := interimResponse
 		finalResponse.IsFinal = true
 		finalResponse.SpeechFinal = true
 		finalResponse.Channel.Alternatives[0].Transcript = "Hello, how are you today?"
 		finalResponse.Channel.Alternatives[0].Confidence = 0.95
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 		if err := conn.WriteJSON(finalResponse); err != nil {
 			t.Errorf("Failed to send final result: %v", err)
 			return
 		}
 
-		// Send utterance end
+		// Send utterance end with minimal delay
 		utteranceEnd := DeepgramWebSocketResponse{
 			Type:     "UtteranceEnd",
 			Duration: 2.5,
@@ -455,7 +454,7 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 			},
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 		if err := conn.WriteJSON(utteranceEnd); err != nil {
 			t.Errorf("Failed to send utterance end: %v", err)
 			return
