@@ -11,6 +11,8 @@ import (
 
 	"github.com/pion/stun"
 	"github.com/sirupsen/logrus"
+
+	"siprec-server/pkg/version"
 )
 
 // STUNClient handles STUN-based external IP detection
@@ -188,7 +190,7 @@ func (hc *HTTPFallbackClient) GetExternalIP(ctx context.Context) (string, error)
 			lastErr = err
 			continue
 		}
-		req.Header.Set("User-Agent", "siprec-stun-fallback/1.0")
+		req.Header.Set("User-Agent", version.UserAgent())
 
 		resp, err := client.Do(req)
 		if err != nil {

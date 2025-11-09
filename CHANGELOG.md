@@ -2,6 +2,38 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.0.33] - 2025-11-09
+
+### Added
+- **Centralized Version Management**: New `pkg/version` package for consistent version reporting
+  - Single source of truth for application version (0.0.33)
+  - `UserAgent()` function for HTTP client headers
+  - `ServerHeader()` function for SIP and HTTP server headers
+- **SIP Server Header**: All SIP responses now include `Server: siprec/0.0.33` header
+  - Automatically added to 100 Trying, 180 Ringing, 200 OK, and all other responses
+  - Helps with debugging and protocol compliance tracking
+- **HTTP Server Header**: All HTTP responses now include `Server: siprec/0.0.33` header
+  - Applied via middleware to health, metrics, and status endpoints
+  - Consistent server identification across all HTTP responses
+- **User-Agent Header**: HTTP clients now send `User-Agent: siprec/0.0.33`
+  - Applied to STUN fallback HTTP requests for external IP detection
+  - Improves server identification in external API calls
+
+### Fixed
+- **SIPREC Validation**: Treat missing state attribute as warning instead of fatal error
+  - While RFC 7866 §4.2 requires the state attribute, many real-world implementations omit it
+  - Messages without state attribute are now accepted with a warning logged
+  - State defaults to "active" in responses for better interoperability
+  - Added comprehensive test coverage for edge cases:
+    - Missing state without reason
+    - Missing state with valid reason
+    - Missing state with invalid reason
+    - Empty state skipping state-specific validations
+
+### Enhanced
+- **Metrics Endpoint**: Build info now reports actual version (0.0.33) instead of hardcoded "1.0.0"
+- **Status Endpoint**: Version field now dynamically reports current version from version package
+
 ## [0.2.3] - 2025-10-19
 
 ### Added
