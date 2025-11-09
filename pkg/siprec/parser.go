@@ -569,7 +569,7 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 	// RFC 7866 §4.2 requires a recording session state attribute.
 	state := strings.ToLower(strings.TrimSpace(rsMetadata.State))
 	if state == "" {
-		result.addError("missing recording state attribute")
+		result.addWarning("missing recording state attribute; will default to 'active' in responses")
 	} else if _, ok := allowedRecordingStates[state]; !ok {
 		result.addError(fmt.Sprintf("invalid recording state: %s", rsMetadata.State))
 	}

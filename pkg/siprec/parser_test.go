@@ -157,14 +157,69 @@ func TestUnmarshalRFC7865Metadata(t *testing.T) {
 	assert.Equal(t, "hVpd7YQgRW2nD22h7q60JQ==", metadata.SessionID)
 }
 
-func TestValidateSiprecMessageWithoutStateFails(t *testing.T) {
+func TestValidateSiprecMessageWithoutStateWarns(t *testing.T) {
 	var metadata RSMetadata
 	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
 	metadata.State = ""
 
 	result := ValidateSiprecMessage(&metadata)
-	require.NotEmpty(t, result.Errors, "Missing state must be rejected")
+	require.Empty(t, result.Errors, "Missing state should no longer be treated as fatal")
+	require.NotEmpty(t, result.Warnings, "Missing state should still generate a warning")
+	assert.Contains(t, result.Warnings[0], "missing recording state attribute", "Warning should mention the missing state")
+	assert.Contains(t, result.Warnings[0], "active", "Warning should mention the default value")
 	assert.Equal(t, "", metadata.State, "Validation must not modify original metadata state")
+}
+
+func TestValidateSiprecMessageWithReasonButNoState(t *testing.T) {
+	// Edge case: reason provided without state
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
+	metadata.State = ""
+	metadata.Reason = "manual" // Valid reason, but no state
+
+	result := ValidateSiprecMessage(&metadata)
+	require.Empty(t, result.Errors, "Should not error on valid reason without state")
+	require.NotEmpty(t, result.Warnings)
+
+	// Should warn about missing state
+	hasStateWarning := false
+	for _, warn := range result.Warnings {
+		if strings.Contains(warn, "missing recording state") {
+			hasStateWarning = true
+			break
+		}
+	}
+	assert.True(t, hasStateWarning, "Should warn about missing state")
+}
+
+func TestValidateSiprecMessageWithInvalidReason(t *testing.T) {
+	// Edge case: invalid reason without state
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
+	metadata.State = ""
+	metadata.Reason = "invalid-reason"
+
+	result := ValidateSiprecMessage(&metadata)
+	require.NotEmpty(t, result.Errors, "Invalid reason should trigger error")
+	assert.Contains(t, result.Errors[0], "unsupported recording reason", "Should mention unsupported reason")
+}
+
+func TestValidateSiprecMessageEmptyStateSkipsStateSpecificChecks(t *testing.T) {
+	// Edge case: verify empty state doesn't trigger state-specific validations
+	var metadata RSMetadata
+	require.NoError(t, xml.Unmarshal([]byte(rfc7865SampleMetadata), &metadata))
+	metadata.State = ""
+	// Don't provide reason - this would fail if state was "terminated" or "error"
+
+	result := ValidateSiprecMessage(&metadata)
+	// Should only warn about missing state, not error about missing reason
+	require.Empty(t, result.Errors, "Empty state should not trigger state-specific validations")
+
+	// Should NOT have error about missing reason for terminated/error state
+	for _, err := range result.Errors {
+		assert.NotContains(t, err, "reason not provided", "Should not require reason when state is missing")
+		assert.NotContains(t, err, "must include a reason", "Should not require reason when state is missing")
+	}
 }
 
 func TestUnmarshalPreservesStateAndSequence(t *testing.T) {
