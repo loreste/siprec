@@ -5,6 +5,30 @@ All notable changes to the SIPREC server project will be documented in this file
 ## [0.0.34] - 2025-11-09
 
 ### Added
+- **Whisper STT Provider**: On-premise speech-to-text using OpenAI's open-source Whisper CLI
+  - Full integration with existing STT provider architecture
+  - Support for 5 model sizes (tiny, base, small, medium, large)
+  - Circuit breaker protection for resilience
+  - Multiple output format support (JSON, TXT, VTT, SRT, TSV, verbose_json)
+  - Injectable runner pattern for comprehensive testability
+  - 23 comprehensive tests covering initialization, formats, errors, edge cases, and advanced scenarios
+- **Whisper Performance & Monitoring**: Production-grade observability and resource management
+  - 4 Prometheus metrics: CLI execution duration histogram, temp file disk usage gauge, timeout counter, output format counter
+  - Aggregate disk usage tracking with increment/decrement pattern for concurrent operations
+  - Concurrent call rate limiting with semaphore-based control
+  - Auto mode limits to CPU core count; manual override for GPU servers
+  - Binary validation with version detection (gracefully handles remote servers)
+- **Remote Deployment Support**: Flexible architecture for distributed Whisper installations
+  - SSH wrapper support for remote GPU servers
+  - HTTP API integration for dedicated Whisper farms
+  - RabbitMQ/queue-based dispatcher support for large-scale deployments
+  - Configurable timeout handling for network latency
+- **Comprehensive Documentation**: Complete setup and reference guides
+  - Dedicated step-by-step setup guide (docs/whisper-setup.md)
+  - 5 deployment scenarios: local CPU/GPU, Docker, SSH wrapper, HTTP API, dedicated farm
+  - Technical reference with configuration, metrics, GPU acceleration, troubleshooting
+  - Model selection guide with performance characteristics
+  - Best practices for production hardening and operations
 - **Comprehensive Test Coverage for GDPR Deletion**: 55+ tests across 5 test files
   - Backup storage scheme-aware deletion tests (13 tests)
   - Recording storage manifest tracking tests (15 tests)

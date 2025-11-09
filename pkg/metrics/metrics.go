@@ -59,10 +59,16 @@ var (
 	AMQPConnectionStatus  prometheus.Gauge
 
 	// Provider health metrics
-	ProviderHealthStatus     *prometheus.GaugeVec
-	ProviderHealthCheckTime  *prometheus.HistogramVec
-	ProviderSelectionScore   *prometheus.GaugeVec
-	ProviderCircuitBreaker   *prometheus.GaugeVec
+	ProviderHealthStatus    *prometheus.GaugeVec
+	ProviderHealthCheckTime *prometheus.HistogramVec
+	ProviderSelectionScore  *prometheus.GaugeVec
+	ProviderCircuitBreaker  *prometheus.GaugeVec
+
+	// Whisper-specific metrics
+	WhisperCLIDuration         *prometheus.HistogramVec
+	WhisperTempFileDiskUsage   prometheus.Gauge
+	WhisperTimeouts            *prometheus.CounterVec
+	WhisperOutputFormatCounter *prometheus.CounterVec
 )
 
 // Init initializes all metrics and registers them with Prometheus
@@ -336,6 +342,39 @@ func Init(logger *logrus.Logger) {
 			[]string{"provider"},
 		)
 
+		// Initialize Whisper-specific metrics
+		WhisperCLIDuration = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "siprec_whisper_cli_duration_seconds",
+				Help:    "Duration of Whisper CLI execution including model loading",
+				Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~1 hour (for large models)
+			},
+			[]string{"model", "status"},
+		)
+
+		WhisperTempFileDiskUsage = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_whisper_temp_file_bytes",
+				Help: "Total disk space used by Whisper temporary files",
+			},
+		)
+
+		WhisperTimeouts = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_whisper_timeouts_total",
+				Help: "Total number of Whisper CLI timeouts",
+			},
+			[]string{"model"},
+		)
+
+		WhisperOutputFormatCounter = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_whisper_output_format_total",
+				Help: "Total number of Whisper transcriptions by output format",
+			},
+			[]string{"format"},
+		)
+
 		// Register all metrics
 		registry.MustRegister(
 			// RTP metrics
@@ -385,6 +424,12 @@ func Init(logger *logrus.Logger) {
 			ProviderHealthCheckTime,
 			ProviderSelectionScore,
 			ProviderCircuitBreaker,
+
+			// Whisper-specific metrics
+			WhisperCLIDuration,
+			WhisperTempFileDiskUsage,
+			WhisperTimeouts,
+			WhisperOutputFormatCounter,
 		)
 
 		logger.Info("Prometheus metrics initialized")
@@ -652,5 +697,46 @@ func SetCircuitBreakerStatus(provider, state string) {
 			value = 2.0
 		}
 		ProviderCircuitBreaker.WithLabelValues(provider).Set(value)
+	}
+}
+
+// ObserveWhisperCLIDuration records Whisper CLI execution duration with a timer function
+func ObserveWhisperCLIDuration(model string) func(status string) {
+	if !metricsEnabled {
+		return func(status string) {}
+	}
+
+	start := time.Now()
+	return func(status string) {
+		duration := time.Since(start)
+		WhisperCLIDuration.WithLabelValues(model, status).Observe(duration.Seconds())
+	}
+}
+
+// RecordWhisperTimeout records a Whisper CLI timeout
+func RecordWhisperTimeout(model string) {
+	if metricsEnabled {
+		WhisperTimeouts.WithLabelValues(model).Inc()
+	}
+}
+
+// RecordWhisperOutputFormat records the usage of a specific output format
+func RecordWhisperOutputFormat(format string) {
+	if metricsEnabled {
+		WhisperOutputFormatCounter.WithLabelValues(format).Inc()
+	}
+}
+
+// AddWhisperTempFileUsage increments the temp file disk usage (call on file creation)
+func AddWhisperTempFileUsage(bytes int64) {
+	if metricsEnabled {
+		WhisperTempFileDiskUsage.Add(float64(bytes))
+	}
+}
+
+// SubWhisperTempFileUsage decrements the temp file disk usage (call on file removal)
+func SubWhisperTempFileUsage(bytes int64) {
+	if metricsEnabled {
+		WhisperTempFileDiskUsage.Sub(float64(bytes))
 	}
 }

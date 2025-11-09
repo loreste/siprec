@@ -27,6 +27,7 @@ This project implements a production-ready SIPREC-compliant recording endpoint w
 - **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
 - **Circuit Breaker Protection** – Automatic failover and health monitoring for all STT providers
 - **Language-Based Routing** – Intelligent provider selection based on detected language
+- **Local & Remote Whisper CLI** – Optional on-prem transcription via the open-source [openai/whisper](https://github.com/openai/whisper) binary (run it locally or point SIPREC at a remote SSH/HTTP wrapper; see [Whisper Setup Guide](docs/whisper-setup.md))
 - **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP publishers (see [real-time transcription docs](docs/realtime-transcription.md) for message formats)
 - **Async Processing** – Queue-based transcription with configurable workers and retries
 
@@ -307,6 +308,7 @@ siprec/
 - [Real-Time Transcription](docs/realtime-transcription.md)
 - [Session Management](docs/sessions.md)
 - [End-to-End Feature Guide](docs/end-to-end.md)
+- [Whisper Setup Guide](docs/whisper-setup.md)
 - [CHANGELOG](CHANGELOG.md)
 
 ## Performance

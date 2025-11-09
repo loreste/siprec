@@ -56,6 +56,35 @@ The project exposes hooks for a provider manager. Each provider has its own cred
 
 Leave the manager unset to run the recorder without STT streaming.
 
+### Whisper CLI (on-prem)
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `WHISPER_ENABLED` | Enable the `whisper` vendor | `false` |
+| `WHISPER_BINARY_PATH` | CLI path (e.g. `/usr/local/bin/whisper`) | `whisper` |
+| `WHISPER_MODEL` | Model name (`tiny`, `base`, `small`, `medium`, `large`) | `base` |
+| `WHISPER_TASK` | `transcribe` or `translate` | `transcribe` |
+| `WHISPER_TRANSLATE` | Force translate mode (overrides task) | `false` |
+| `WHISPER_LANGUAGE` | Force language (empty for auto-detect) | `""` |
+| `WHISPER_OUTPUT_FORMAT` | CLI output format (`json`, `txt`, `srt`, `vtt`, `tsv`, `verbose_json`) | `json` |
+| `WHISPER_SAMPLE_RATE` | Sample rate for the buffered WAV | `16000` |
+| `WHISPER_CHANNELS` | Channel count for the WAV | `1` |
+| `WHISPER_TIMEOUT` | Maximum runtime per call | `10m` |
+| `WHISPER_MAX_CONCURRENT` | Max concurrent calls (`-1`=auto, `0`=unlimited, `N`=limit) | `-1` |
+| `WHISPER_EXTRA_ARGS` | Additional CLI arguments (e.g., `--device cuda --fp16 True`) | `""` |
+
+**Remote Server Example**:
+```bash
+# Whisper running on separate GPU server
+WHISPER_ENABLED=true
+WHISPER_BINARY_PATH=/usr/local/bin/whisper-remote  # SSH or HTTP wrapper
+WHISPER_MODEL=large
+WHISPER_TIMEOUT=20m  # Increased for network latency
+WHISPER_MAX_CONCURRENT=16  # GPU server can handle more
+```
+
+See [Speech-to-Text Integration](stt.md) for detailed Whisper configuration including GPU acceleration, remote servers, and performance tuning.
+
 ## HTTP Server
 
 | Variable | Description | Default |
