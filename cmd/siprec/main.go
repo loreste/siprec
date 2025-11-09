@@ -834,6 +834,16 @@ func initialize() error {
 					logger.WithField("provider", "openai").Info("Registered STT provider with circuit breaker protection")
 				}
 			}
+		case "whisper":
+			if appConfig.STT.Whisper.Enabled {
+				whisperProvider := stt.NewWhisperProvider(logger, transcriptionSvc, &appConfig.STT.Whisper)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(whisperProvider, cbManager, logger, nil)
+				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
+					logger.WithError(err).Warn("Failed to register Whisper provider")
+				} else {
+					logger.WithField("provider", "whisper").Info("Registered Whisper STT provider")
+				}
+			}
 		case "speechmatics":
 			if appConfig.STT.Speechmatics.Enabled {
 				speechmaticsProvider := stt.NewSpeechmaticsProvider(logger, transcriptionSvc, &appConfig.STT.Speechmatics)

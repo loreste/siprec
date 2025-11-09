@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -40,6 +41,9 @@ func ValidateSTTConfig(config *STTConfig, logger *logrus.Logger) *STTConfigValid
 	validation.Results = append(validation.Results, validateAzureSTT(&config.Azure))
 	validation.Results = append(validation.Results, validateAmazonSTT(&config.Amazon))
 	validation.Results = append(validation.Results, validateOpenAISTT(&config.OpenAI))
+	validation.Results = append(validation.Results, validateWhisperSTT(&config.Whisper))
+	validation.Results = append(validation.Results, validateElevenLabsSTT(&config.ElevenLabs))
+	validation.Results = append(validation.Results, validateSpeechmaticsSTT(&config.Speechmatics))
 
 	// Count enabled providers and collect enabled provider names
 	enabledCount := 0
@@ -112,6 +116,12 @@ func validateGeneralSTTConfig(config *STTConfig, enabledCount int) STTValidation
 		defaultEnabled = config.Amazon.Enabled
 	case "openai":
 		defaultEnabled = config.OpenAI.Enabled
+	case "whisper":
+		defaultEnabled = config.Whisper.Enabled
+	case "speechmatics":
+		defaultEnabled = config.Speechmatics.Enabled
+	case "elevenlabs":
+		defaultEnabled = config.ElevenLabs.Enabled
 	}
 
 	if !defaultEnabled {
@@ -363,44 +373,147 @@ func validateOpenAISTT(config *OpenAISTTConfig) STTValidationResult {
 	return result
 }
 
+// validateWhisperSTT validates Whisper CLI configuration
+func validateWhisperSTT(config *WhisperSTTConfig) STTValidationResult {
+	result := STTValidationResult{
+		Provider: "whisper",
+		Enabled:  config.Enabled,
+		Valid:    true,
+		Warnings: make([]string, 0),
+		Errors:   make([]string, 0),
+	}
+
+	if !config.Enabled {
+		return result
+	}
+
+	if config.BinaryPath == "" {
+		result.Errors = append(result.Errors, "WHISPER_BINARY_PATH must be set")
+		result.Valid = false
+	} else if _, err := exec.LookPath(config.BinaryPath); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Whisper binary '%s' not found in PATH", config.BinaryPath))
+	}
+
+	if config.Model == "" {
+		result.Warnings = append(result.Warnings, "WHISPER_MODEL not set, defaulting to 'base'")
+	}
+
+	validFormats := map[string]bool{
+		"json": true, "txt": true, "vtt": true, "srt": true, "tsv": true, "verbose_json": true,
+	}
+	if _, ok := validFormats[strings.ToLower(config.OutputFormat)]; !ok {
+		result.Errors = append(result.Errors, fmt.Sprintf("Output format '%s' is not supported. Valid formats: json, txt, vtt, srt, tsv, verbose_json", config.OutputFormat))
+		result.Valid = false
+	}
+
+	if config.SampleRate <= 0 {
+		result.Errors = append(result.Errors, "Sample rate must be positive for Whisper recordings")
+		result.Valid = false
+	}
+
+	if config.Channels <= 0 {
+		result.Errors = append(result.Errors, "Channel count must be positive for Whisper recordings")
+		result.Valid = false
+	}
+
+	if config.MaxConcurrentCalls < -1 {
+		result.Errors = append(result.Errors, "MaxConcurrentCalls must be -1 (auto), 0 (unlimited), or a positive number")
+		result.Valid = false
+	}
+
+	return result
+}
+
+// validateElevenLabsSTT validates ElevenLabs configuration.
+func validateElevenLabsSTT(config *ElevenLabsSTTConfig) STTValidationResult {
+	result := STTValidationResult{
+		Provider: "elevenlabs",
+		Enabled:  config.Enabled,
+		Valid:    true,
+		Warnings: make([]string, 0),
+		Errors:   make([]string, 0),
+	}
+
+	if !config.Enabled {
+		return result
+	}
+
+	if config.APIKey == "" {
+		result.Errors = append(result.Errors, "ELEVENLABS_API_KEY must be set")
+		result.Valid = false
+	}
+
+	if config.ModelID == "" {
+		result.Warnings = append(result.Warnings, "ELEVENLABS_MODEL_ID not specified; default model will be used")
+	}
+
+	return result
+}
+
+// validateSpeechmaticsSTT validates Speechmatics configuration.
+func validateSpeechmaticsSTT(config *SpeechmaticsSTTConfig) STTValidationResult {
+	result := STTValidationResult{
+		Provider: "speechmatics",
+		Enabled:  config.Enabled,
+		Valid:    true,
+		Warnings: make([]string, 0),
+		Errors:   make([]string, 0),
+	}
+
+	if !config.Enabled {
+		return result
+	}
+
+	if config.APIKey == "" {
+		result.Errors = append(result.Errors, "SPEECHMATICS_API_KEY must be set")
+		result.Valid = false
+	}
+
+	if config.BaseURL == "" {
+		result.Warnings = append(result.Warnings, "SPEECHMATICS_API_URL not set; default endpoint will be used")
+	}
+
+	return result
+}
+
 // PrintSTTValidation prints a human-readable validation report
 func PrintSTTValidation(validation *STTConfigValidation, logger *logrus.Logger) {
 	logger.Info("=== STT Configuration Validation Report ===")
-	
+
 	// Overall status
 	if validation.Valid {
 		logger.Info("✓ Overall configuration is VALID")
 	} else {
 		logger.Error("✗ Overall configuration has ERRORS")
 	}
-	
+
 	logger.Infof("Default Provider: %s", validation.DefaultProvider)
 	logger.Infof("Enabled Providers: %v", validation.EnabledProviders)
-	
+
 	// Per-provider results
 	for _, result := range validation.Results {
 		logger.Infof("\n--- %s Provider ---", strings.ToUpper(result.Provider))
-		
+
 		if !result.Enabled && result.Provider != "general" {
 			logger.Infof("Status: DISABLED")
 			continue
 		}
-		
+
 		if result.Valid {
 			logger.Infof("Status: ✓ VALID")
 		} else {
 			logger.Errorf("Status: ✗ INVALID")
 		}
-		
+
 		for _, warning := range result.Warnings {
 			logger.Warnf("⚠ Warning: %s", warning)
 		}
-		
+
 		for _, err := range result.Errors {
 			logger.Errorf("✗ Error: %s", err)
 		}
 	}
-	
+
 	// Summary
 	logger.Info("\n=== Summary ===")
 	for key, value := range validation.Summary {
