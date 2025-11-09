@@ -29,6 +29,7 @@ import (
 	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/telemetry/tracing"
+	"siprec-server/pkg/version"
 )
 
 // CustomSIPServer is our own SIP server implementation
@@ -2295,6 +2296,9 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 			resp.ReplaceHeader(sipparser.NewHeader("Content-Type", "application/sdp"))
 		}
 	}
+
+	// Add Server header to all responses
+	resp.AppendHeader(sipparser.NewHeader("Server", version.ServerHeader()))
 
 	for name, value := range headers {
 		if value == "" {

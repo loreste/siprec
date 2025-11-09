@@ -10,6 +10,7 @@ import (
 
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/metrics"
+	"siprec-server/pkg/version"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
@@ -53,36 +54,49 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 
 	mux := http.NewServeMux()
 
+	// Wrap handlers with middleware that adds Server header
+	addServerHeader := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Server", version.ServerHeader())
+			next(w, r)
+		}
+	}
+
 	// Register standard endpoints
-	mux.HandleFunc("/health", server.HealthHandler)
-	mux.HandleFunc("/health/live", server.LivenessHandler)
-	mux.HandleFunc("/health/ready", server.ReadinessHandler)
-	
+	mux.HandleFunc("/health", addServerHeader(server.HealthHandler))
+	mux.HandleFunc("/health/live", addServerHeader(server.LivenessHandler))
+	mux.HandleFunc("/health/ready", addServerHeader(server.ReadinessHandler))
+
 	// Add metrics endpoints based on configuration
 	if config.EnableMetrics {
 		// Use the comprehensive Prometheus metrics registry if available
 		if registry := metrics.GetRegistry(); registry != nil {
-			mux.Handle("/metrics", promhttp.HandlerFor(
+			// Wrap promhttp handler with Server header middleware
+			promHandler := promhttp.HandlerFor(
 				registry,
 				promhttp.HandlerOpts{
 					EnableOpenMetrics: true,
 					Registry:          registry,
 				},
-			))
+			)
+			mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Server", version.ServerHeader())
+				promHandler.ServeHTTP(w, r)
+			})
 			logger.Info("Prometheus metrics endpoint enabled at /metrics")
 		} else {
 			// Fallback to simple metrics
-			mux.HandleFunc("/metrics", server.metricsHandler)
+			mux.HandleFunc("/metrics", addServerHeader(server.metricsHandler))
 			logger.Info("Simple metrics endpoint enabled at /metrics")
 		}
-		
+
 		// Add a simple metrics endpoint as well for basic monitoring
-		mux.HandleFunc("/metrics/simple", server.metricsHandler)
+		mux.HandleFunc("/metrics/simple", addServerHeader(server.metricsHandler))
 	} else {
 		logger.Info("Metrics endpoints disabled")
 	}
-	
-	mux.HandleFunc("/status", server.statusHandler)
+
+	mux.HandleFunc("/status", addServerHeader(server.statusHandler))
 
 	// Create the HTTP server
 	server.httpServer = &http.Server{
@@ -199,7 +213,7 @@ siprec_http_requests_total{endpoint="/metrics",method="GET"} 1
 
 # HELP siprec_build_info Build information
 # TYPE siprec_build_info gauge
-siprec_build_info{version="1.0.0",component="siprec-server",go_version="go1.23"} 1
+siprec_build_info{version="%s",component="siprec-server",go_version="go1.23"} 1
 
 # HELP siprec_health_status Health status of components (1 = healthy, 0 = unhealthy)
 # TYPE siprec_health_status gauge
@@ -207,6 +221,7 @@ siprec_health_status{component="server"} 1
 `,
 		activeCalls,
 		time.Since(s.startTime).Seconds(),
+		version.Version,
 	)
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -222,7 +237,7 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 		"status":       "ok",
 		"uptime":       time.Since(s.startTime).String(),
 		"active_calls": 0,
-		"version":      "1.0.0", // Replace with actual version from build
+		"version":      version.Version,
 		"started_at":   s.startTime.Format(time.RFC3339),
 	}
 
