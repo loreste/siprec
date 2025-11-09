@@ -1,6 +1,10 @@
 package media
 
-import "time"
+import (
+	"time"
+
+	"siprec-server/pkg/audio"
+)
 
 // Config holds media-related configuration
 type Config struct {
@@ -13,6 +17,7 @@ type Config struct {
 	// Recording configuration
 	RecordingDir     string
 	RecordingStorage RecordingStorage
+	EncryptedRecorder *audio.EncryptedRecordingManager
 
 	// NAT configuration
 	BehindNAT  bool

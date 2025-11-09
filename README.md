@@ -6,7 +6,7 @@
 
 This project implements a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 0.0.33
+**Version:** 0.0.34
 
 ## Core Features
 
@@ -27,13 +27,14 @@ This project implements a production-ready SIPREC-compliant recording endpoint w
 - **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
 - **Circuit Breaker Protection** – Automatic failover and health monitoring for all STT providers
 - **Language-Based Routing** – Intelligent provider selection based on detected language
-- **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP
+- **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP publishers (see [real-time transcription docs](docs/realtime-transcription.md) for message formats)
 - **Async Processing** – Queue-based transcription with configurable workers and retries
 
 ### Security & Compliance
 - **End-to-End Encryption** – AES-256-GCM and ChaCha20-Poly1305 for recordings and metadata
 - **Automatic Key Rotation** – Configurable key rotation intervals with secure storage
 - **PII Detection & Redaction** – SSN, credit cards, phone numbers, email addresses
+- **Encrypted Recording Pipeline** – Streams media through AES-256-GCM into `.siprec` containers with per-recording key metadata
 - **PCI DSS Compliance Mode** – Automatic security hardening and required safeguards
 - **GDPR Tools** – Data export and erasure APIs with audit trails
 - **TLS Support** – Secure SIP signaling with configurable certificates
@@ -211,7 +212,9 @@ The server is configured via environment variables. See `.env.example` for a com
 ### GDPR Compliance
 
 - `POST /api/compliance/export` – Export user data
-- `POST /api/compliance/erase` – Erase user data
+- `POST /api/compliance/erase` – Erase user data (removes local `.wav/.siprec` artifacts and every uploaded copy recorded in the `.locations` manifest)
+
+Every recording that is uploaded to remote storage now has a sidecar `<recording>.locations` file listing the exact URLs that were written (e.g., `s3://bucket/prefix/file.siprec`). The GDPR erase workflow reads that manifest, issues deletes against each backend, and then removes both the manifest and the encrypted object so that nothing remains online.
 
 ## Architecture
 
@@ -303,6 +306,7 @@ siprec/
 - [Speech-to-Text Integration](docs/stt.md)
 - [Real-Time Transcription](docs/realtime-transcription.md)
 - [Session Management](docs/sessions.md)
+- [End-to-End Feature Guide](docs/end-to-end.md)
 - [CHANGELOG](CHANGELOG.md)
 
 ## Performance

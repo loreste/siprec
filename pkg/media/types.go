@@ -5,13 +5,14 @@ import (
 	"encoding/binary"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"siprec-server/pkg/audio"
 	"siprec-server/pkg/siprec"
 
 	"github.com/sirupsen/logrus"
-	"strings"
 )
 
 // RTPForwarder handles RTP packet forwarding and recording
@@ -43,6 +44,9 @@ type RTPForwarder struct {
 
 	// WAV writer handles PCM containerization
 	WAVWriter *WAVWriter
+	// Encrypted recording support
+	EncryptedRecorder  *audio.EncryptedRecordingManager
+	EncryptedSessionID string
 
 	// Pause/Resume state
 	TranscriptionPaused bool            // Flag to indicate if transcription is paused
@@ -168,7 +172,7 @@ func generateRandomSSRC() uint32 {
 }
 
 // NewRTPForwarder creates a new RTP forwarder using RFC 3550 compliant RTP/RTCP port pairs
-func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger, piiAudioEnabled bool) (*RTPForwarder, error) {
+func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSession, logger *logrus.Logger, piiAudioEnabled bool, encryptedRecorder *audio.EncryptedRecordingManager) (*RTPForwarder, error) {
 	// Get an RTP/RTCP port pair from the port manager (RFC 3550 compliant)
 	pm := GetPortManager()
 	portPair, err := pm.AllocatePortPair()
@@ -195,6 +199,7 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		SRTPKeyLifetime:  1 << 31,                   // Default lifetime from RFC 3711
 		AudioProcessor:   nil,                       // Will be initialized in StartRTPForwarding
 		PIIAudioMarker:   piiAudioMarker,            // PII audio tracking
+		EncryptedRecorder: encryptedRecorder,
 		isCleanedUp:      false,                     // Not cleaned up initially
 		MarkedForCleanup: false,                     // Not marked for cleanup initially
 		LocalSSRC:        generateRandomSSRC(),
@@ -373,6 +378,16 @@ func (f *RTPForwarder) Cleanup() {
 		}
 		f.RecordingFile.Close()
 		f.RecordingFile = nil
+	}
+
+	if f.EncryptedRecorder != nil && f.EncryptedSessionID != "" {
+		if err := f.EncryptedRecorder.StopRecording(f.EncryptedSessionID); err != nil && f.Logger != nil {
+			f.Logger.WithError(err).WithFields(logrus.Fields{
+				"session_id": f.EncryptedSessionID,
+				"call_uuid":  f.CallUUID,
+			}).Warn("Failed to stop encrypted recording session during cleanup")
+		}
+		f.EncryptedSessionID = ""
 	}
 
 	// Upload recording to external storage if configured

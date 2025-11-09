@@ -1,7 +1,7 @@
 package version
 
 // Version is the current version of the SIPREC server
-const Version = "0.0.33"
+const Version = "0.0.34"
 
 // UserAgent returns the User-Agent string for HTTP requests
 func UserAgent() string {
