@@ -8,22 +8,35 @@ import (
 	"time"
 
 	"siprec-server/pkg/database"
+	"siprec-server/pkg/media"
 
 	"github.com/sirupsen/logrus"
 )
 
+// CallDataRepository defines the repository methods needed for GDPR operations.
+type CallDataRepository interface {
+	GetSessionByCallID(callID string) (*database.Session, error)
+	GetParticipantsBySession(sessionID string) ([]*database.Participant, error)
+	GetStreamsBySession(sessionID string) ([]*database.Stream, error)
+	GetTranscriptionsBySession(sessionID string) ([]*database.Transcription, error)
+	GetCDRByCallID(callID string) (*database.CDR, error)
+	DeleteCallData(callID string) error
+}
+
 // GDPRService provides export and erasure capabilities for call data.
 type GDPRService struct {
-	repo      *database.Repository
+	repo      CallDataRepository
 	exportDir string
+	storage   media.RecordingStorage
 	logger    *logrus.Logger
 }
 
 // NewGDPRService creates a new GDPR service instance.
-func NewGDPRService(repo *database.Repository, exportDir string, logger *logrus.Logger) *GDPRService {
+func NewGDPRService(repo CallDataRepository, exportDir string, storage media.RecordingStorage, logger *logrus.Logger) *GDPRService {
 	return &GDPRService{
 		repo:      repo,
 		exportDir: exportDir,
+		storage:   storage,
 		logger:    logger,
 	}
 }
@@ -126,6 +139,11 @@ func (s *GDPRService) EraseCallData(callID string) error {
 	if recordingPath != "" {
 		if err := os.Remove(recordingPath); err != nil && !os.IsNotExist(err) {
 			s.logger.WithError(err).WithField("path", recordingPath).Warn("Failed to delete recording file during GDPR erase")
+		}
+		if s.storage != nil {
+			if err := s.storage.Delete(callID, nil, recordingPath); err != nil {
+				s.logger.WithError(err).WithField("path", recordingPath).Warn("Failed to delete remote recording copies during GDPR erase")
+			}
 		}
 	}
 

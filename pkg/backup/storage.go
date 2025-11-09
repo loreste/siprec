@@ -153,15 +153,25 @@ func (m *MultiBackupStorage) List() ([]StoredBackup, error) {
 	return allBackups, nil
 }
 
-// Delete deletes from all storage backends
+// Delete deletes from all storage backends matching the remote path scheme
 func (m *MultiBackupStorage) Delete(remotePath string) error {
 	var errors []string
+	scheme := extractScheme(remotePath)
+	matched := false
 
 	for _, storage := range m.storages {
+		if !storageMatchesScheme(storage.GetLocation(), scheme) {
+			continue
+		}
+		matched = true
 		err := storage.Delete(remotePath)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", storage.GetLocation(), err))
 		}
+	}
+
+	if !matched {
+		return fmt.Errorf("no storage backend configured for scheme %s", scheme)
 	}
 
 	if len(errors) > 0 {
@@ -169,6 +179,45 @@ func (m *MultiBackupStorage) Delete(remotePath string) error {
 	}
 
 	return nil
+}
+
+func extractScheme(path string) string {
+	if strings.HasPrefix(path, "local://") {
+		return "local"
+	}
+	if idx := strings.Index(path, "://"); idx != -1 {
+		return path[:idx]
+	}
+	return ""
+}
+
+func storageMatchesScheme(location, scheme string) bool {
+	if scheme == "" {
+		return false
+	}
+	// Exact match
+	if location == scheme {
+		return true
+	}
+	// Match URL format: location must start with "scheme://"
+	schemePrefix := scheme + "://"
+	if strings.HasPrefix(location, schemePrefix) {
+		return true
+	}
+	// Prefix match, but not for ambiguous cases like "gcs" vs "gs"
+	// Only match if location starts with scheme followed by non-letter
+	if strings.HasPrefix(location, scheme) {
+		// Check that the character after the scheme is not a letter
+		// This prevents "gcs" from matching "gs"
+		if len(location) > len(scheme) {
+			nextChar := location[len(scheme)]
+			// Allow dash, underscore, or other non-letter characters
+			if nextChar < 'a' || nextChar > 'z' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // GetLocation returns a description of all configured storage backends

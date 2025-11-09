@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/json"
 	"os"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 // after local capture.
 type RecordingStorage interface {
 	Upload(callUUID string, session *siprec.RecordingSession, localPath string) error
+	Delete(callUUID string, session *siprec.RecordingSession, localPath string) error
 	KeepLocalCopy() bool
 }
 
@@ -24,6 +26,7 @@ type noopRecordingStorage struct{}
 
 func (noopRecordingStorage) Upload(string, *siprec.RecordingSession, string) error { return nil }
 func (noopRecordingStorage) KeepLocalCopy() bool                                   { return true }
+func (noopRecordingStorage) Delete(string, *siprec.RecordingSession, string) error { return nil }
 
 // backupRecordingStorage uploads recordings using the backup storage utilities.
 type backupRecordingStorage struct {
@@ -76,6 +79,10 @@ func (b *backupRecordingStorage) Upload(callUUID string, session *siprec.Recordi
 		"stored_at":  locations,
 	}).Info("Recording persisted to external storage")
 
+	if err := saveRemoteRecordingLocations(localPath, locations); err != nil {
+		b.logger.WithError(err).WithField("path", localPath).Warn("Failed to persist remote recording locations")
+	}
+
 	audit.Log(tracing.ContextForCall(callUUID), b.logger, &audit.Event{
 		Category:  "storage",
 		Action:    "upload",
@@ -94,6 +101,30 @@ func (b *backupRecordingStorage) KeepLocalCopy() bool {
 	return b.keepLocal
 }
 
+func (b *backupRecordingStorage) Delete(callUUID string, session *siprec.RecordingSession, localPath string) error {
+	locations, err := loadRemoteRecordingLocations(localPath)
+	if err != nil {
+		b.logger.WithError(err).WithField("path", localPath).Warn("Failed to load remote recording locations for deletion")
+	}
+
+	var deleteErr error
+	for _, location := range locations {
+		if err := b.storage.Delete(location); err != nil {
+			deleteErr = err
+			b.logger.WithError(err).WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"location":  location,
+			}).Warn("Failed to delete recording from storage backend")
+		}
+	}
+
+	if err := removeRemoteRecordingLocations(localPath); err != nil {
+		b.logger.WithError(err).WithField("path", localPath).Debug("Failed to remove remote recording location metadata")
+	}
+
+	return deleteErr
+}
+
 // RemoveLocalRecording removes the local recording file when retention is disabled.
 func RemoveLocalRecording(logger *logrus.Logger, path string) {
 	if path == "" {
@@ -102,4 +133,51 @@ func RemoveLocalRecording(logger *logrus.Logger, path string) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		logger.WithError(err).WithField("path", path).Warn("Failed to remove local recording after upload")
 	}
+}
+
+func locationMetadataPath(localPath string) string {
+	return localPath + ".locations"
+}
+
+func saveRemoteRecordingLocations(localPath string, locations []string) error {
+	if len(locations) == 0 || localPath == "" {
+		return nil
+	}
+
+	data, err := json.MarshalIndent(locations, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(locationMetadataPath(localPath), data, 0o600)
+}
+
+func loadRemoteRecordingLocations(localPath string) ([]string, error) {
+	if localPath == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(locationMetadataPath(localPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var locations []string
+	if err := json.Unmarshal(data, &locations); err != nil {
+		return nil, err
+	}
+	return locations, nil
+}
+
+func removeRemoteRecordingLocations(localPath string) error {
+	if localPath == "" {
+		return nil
+	}
+	if err := os.Remove(locationMetadataPath(localPath)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/alerting"
+	"siprec-server/pkg/audio"
 	"siprec-server/pkg/auth"
 	"siprec-server/pkg/backup"
 	"siprec-server/pkg/cdr"
@@ -67,6 +68,9 @@ var (
 	// PII detection components
 	piiDetector *pii.PIIDetector
 	piiFilter   *stt.PIITranscriptionFilter
+
+	// Recording encryption
+	encryptedRecordingManager *audio.EncryptedRecordingManager
 
 	tracingShutdown     = func(ctx context.Context) error { return nil }
 	analyticsDispatcher *analytics.Dispatcher
@@ -465,12 +469,12 @@ func initialize() error {
 	}
 
 	gdprService = nil
+	gdprEnabled := false
 	if appConfig.Compliance.GDPR.Enabled {
 		if dbRepo == nil {
 			logger.Warn("GDPR tools enabled but database repository unavailable; export/erase APIs disabled")
 		} else {
-			gdprService = compliance.NewGDPRService(dbRepo, appConfig.Compliance.GDPR.ExportDir, logger)
-			logger.WithField("export_dir", appConfig.Compliance.GDPR.ExportDir).Info("GDPR service initialized")
+			gdprEnabled = true
 		}
 	}
 
@@ -864,6 +868,21 @@ func initialize() error {
 
 	recordingStorage := createRecordingStorage(logger, &appConfig.Recording, &appConfig.Encryption)
 
+	if appConfig.Encryption.EnableRecordingEncryption {
+		if encryptionManager == nil {
+			return fmt.Errorf("recording encryption is enabled but encryption manager is not initialized")
+		}
+		if encryptedRecordingManager == nil {
+			encryptedRecordingManager, err = audio.NewEncryptedRecordingManager(encryptionManager, appConfig.Recording.Directory, logger)
+			if err != nil {
+				return fmt.Errorf("failed to initialize encrypted recording manager: %w", err)
+			}
+			logger.WithField("directory", appConfig.Recording.Directory).Info("Encrypted recording manager initialized")
+		}
+	} else {
+		encryptedRecordingManager = nil
+	}
+
 	// Create the media config
 	mediaConfig := &media.Config{
 		RTPPortMin:       appConfig.Network.RTPPortMin,
@@ -894,6 +913,12 @@ func initialize() error {
 			ctx:        rootCtx,
 		},
 		AudioMetricsInterval: 5 * time.Second,
+		EncryptedRecorder:   encryptedRecordingManager,
+	}
+
+	if gdprEnabled && dbRepo != nil {
+		gdprService = compliance.NewGDPRService(dbRepo, appConfig.Compliance.GDPR.ExportDir, recordingStorage, logger)
+		logger.WithField("export_dir", appConfig.Compliance.GDPR.ExportDir).Info("GDPR service initialized")
 	}
 
 	// Create SIP handler config

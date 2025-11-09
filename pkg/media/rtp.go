@@ -171,6 +171,21 @@ func clamp(value, min, max float64) float64 {
 	return value
 }
 
+type encryptedRecordingWriter struct {
+	manager   *audio.EncryptedRecordingManager
+	sessionID string
+}
+
+func (w *encryptedRecordingWriter) Write(p []byte) (int, error) {
+	if w.manager == nil || w.sessionID == "" {
+		return 0, fmt.Errorf("encrypted recorder not initialized")
+	}
+	if err := w.manager.WriteAudio(w.sessionID, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 // StartRTPForwarding starts forwarding RTP packets for a call
 
 func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string, config *Config, sttProvider func(context.Context, string, io.Reader, string) error) {
@@ -253,18 +268,6 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		sanitizedUUID := security.SanitizeCallUUID(callUUID)
-		filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", sanitizedUUID))
-		forwarder.RecordingFile, err = os.Create(filePath)
-		if err != nil {
-			forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
-			rtpSpan.RecordError(err)
-			rtpSpan.SetStatus(codes.Error, "recording file creation failed")
-			if metrics.IsMetricsEnabled() {
-				metrics.RecordRTPDroppedPackets(callUUID, "file_creation_failed", 1)
-			}
-			return
-		}
-		forwarder.RecordingPath = filePath
 		forwarder.CallUUID = callUUID
 		forwarder.Storage = config.RecordingStorage
 
@@ -276,24 +279,81 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		if channels == 0 {
 			channels = 1
 		}
-		wavWriter, err := NewWAVWriter(forwarder.RecordingFile, sampleRate, channels)
-		if err != nil {
-			forwarder.Logger.WithError(err).WithFields(logrus.Fields{
+
+		var baseRecordingWriter io.Writer
+
+		if forwarder.EncryptedRecorder != nil {
+			sessionID := fmt.Sprintf("%s-%d", sanitizedUUID, forwarder.LocalPort)
+			metadata := &audio.RecordingMetadata{
+				SessionID:    sessionID,
+				Codec:        forwarder.CodecName,
+				SampleRate:   sampleRate,
+				Channels:     channels,
+				FileFormat:   "siprec",
+				Participants: nil,
+			}
+
+			encSession, err := forwarder.EncryptedRecorder.StartRecording(sessionID, metadata)
+			if err != nil {
+				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to initialize encrypted recording session")
+				rtpSpan.RecordError(err)
+				rtpSpan.SetStatus(codes.Error, "encrypted_recording_init_failed")
+				return
+			}
+
+			forwarder.EncryptedSessionID = sessionID
+			forwarder.RecordingPath = encSession.FilePath
+			baseRecordingWriter = &encryptedRecordingWriter{
+				manager:   forwarder.EncryptedRecorder,
+				sessionID: sessionID,
+			}
+
+			forwarder.Logger.WithFields(logrus.Fields{
+				"call_uuid":  callUUID,
+				"session_id": sessionID,
+				"path":       forwarder.RecordingPath,
+			}).Info("Encrypted recording session started")
+		} else {
+			filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", sanitizedUUID))
+			forwarder.RecordingFile, err = os.Create(filePath)
+			if err != nil {
+				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
+				rtpSpan.RecordError(err)
+				rtpSpan.SetStatus(codes.Error, "recording file creation failed")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordRTPDroppedPackets(callUUID, "file_creation_failed", 1)
+				}
+				return
+			}
+			forwarder.RecordingPath = filePath
+
+			wavWriter, err := NewWAVWriter(forwarder.RecordingFile, sampleRate, channels)
+			if err != nil {
+				forwarder.Logger.WithError(err).WithFields(logrus.Fields{
+					"call_uuid":   callUUID,
+					"sample_rate": sampleRate,
+					"channels":    channels,
+				}).Error("Failed to initialize WAV writer")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordRTPDroppedPackets(callUUID, "wav_writer_init_failed", 1)
+				}
+				return
+			}
+			forwarder.WAVWriter = wavWriter
+			baseRecordingWriter = wavWriter
+
+			forwarder.Logger.WithFields(logrus.Fields{
 				"call_uuid":   callUUID,
 				"sample_rate": sampleRate,
 				"channels":    channels,
-			}).Error("Failed to initialize WAV writer")
-			if metrics.IsMetricsEnabled() {
-				metrics.RecordRTPDroppedPackets(callUUID, "wav_writer_init_failed", 1)
-			}
+			}).Debug("Initialized WAV writer for recording")
+		}
+
+		if baseRecordingWriter == nil {
+			forwarder.Logger.WithField("call_uuid", callUUID).Error("Recording writer was not initialized")
+			rtpSpan.SetStatus(codes.Error, "recording_writer_missing")
 			return
 		}
-		forwarder.WAVWriter = wavWriter
-		forwarder.Logger.WithFields(logrus.Fields{
-			"call_uuid":   callUUID,
-			"sample_rate": sampleRate,
-			"channels":    channels,
-		}).Debug("Initialized WAV writer for recording")
 
 		var srtpSession *srtp.SessionSRTP
 		if config.EnableSRTP {
@@ -370,7 +430,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		mainPr, mainPw := io.Pipe()
-		recordingWriter := NewPausableWriter(forwarder.WAVWriter)
+		recordingWriter := NewPausableWriter(baseRecordingWriter)
 		recordingReader := io.TeeReader(mainPr, recordingWriter)
 		transcriptionReader := NewPausableReader(recordingReader)
 		forwarder.recordingWriter = recordingWriter
