@@ -2,6 +2,42 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [0.0.34] - 2025-11-09
+
+### Added
+- **Comprehensive Test Coverage for GDPR Deletion**: 55+ tests across 5 test files
+  - Backup storage scheme-aware deletion tests (13 tests)
+  - Recording storage manifest tracking tests (15 tests)
+  - GDPR service deletion tests (7 unit tests + 7 integration tests)
+  - Encrypted recording writer tests (8 tests)
+  - Complete end-to-end GDPR erase flow integration tests
+- **CallDataRepository Interface**: Abstraction for GDPR service database operations
+  - Enables proper mocking and testing without database dependencies
+  - Defines contract for GetSessionByCallID, GetCDRByCallID, DeleteCallData, etc.
+  - Improves testability and maintainability of GDPR compliance features
+
+### Enhanced
+- **Storage Deletion Routing**: Improved scheme-aware deletion logic
+  - Better handling of ambiguous schemes (e.g., "gcs" vs "gs")
+  - Exact match support for location identifiers
+  - URL format matching with "scheme://" prefix
+  - Prefix matching with non-letter boundary detection
+- **Test Infrastructure**: Mock implementations for all storage and repository interfaces
+  - Realistic simulation of manifest file operations
+  - Proper cleanup verification in integration tests
+  - Edge case coverage (empty paths, missing files, malformed JSON)
+
+### Fixed
+- Storage matching logic now correctly distinguishes between similar scheme prefixes
+- GDPR service tests properly mock repository interface methods
+- Recording storage mock now simulates manifest deletion behavior
+
+### Technical
+- All tests passing with comprehensive coverage of edge cases
+- Integration tests verify complete upload → track → erase → verify flow
+- Concurrent operation tests ensure thread safety
+- SIPP tests confirm no regression in core functionality
+
 ## [0.0.33] - 2025-11-09
 
 ### Added
