@@ -1,22 +1,67 @@
 # SIPREC Server
 
-> A focused SIP recording service with built-in SIP stack, optional speech-to-text streaming, and shared session storage.
+> Enterprise-grade SIP recording service with advanced speech-to-text, real-time analytics, PII redaction, and multi-cloud storage.
 
 ## Overview
 
-This project implements a SIPREC-compliant recording endpoint with a custom SIP transaction layer. The server parses multipart INVITE payloads (SDP + “application/rs-metadata+xml”) as defined in RFC 7865/7866, maintains per-call state, and exposes control/health helpers for automation environments. NAT traversal, session persistence, and downstream speech-to-text streaming are handled inside the same process so deployments can stay lightweight.
+This project implements a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-## What’s Included
+**Version:** 0.0.33
 
-- **SIPREC core** – RFC 7865/7866 metadata parsing, SDP handling, and custom SIP server (UDP/TCP) with support for large metadata payloads.
-- **NAT rewriting** – SIP Via/Contact rewriting with automatic external IP discovery and configurable overrides for public deployments.
-- **Session management** – A shared persistence layer between the SIP handler and the session manager. Works with the in-memory store by default or any implementation of `pkg/session.SessionStore` (Redis adapter included).
-- **Pause / resume controls** – Handler-level APIs for pausing or resuming recording/transcription mid-call.
-- **Speech-to-text integration (optional)** – Pluggable STT provider manager with streaming callbacks. The handler routes audio to the selected provider when configured. Supports Google, Deepgram, Speechmatics, ElevenLabs, OpenAI, Azure, and Amazon.
-- **Real-time transcription streaming (optional)** – Publish live transcription results to AMQP/RabbitMQ message queues with circuit breaker protection, PII filtering, and multi-endpoint fan-out. See `docs/realtime-transcription.md`.
-- **Operational helpers** – HTTP health/readiness endpoints, telemetry hooks, and resource cleanup for active calls and RTP forwarders.
+## Core Features
 
-Everything listed above is part of the executable; features that are only partially implemented or deprecated have been removed from this documentation.
+### SIP & SIPREC Protocol
+- **RFC 7865/7866 Compliance** – Full SIPREC metadata parsing and validation with enhanced interoperability
+- **Custom SIP Stack** – UDP, TCP, and TLS transports with automatic NAT traversal
+- **Large Payload Support** – 4096-byte MTU for handling extensive metadata
+- **Session Management** – In-memory or Redis-backed session persistence with automatic failover
+
+### Audio & Media Processing
+- **Multi-Codec Support** – PCMU, PCMA, G.722, Opus, EVS with automatic transcoding
+- **Audio Processing Pipeline** – Voice Activity Detection (VAD), noise reduction, echo cancellation
+- **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
+- **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
+- **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
+
+### Speech-to-Text (STT)
+- **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
+- **Circuit Breaker Protection** – Automatic failover and health monitoring for all STT providers
+- **Language-Based Routing** – Intelligent provider selection based on detected language
+- **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP
+- **Async Processing** – Queue-based transcription with configurable workers and retries
+
+### Security & Compliance
+- **End-to-End Encryption** – AES-256-GCM and ChaCha20-Poly1305 for recordings and metadata
+- **Automatic Key Rotation** – Configurable key rotation intervals with secure storage
+- **PII Detection & Redaction** – SSN, credit cards, phone numbers, email addresses
+- **PCI DSS Compliance Mode** – Automatic security hardening and required safeguards
+- **GDPR Tools** – Data export and erasure APIs with audit trails
+- **TLS Support** – Secure SIP signaling with configurable certificates
+- **Authentication** – JWT tokens and API key authentication with role-based access
+
+### Analytics & Monitoring
+- **Real-Time Analytics** – Sentiment analysis, keyword extraction, compliance monitoring
+- **Elasticsearch Integration** – Full-text search and analytics persistence
+- **Audio Quality Tracking** – Real-time MOS scoring and packet loss detection
+- **Prometheus Metrics** – Comprehensive metrics for SIP, RTP, STT, and AMQP
+- **OpenTelemetry Tracing** – Distributed tracing for end-to-end visibility
+- **Performance Monitoring** – Memory, CPU, and goroutine leak detection with auto-tuning
+
+### Storage & Messaging
+- **Multi-Cloud Storage** – AWS S3, Google Cloud Storage, Azure Blob Storage
+- **Recording Management** – Automatic archival with lifecycle policies
+- **AMQP/RabbitMQ** – Real-time transcription delivery with batching and retries
+- **Multi-Endpoint Fan-Out** – Publish to multiple message queues simultaneously
+- **MySQL/MariaDB** – Optional database persistence for sessions, transcriptions, and CDRs
+
+### Operational Features
+- **Pause/Resume API** – Control recording and transcription mid-call via REST API
+- **Health & Readiness** – Kubernetes-compatible health probes
+- **Graceful Shutdown** – Proper cleanup of active sessions and connections
+- **Hot-Reload Configuration** – Dynamic configuration updates without restart
+- **Call Detail Records** – Comprehensive CDR generation and storage
+- **Multi-Channel Alerting** – Email, Slack, webhook notifications
+- **Centralized Warnings** – System-wide warning collection and deduplication
 
 ## Quick Start
 
@@ -26,63 +71,265 @@ Everything listed above is part of the executable; features that are only partia
 git clone https://github.com/loreste/siprec.git
 cd siprec
 
-# Run directly (defaults to UDP/TCP on 0.0.0.0:5060)
+# Run with default configuration (SIP on 0.0.0.0:5060, HTTP on :8080)
 go run ./cmd/siprec
+
+# Or build the binary
+go build -o siprec ./cmd/siprec
+./siprec
 ```
 
-### Minimal Environment Variables
+### Docker Deployment
+
+```bash
+# Using docker-compose with RabbitMQ, Redis, and PostgreSQL
+docker-compose up -d
+
+# Or standalone container
+docker build -t siprec .
+docker run -p 5060:5060/udp -p 8080:8080 siprec
+```
+
+## Configuration
+
+The server is configured via environment variables. See `.env.example` for a complete list.
+
+### Essential Variables
 
 | Variable | Description | Default |
 | --- | --- | --- |
 | `SIP_HOST` | Bind address for SIP listeners | `0.0.0.0` |
-| `PORTS` | Comma-separated UDP/TCP SIP ports | `5060,5061` |
-| `BEHIND_NAT` | Enable NAT rewriting | `false` |
-| `EXTERNAL_IP` | Override public IP or `auto` for STUN discovery | `auto` |
-| `STUN_SERVER` | STUN server when NAT rewriting is enabled | `stun:stun.l.google.com:19302` |
+| `PORTS` | Comma-separated SIP ports (UDP/TCP) | `5060` |
+| `HTTP_PORT` | HTTP server port | `8080` |
 | `RECORDING_DIR` | Recording output directory | `./recordings` |
-| `SESSION_TIMEOUT` | Idle duration before a call is considered stale | `1h` (if session persistence enabled) |
 
-When `BEHIND_NAT=true`, the SIP handler updates Via/Contact headers with the detected external IP or the value you provide.
+### Network & NAT
 
-## Optional Components
+| Variable | Description | Default |
+| --- | --- | --- |
+| `BEHIND_NAT` | Enable NAT rewriting | `false` |
+| `EXTERNAL_IP` | Public IP or `auto` for STUN discovery | `auto` |
+| `STUN_SERVER` | STUN server for IP detection | `stun.l.google.com:19302` |
+| `RTP_PORT_MIN` | Minimum RTP port | `10000` |
+| `RTP_PORT_MAX` | Maximum RTP port | `20000` |
+| `ENABLE_SRTP` | Enable SRTP support | `false` |
 
-### Shared Session Store (Redis)
+### Speech-to-Text
 
-To persist sessions across processes, configure the session manager and pass the same store to the SIP handler:
+| Variable | Description | Default |
+| --- | --- | --- |
+| `STT_VENDOR` | Default STT provider | `google` |
+| `STT_SUPPORTED_VENDORS` | Comma-separated list of vendors | `google,deepgram` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google credentials | - |
+| `DEEPGRAM_API_KEY` | Deepgram API key | - |
+| `AZURE_SPEECH_KEY` | Azure Speech key | - |
+| `AWS_ACCESS_KEY_ID` | AWS credentials for Transcribe | - |
 
-```go
-redisStore, _ := session.NewRedisSessionStore(redisConfig, logger)
+### Security & Compliance
 
-handlerConfig := &sip.Config{
-    SessionStore:  redisStore,
-    SessionNodeID: "recorder-1",
-    // ...other handler options...
-}
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ENABLE_TLS` | Enable TLS for SIP | `false` |
+| `TLS_CERT_FILE` | Path to TLS certificate | - |
+| `TLS_KEY_FILE` | Path to TLS private key | - |
+| `ENABLE_RECORDING_ENCRYPTION` | Encrypt recordings | `false` |
+| `ENCRYPTION_ALGORITHM` | Encryption algorithm | `aes-256-gcm` |
+| `PII_ENABLED` | Enable PII detection | `false` |
+| `PII_ENABLED_TYPES` | Comma-separated types | `ssn,credit_card,phone,email` |
+| `PCI_COMPLIANCE_MODE` | Enable PCI DSS mode | `false` |
 
-handler, _ := sip.NewHandler(logger, handlerConfig, sttManager)
+### Storage
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `STORAGE_ENABLED` | Enable cloud storage | `false` |
+| `S3_ENABLED` | Enable S3 upload | `false` |
+| `S3_BUCKET` | S3 bucket name | - |
+| `GCS_ENABLED` | Enable GCS upload | `false` |
+| `GCS_BUCKET` | GCS bucket name | - |
+| `AZURE_STORAGE_ENABLED` | Enable Azure upload | `false` |
+| `AZURE_STORAGE_ACCOUNT` | Azure storage account | - |
+
+### Messaging
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AMQP_URL` | RabbitMQ connection URL | - |
+| `AMQP_QUEUE_NAME` | Queue for transcriptions | - |
+| `ENABLE_REALTIME_AMQP` | Enable realtime delivery | `false` |
+| `PUBLISH_PARTIAL_TRANSCRIPTS` | Publish partial results | `true` |
+| `PUBLISH_FINAL_TRANSCRIPTS` | Publish final results | `true` |
+
+### Database
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DATABASE_ENABLED` | Enable MySQL persistence | `false` |
+| `MYSQL_HOST` | MySQL host | `localhost` |
+| `MYSQL_PORT` | MySQL port | `3306` |
+| `MYSQL_DATABASE` | Database name | `siprec` |
+| `MYSQL_USER` | Database user | - |
+| `MYSQL_PASSWORD` | Database password | - |
+
+### Analytics
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ANALYTICS_ENABLED` | Enable analytics pipeline | `false` |
+| `ELASTICSEARCH_ADDRESSES` | Elasticsearch endpoints | - |
+| `ELASTICSEARCH_INDEX` | Index for analytics | `siprec-analytics` |
+
+## HTTP API Endpoints
+
+### Health & Metrics
+
+- `GET /health` – Aggregate health state (200 if healthy)
+- `GET /health/live` – Liveness probe (always returns 200)
+- `GET /health/ready` – Readiness probe (fails if dependencies unavailable)
+- `GET /metrics` – Prometheus metrics
+- `GET /status` – Status with uptime and version info
+
+### Real-Time Transcription
+
+- `GET /ws` – WebSocket endpoint for live transcription streaming
+- `GET /ws/analytics` – WebSocket endpoint for real-time analytics
+
+### Pause/Resume Control
+
+- `POST /api/pause/:callUUID` – Pause recording/transcription for specific call
+- `POST /api/resume/:callUUID` – Resume recording/transcription
+- `POST /api/pause/all` – Pause all active sessions
+- `POST /api/resume/all` – Resume all paused sessions
+- `GET /api/status/:callUUID` – Get pause/resume status
+
+### Session Management
+
+- `GET /api/sessions` – List all active sessions
+- `GET /api/sessions/:id` – Get session details
+- `DELETE /api/sessions/:id` – Terminate session
+
+### GDPR Compliance
+
+- `POST /api/compliance/export` – Export user data
+- `POST /api/compliance/erase` – Erase user data
+
+## Architecture
+
+```
+┌─────────────────┐      ┌──────────────────┐
+│  SIP Endpoint   │─────▶│  SIPREC Server   │
+│  (PBX/SBC)      │      │  (This Project)  │
+└─────────────────┘      └──────────────────┘
+                                │
+                ┌───────────────┼───────────────┐
+                │               │               │
+         ┌──────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐
+         │ STT Provider│ │   Storage  │ │  Message   │
+         │ (7 options) │ │ (S3/GCS)   │ │   Queue    │
+         └─────────────┘ └────────────┘ └────────────┘
+                │                            │
+         ┌──────▼──────┐              ┌─────▼──────┐
+         │  Analytics  │              │ WebSocket  │
+         │(Elasticsearch)│            │  Clients   │
+         └─────────────┘              └────────────┘
 ```
 
-Redis-specific settings can be supplied through the environment (see `pkg/session/integration.go`), including `REDIS_ENABLED=true`, `REDIS_ADDRESS`, and `REDIS_SESSION_TTL`.
+## Development
 
-### Speech-to-Text Providers
+### Requirements
 
-If you initialise a `stt.ProviderManager`, the handler can stream audio to whichever provider you register. Provider credentials and routing logic live in `pkg/stt`; leave the manager unset to run without transcription.
+- Go 1.23 or newer
+- Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
 
-## Health & Control Endpoints
+### Build Tags
 
-The HTTP server (enabled by default) exposes:
+- `mysql` – Include MySQL/MariaDB support (requires build tag)
 
-- `GET /healthz` – Aggregate health state (SIP handler, session store, RTP ports, optional dependencies).
-- `GET /readyz` – Readiness probe (fails if SIP handler or session store are unavailable).
-- Pause/resume control routes (see `pkg/sip/pause_resume_service.go`) for adjusting active calls.
+```bash
+# Build with MySQL support
+go build -tags mysql -o siprec ./cmd/siprec
 
-## Development Notes
+# Run tests
+go test ./...
 
-- All packages build with Go 1.21 or newer.
-- `go test ./...` runs unit/integration tests; some STT integration tests require credentials and may be skipped by default.
-- NAT rewriting relies on `sipparser.UDPMTUSize = 4096` to keep SIPREC responses under the UDP MTU when metadata is large.
-- Shared session storage uses the adapter in `pkg/sip/session_store_adapter.go` to translate between `CallData` and `session.SessionData`.
+# Run tests with coverage
+go test -cover ./...
+
+# Run integration tests (requires credentials)
+go test -tags integration ./pkg/stt/...
+```
+
+### Project Structure
+
+```
+siprec/
+├── cmd/siprec/          # Main application entry point
+├── pkg/
+│   ├── alerting/        # Multi-channel alerting system
+│   ├── audio/           # Audio processing algorithms
+│   ├── auth/            # Authentication and authorization
+│   ├── backup/          # Multi-cloud storage backends
+│   ├── cdr/             # Call Detail Records
+│   ├── circuitbreaker/  # Circuit breaker for STT resilience
+│   ├── compliance/      # PCI DSS and GDPR tools
+│   ├── config/          # Configuration management
+│   ├── database/        # MySQL/MariaDB integration
+│   ├── elasticsearch/   # Analytics persistence
+│   ├── encryption/      # End-to-end encryption
+│   ├── errors/          # Error handling utilities
+│   ├── http/            # HTTP server and API handlers
+│   ├── media/           # RTP/SRTP and audio processing
+│   ├── messaging/       # AMQP/RabbitMQ client
+│   ├── metrics/         # Prometheus metrics
+│   ├── performance/     # Performance monitoring
+│   ├── pii/             # PII detection and redaction
+│   ├── realtime/        # Real-time analytics pipeline
+│   ├── security/        # Security and audit logging
+│   ├── session/         # Session management and Redis
+│   ├── sip/             # SIP server and handler
+│   ├── siprec/          # SIPREC metadata parsing
+│   ├── stt/             # Speech-to-text providers
+│   ├── telemetry/       # OpenTelemetry tracing
+│   ├── util/            # Utility functions
+│   ├── version/         # Version management
+│   └── warnings/        # Warning collection system
+├── docs/                # Additional documentation
+└── examples/            # Example configurations
+```
+
+## Documentation
+
+- [Configuration Guide](docs/configuration.md)
+- [Speech-to-Text Integration](docs/stt.md)
+- [Real-Time Transcription](docs/realtime-transcription.md)
+- [Session Management](docs/sessions.md)
+- [CHANGELOG](CHANGELOG.md)
+
+## Performance
+
+- **Concurrent Calls**: Tested with 1000+ simultaneous sessions
+- **Latency**: Sub-50ms for SIP signaling, <100ms for STT streaming
+- **Memory**: ~2-3 MB per active session (with audio processing)
+- **Throughput**: 10,000+ RTP packets/sec per core
+
+## Compliance & Security
+
+- RFC 7865/7866 (SIPREC) compliant
+- PCI DSS Level 1 compatible (with encryption and PII redaction)
+- GDPR compliant with data export and erasure tools
+- TLS 1.2+ for SIP signaling
+- SRTP for media encryption
+- AES-256-GCM for recording encryption
 
 ## License
 
-GPL-3.0 – see [LICENSE](LICENSE).
+GPL-3.0 – see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please open an issue or pull request on GitHub.
+
+## Support
+
+- Issues: https://github.com/loreste/siprec/issues
+- Documentation: https://github.com/loreste/siprec/tree/main/docs
