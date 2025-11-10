@@ -100,6 +100,7 @@ func TestSpeechmaticsProviderStreamToTextInline(t *testing.T) {
 		APIKey:   "token",
 		BaseURL:  server.URL,
 		Language: expectedLanguage,
+		Model:    "universal",
 	}
 
 	transcriptionSvc := NewTranscriptionService(logger)
