@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -429,22 +430,47 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			go collector.run(ctx)
 		}
 
-		mainPr, mainPw := io.Pipe()
 		recordingWriter := NewPausableWriter(baseRecordingWriter)
-		recordingReader := io.TeeReader(mainPr, recordingWriter)
-		transcriptionReader := NewPausableReader(recordingReader)
 		forwarder.recordingWriter = recordingWriter
-		forwarder.transcriptionReader = transcriptionReader
 
-		forwarder.Logger.WithField("call_uuid", callUUID).Debug("Starting transcription stream")
-		rtpSpan.AddEvent("stt.dispatch", trace.WithAttributes(attribute.String("stt.vendor", config.DefaultVendor)))
-		go sttProvider(ctx, "", transcriptionReader, callUUID)
+		var (
+			sttPipeReader *io.PipeReader
+			sttPipeWriter *io.PipeWriter
+		)
+
+		if sttProvider != nil {
+			sttPipeReader, sttPipeWriter = io.Pipe()
+			transcriptionReader := NewPausableReader(sttPipeReader)
+			forwarder.transcriptionReader = transcriptionReader
+
+			forwarder.Logger.WithField("call_uuid", callUUID).Debug("Starting transcription stream")
+			rtpSpan.AddEvent("stt.dispatch", trace.WithAttributes(attribute.String("stt.vendor", config.DefaultVendor)))
+
+			go func(reader *io.PipeReader, paused *PausableReader) {
+				if err := sttProvider(ctx, "", paused, callUUID); err != nil {
+					forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("STT provider exited early; transcription will be disabled")
+					reader.CloseWithError(err)
+					return
+				}
+				reader.Close()
+			}(sttPipeReader, transcriptionReader)
+
+			defer func() {
+				if sttPipeWriter != nil {
+					sttPipeWriter.Close()
+				}
+			}()
+		} else {
+			forwarder.transcriptionReader = nil
+		}
 
 		go MonitorRTPTimeout(forwarder, callUUID)
 		go startRTCPSender(ctx, forwarder)
 		if rtcpConn != nil {
 			go readIncomingRTCP(forwarder, rtcpConn)
 		}
+
+		sttWriter := sttPipeWriter
 
 		decodeAndProcess := func(packet []byte, arrival time.Time, remoteAddr *net.UDPAddr) {
 			if len(packet) == 0 {
@@ -558,12 +584,23 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 
 			startWrite := time.Now()
-			if _, err := mainPw.Write(processed); err != nil {
-				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write PCM audio to stream")
+			if _, err := recordingWriter.Write(processed); err != nil {
+				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write PCM audio to recording")
 				if metrics.IsMetricsEnabled() {
 					metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
 				}
 				return
+			}
+			if sttWriter != nil {
+				if _, err := sttWriter.Write(processed); err != nil {
+					if errors.Is(err, io.ErrClosedPipe) {
+						forwarder.Logger.WithField("call_uuid", callUUID).Debug("STT stream closed; skipping transcription writes")
+					} else {
+						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("Failed to stream audio samples to STT provider")
+					}
+					sttWriter.Close()
+					sttWriter = nil
+				}
 			}
 			if metrics.IsMetricsEnabled() {
 				metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
@@ -573,10 +610,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		for {
 			select {
 			case <-forwarder.StopChan:
-				mainPw.Close()
 				return
 			case <-ctx.Done():
-				mainPw.Close()
 				return
 			default:
 				buffer, returnBuffer := GetPacketBuffer(1500)
