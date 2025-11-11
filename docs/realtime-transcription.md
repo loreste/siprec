@@ -230,6 +230,29 @@ AMQP_PUBLISH_CONFIRM=true
 - `BATCH_SIZE=100+`: Maximum throughput (higher latency)
 - `BATCH_TIMEOUT`: Forces batch send even if not full (prevents stalls)
 
+### Analytics & Sentiment Fan-out
+
+The analytics dispatcher (sentiment, keywords, compliance, agent metrics) runs alongside the transcription service. To publish its output:
+
+1. **Enable persistence + WebSocket telemetry**
+   ```bash
+   ANALYTICS_ENABLED=true
+   ELASTICSEARCH_ADDRESSES=https://es.example.com:9200
+   ELASTICSEARCH_INDEX=call-analytics
+   ```
+   These flags turn on the `/ws/analytics` endpoint and write aggregated snapshots (including running sentiment trend) to Elasticsearch.
+
+2. **Publish sentiment over AMQP (optional)**
+   ```bash
+   ENABLE_REALTIME_AMQP=true
+   PUBLISH_SENTIMENT_UPDATES=true   # default true
+   ```
+
+What you receive:
+- **Real-time sentiment** with polarity, magnitude, confidence, and emotion/subjectivity hints that account for lexicon hits, intensifiers, punctuation, and negations.
+- **Per-speaker tracking** so caller vs. callee sentiment stays separate (sliding 5-message context window).
+- **Delivery fan-out** to WebSocket (`/ws/analytics`), AMQP realtime publishers, and Elasticsearch (`call-analytics` index by default) without additional code.
+
 ### Connection Pool Settings
 
 For high-volume deployments:
