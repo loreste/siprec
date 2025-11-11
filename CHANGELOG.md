@@ -4,6 +4,9 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ## [Unreleased]
 
+### Documentation
+- **Recording Format Reference**: README now explains how SIPREC preserves multi-channel WAV layouts from the SDP offer and how to keep both legs in a single stereo file.
+
 ### Fixed
 - **Recording Reliability**: Audio capture is now decoupled from the STT pipeline. Transcription crashes or disabled providers no longer produce zero-byte recordings or keep analytics publishers running past BYE. The server logs when an STT stream shuts down and completes recording/cleanup normally.
 
