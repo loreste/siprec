@@ -181,6 +181,28 @@ The server is configured via environment variables. See `.env.example` for a com
 | `ELASTICSEARCH_ADDRESSES` | Elasticsearch endpoints | - |
 | `ELASTICSEARCH_INDEX` | Index for analytics | `siprec-analytics` |
 
+#### Enabling Sentiment & Analytics
+
+1. Turn on the dispatcher and persistence layer:
+   ```bash
+   export ANALYTICS_ENABLED=true
+   export ELASTICSEARCH_ADDRESSES=https://es.example.com:9200
+   export ELASTICSEARCH_INDEX=call-analytics
+   ```
+   Supplying credentials/timeouts via the matching environment variables allows the server to persist every analytics snapshot (sentiment trend, compliance flags, agent metrics) to Elasticsearch.
+2. Enable realtime fan-out if you need live dashboards or queue-based consumers:
+   ```bash
+   export ENABLE_REALTIME_AMQP=true
+   export PUBLISH_SENTIMENT_UPDATES=true   # already true by default
+   export PUBLISH_KEYWORD_DETECTIONS=true  # default true
+   ```
+3. (Optional) Expose `/ws/analytics` by keeping `ANALYTICS_ENABLED=true`; the HTTP server automatically provisions the WebSocket endpoint alongside the dispatcher.
+
+Once enabled, each transcription chunk carries a sentiment payload computed by the built-in analyzer (lexicon + context window + punctuation/intensifier heuristics, with negation handling). The analytics pipeline tracks per-speaker polarity, emits emotion/subjectivity hints, and publishes confidence scores in three places simultaneously:
+- `ws://<host>/ws/analytics` WebSocket stream
+- AMQP realtime exchange/queue when `ENABLE_REALTIME_AMQP=true`
+- Elasticsearch documents in the configured index for historical reporting
+
 ## HTTP API Endpoints
 
 ### Health & Metrics
@@ -317,6 +339,7 @@ siprec/
 - [Configuration Guide](docs/configuration.md)
 - [Speech-to-Text Integration](docs/stt.md)
 - [Real-Time Transcription](docs/realtime-transcription.md)
+- [API Reference](docs/api.md)
 - [Session Management](docs/sessions.md)
 - [End-to-End Feature Guide](docs/end-to-end.md)
 - [Whisper Setup Guide](docs/whisper-setup.md)
