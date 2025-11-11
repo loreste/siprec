@@ -201,6 +201,12 @@ The server is configured via environment variables. See `.env.example` for a com
 - Recording to disk is fully independent from the STT pipeline. If a provider crashes or is misconfigured, the server logs `STT provider exited early; transcription will be disabled`, keeps writing audio to the `.wav/.siprec` file, and tears down analytics as soon as the BYE is processed.
 - After a provider failure, no further transcription events are published for that call (analytics snapshot and call cleanup still complete), so dashboards will show a recording with missing transcripts instead of an empty file.
 
+#### Recording Format
+
+- Every SIPREC stream is persisted as `<Call-ID>_<stream-label>.wav`, so multi-stream calls produce one file per stream (e.g., `B2B.123_leg0.wav` for the caller and `B2B.123_leg1.wav` for the callee).
+- When your SBC or PBX mixes both legs into a single multi-channel RTP stream (e.g., `rtpmap:96 opus/48000/2`), the recorder preserves that layout: channel 0 stays the caller, channel 1 stays the callee, and you get a single stereo WAV with intact separation.
+- No extra flags are required—channel counts are learned from the SDP offer—just ensure the upstream recorder advertises the desired `/2` channel count so the SIPREC server keeps both legs in one file.
+
 ### Pause/Resume Control
 
 - `POST /api/pause/:callUUID` – Pause recording/transcription for specific call
