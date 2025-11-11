@@ -2024,6 +2024,15 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	callState.LastActivity = time.Now()
 	s.callMutex.Unlock()
 
+	// Respond immediately before running cleanup to avoid retransmitted BYEs
+	s.sendResponse(message, 200, "OK", nil, nil)
+	if callState.TraceScope != nil {
+		callState.TraceScope.Span().AddEvent("siprec.bye.acknowledged", trace.WithAttributes(
+			attribute.Int("sip.cseq", seq),
+		))
+	}
+	logger.Info("Successfully responded to BYE request")
+
 	// Clean up call state and recording session if exists
 	if callState != nil {
 		if callState.RecordingSession != nil {
@@ -2063,14 +2072,6 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 			"call_state_present": callState != nil,
 		},
 	})
-
-	s.sendResponse(message, 200, "OK", nil, nil)
-	if callState.TraceScope != nil {
-		callState.TraceScope.Span().AddEvent("siprec.bye.acknowledged", trace.WithAttributes(
-			attribute.Int("sip.cseq", seq),
-		))
-	}
-	logger.Info("Successfully responded to BYE request")
 }
 
 // handleCancelMessage handles CANCEL requests

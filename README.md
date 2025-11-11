@@ -196,6 +196,11 @@ The server is configured via environment variables. See `.env.example` for a com
 - `GET /ws` – WebSocket endpoint for live transcription streaming
 - `GET /ws/analytics` – WebSocket endpoint for real-time analytics
 
+#### Failure Handling
+
+- Recording to disk is fully independent from the STT pipeline. If a provider crashes or is misconfigured, the server logs `STT provider exited early; transcription will be disabled`, keeps writing audio to the `.wav/.siprec` file, and tears down analytics as soon as the BYE is processed.
+- After a provider failure, no further transcription events are published for that call (analytics snapshot and call cleanup still complete), so dashboards will show a recording with missing transcripts instead of an empty file.
+
 ### Pause/Resume Control
 
 - `POST /api/pause/:callUUID` – Pause recording/transcription for specific call

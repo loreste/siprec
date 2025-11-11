@@ -2,6 +2,11 @@
 
 All notable changes to the SIPREC server project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Recording Reliability**: Audio capture is now decoupled from the STT pipeline. Transcription crashes or disabled providers no longer produce zero-byte recordings or keep analytics publishers running past BYE. The server logs when an STT stream shuts down and completes recording/cleanup normally.
+
 ## [0.0.34] - 2025-11-09
 
 ### Added
