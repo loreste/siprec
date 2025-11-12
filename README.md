@@ -228,6 +228,7 @@ Once enabled, each transcription chunk carries a sentiment payload computed by t
 - Every SIPREC stream is persisted as `<Call-ID>_<stream-label>.wav`, so multi-stream calls produce one file per stream (e.g., `B2B.123_leg0.wav` for the caller and `B2B.123_leg1.wav` for the callee).
 - When your SBC or PBX mixes both legs into a single multi-channel RTP stream (e.g., `rtpmap:96 opus/48000/2`), the recorder preserves that layout: channel 0 stays the caller, channel 1 stays the callee, and you get a single stereo WAV with intact separation.
 - No extra flags are required—channel counts are learned from the SDP offer—just ensure the upstream recorder advertises the desired `/2` channel count so the SIPREC server keeps both legs in one file.
+- If the SRC sends **separate** audio streams (most SIPREC implementations), enable `RECORDING_COMBINE_LEGS=true` (default) to automatically merge all legs into `<Call-ID>.wav` with each leg occupying its own channel. Individual leg files remain on disk for debugging.
 
 ### Pause/Resume Control
 
@@ -294,6 +295,9 @@ go test -cover ./...
 
 # Run integration tests (requires credentials)
 go test -tags integration ./pkg/stt/...
+
+# Validate SIPREC leg merging pipeline
+go test ./pkg/sip -run TestCombineRecordingLegs
 ```
 
 ### Project Structure

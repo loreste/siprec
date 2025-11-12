@@ -153,6 +153,9 @@ type RecordingConfig struct {
 
 	// Storage configuration for recordings
 	Storage RecordingStorageConfig `json:"storage"`
+
+	// CombineLegs determines whether multi-stream SIPREC legs are merged into a single file
+	CombineLegs bool `json:"combine_legs" env:"RECORDING_COMBINE_LEGS" default:"true"`
 }
 
 // RecordingStorageConfig defines remote storage options for recordings
@@ -1329,6 +1332,9 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 			"azure":      config.Storage.Azure.Enabled,
 		}).Info("Recording storage enabled")
 	}
+
+	// Whether to merge SIPREC legs into a single WAV
+	config.CombineLegs = getEnvBool("RECORDING_COMBINE_LEGS", true)
 
 	return nil
 }

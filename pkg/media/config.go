@@ -15,9 +15,10 @@ type Config struct {
 	RequireSRTP bool
 
 	// Recording configuration
-	RecordingDir     string
-	RecordingStorage RecordingStorage
+	RecordingDir      string
+	RecordingStorage  RecordingStorage
 	EncryptedRecorder *audio.EncryptedRecordingManager
+	CombineLegs       bool
 
 	// NAT configuration
 	BehindNAT  bool
