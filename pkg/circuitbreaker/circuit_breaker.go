@@ -32,49 +32,49 @@ func (s State) String() string {
 
 // CircuitBreaker implements the circuit breaker pattern
 type CircuitBreaker struct {
-	name           string
-	logger         *logrus.Entry
-	config         *Config
-	state          State
-	failures       int64
-	lastFailTime   time.Time
+	name            string
+	logger          *logrus.Entry
+	config          *Config
+	state           State
+	failures        int64
+	lastFailTime    time.Time
 	lastSuccessTime time.Time
-	nextAttempt    time.Time
-	mutex          sync.RWMutex
-	
+	nextAttempt     time.Time
+	mutex           sync.RWMutex
+
 	// Statistics
-	stats          *Statistics
-	
+	stats *Statistics
+
 	// Callbacks
-	onStateChange  func(name string, from State, to State)
+	onStateChange func(name string, from State, to State)
 }
 
 // Config holds circuit breaker configuration
 type Config struct {
 	// Failure threshold before opening circuit
 	FailureThreshold int64 `json:"failure_threshold" default:"5"`
-	
+
 	// Success threshold for closing circuit from half-open
 	SuccessThreshold int64 `json:"success_threshold" default:"2"`
-	
+
 	// Timeout before attempting to close circuit
 	Timeout time.Duration `json:"timeout" default:"60s"`
-	
+
 	// Maximum timeout (for exponential backoff)
 	MaxTimeout time.Duration `json:"max_timeout" default:"300s"`
-	
+
 	// Request timeout for operations
 	RequestTimeout time.Duration `json:"request_timeout" default:"30s"`
-	
+
 	// Whether to use exponential backoff
 	ExponentialBackoff bool `json:"exponential_backoff" default:"true"`
-	
+
 	// Failure rate threshold (0.0-1.0)
 	FailureRateThreshold float64 `json:"failure_rate_threshold" default:"0.5"`
-	
+
 	// Minimum number of requests before evaluating failure rate
 	MinRequestThreshold int64 `json:"min_request_threshold" default:"10"`
-	
+
 	// Time window for failure rate calculation
 	TimeWindow time.Duration `json:"time_window" default:"60s"`
 }
@@ -96,20 +96,20 @@ func DefaultConfig() *Config {
 
 // Statistics tracks circuit breaker performance
 type Statistics struct {
-	mutex             sync.RWMutex
-	TotalRequests     int64     `json:"total_requests"`
-	SuccessfulRequests int64    `json:"successful_requests"`
-	FailedRequests    int64     `json:"failed_requests"`
-	RejectedRequests  int64     `json:"rejected_requests"`
-	ConsecutiveFailures int64   `json:"consecutive_failures"`
-	ConsecutiveSuccesses int64  `json:"consecutive_successes"`
-	LastFailureTime   time.Time `json:"last_failure_time"`
-	LastSuccessTime   time.Time `json:"last_success_time"`
-	StateTransitions  int64     `json:"state_transitions"`
-	
+	mutex                sync.RWMutex
+	TotalRequests        int64     `json:"total_requests"`
+	SuccessfulRequests   int64     `json:"successful_requests"`
+	FailedRequests       int64     `json:"failed_requests"`
+	RejectedRequests     int64     `json:"rejected_requests"`
+	ConsecutiveFailures  int64     `json:"consecutive_failures"`
+	ConsecutiveSuccesses int64     `json:"consecutive_successes"`
+	LastFailureTime      time.Time `json:"last_failure_time"`
+	LastSuccessTime      time.Time `json:"last_success_time"`
+	StateTransitions     int64     `json:"state_transitions"`
+
 	// Time-windowed statistics
-	WindowRequests    []RequestRecord `json:"-"`
-	WindowStart       time.Time       `json:"window_start"`
+	WindowRequests []RequestRecord `json:"-"`
+	WindowStart    time.Time       `json:"window_start"`
 }
 
 // RequestRecord represents a request within the time window
@@ -123,13 +123,13 @@ func NewCircuitBreaker(name string, config *Config, logger *logrus.Logger) *Circ
 	if config == nil {
 		config = DefaultConfig()
 	}
-	
+
 	return &CircuitBreaker{
 		name:   name,
 		logger: logger.WithField("circuit_breaker", name),
 		config: config,
 		state:  StateClosed,
-		stats:  &Statistics{
+		stats: &Statistics{
 			WindowStart: time.Now(),
 		},
 	}
@@ -142,23 +142,23 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(ctx context.Conte
 		cb.recordRejection()
 		return NewCircuitBreakerOpenError(cb.name, cb.state)
 	}
-	
+
 	// Create timeout context if not already set
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cb.config.RequestTimeout)
 		defer cancel()
 	}
-	
+
 	// Execute the function
 	err := fn(ctx)
-	
+
 	// Record the result
 	if err != nil {
 		cb.recordFailure(err)
 		return err
 	}
-	
+
 	cb.recordSuccess()
 	return nil
 }
@@ -180,23 +180,23 @@ func (cb *CircuitBreaker) ExecuteWithFallback(ctx context.Context, fn func(ctx c
 func (cb *CircuitBreaker) allowRequest() bool {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
-	
+
 	now := time.Now()
-	
+
 	switch cb.state {
 	case StateClosed:
 		return true
-		
+
 	case StateOpen:
 		if now.After(cb.nextAttempt) {
 			cb.setState(StateHalfOpen)
 			return true
 		}
 		return false
-		
+
 	case StateHalfOpen:
 		return true
-		
+
 	default:
 		return false
 	}
@@ -206,10 +206,10 @@ func (cb *CircuitBreaker) allowRequest() bool {
 func (cb *CircuitBreaker) recordSuccess() {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
-	
+
 	cb.failures = 0
 	cb.lastSuccessTime = time.Now()
-	
+
 	cb.stats.mutex.Lock()
 	cb.stats.TotalRequests++
 	cb.stats.SuccessfulRequests++
@@ -218,7 +218,7 @@ func (cb *CircuitBreaker) recordSuccess() {
 	cb.stats.LastSuccessTime = cb.lastSuccessTime
 	cb.addWindowRecord(cb.lastSuccessTime, true)
 	cb.stats.mutex.Unlock()
-	
+
 	if cb.state == StateHalfOpen {
 		if cb.stats.ConsecutiveSuccesses >= cb.config.SuccessThreshold {
 			cb.setState(StateClosed)
@@ -230,10 +230,10 @@ func (cb *CircuitBreaker) recordSuccess() {
 func (cb *CircuitBreaker) recordFailure(err error) {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
-	
+
 	cb.failures++
 	cb.lastFailTime = time.Now()
-	
+
 	cb.stats.mutex.Lock()
 	cb.stats.TotalRequests++
 	cb.stats.FailedRequests++
@@ -242,11 +242,11 @@ func (cb *CircuitBreaker) recordFailure(err error) {
 	cb.stats.LastFailureTime = cb.lastFailTime
 	cb.addWindowRecord(cb.lastFailTime, false)
 	cb.stats.mutex.Unlock()
-	
+
 	if cb.shouldTrip() {
 		cb.setState(StateOpen)
 	}
-	
+
 	cb.logger.WithError(err).WithFields(logrus.Fields{
 		"failures": cb.failures,
 		"state":    cb.state.String(),
@@ -257,7 +257,7 @@ func (cb *CircuitBreaker) recordFailure(err error) {
 func (cb *CircuitBreaker) recordRejection() {
 	cb.stats.mutex.Lock()
 	defer cb.stats.mutex.Unlock()
-	
+
 	cb.stats.RejectedRequests++
 }
 
@@ -267,7 +267,7 @@ func (cb *CircuitBreaker) shouldTrip() bool {
 	if cb.failures >= cb.config.FailureThreshold {
 		return true
 	}
-	
+
 	// Check failure rate threshold
 	if cb.stats.TotalRequests >= cb.config.MinRequestThreshold {
 		failureRate := cb.getFailureRate()
@@ -275,7 +275,7 @@ func (cb *CircuitBreaker) shouldTrip() bool {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -283,9 +283,9 @@ func (cb *CircuitBreaker) shouldTrip() bool {
 func (cb *CircuitBreaker) getFailureRate() float64 {
 	now := time.Now()
 	windowStart := now.Add(-cb.config.TimeWindow)
-	
+
 	var totalRequests, failedRequests int64
-	
+
 	for _, record := range cb.stats.WindowRequests {
 		if record.Timestamp.After(windowStart) {
 			totalRequests++
@@ -294,11 +294,11 @@ func (cb *CircuitBreaker) getFailureRate() float64 {
 			}
 		}
 	}
-	
+
 	if totalRequests == 0 {
 		return 0.0
 	}
-	
+
 	return float64(failedRequests) / float64(totalRequests)
 }
 
@@ -308,19 +308,19 @@ func (cb *CircuitBreaker) addWindowRecord(timestamp time.Time, success bool) {
 		Timestamp: timestamp,
 		Success:   success,
 	}
-	
+
 	cb.stats.WindowRequests = append(cb.stats.WindowRequests, record)
-	
+
 	// Clean old records outside the time window
 	windowStart := timestamp.Add(-cb.config.TimeWindow)
 	validRecords := make([]RequestRecord, 0, len(cb.stats.WindowRequests))
-	
+
 	for _, r := range cb.stats.WindowRequests {
 		if r.Timestamp.After(windowStart) {
 			validRecords = append(validRecords, r)
 		}
 	}
-	
+
 	cb.stats.WindowRequests = validRecords
 }
 
@@ -329,12 +329,12 @@ func (cb *CircuitBreaker) setState(newState State) {
 	if cb.state == newState {
 		return
 	}
-	
+
 	oldState := cb.state
 	cb.state = newState
-	
+
 	now := time.Now()
-	
+
 	switch newState {
 	case StateOpen:
 		timeout := cb.config.Timeout
@@ -347,28 +347,28 @@ func (cb *CircuitBreaker) setState(newState State) {
 			}
 		}
 		cb.nextAttempt = now.Add(timeout)
-		
+
 	case StateClosed:
 		cb.failures = 0
 		cb.nextAttempt = time.Time{}
-		
+
 	case StateHalfOpen:
 		// Reset success counter for half-open state
 		cb.stats.mutex.Lock()
 		cb.stats.ConsecutiveSuccesses = 0
 		cb.stats.mutex.Unlock()
 	}
-	
+
 	cb.stats.mutex.Lock()
 	cb.stats.StateTransitions++
 	cb.stats.mutex.Unlock()
-	
+
 	cb.logger.WithFields(logrus.Fields{
 		"from_state": oldState.String(),
 		"to_state":   newState.String(),
 		"failures":   cb.failures,
 	}).Info("Circuit breaker state changed")
-	
+
 	// Call state change callback if set
 	if cb.onStateChange != nil {
 		go cb.onStateChange(cb.name, oldState, newState)
@@ -386,14 +386,22 @@ func (cb *CircuitBreaker) GetState() State {
 func (cb *CircuitBreaker) GetStatistics() *Statistics {
 	cb.stats.mutex.RLock()
 	defer cb.stats.mutex.RUnlock()
-	
-	// Create a copy to avoid race conditions
-	statsCopy := *cb.stats
-	
-	// Copy the window records slice
-	statsCopy.WindowRequests = make([]RequestRecord, len(cb.stats.WindowRequests))
-	copy(statsCopy.WindowRequests, cb.stats.WindowRequests)
-	
+
+	statsCopy := Statistics{}
+	statsCopy.TotalRequests = cb.stats.TotalRequests
+	statsCopy.SuccessfulRequests = cb.stats.SuccessfulRequests
+	statsCopy.FailedRequests = cb.stats.FailedRequests
+	statsCopy.RejectedRequests = cb.stats.RejectedRequests
+	statsCopy.ConsecutiveFailures = cb.stats.ConsecutiveFailures
+	statsCopy.ConsecutiveSuccesses = cb.stats.ConsecutiveSuccesses
+	statsCopy.LastFailureTime = cb.stats.LastFailureTime
+	statsCopy.LastSuccessTime = cb.stats.LastSuccessTime
+	statsCopy.StateTransitions = cb.stats.StateTransitions
+	statsCopy.WindowStart = cb.stats.WindowStart
+	if len(cb.stats.WindowRequests) > 0 {
+		statsCopy.WindowRequests = make([]RequestRecord, len(cb.stats.WindowRequests))
+		copy(statsCopy.WindowRequests, cb.stats.WindowRequests)
+	}
 	return &statsCopy
 }
 
@@ -401,13 +409,13 @@ func (cb *CircuitBreaker) GetStatistics() *Statistics {
 func (cb *CircuitBreaker) Reset() {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
-	
+
 	cb.setState(StateClosed)
 	cb.failures = 0
 	cb.lastFailTime = time.Time{}
 	cb.lastSuccessTime = time.Time{}
 	cb.nextAttempt = time.Time{}
-	
+
 	cb.stats.mutex.Lock()
 	cb.stats.TotalRequests = 0
 	cb.stats.SuccessfulRequests = 0
@@ -420,7 +428,7 @@ func (cb *CircuitBreaker) Reset() {
 	cb.stats.WindowRequests = nil
 	cb.stats.WindowStart = time.Now()
 	cb.stats.mutex.Unlock()
-	
+
 	cb.logger.Info("Circuit breaker reset")
 }
 
