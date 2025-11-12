@@ -66,7 +66,6 @@ type AMQPMetrics struct {
 	PublishedMessages int64
 	FailedPublishes   int64
 	ReconnectAttempts int64
-	mutex             sync.RWMutex
 }
 
 // NewAMQPPool creates a new AMQP connection pool
@@ -549,9 +548,6 @@ func (p *AMQPPool) reconnectConnection(oldConn *PooledConnection) {
 
 // GetMetrics returns current pool metrics
 func (p *AMQPPool) GetMetrics() AMQPMetrics {
-	p.metrics.mutex.RLock()
-	defer p.metrics.mutex.RUnlock()
-
 	return AMQPMetrics{
 		TotalConnections:  atomic.LoadInt64(&p.metrics.TotalConnections),
 		ActiveConnections: atomic.LoadInt64(&p.metrics.ActiveConnections),
