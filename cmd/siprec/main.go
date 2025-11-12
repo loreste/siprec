@@ -901,6 +901,7 @@ func initialize() error {
 		RequireSRTP:      appConfig.Network.RequireSRTP,
 		RecordingDir:     appConfig.Recording.Directory,
 		RecordingStorage: recordingStorage,
+		CombineLegs:      appConfig.Recording.CombineLegs,
 		BehindNAT:        appConfig.Network.BehindNAT,
 		InternalIP:       appConfig.Network.InternalIP,
 		ExternalIP:       appConfig.Network.ExternalIP,

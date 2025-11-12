@@ -77,7 +77,7 @@ The server automatically registers `/metrics` only if `HTTP.EnableMetrics=true`.
       "state": "connected",
       "created_at": "2025-11-11T12:10:04.493Z",
       "participants": ["sip:agent@pbx", "sip:customer@example.com"],
-      "recording_path": "/var/lib/siprec/B2B.160_leg0.wav",
+      "recording_path": "/var/lib/siprec/B2B1601762863004937031301.wav",
       "analytics": {
         "sentiment": "neutral",
         "mos": 4.2
@@ -86,6 +86,8 @@ The server automatically registers `/metrics` only if `HTTP.EnableMetrics=true`.
   ]
 }
 ```
+
+With `RECORDING_COMBINE_LEGS=true` (default) the `recording_path` points to the merged multi-channel WAV while the per-leg files remain available alongside it.
 
 ---
 
@@ -255,4 +257,3 @@ Refer to [docs/realtime-transcription.md](realtime-transcription.md) for connect
 ## Versioning & Compatibility
 
 All endpoints listed here are part of the 0.0.34 release. Backward-incompatible changes will be announced in the `CHANGELOG` and versioned via semantic versioning. For automation, inspect the `Server` header (`siprec/<version>`) or call `GET /status`.
-
