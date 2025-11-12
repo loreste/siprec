@@ -3,11 +3,14 @@ package sip
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"siprec-server/pkg/media"
+	"siprec-server/pkg/security"
 	"siprec-server/pkg/siprec"
 )
 
@@ -103,6 +107,137 @@ func TestHandleSubscribeRegistersCallback(t *testing.T) {
 		require.Equal(t, "metadata.accepted", event.Event)
 	case <-ctx.Done():
 		t.Fatal("expected notification delivery via registered callback")
+	}
+}
+
+func writeTempWAV(t *testing.T, path string, samples []int16) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create wav: %v", err)
+	}
+	defer f.Close()
+
+	writer, err := media.NewWAVWriter(f, 8000, 1)
+	if err != nil {
+		t.Fatalf("wav writer: %v", err)
+	}
+
+	buf := make([]byte, len(samples)*2)
+	for i, s := range samples {
+		binary.LittleEndian.PutUint16(buf[i*2:], uint16(s))
+	}
+
+	if _, err := writer.Write(buf); err != nil {
+		t.Fatalf("write samples: %v", err)
+	}
+	if err := writer.Finalize(); err != nil {
+		t.Fatalf("finalize wav: %v", err)
+	}
+}
+
+func TestCombineRecordingLegsCreatesMergedWav(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	dir := t.TempDir()
+	leg0 := filepath.Join(dir, "leg0.wav")
+	leg1 := filepath.Join(dir, "leg1.wav")
+	writeTempWAV(t, leg0, []int16{100, 200})
+	writeTempWAV(t, leg1, []int16{1000})
+
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{
+			MediaConfig: &media.Config{
+				RecordingDir: dir,
+				CombineLegs:  true,
+			},
+		},
+	}
+	server := NewCustomSIPServer(logger, handler)
+
+	callState := &CallState{
+		RecordingSession: &siprec.RecordingSession{
+			ExtendedMetadata: make(map[string]string),
+		},
+	}
+	callID := "B2B.160.1111.2222"
+	server.combineRecordingLegs(callID, callState, []string{leg0, leg1})
+
+	expectedName := security.SanitizeCallUUID(callID)
+	expectedPath := filepath.Join(dir, fmt.Sprintf("%s.wav", expectedName))
+
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Fatalf("combined wav not created: %v", err)
+	}
+
+	reader, err := media.NewWAVReader(expectedPath)
+	if err != nil {
+		t.Fatalf("open combined: %v", err)
+	}
+	defer reader.Close()
+
+	if reader.Channels != 2 {
+		t.Fatalf("expected 2 channels, got %d", reader.Channels)
+	}
+
+	samples, err := reader.ReadSamples(10)
+	if err != nil && err != io.EOF {
+		t.Fatalf("read samples: %v", err)
+	}
+	expectedSamples := []int16{
+		100, 1000,
+		200, 0,
+	}
+	if len(samples) != len(expectedSamples) {
+		t.Fatalf("unexpected sample count %d", len(samples))
+	}
+	for i := range samples {
+		if samples[i] != expectedSamples[i] {
+			t.Fatalf("sample[%d]=%d expected %d", i, samples[i], expectedSamples[i])
+		}
+	}
+
+	pathMeta := callState.RecordingSession.ExtendedMetadata["combined_recording_path"]
+	if pathMeta != expectedPath {
+		t.Fatalf("metadata path mismatch: %s vs %s", pathMeta, expectedPath)
+	}
+}
+
+func TestCombineRecordingLegsRespectsDisableFlag(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	dir := t.TempDir()
+	leg0 := filepath.Join(dir, "leg0.wav")
+	leg1 := filepath.Join(dir, "leg1.wav")
+	writeTempWAV(t, leg0, []int16{10})
+	writeTempWAV(t, leg1, []int16{20})
+
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{
+			MediaConfig: &media.Config{
+				RecordingDir: dir,
+				CombineLegs:  false,
+			},
+		},
+	}
+	server := NewCustomSIPServer(logger, handler)
+	session := &siprec.RecordingSession{ExtendedMetadata: map[string]string{}}
+	callState := &CallState{RecordingSession: session}
+
+	callID := "B2B.160.3333.4444"
+	server.combineRecordingLegs(callID, callState, []string{leg0, leg1})
+
+	expectedName := security.SanitizeCallUUID(callID)
+	expectedPath := filepath.Join(dir, fmt.Sprintf("%s.wav", expectedName))
+	if _, err := os.Stat(expectedPath); err == nil {
+		t.Fatalf("combined file should not exist when disabled")
+	}
+	if _, ok := session.ExtendedMetadata["combined_recording_path"]; ok {
+		t.Fatalf("metadata should not contain combined path when disabled")
 	}
 }
 

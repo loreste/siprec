@@ -11,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -2361,6 +2362,7 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		callState.RecordingSession.ExtendedMetadata["termination_reason"] = reason
 	}
 
+	recordingPaths := make([]string, 0, len(callState.RTPForwarders))
 	if len(callState.RTPForwarders) > 0 {
 		for _, forwarder := range callState.RTPForwarders {
 			if forwarder == nil {
@@ -2368,11 +2370,17 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 			}
 			forwarder.Stop()
 			forwarder.Cleanup()
+			if forwarder.RecordingPath != "" {
+				recordingPaths = append(recordingPaths, forwarder.RecordingPath)
+			}
 		}
 		callState.RTPForwarders = nil
 	} else if callState.RTPForwarder != nil {
 		callState.RTPForwarder.Stop()
 		callState.RTPForwarder.Cleanup()
+		if callState.RTPForwarder.RecordingPath != "" {
+			recordingPaths = append(recordingPaths, callState.RTPForwarder.RecordingPath)
+		}
 	}
 
 	callState.RTPForwarder = nil
@@ -2380,6 +2388,8 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	callState.StreamForwarders = nil
 
 	callState.PendingAckCSeq = 0
+
+	s.combineRecordingLegs(callID, callState, recordingPaths)
 
 	// Release allocated port pairs
 	pm := media.GetPortManager()
@@ -2442,6 +2452,51 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 			"termination_reason": reason,
 		})
 	}
+}
+
+func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallState, recordingPaths []string) {
+	if len(recordingPaths) < 2 {
+		return
+	}
+	if s.handler == nil || s.handler.Config == nil || s.handler.Config.MediaConfig == nil {
+		return
+	}
+	mediaCfg := s.handler.Config.MediaConfig
+	if !mediaCfg.CombineLegs {
+		return
+	}
+
+	outputDir := ""
+	if mediaCfg.RecordingDir != "" {
+		outputDir = mediaCfg.RecordingDir
+	}
+	if outputDir == "" {
+		outputDir = filepath.Dir(recordingPaths[0])
+	}
+
+	baseName := security.SanitizeCallUUID(callID)
+	if baseName == "" {
+		baseName = fmt.Sprintf("call-%d", time.Now().Unix())
+	}
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s.wav", baseName))
+
+	if err := media.CombineWAVRecordings(outputPath, recordingPaths); err != nil {
+		s.logger.WithError(err).WithField("call_id", callID).Warn("Failed to combine SIPREC legs into single recording")
+		return
+	}
+
+	if callState != nil && callState.RecordingSession != nil {
+		if callState.RecordingSession.ExtendedMetadata == nil {
+			callState.RecordingSession.ExtendedMetadata = make(map[string]string)
+		}
+		callState.RecordingSession.ExtendedMetadata["combined_recording_path"] = outputPath
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"call_id": callID,
+		"path":    outputPath,
+		"legs":    len(recordingPaths),
+	}).Info("Combined SIPREC legs into single recording")
 }
 
 func (s *CustomSIPServer) notifyMetadataEvent(ctx context.Context, session *siprec.RecordingSession, callID, event string, extra map[string]interface{}) {
