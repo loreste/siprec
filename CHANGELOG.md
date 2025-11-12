@@ -6,6 +6,10 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ### Documentation
 - **Recording Format Reference**: README now explains how SIPREC preserves multi-channel WAV layouts from the SDP offer and how to keep both legs in a single stereo file.
+- **Configuration Guide**: Added `RECORDING_COMBINE_LEGS` so operators can explicitly control whether the SRC legs are merged into a single multi-channel WAV.
+
+### Added
+- **Leg-Merge Regression Tests**: `pkg/sip/custom_server_test.go` now exercises the WAV combiner to ensure multi-leg SIPREC recordings produce the expected multi-channel output and metadata path.
 
 ### Fixed
 - **Recording Reliability**: Audio capture is now decoupled from the STT pipeline. Transcription crashes or disabled providers no longer produce zero-byte recordings or keep analytics publishers running past BYE. The server logs when an STT stream shuts down and completes recording/cleanup normally.

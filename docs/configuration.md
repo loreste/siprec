@@ -19,6 +19,7 @@ All settings are provided through environment variables. The core service only r
 | --- | --- | --- |
 | `RECORDING_DIR` | Folder for recorded media | `./recordings` |
 | `RECORDING_MAX_DURATION` | Max duration per call | `4h` |
+| `RECORDING_COMBINE_LEGS` | Merge SIPREC legs into one multi-channel WAV | `true` |
 
 ## Session Persistence
 

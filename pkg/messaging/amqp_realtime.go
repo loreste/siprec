@@ -505,8 +505,20 @@ func (p *AMQPRealtimePublisher) GetStats() *AMQPPublisherStats {
 	p.stats.mutex.RLock()
 	defer p.stats.mutex.RUnlock()
 
-	statsCopy := *p.stats
-	return &statsCopy
+	statsCopy := &AMQPPublisherStats{
+		TotalMessages:     p.stats.TotalMessages,
+		PublishedMessages: p.stats.PublishedMessages,
+		FailedMessages:    p.stats.FailedMessages,
+		QueuedMessages:    p.stats.QueuedMessages,
+		DroppedMessages:   p.stats.DroppedMessages,
+		BatchesSent:       p.stats.BatchesSent,
+		RetryAttempts:     p.stats.RetryAttempts,
+		AverageLatency:    p.stats.AverageLatency,
+		LastPublishTime:   p.stats.LastPublishTime,
+		LastError:         p.stats.LastError,
+		LastReset:         p.stats.LastReset,
+	}
+	return statsCopy
 }
 
 // IsStarted returns whether the publisher is started

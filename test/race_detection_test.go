@@ -64,11 +64,12 @@ func TestCallDataRaceConditions(t *testing.T) {
 				for j := 0; j < 50; j++ {
 					// Update
 					callData.UpdateActivity()
-					
+
 					// Copy
 					copy := callData.SafeCopy()
-					require.NotNil(t, copy.LastActivity)
-					
+					require.NotNil(t, copy)
+					require.False(t, copy.LastActivity.IsZero())
+
 					// Small delay
 					time.Sleep(time.Microsecond)
 				}
@@ -83,7 +84,7 @@ func TestCallDataRaceConditions(t *testing.T) {
 func TestShardedMapRaceConditions(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.WarnLevel)
-	
+
 	shardedMap := sip.NewShardedMap(32)
 
 	var wg sync.WaitGroup
@@ -95,22 +96,22 @@ func TestShardedMapRaceConditions(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			
+
 			for j := 0; j < numOperations; j++ {
 				key := "key" + string(rune((id*numOperations+j)%256))
-				
+
 				// Store
 				shardedMap.Store(key, &sip.CallData{
 					LastActivity:  time.Now(),
 					RemoteAddress: "192.168.1.100:5060",
 				})
-				
+
 				// Load
 				if val, ok := shardedMap.Load(key); ok {
 					callData := val.(*sip.CallData)
 					callData.UpdateActivity()
 				}
-				
+
 				// Delete (50% chance)
 				if j%2 == 0 {
 					shardedMap.Delete(key)
@@ -124,7 +125,7 @@ func TestShardedMapRaceConditions(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			
+
 			for j := 0; j < 10; j++ {
 				count := 0
 				shardedMap.Range(func(key, value interface{}) bool {
@@ -133,7 +134,7 @@ func TestShardedMapRaceConditions(t *testing.T) {
 					time.Sleep(time.Microsecond)
 					return true
 				})
-				
+
 				// Add some delay between ranges
 				time.Sleep(time.Millisecond)
 			}
@@ -155,16 +156,16 @@ func TestMemorySessionStoreRaceConditions(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			
+
 			for j := 0; j < numSessions; j++ {
 				key := "session" + string(rune((id*numSessions+j)%256))
-				
+
 				// Create call data that will be modified concurrently
 				callData := &sip.CallData{
 					LastActivity:  time.Now(),
 					RemoteAddress: "192.168.1.100:5060",
 				}
-				
+
 				// Save (with potential concurrent modifications)
 				go func() {
 					for k := 0; k < 10; k++ {
@@ -172,17 +173,17 @@ func TestMemorySessionStoreRaceConditions(t *testing.T) {
 						time.Sleep(time.Microsecond)
 					}
 				}()
-				
+
 				err := store.Save(key, callData)
 				require.NoError(t, err)
-				
+
 				// Load
 				loaded, err := store.Load(key)
 				if err == nil {
 					require.NotNil(t, loaded)
 					loaded.UpdateActivity()
 				}
-				
+
 				// Delete
 				err = store.Delete(key)
 				require.NoError(t, err)
