@@ -330,8 +330,17 @@ func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
 	p.metrics.ActiveWorkers = activeWorkers
 
 	// Return a copy of metrics
-	metricsCopy := *p.metrics
-	return &metricsCopy
+	metricsCopy := &AsyncSTTMetrics{
+		JobsEnqueued:       p.metrics.JobsEnqueued,
+		JobsProcessed:      p.metrics.JobsProcessed,
+		JobsFailed:         p.metrics.JobsFailed,
+		JobsRetried:        p.metrics.JobsRetried,
+		AverageProcessTime: p.metrics.AverageProcessTime,
+		TotalCost:          p.metrics.TotalCost,
+		ActiveWorkers:      p.metrics.ActiveWorkers,
+		QueueSize:          p.metrics.QueueSize,
+	}
+	return metricsCopy
 }
 
 // AddCallback adds a job completion callback in a thread-safe manner

@@ -305,7 +305,7 @@ func (c *CallData) IsStale(timeout time.Duration) bool {
 }
 
 // SafeCopy creates a thread-safe copy of CallData for serialization
-func (c *CallData) SafeCopy() CallData {
+func (c *CallData) SafeCopy() *CallData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -318,7 +318,7 @@ func (c *CallData) SafeCopy() CallData {
 		RemoteAddress:    c.RemoteAddress,
 		// Note: Don't copy the mutex
 	}
-	return copy
+	return &copy
 }
 
 // monitorSessions periodically checks for stale sessions

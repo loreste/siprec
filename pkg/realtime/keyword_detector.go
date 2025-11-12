@@ -12,33 +12,33 @@ import (
 // KeywordDetector provides real-time keyword detection for compliance monitoring
 type KeywordDetector struct {
 	logger *logrus.Entry
-	
+
 	// Keyword categories and patterns
 	complianceKeywords map[string][]KeywordPattern
 	securityKeywords   map[string][]KeywordPattern
 	customKeywords     map[string][]KeywordPattern
-	
+
 	// Pattern matching
-	compiledPatterns   map[string]*regexp.Regexp
-	
+	compiledPatterns map[string]*regexp.Regexp
+
 	// Context analysis
-	contextWindow      int
-	recentDetections   []KeywordDetection
-	detectionHistory   map[string][]KeywordDetection // Per speaker
-	
+	contextWindow    int
+	recentDetections []KeywordDetection
+	detectionHistory map[string][]KeywordDetection // Per speaker
+
 	// Configuration
-	config             *KeywordConfig
-	
+	config *KeywordConfig
+
 	// Performance optimization
-	cacheMaxSize       int
-	detectionCache     map[string][]Keyword
-	lastCleanup        time.Time
-	
+	cacheMaxSize   int
+	detectionCache map[string][]Keyword
+	lastCleanup    time.Time
+
 	// Thread safety
-	mutex              sync.RWMutex
-	
+	mutex sync.RWMutex
+
 	// Statistics
-	stats              *KeywordStats
+	stats *KeywordStats
 }
 
 // KeywordPattern represents a keyword detection pattern
@@ -54,36 +54,36 @@ type KeywordPattern struct {
 
 // KeywordDetection represents a detected keyword instance
 type KeywordDetection struct {
-	Keyword     Keyword   `json:"keyword"`
-	Context     string    `json:"context"`     // Surrounding text
-	SpeakerID   string    `json:"speaker_id"`
-	Timestamp   time.Time `json:"timestamp"`
-	Confidence  float64   `json:"confidence"`
+	Keyword    Keyword   `json:"keyword"`
+	Context    string    `json:"context"` // Surrounding text
+	SpeakerID  string    `json:"speaker_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	Confidence float64   `json:"confidence"`
 }
 
 // KeywordConfig holds configuration for keyword detection
 type KeywordConfig struct {
-	Language         string `json:"language" default:"en"`
-	ContextWindow    int    `json:"context_window" default:"10"`
+	Language         string  `json:"language" default:"en"`
+	ContextWindow    int     `json:"context_window" default:"10"`
 	MinConfidence    float64 `json:"min_confidence" default:"0.6"`
-	CaseSensitive    bool   `json:"case_sensitive" default:"false"`
-	EnableFuzzyMatch bool   `json:"enable_fuzzy_match" default:"true"`
-	CacheSize        int    `json:"cache_size" default:"1000"`
-	HistorySize      int    `json:"history_size" default:"500"`
+	CaseSensitive    bool    `json:"case_sensitive" default:"false"`
+	EnableFuzzyMatch bool    `json:"enable_fuzzy_match" default:"true"`
+	CacheSize        int     `json:"cache_size" default:"1000"`
+	HistorySize      int     `json:"history_size" default:"500"`
 }
 
 // KeywordStats tracks keyword detection performance
 type KeywordStats struct {
-	mutex                 sync.RWMutex
-	TotalDetections       int64                    `json:"total_detections"`
-	CategoryCounts        map[string]int64         `json:"category_counts"`
-	SeverityCounts        map[string]int64         `json:"severity_counts"`
-	ProcessingTime        int64                    `json:"processing_time_ms"`
-	CacheHits             int64                    `json:"cache_hits"`
-	CacheMisses           int64                    `json:"cache_misses"`
-	FalsePositiveRate     float64                  `json:"false_positive_rate"`
-	AverageConfidence     float64                  `json:"average_confidence"`
-	LastReset             time.Time                `json:"last_reset"`
+	mutex             sync.RWMutex
+	TotalDetections   int64            `json:"total_detections"`
+	CategoryCounts    map[string]int64 `json:"category_counts"`
+	SeverityCounts    map[string]int64 `json:"severity_counts"`
+	ProcessingTime    int64            `json:"processing_time_ms"`
+	CacheHits         int64            `json:"cache_hits"`
+	CacheMisses       int64            `json:"cache_misses"`
+	FalsePositiveRate float64          `json:"false_positive_rate"`
+	AverageConfidence float64          `json:"average_confidence"`
+	LastReset         time.Time        `json:"last_reset"`
 }
 
 // NewKeywordDetector creates a new keyword detector
@@ -97,28 +97,28 @@ func NewKeywordDetector(logger *logrus.Logger) *KeywordDetector {
 		CacheSize:        1000,
 		HistorySize:      500,
 	}
-	
+
 	kd := &KeywordDetector{
-		logger:             logger.WithField("component", "keyword_detector"),
-		config:             config,
-		contextWindow:      config.ContextWindow,
-		recentDetections:   make([]KeywordDetection, 0, config.HistorySize),
-		detectionHistory:   make(map[string][]KeywordDetection),
-		compiledPatterns:   make(map[string]*regexp.Regexp),
-		cacheMaxSize:       config.CacheSize,
-		detectionCache:     make(map[string][]Keyword),
-		lastCleanup:        time.Now(),
-		stats:              &KeywordStats{
+		logger:           logger.WithField("component", "keyword_detector"),
+		config:           config,
+		contextWindow:    config.ContextWindow,
+		recentDetections: make([]KeywordDetection, 0, config.HistorySize),
+		detectionHistory: make(map[string][]KeywordDetection),
+		compiledPatterns: make(map[string]*regexp.Regexp),
+		cacheMaxSize:     config.CacheSize,
+		detectionCache:   make(map[string][]Keyword),
+		lastCleanup:      time.Now(),
+		stats: &KeywordStats{
 			CategoryCounts: make(map[string]int64),
 			SeverityCounts: make(map[string]int64),
 			LastReset:      time.Now(),
 		},
 	}
-	
+
 	// Initialize keyword patterns
 	kd.initializeKeywordPatterns()
 	kd.compilePatterns()
-	
+
 	return kd
 }
 
@@ -127,14 +127,14 @@ func (kd *KeywordDetector) DetectKeywords(text string) []Keyword {
 	if len(text) < 2 {
 		return nil
 	}
-	
+
 	startTime := time.Now()
 	defer func() {
 		kd.stats.mutex.Lock()
 		kd.stats.ProcessingTime += time.Since(startTime).Nanoseconds() / 1e6
 		kd.stats.mutex.Unlock()
 	}()
-	
+
 	// Check cache first
 	if cached, exists := kd.getCachedDetection(text); exists {
 		kd.stats.mutex.Lock()
@@ -142,51 +142,51 @@ func (kd *KeywordDetector) DetectKeywords(text string) []Keyword {
 		kd.stats.mutex.Unlock()
 		return cached
 	}
-	
+
 	kd.stats.mutex.Lock()
 	kd.stats.CacheMisses++
 	kd.stats.mutex.Unlock()
-	
+
 	// Preprocess text
 	processedText := kd.preprocessText(text)
-	
+
 	// Detect keywords across all categories
 	var allKeywords []Keyword
-	
+
 	// Compliance keywords
 	compliance := kd.detectInCategory(processedText, text, kd.complianceKeywords, "compliance")
 	allKeywords = append(allKeywords, compliance...)
-	
+
 	// Security keywords
 	security := kd.detectInCategory(processedText, text, kd.securityKeywords, "security")
 	allKeywords = append(allKeywords, security...)
-	
+
 	// Custom keywords
 	custom := kd.detectInCategory(processedText, text, kd.customKeywords, "custom")
 	allKeywords = append(allKeywords, custom...)
-	
+
 	// Filter by confidence threshold
 	filteredKeywords := kd.filterByConfidence(allKeywords)
-	
+
 	// Remove duplicates and conflicts
 	finalKeywords := kd.removeDuplicates(filteredKeywords)
-	
+
 	// Cache result
 	kd.cacheDetection(text, finalKeywords)
-	
+
 	// Update statistics
 	kd.updateStats(finalKeywords)
-	
+
 	// Add to detection history
 	kd.addToHistory("", finalKeywords, text) // Speaker ID not available at this level
-	
+
 	return finalKeywords
 }
 
 // detectInCategory detects keywords within a specific category
 func (kd *KeywordDetector) detectInCategory(processedText, originalText string, categoryPatterns map[string][]KeywordPattern, category string) []Keyword {
 	var keywords []Keyword
-	
+
 	for _, patterns := range categoryPatterns {
 		for _, pattern := range patterns {
 			matches := kd.findMatches(processedText, originalText, pattern)
@@ -203,7 +203,7 @@ func (kd *KeywordDetector) detectInCategory(processedText, originalText string, 
 			}
 		}
 	}
-	
+
 	return keywords
 }
 
@@ -219,12 +219,12 @@ type MatchResult struct {
 // findMatches finds all matches for a pattern in the text
 func (kd *KeywordDetector) findMatches(processedText, originalText string, pattern KeywordPattern) []MatchResult {
 	var matches []MatchResult
-	
+
 	searchText := processedText
 	if kd.config.CaseSensitive {
 		searchText = originalText
 	}
-	
+
 	if pattern.IsRegex {
 		// Regex pattern matching
 		if compiledPattern, exists := kd.compiledPatterns[pattern.Pattern]; exists {
@@ -232,7 +232,7 @@ func (kd *KeywordDetector) findMatches(processedText, originalText string, patte
 			for _, match := range regexMatches {
 				matchText := searchText[match[0]:match[1]]
 				confidence := kd.calculateMatchConfidence(matchText, originalText, pattern)
-				
+
 				if confidence >= kd.config.MinConfidence {
 					matches = append(matches, MatchResult{
 						text:       matchText,
@@ -250,17 +250,17 @@ func (kd *KeywordDetector) findMatches(processedText, originalText string, patte
 		if !kd.config.CaseSensitive {
 			searchPattern = strings.ToLower(searchPattern)
 		}
-		
+
 		index := 0
 		for {
 			pos := strings.Index(searchText[index:], searchPattern)
 			if pos == -1 {
 				break
 			}
-			
+
 			actualPos := index + pos
 			confidence := kd.calculateMatchConfidence(searchPattern, originalText, pattern)
-			
+
 			if confidence >= kd.config.MinConfidence {
 				matches = append(matches, MatchResult{
 					text:       searchPattern,
@@ -270,33 +270,33 @@ func (kd *KeywordDetector) findMatches(processedText, originalText string, patte
 					position:   actualPos,
 				})
 			}
-			
+
 			index = actualPos + len(searchPattern)
 		}
 	}
-	
+
 	// Apply fuzzy matching if enabled
 	if kd.config.EnableFuzzyMatch && len(matches) == 0 {
 		fuzzyMatches := kd.findFuzzyMatches(searchText, pattern)
 		matches = append(matches, fuzzyMatches...)
 	}
-	
+
 	return matches
 }
 
 // calculateMatchConfidence calculates confidence for a pattern match
 func (kd *KeywordDetector) calculateMatchConfidence(matchText, fullText string, pattern KeywordPattern) float64 {
 	confidence := pattern.Weight
-	
+
 	// Context analysis
 	contextScore := kd.analyzeContext(matchText, fullText, pattern)
 	confidence *= contextScore
-	
+
 	// Check exclusions
 	if kd.hasExclusions(fullText, pattern.Exclusions) {
 		confidence *= 0.3 // Reduce confidence significantly
 	}
-	
+
 	// Fuzzy match penalty
 	if kd.config.EnableFuzzyMatch {
 		exactMatch := strings.Contains(strings.ToLower(fullText), strings.ToLower(pattern.Pattern))
@@ -304,7 +304,7 @@ func (kd *KeywordDetector) calculateMatchConfidence(matchText, fullText string, 
 			confidence *= 0.8 // Slight penalty for fuzzy matches
 		}
 	}
-	
+
 	// Normalize to [0, 1]
 	if confidence > 1.0 {
 		confidence = 1.0
@@ -312,7 +312,7 @@ func (kd *KeywordDetector) calculateMatchConfidence(matchText, fullText string, 
 	if confidence < 0.0 {
 		confidence = 0.0
 	}
-	
+
 	return confidence
 }
 
@@ -321,13 +321,13 @@ func (kd *KeywordDetector) analyzeContext(matchText, fullText string, pattern Ke
 	if len(pattern.Context) == 0 {
 		return 1.0 // No context requirements
 	}
-	
+
 	// Find the position of the match in the full text
 	matchPos := strings.Index(strings.ToLower(fullText), strings.ToLower(matchText))
 	if matchPos == -1 {
 		return 0.5 // Default if can't find position
 	}
-	
+
 	// Extract context window around the match
 	start := matchPos - kd.contextWindow*10 // Approximate words
 	if start < 0 {
@@ -337,9 +337,9 @@ func (kd *KeywordDetector) analyzeContext(matchText, fullText string, pattern Ke
 	if end > len(fullText) {
 		end = len(fullText)
 	}
-	
+
 	contextText := strings.ToLower(fullText[start:end])
-	
+
 	// Check for required context words
 	contextFound := 0
 	for _, contextWord := range pattern.Context {
@@ -347,12 +347,12 @@ func (kd *KeywordDetector) analyzeContext(matchText, fullText string, pattern Ke
 			contextFound++
 		}
 	}
-	
+
 	// Calculate context score
 	if len(pattern.Context) > 0 {
 		return float64(contextFound) / float64(len(pattern.Context))
 	}
-	
+
 	return 1.0
 }
 
@@ -370,27 +370,27 @@ func (kd *KeywordDetector) hasExclusions(text string, exclusions []string) bool 
 // findFuzzyMatches finds approximate matches using simple edit distance
 func (kd *KeywordDetector) findFuzzyMatches(text string, pattern KeywordPattern) []MatchResult {
 	var matches []MatchResult
-	
+
 	if pattern.IsRegex {
 		return matches // Skip fuzzy matching for regex patterns
 	}
-	
+
 	words := strings.Fields(text)
 	patternWords := strings.Fields(strings.ToLower(pattern.Pattern))
-	
+
 	if len(patternWords) == 0 {
 		return matches
 	}
-	
+
 	// Simple n-gram fuzzy matching
 	for i := 0; i <= len(words)-len(patternWords); i++ {
 		window := words[i : i+len(patternWords)]
 		similarity := kd.calculateSimilarity(window, patternWords)
-		
+
 		if similarity > 0.7 { // 70% similarity threshold
 			matchText := strings.Join(window, " ")
 			confidence := similarity * pattern.Weight * 0.8 // Penalty for fuzzy match
-			
+
 			if confidence >= kd.config.MinConfidence {
 				matches = append(matches, MatchResult{
 					text:       matchText,
@@ -402,7 +402,7 @@ func (kd *KeywordDetector) findFuzzyMatches(text string, pattern KeywordPattern)
 			}
 		}
 	}
-	
+
 	return matches
 }
 
@@ -411,7 +411,7 @@ func (kd *KeywordDetector) calculateSimilarity(words1, words2 []string) float64 
 	if len(words1) != len(words2) {
 		return 0.0
 	}
-	
+
 	matches := 0
 	for i := 0; i < len(words1); i++ {
 		if strings.ToLower(words1[i]) == strings.ToLower(words2[i]) {
@@ -424,7 +424,7 @@ func (kd *KeywordDetector) calculateSimilarity(words1, words2 []string) float64 
 			}
 		}
 	}
-	
+
 	return float64(matches) / float64(len(words1))
 }
 
@@ -433,33 +433,33 @@ func (kd *KeywordDetector) calculateCharSimilarity(s1, s2 string) float64 {
 	if len(s1) == 0 || len(s2) == 0 {
 		return 0.0
 	}
-	
+
 	// Simple character overlap ratio
 	s1Lower := strings.ToLower(s1)
 	s2Lower := strings.ToLower(s2)
-	
+
 	if s1Lower == s2Lower {
 		return 1.0
 	}
-	
+
 	// Count common characters
 	commonChars := 0
 	s1Chars := make(map[rune]int)
 	s2Chars := make(map[rune]int)
-	
+
 	for _, char := range s1Lower {
 		s1Chars[char]++
 	}
 	for _, char := range s2Lower {
 		s2Chars[char]++
 	}
-	
+
 	for char, count1 := range s1Chars {
 		if count2, exists := s2Chars[char]; exists {
 			commonChars += min(count1, count2)
 		}
 	}
-	
+
 	maxLen := max(len(s1), len(s2))
 	return float64(commonChars) / float64(maxLen)
 }
@@ -496,20 +496,20 @@ func (kd *KeywordDetector) removeDuplicates(keywords []Keyword) []Keyword {
 	if len(keywords) <= 1 {
 		return keywords
 	}
-	
+
 	var unique []Keyword
 	seen := make(map[string]bool)
-	
+
 	for _, keyword := range keywords {
 		// Create a key for deduplication
 		key := keyword.Text + "_" + keyword.Category + "_" + keyword.Severity
-		
+
 		if !seen[key] {
 			seen[key] = true
 			unique = append(unique, keyword)
 		}
 	}
-	
+
 	return unique
 }
 
@@ -517,14 +517,14 @@ func (kd *KeywordDetector) removeDuplicates(keywords []Keyword) []Keyword {
 func (kd *KeywordDetector) preprocessText(text string) string {
 	// Basic preprocessing
 	processed := strings.TrimSpace(text)
-	
+
 	if !kd.config.CaseSensitive {
 		processed = strings.ToLower(processed)
 	}
-	
+
 	// Normalize whitespace
 	processed = regexp.MustCompile(`\s+`).ReplaceAllString(processed, " ")
-	
+
 	return processed
 }
 
@@ -532,7 +532,7 @@ func (kd *KeywordDetector) preprocessText(text string) string {
 func (kd *KeywordDetector) getCachedDetection(text string) ([]Keyword, bool) {
 	kd.mutex.RLock()
 	defer kd.mutex.RUnlock()
-	
+
 	key := kd.createCacheKey(text)
 	keywords, exists := kd.detectionCache[key]
 	return keywords, exists
@@ -542,7 +542,7 @@ func (kd *KeywordDetector) getCachedDetection(text string) ([]Keyword, bool) {
 func (kd *KeywordDetector) cacheDetection(text string, keywords []Keyword) {
 	kd.mutex.Lock()
 	defer kd.mutex.Unlock()
-	
+
 	// Check cache size limit
 	if len(kd.detectionCache) >= kd.cacheMaxSize {
 		// Remove oldest entries (simplified LRU)
@@ -556,7 +556,7 @@ func (kd *KeywordDetector) cacheDetection(text string, keywords []Keyword) {
 			}
 		}
 	}
-	
+
 	key := kd.createCacheKey(text)
 	kd.detectionCache[key] = keywords
 }
@@ -571,12 +571,12 @@ func (kd *KeywordDetector) addToHistory(speakerID string, keywords []Keyword, co
 	if len(keywords) == 0 {
 		return
 	}
-	
+
 	kd.mutex.Lock()
 	defer kd.mutex.Unlock()
-	
+
 	now := time.Now()
-	
+
 	for _, keyword := range keywords {
 		detection := KeywordDetection{
 			Keyword:    keyword,
@@ -585,19 +585,19 @@ func (kd *KeywordDetector) addToHistory(speakerID string, keywords []Keyword, co
 			Timestamp:  now,
 			Confidence: keyword.Confidence,
 		}
-		
+
 		// Add to recent detections
 		kd.recentDetections = append(kd.recentDetections, detection)
 		if len(kd.recentDetections) > kd.config.HistorySize {
 			kd.recentDetections = kd.recentDetections[1:]
 		}
-		
+
 		// Add to speaker-specific history if speaker ID provided
 		if speakerID != "" {
 			if _, exists := kd.detectionHistory[speakerID]; !exists {
 				kd.detectionHistory[speakerID] = make([]KeywordDetection, 0)
 			}
-			
+
 			kd.detectionHistory[speakerID] = append(kd.detectionHistory[speakerID], detection)
 			if len(kd.detectionHistory[speakerID]) > kd.config.HistorySize {
 				kd.detectionHistory[speakerID] = kd.detectionHistory[speakerID][1:]
@@ -611,19 +611,19 @@ func (kd *KeywordDetector) updateStats(keywords []Keyword) {
 	if len(keywords) == 0 {
 		return
 	}
-	
+
 	kd.stats.mutex.Lock()
 	defer kd.stats.mutex.Unlock()
-	
+
 	totalConfidence := 0.0
-	
+
 	for _, keyword := range keywords {
 		kd.stats.TotalDetections++
 		kd.stats.CategoryCounts[keyword.Category]++
 		kd.stats.SeverityCounts[keyword.Severity]++
 		totalConfidence += keyword.Confidence
 	}
-	
+
 	// Update average confidence
 	if kd.stats.TotalDetections > 0 {
 		kd.stats.AverageConfidence = (kd.stats.AverageConfidence*float64(kd.stats.TotalDetections-int64(len(keywords))) + totalConfidence) / float64(kd.stats.TotalDetections)
@@ -634,13 +634,13 @@ func (kd *KeywordDetector) updateStats(keywords []Keyword) {
 func (kd *KeywordDetector) compilePatterns() {
 	kd.mutex.Lock()
 	defer kd.mutex.Unlock()
-	
+
 	categories := []map[string][]KeywordPattern{
 		kd.complianceKeywords,
 		kd.securityKeywords,
 		kd.customKeywords,
 	}
-	
+
 	for _, category := range categories {
 		for _, patterns := range category {
 			for _, pattern := range patterns {
@@ -649,13 +649,13 @@ func (kd *KeywordDetector) compilePatterns() {
 					if !kd.config.CaseSensitive {
 						patternStr = "(?i)" + patternStr
 					}
-					
+
 					compiled, err := regexp.Compile(patternStr)
 					if err != nil {
 						kd.logger.WithError(err).WithField("pattern", pattern.Pattern).Warning("Failed to compile regex pattern")
 						continue
 					}
-					
+
 					kd.compiledPatterns[pattern.Pattern] = compiled
 				}
 			}
@@ -667,13 +667,13 @@ func (kd *KeywordDetector) compilePatterns() {
 func (kd *KeywordDetector) AddCustomKeywords(category string, patterns []KeywordPattern) error {
 	kd.mutex.Lock()
 	defer kd.mutex.Unlock()
-	
+
 	if kd.customKeywords == nil {
 		kd.customKeywords = make(map[string][]KeywordPattern)
 	}
-	
+
 	kd.customKeywords[category] = patterns
-	
+
 	// Compile new regex patterns
 	for _, pattern := range patterns {
 		if pattern.IsRegex {
@@ -681,16 +681,16 @@ func (kd *KeywordDetector) AddCustomKeywords(category string, patterns []Keyword
 			if !kd.config.CaseSensitive {
 				flags = "(?i)"
 			}
-			
+
 			compiled, err := regexp.Compile(flags + pattern.Pattern)
 			if err != nil {
 				return err
 			}
-			
+
 			kd.compiledPatterns[pattern.Pattern] = compiled
 		}
 	}
-	
+
 	return nil
 }
 
@@ -698,14 +698,14 @@ func (kd *KeywordDetector) AddCustomKeywords(category string, patterns []Keyword
 func (kd *KeywordDetector) GetSpeakerDetectionHistory(speakerID string) []KeywordDetection {
 	kd.mutex.RLock()
 	defer kd.mutex.RUnlock()
-	
+
 	if history, exists := kd.detectionHistory[speakerID]; exists {
 		// Return a copy
 		historyCopy := make([]KeywordDetection, len(history))
 		copy(historyCopy, history)
 		return historyCopy
 	}
-	
+
 	return nil
 }
 
@@ -713,7 +713,7 @@ func (kd *KeywordDetector) GetSpeakerDetectionHistory(speakerID string) []Keywor
 func (kd *KeywordDetector) GetRecentDetections() []KeywordDetection {
 	kd.mutex.RLock()
 	defer kd.mutex.RUnlock()
-	
+
 	detectionsCopy := make([]KeywordDetection, len(kd.recentDetections))
 	copy(detectionsCopy, kd.recentDetections)
 	return detectionsCopy
@@ -723,36 +723,42 @@ func (kd *KeywordDetector) GetRecentDetections() []KeywordDetection {
 func (kd *KeywordDetector) GetStats() *KeywordStats {
 	kd.stats.mutex.RLock()
 	defer kd.stats.mutex.RUnlock()
-	
-	statsCopy := *kd.stats
-	// Deep copy maps
-	statsCopy.CategoryCounts = make(map[string]int64)
-	statsCopy.SeverityCounts = make(map[string]int64)
-	
+
+	statsCopy := &KeywordStats{
+		TotalDetections:   kd.stats.TotalDetections,
+		ProcessingTime:    kd.stats.ProcessingTime,
+		CacheHits:         kd.stats.CacheHits,
+		CacheMisses:       kd.stats.CacheMisses,
+		FalsePositiveRate: kd.stats.FalsePositiveRate,
+		AverageConfidence: kd.stats.AverageConfidence,
+		LastReset:         kd.stats.LastReset,
+	}
+	statsCopy.CategoryCounts = make(map[string]int64, len(kd.stats.CategoryCounts))
 	for k, v := range kd.stats.CategoryCounts {
 		statsCopy.CategoryCounts[k] = v
 	}
+	statsCopy.SeverityCounts = make(map[string]int64, len(kd.stats.SeverityCounts))
 	for k, v := range kd.stats.SeverityCounts {
 		statsCopy.SeverityCounts[k] = v
 	}
-	
-	return &statsCopy
+
+	return statsCopy
 }
 
 // Cleanup performs cleanup operations
 func (kd *KeywordDetector) Cleanup() {
 	kd.mutex.Lock()
 	defer kd.mutex.Unlock()
-	
+
 	// Clear caches and history
 	kd.detectionCache = make(map[string][]Keyword)
 	kd.recentDetections = kd.recentDetections[:0]
-	
+
 	// Clear speaker histories
 	for speakerID := range kd.detectionHistory {
 		delete(kd.detectionHistory, speakerID)
 	}
-	
+
 	kd.logger.Debug("Keyword detector cleaned up")
 }
 
@@ -777,7 +783,7 @@ func (kd *KeywordDetector) initializeKeywordPatterns() {
 			{Pattern: "\\b(contract|agreement|terms)\\b", IsRegex: true, Category: "compliance", Severity: "low", Weight: 0.6},
 		},
 	}
-	
+
 	// Initialize security keywords
 	kd.securityKeywords = map[string][]KeywordPattern{
 		"authentication": {
@@ -796,7 +802,7 @@ func (kd *KeywordDetector) initializeKeywordPatterns() {
 			{Pattern: "\\b(secure|protect|safeguard)\\b", IsRegex: true, Category: "security", Severity: "low", Weight: 0.6},
 		},
 	}
-	
+
 	// Initialize custom keywords (empty by default)
 	kd.customKeywords = make(map[string][]KeywordPattern)
 }

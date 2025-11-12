@@ -13,75 +13,75 @@ import (
 // SentimentAnalyzer provides real-time sentiment analysis for transcribed text
 type SentimentAnalyzer struct {
 	logger *logrus.Entry
-	
+
 	// Lexicon-based analysis
 	positiveWords map[string]float64
 	negativeWords map[string]float64
 	intensifiers  map[string]float64
 	negators      map[string]float64
-	
+
 	// Pattern-based analysis
 	emotionPatterns  map[string]*regexp.Regexp
 	punctuationRules map[string]float64
-	
+
 	// Context analysis
 	contextWindow    int
 	recentSentiments []Sentiment
 	sentimentHistory map[string][]Sentiment // Per speaker
-	
+
 	// Configuration
-	config           *SentimentConfig
-	
+	config *SentimentConfig
+
 	// Performance optimization
-	textProcessor    *TextProcessor
-	cacheMaxSize     int
-	sentimentCache   map[string]Sentiment
-	lastCleanup      time.Time
-	
+	textProcessor  *TextProcessor
+	cacheMaxSize   int
+	sentimentCache map[string]Sentiment
+	lastCleanup    time.Time
+
 	// Thread safety
-	mutex            sync.RWMutex
-	
+	mutex sync.RWMutex
+
 	// Statistics
-	stats            *SentimentStats
+	stats *SentimentStats
 }
 
 // SentimentConfig holds configuration for sentiment analysis
 type SentimentConfig struct {
-	Language           string    `json:"language" default:"en"`
-	ContextWindow      int       `json:"context_window" default:"5"`
-	MinTextLength      int       `json:"min_text_length" default:"3"`
-	EnableEmotions     bool      `json:"enable_emotions" default:"true"`
-	EnableSubjectivity bool      `json:"enable_subjectivity" default:"true"`
-	CacheSize          int       `json:"cache_size" default:"1000"`
-	HistorySize        int       `json:"history_size" default:"100"`
+	Language           string `json:"language" default:"en"`
+	ContextWindow      int    `json:"context_window" default:"5"`
+	MinTextLength      int    `json:"min_text_length" default:"3"`
+	EnableEmotions     bool   `json:"enable_emotions" default:"true"`
+	EnableSubjectivity bool   `json:"enable_subjectivity" default:"true"`
+	CacheSize          int    `json:"cache_size" default:"1000"`
+	HistorySize        int    `json:"history_size" default:"100"`
 }
 
 // SentimentStats tracks sentiment analysis performance
 type SentimentStats struct {
-	mutex              sync.RWMutex
-	TotalAnalyses      int64     `json:"total_analyses"`
-	PositiveDetected   int64     `json:"positive_detected"`
-	NegativeDetected   int64     `json:"negative_detected"`
-	NeutralDetected    int64     `json:"neutral_detected"`
-	ProcessingTime     int64     `json:"processing_time_ms"`
-	CacheHits          int64     `json:"cache_hits"`
-	CacheMisses        int64     `json:"cache_misses"`
-	AverageConfidence  float64   `json:"average_confidence"`
-	LastReset          time.Time `json:"last_reset"`
+	mutex             sync.RWMutex
+	TotalAnalyses     int64     `json:"total_analyses"`
+	PositiveDetected  int64     `json:"positive_detected"`
+	NegativeDetected  int64     `json:"negative_detected"`
+	NeutralDetected   int64     `json:"neutral_detected"`
+	ProcessingTime    int64     `json:"processing_time_ms"`
+	CacheHits         int64     `json:"cache_hits"`
+	CacheMisses       int64     `json:"cache_misses"`
+	AverageConfidence float64   `json:"average_confidence"`
+	LastReset         time.Time `json:"last_reset"`
 }
 
 // TextProcessor handles text preprocessing for sentiment analysis
 type TextProcessor struct {
 	// Text cleaning patterns
-	urlPattern       *regexp.Regexp
-	mentionPattern   *regexp.Regexp
-	hashtagPattern   *regexp.Regexp
-	punctPattern     *regexp.Regexp
+	urlPattern        *regexp.Regexp
+	mentionPattern    *regexp.Regexp
+	hashtagPattern    *regexp.Regexp
+	punctPattern      *regexp.Regexp
 	whitespacePattern *regexp.Regexp
-	
+
 	// Word processing
-	stopWords        map[string]bool
-	contractions     map[string]string
+	stopWords    map[string]bool
+	contractions map[string]string
 }
 
 // NewSentimentAnalyzer creates a new sentiment analyzer
@@ -95,7 +95,7 @@ func NewSentimentAnalyzer(logger *logrus.Logger) *SentimentAnalyzer {
 		CacheSize:          1000,
 		HistorySize:        100,
 	}
-	
+
 	sa := &SentimentAnalyzer{
 		logger:           logger.WithField("component", "sentiment_analyzer"),
 		config:           config,
@@ -107,12 +107,12 @@ func NewSentimentAnalyzer(logger *logrus.Logger) *SentimentAnalyzer {
 		lastCleanup:      time.Now(),
 		stats:            &SentimentStats{LastReset: time.Now()},
 	}
-	
+
 	// Initialize lexicons and patterns
 	sa.initializeLexicons()
 	sa.initializePatterns()
 	sa.textProcessor = sa.initializeTextProcessor()
-	
+
 	return sa
 }
 
@@ -121,7 +121,7 @@ func (sa *SentimentAnalyzer) AnalyzeText(text string) Sentiment {
 	if len(text) < sa.config.MinTextLength {
 		return Sentiment{Label: "neutral", Score: 0.5, Magnitude: 0.0}
 	}
-	
+
 	startTime := time.Now()
 	defer func() {
 		sa.stats.mutex.Lock()
@@ -129,7 +129,7 @@ func (sa *SentimentAnalyzer) AnalyzeText(text string) Sentiment {
 		sa.stats.TotalAnalyses++
 		sa.stats.mutex.Unlock()
 	}()
-	
+
 	// Check cache first
 	if cached, exists := sa.getCachedSentiment(text); exists {
 		sa.stats.mutex.Lock()
@@ -137,29 +137,29 @@ func (sa *SentimentAnalyzer) AnalyzeText(text string) Sentiment {
 		sa.stats.mutex.Unlock()
 		return cached
 	}
-	
+
 	sa.stats.mutex.Lock()
 	sa.stats.CacheMisses++
 	sa.stats.mutex.Unlock()
-	
+
 	// Preprocess text
 	processedText := sa.textProcessor.ProcessText(text)
-	
+
 	// Perform sentiment analysis
 	sentiment := sa.analyzeSentiment(processedText, text)
-	
+
 	// Add contextual adjustment
 	sentiment = sa.adjustForContext(sentiment)
-	
+
 	// Cache result
 	sa.cacheSentiment(text, sentiment)
-	
+
 	// Update statistics
 	sa.updateStats(sentiment)
-	
+
 	// Add to history
 	sa.addToHistory("", sentiment) // Speaker ID not available at this level
-	
+
 	return sentiment
 }
 
@@ -169,31 +169,31 @@ func (sa *SentimentAnalyzer) analyzeSentiment(processedText, originalText string
 	if len(words) == 0 {
 		return Sentiment{Label: "neutral", Score: 0.5, Magnitude: 0.0}
 	}
-	
+
 	// Lexicon-based analysis
 	lexiconScore := sa.calculateLexiconScore(words)
-	
+
 	// Pattern-based analysis
 	patternScore := sa.calculatePatternScore(originalText)
-	
+
 	// Punctuation-based analysis
 	punctuationScore := sa.calculatePunctuationScore(originalText)
-	
+
 	// Combine scores with weights
 	combinedScore := (lexiconScore*0.6 + patternScore*0.3 + punctuationScore*0.1)
-	
+
 	// Calculate magnitude (intensity)
 	magnitude := sa.calculateMagnitude(words, combinedScore)
-	
+
 	// Calculate subjectivity if enabled
 	subjectivity := 0.5 // Default neutral
 	if sa.config.EnableSubjectivity {
 		subjectivity = sa.calculateSubjectivity(words)
 	}
-	
+
 	// Determine label and normalize score
 	label, normalizedScore := sa.normalizeScore(combinedScore)
-	
+
 	return Sentiment{
 		Label:        label,
 		Score:        normalizedScore,
@@ -207,22 +207,22 @@ func (sa *SentimentAnalyzer) calculateLexiconScore(words []string) float64 {
 	score := 0.0
 	wordCount := 0
 	modifier := 1.0
-	
+
 	for i, word := range words {
 		lowerWord := strings.ToLower(word)
-		
+
 		// Check for negators (flip sentiment for next 3 words)
 		if negValue, isNegator := sa.negators[lowerWord]; isNegator {
 			modifier = negValue
 			continue
 		}
-		
+
 		// Check for intensifiers
 		if intValue, isIntensifier := sa.intensifiers[lowerWord]; isIntensifier {
 			modifier *= intValue
 			continue
 		}
-		
+
 		// Check sentiment words
 		if posValue, isPositive := sa.positiveWords[lowerWord]; isPositive {
 			score += posValue * modifier
@@ -231,13 +231,13 @@ func (sa *SentimentAnalyzer) calculateLexiconScore(words []string) float64 {
 			score += negValue * modifier
 			wordCount++
 		}
-		
+
 		// Reset modifier after 3 words or at end of sentence
 		if i > 0 && (i%3 == 0 || strings.ContainsAny(word, ".!?")) {
 			modifier = 1.0
 		}
 	}
-	
+
 	if wordCount > 0 {
 		return score / float64(wordCount)
 	}
@@ -247,7 +247,7 @@ func (sa *SentimentAnalyzer) calculateLexiconScore(words []string) float64 {
 // calculatePatternScore calculates sentiment based on text patterns
 func (sa *SentimentAnalyzer) calculatePatternScore(text string) float64 {
 	score := 0.0
-	
+
 	for emotion, pattern := range sa.emotionPatterns {
 		if pattern.MatchString(text) {
 			switch emotion {
@@ -262,19 +262,19 @@ func (sa *SentimentAnalyzer) calculatePatternScore(text string) float64 {
 			}
 		}
 	}
-	
+
 	return score
 }
 
 // calculatePunctuationScore calculates sentiment based on punctuation
 func (sa *SentimentAnalyzer) calculatePunctuationScore(text string) float64 {
 	score := 0.0
-	
+
 	for punct, value := range sa.punctuationRules {
 		count := strings.Count(text, punct)
 		score += float64(count) * value
 	}
-	
+
 	return score
 }
 
@@ -282,7 +282,7 @@ func (sa *SentimentAnalyzer) calculatePunctuationScore(text string) float64 {
 func (sa *SentimentAnalyzer) calculateMagnitude(words []string, score float64) float64 {
 	// Base magnitude from absolute score
 	magnitude := math.Abs(score)
-	
+
 	// Boost magnitude for intensifiers and strong words
 	intensityBoost := 0.0
 	for _, word := range words {
@@ -290,7 +290,7 @@ func (sa *SentimentAnalyzer) calculateMagnitude(words []string, score float64) f
 		if intValue, exists := sa.intensifiers[lowerWord]; exists {
 			intensityBoost += math.Abs(intValue - 1.0)
 		}
-		
+
 		// Check for strong sentiment words (high absolute values)
 		if posValue, exists := sa.positiveWords[lowerWord]; exists && math.Abs(posValue) > 0.7 {
 			intensityBoost += 0.2
@@ -299,14 +299,14 @@ func (sa *SentimentAnalyzer) calculateMagnitude(words []string, score float64) f
 			intensityBoost += 0.2
 		}
 	}
-	
+
 	magnitude += intensityBoost
-	
+
 	// Normalize to [0, 1]
 	if magnitude > 1.0 {
 		magnitude = 1.0
 	}
-	
+
 	return magnitude
 }
 
@@ -314,23 +314,23 @@ func (sa *SentimentAnalyzer) calculateMagnitude(words []string, score float64) f
 func (sa *SentimentAnalyzer) calculateSubjectivity(words []string) float64 {
 	subjectiveCount := 0
 	totalWords := len(words)
-	
+
 	for _, word := range words {
 		lowerWord := strings.ToLower(word)
-		
+
 		// Count sentiment words as subjective
 		if _, exists := sa.positiveWords[lowerWord]; exists {
 			subjectiveCount++
 		} else if _, exists := sa.negativeWords[lowerWord]; exists {
 			subjectiveCount++
 		}
-		
+
 		// Check for subjective indicators
 		if sa.isSubjectiveWord(lowerWord) {
 			subjectiveCount++
 		}
 	}
-	
+
 	if totalWords > 0 {
 		return float64(subjectiveCount) / float64(totalWords)
 	}
@@ -344,7 +344,7 @@ func (sa *SentimentAnalyzer) isSubjectiveWord(word string) bool {
 		"probably", "maybe", "perhaps", "might", "could", "should",
 		"beautiful", "ugly", "amazing", "terrible", "wonderful", "awful",
 	}
-	
+
 	for _, indicator := range subjectiveIndicators {
 		if word == indicator {
 			return true
@@ -362,7 +362,7 @@ func (sa *SentimentAnalyzer) normalizeScore(score float64) (string, float64) {
 	} else if normalizedScore > 1 {
 		normalizedScore = 1
 	}
-	
+
 	// Determine label based on thresholds
 	if normalizedScore > 0.6 {
 		return "positive", normalizedScore
@@ -377,31 +377,31 @@ func (sa *SentimentAnalyzer) normalizeScore(score float64) (string, float64) {
 func (sa *SentimentAnalyzer) adjustForContext(sentiment Sentiment) Sentiment {
 	sa.mutex.RLock()
 	defer sa.mutex.RUnlock()
-	
+
 	if len(sa.recentSentiments) < 2 {
 		return sentiment
 	}
-	
+
 	// Calculate context influence
 	contextScore := 0.0
 	contextWeight := 0.1 // 10% influence from context
-	
+
 	for i, recent := range sa.recentSentiments {
 		if i >= sa.contextWindow {
 			break
 		}
-		
+
 		// Weight more recent sentiments higher
 		weight := float64(sa.contextWindow-i) / float64(sa.contextWindow)
 		contextScore += recent.Score * weight
 	}
-	
+
 	contextScore /= float64(len(sa.recentSentiments))
-	
+
 	// Adjust current sentiment
 	adjustedScore := sentiment.Score*(1-contextWeight) + contextScore*contextWeight
-	adjustedLabel, _ := sa.normalizeScore((adjustedScore-0.5)*2) // Convert back to [-1,1] then normalize
-	
+	adjustedLabel, _ := sa.normalizeScore((adjustedScore - 0.5) * 2) // Convert back to [-1,1] then normalize
+
 	return Sentiment{
 		Label:        adjustedLabel,
 		Score:        adjustedScore,
@@ -414,7 +414,7 @@ func (sa *SentimentAnalyzer) adjustForContext(sentiment Sentiment) Sentiment {
 func (sa *SentimentAnalyzer) getCachedSentiment(text string) (Sentiment, bool) {
 	sa.mutex.RLock()
 	defer sa.mutex.RUnlock()
-	
+
 	// Create cache key
 	key := sa.createCacheKey(text)
 	sentiment, exists := sa.sentimentCache[key]
@@ -425,7 +425,7 @@ func (sa *SentimentAnalyzer) getCachedSentiment(text string) (Sentiment, bool) {
 func (sa *SentimentAnalyzer) cacheSentiment(text string, sentiment Sentiment) {
 	sa.mutex.Lock()
 	defer sa.mutex.Unlock()
-	
+
 	// Check cache size limit
 	if len(sa.sentimentCache) >= sa.cacheMaxSize {
 		// Remove oldest entries (simplified LRU)
@@ -439,7 +439,7 @@ func (sa *SentimentAnalyzer) cacheSentiment(text string, sentiment Sentiment) {
 			}
 		}
 	}
-	
+
 	key := sa.createCacheKey(text)
 	sa.sentimentCache[key] = sentiment
 }
@@ -454,19 +454,19 @@ func (sa *SentimentAnalyzer) createCacheKey(text string) string {
 func (sa *SentimentAnalyzer) addToHistory(speakerID string, sentiment Sentiment) {
 	sa.mutex.Lock()
 	defer sa.mutex.Unlock()
-	
+
 	// Add to recent sentiments
 	sa.recentSentiments = append(sa.recentSentiments, sentiment)
 	if len(sa.recentSentiments) > sa.config.HistorySize {
 		sa.recentSentiments = sa.recentSentiments[1:]
 	}
-	
+
 	// Add to speaker-specific history if speaker ID provided
 	if speakerID != "" {
 		if _, exists := sa.sentimentHistory[speakerID]; !exists {
 			sa.sentimentHistory[speakerID] = make([]Sentiment, 0)
 		}
-		
+
 		sa.sentimentHistory[speakerID] = append(sa.sentimentHistory[speakerID], sentiment)
 		if len(sa.sentimentHistory[speakerID]) > sa.config.HistorySize {
 			sa.sentimentHistory[speakerID] = sa.sentimentHistory[speakerID][1:]
@@ -478,7 +478,7 @@ func (sa *SentimentAnalyzer) addToHistory(speakerID string, sentiment Sentiment)
 func (sa *SentimentAnalyzer) updateStats(sentiment Sentiment) {
 	sa.stats.mutex.Lock()
 	defer sa.stats.mutex.Unlock()
-	
+
 	switch sentiment.Label {
 	case "positive":
 		sa.stats.PositiveDetected++
@@ -487,7 +487,7 @@ func (sa *SentimentAnalyzer) updateStats(sentiment Sentiment) {
 	case "neutral":
 		sa.stats.NeutralDetected++
 	}
-	
+
 	// Update average confidence (using score as confidence proxy)
 	if sa.stats.TotalAnalyses > 0 {
 		sa.stats.AverageConfidence = (sa.stats.AverageConfidence*float64(sa.stats.TotalAnalyses-1) + sentiment.Score) / float64(sa.stats.TotalAnalyses)
@@ -500,14 +500,14 @@ func (sa *SentimentAnalyzer) updateStats(sentiment Sentiment) {
 func (sa *SentimentAnalyzer) GetSpeakerSentimentTrend(speakerID string) []Sentiment {
 	sa.mutex.RLock()
 	defer sa.mutex.RUnlock()
-	
+
 	if history, exists := sa.sentimentHistory[speakerID]; exists {
 		// Return a copy
 		trend := make([]Sentiment, len(history))
 		copy(trend, history)
 		return trend
 	}
-	
+
 	return nil
 }
 
@@ -515,25 +515,35 @@ func (sa *SentimentAnalyzer) GetSpeakerSentimentTrend(speakerID string) []Sentim
 func (sa *SentimentAnalyzer) GetStats() *SentimentStats {
 	sa.stats.mutex.RLock()
 	defer sa.stats.mutex.RUnlock()
-	
-	statsCopy := *sa.stats
-	return &statsCopy
+
+	statsCopy := &SentimentStats{
+		TotalAnalyses:     sa.stats.TotalAnalyses,
+		PositiveDetected:  sa.stats.PositiveDetected,
+		NegativeDetected:  sa.stats.NegativeDetected,
+		NeutralDetected:   sa.stats.NeutralDetected,
+		ProcessingTime:    sa.stats.ProcessingTime,
+		CacheHits:         sa.stats.CacheHits,
+		CacheMisses:       sa.stats.CacheMisses,
+		AverageConfidence: sa.stats.AverageConfidence,
+		LastReset:         sa.stats.LastReset,
+	}
+	return statsCopy
 }
 
 // Cleanup performs cleanup operations
 func (sa *SentimentAnalyzer) Cleanup() {
 	sa.mutex.Lock()
 	defer sa.mutex.Unlock()
-	
+
 	// Clear caches and history
 	sa.sentimentCache = make(map[string]Sentiment)
 	sa.recentSentiments = sa.recentSentiments[:0]
-	
+
 	// Clear speaker histories
 	for speakerID := range sa.sentimentHistory {
 		delete(sa.sentimentHistory, speakerID)
 	}
-	
+
 	sa.logger.Debug("Sentiment analyzer cleaned up")
 }
 
@@ -547,7 +557,7 @@ func (sa *SentimentAnalyzer) initializeLexicons() {
 		"satisfied": 0.7, "delighted": 0.8, "thrilled": 0.9, "excited": 0.8, "positive": 0.7,
 		"yes": 0.6, "success": 0.8, "win": 0.7, "victory": 0.8, "achieve": 0.7,
 	}
-	
+
 	// Initialize negative words (simplified set)
 	sa.negativeWords = map[string]float64{
 		"bad": -0.7, "terrible": -0.8, "awful": -0.9, "horrible": -0.9, "disgusting": -0.8,
@@ -556,14 +566,14 @@ func (sa *SentimentAnalyzer) initializeLexicons() {
 		"no": -0.5, "never": -0.6, "nothing": -0.5, "nobody": -0.5, "failure": -0.8,
 		"lose": -0.7, "defeat": -0.7, "wrong": -0.6, "problem": -0.6, "issue": -0.5,
 	}
-	
+
 	// Initialize intensifiers
 	sa.intensifiers = map[string]float64{
 		"very": 1.3, "extremely": 1.5, "really": 1.2, "quite": 1.1, "rather": 1.1,
 		"absolutely": 1.4, "completely": 1.4, "totally": 1.4, "incredibly": 1.5,
 		"remarkably": 1.3, "exceptionally": 1.4, "particularly": 1.2,
 	}
-	
+
 	// Initialize negators
 	sa.negators = map[string]float64{
 		"not": -1.0, "no": -1.0, "never": -1.0, "nothing": -1.0, "nobody": -1.0,
@@ -575,25 +585,25 @@ func (sa *SentimentAnalyzer) initializeLexicons() {
 // initializePatterns initializes emotion detection patterns
 func (sa *SentimentAnalyzer) initializePatterns() {
 	sa.emotionPatterns = make(map[string]*regexp.Regexp)
-	
+
 	// Joy patterns
 	sa.emotionPatterns["joy"] = regexp.MustCompile(`(?i)(\:D|\:\)|\:P|haha|lol|lmao|rofl|😂|😃|😄|🙂)`)
-	
+
 	// Sadness patterns
 	sa.emotionPatterns["sadness"] = regexp.MustCompile(`(?i)(\:\(|\:'\(|😢|😭|💔|sob|cry|tears)`)
-	
+
 	// Anger patterns
 	sa.emotionPatterns["anger"] = regexp.MustCompile(`(?i)(damn|shit|fuck|angry|mad|furious|rage|😡|🤬|grr)`)
-	
+
 	// Fear patterns
 	sa.emotionPatterns["fear"] = regexp.MustCompile(`(?i)(scared|afraid|terrified|worried|anxious|panic|😨|😰)`)
-	
+
 	// Love patterns
 	sa.emotionPatterns["love"] = regexp.MustCompile(`(?i)(love|adore|cherish|💖|💕|❤️|😍|🥰)`)
-	
+
 	// Surprise patterns
 	sa.emotionPatterns["surprise"] = regexp.MustCompile(`(?i)(wow|omg|amazing|incredible|unbelievable|😮|😲)`)
-	
+
 	// Initialize punctuation rules
 	sa.punctuationRules = map[string]float64{
 		"!":   0.3,  // Exclamation adds intensity
@@ -615,7 +625,7 @@ func (sa *SentimentAnalyzer) initializeTextProcessor() *TextProcessor {
 		stopWords:         make(map[string]bool),
 		contractions:      make(map[string]string),
 	}
-	
+
 	// Initialize stop words (simplified set)
 	stopWordsList := []string{
 		"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
@@ -624,11 +634,11 @@ func (sa *SentimentAnalyzer) initializeTextProcessor() *TextProcessor {
 		"i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
 		"this", "that", "these", "those", "what", "which", "who", "where", "when", "why", "how",
 	}
-	
+
 	for _, word := range stopWordsList {
 		tp.stopWords[word] = true
 	}
-	
+
 	// Initialize contractions
 	tp.contractions = map[string]string{
 		"don't": "do not", "won't": "will not", "can't": "cannot", "shouldn't": "should not",
@@ -641,7 +651,7 @@ func (sa *SentimentAnalyzer) initializeTextProcessor() *TextProcessor {
 		"we'll": "we will", "they'll": "they will", "I'd": "I would", "you'd": "you would",
 		"he'd": "he would", "she'd": "she would", "we'd": "we would", "they'd": "they would",
 	}
-	
+
 	return tp
 }
 
@@ -649,26 +659,26 @@ func (sa *SentimentAnalyzer) initializeTextProcessor() *TextProcessor {
 func (tp *TextProcessor) ProcessText(text string) string {
 	// Convert to lowercase
 	processed := strings.ToLower(text)
-	
+
 	// Expand contractions
 	for contraction, expansion := range tp.contractions {
 		processed = strings.ReplaceAll(processed, strings.ToLower(contraction), expansion)
 	}
-	
+
 	// Remove URLs
 	processed = tp.urlPattern.ReplaceAllString(processed, "")
-	
+
 	// Remove mentions and hashtags but keep the text part
 	processed = tp.mentionPattern.ReplaceAllString(processed, "")
 	processed = tp.hashtagPattern.ReplaceAllStringFunc(processed, func(match string) string {
 		return match[1:] // Remove # but keep the word
 	})
-	
+
 	// Normalize whitespace
 	processed = tp.whitespacePattern.ReplaceAllString(processed, " ")
-	
+
 	// Trim
 	processed = strings.TrimSpace(processed)
-	
+
 	return processed
 }

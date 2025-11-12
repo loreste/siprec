@@ -340,11 +340,11 @@ func (se *SSHExecutor) createSSHConfig(sshConfig SSHConfig) (*ssh.ClientConfig, 
 	// Host key verification
 	var hostKeyCallback ssh.HostKeyCallback
 	if sshConfig.KnownHosts != "" {
-		hostKeyCallback, err := knownhosts.New(sshConfig.KnownHosts)
+		callback, err := knownhosts.New(sshConfig.KnownHosts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load known hosts: %w", err)
 		}
-		hostKeyCallback = hostKeyCallback
+		hostKeyCallback = callback
 	} else {
 		// INSECURE: Skip host key verification (only for testing)
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
