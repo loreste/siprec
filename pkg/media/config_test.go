@@ -1,10 +1,16 @@
 package media
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func resetGlobalPortManagerForTests() {
+	portManager = nil
+	portManagerOnce = sync.Once{}
+}
 
 func TestConfig(t *testing.T) {
 	// Test that we can create and use a Config struct
@@ -96,6 +102,9 @@ func TestPortManagerBasicFunctionality(t *testing.T) {
 func TestGlobalPortManager(t *testing.T) {
 	restore := setPortAvailabilityChecker(func(int) bool { return true })
 	defer restore()
+
+	resetGlobalPortManagerForTests()
+	defer resetGlobalPortManagerForTests()
 
 	// Test the global port manager functions
 	InitPortManager(20000, 20010)

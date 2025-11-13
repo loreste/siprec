@@ -224,9 +224,17 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				listenAddr.IP = net.ParseIP(config.InternalIP)
 			}
 			forwarder.Logger.WithFields(logrus.Fields{
-				"port": forwarder.LocalPort,
-				"ip":   listenAddr.IP,
-			}).Debug("Binding RTP listener with NAT considerations")
+				"port":        forwarder.LocalPort,
+				"ip":          listenAddr.IP,
+				"behind_nat":  true,
+				"internal_ip": config.InternalIP,
+			}).Info("Binding RTP listener with NAT considerations")
+		} else {
+			forwarder.Logger.WithFields(logrus.Fields{
+				"port":        forwarder.LocalPort,
+				"listen_addr": listenAddr.String(),
+				"behind_nat":  false,
+			}).Info("Binding RTP listener on all interfaces")
 		}
 
 		udpConn, err := net.ListenUDP("udp", listenAddr)
@@ -472,6 +480,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		sttWriter := sttPipeWriter
 
+		var firstPacketReceived bool
 		decodeAndProcess := func(packet []byte, arrival time.Time, remoteAddr *net.UDPAddr) {
 			if len(packet) == 0 {
 				return
@@ -487,6 +496,21 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 
 			forwarder.LastRTPTime = time.Now()
+
+			// Log first RTP packet for diagnostics
+			if !firstPacketReceived {
+				firstPacketReceived = true
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid":      callUUID,
+					"remote_addr":    remoteAddr.String(),
+					"ssrc":           rtpPacket.SSRC,
+					"payload_type":   rtpPacket.PayloadType,
+					"sequence":       rtpPacket.SequenceNumber,
+					"timestamp":      rtpPacket.Timestamp,
+					"local_port":     forwarder.LocalPort,
+					"payload_size":   len(rtpPacket.Payload),
+				}).Info("First RTP packet received successfully")
+			}
 
 			if forwarder.RemoteSSRC == 0 {
 				forwarder.RemoteSSRC = rtpPacket.SSRC
@@ -549,28 +573,13 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
-			processed := pcm
-			if config.AudioProcessing.Enabled && forwarder.AudioProcessor != nil {
-				if processingManager, ok := forwarder.AudioProcessor.(*audio.ProcessingManager); ok {
-					var finishProcessingTimer func()
-					if metrics.IsMetricsEnabled() {
-						finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "audio_processing")
-					}
-					processed, err = processingManager.ProcessAudio(pcm)
-					if finishProcessingTimer != nil {
-						finishProcessingTimer()
-					}
-					if err != nil {
-						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to process audio chunk")
-						if metrics.IsMetricsEnabled() {
-							metrics.RecordAudioProcessingError(callUUID, "processing_error", 1)
-						}
-						return
-					}
-					if len(processed) == 0 {
-						return
-					}
+			recordingPayload, transcriptionPayload, procErr := prepareRecordingAndTranscriptionPayloads(pcm, forwarder, config.AudioProcessing.Enabled, callUUID)
+			if procErr != nil {
+				forwarder.Logger.WithError(procErr).WithField("call_uuid", callUUID).Debug("Failed to process audio chunk")
+				if metrics.IsMetricsEnabled() {
+					metrics.RecordAudioProcessingError(callUUID, "processing_error", 1)
 				}
+				return
 			}
 
 			forwarder.pauseMutex.RLock()
@@ -584,15 +593,15 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 
 			startWrite := time.Now()
-			if _, err := recordingWriter.Write(processed); err != nil {
+			if _, err := recordingWriter.Write(recordingPayload); err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write PCM audio to recording")
 				if metrics.IsMetricsEnabled() {
 					metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
 				}
 				return
 			}
-			if sttWriter != nil {
-				if _, err := sttWriter.Write(processed); err != nil {
+			if sttWriter != nil && len(transcriptionPayload) > 0 {
+				if _, err := sttWriter.Write(transcriptionPayload); err != nil {
 					if errors.Is(err, io.ErrClosedPipe) {
 						forwarder.Logger.WithField("call_uuid", callUUID).Debug("STT stream closed; skipping transcription writes")
 					} else {
@@ -739,18 +748,48 @@ func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var timeoutWarningIssued bool
+
 	for {
 		select {
 		case <-forwarder.StopChan:
 			return
 		case <-ticker.C:
-			// Check if we've timed out
-			if time.Since(forwarder.LastRTPTime) > forwarder.Timeout {
+			// Check how long since last RTP packet
+			timeSinceLastRTP := time.Since(forwarder.LastRTPTime)
+
+			// Issue warning at 50% timeout threshold
+			if !timeoutWarningIssued && timeSinceLastRTP > forwarder.Timeout/2 {
+				timeoutWarningIssued = true
+				forwarder.remoteMutex.Lock()
+				remoteAddr := forwarder.RemoteRTPAddr
+				forwarder.remoteMutex.Unlock()
+
 				forwarder.Logger.WithFields(logrus.Fields{
-					"call_uuid": callUUID,
-					"last_rtp":  forwarder.LastRTPTime,
-					"timeout":   forwarder.Timeout,
-				}).Info("RTP timeout detected, closing forwarder")
+					"call_uuid":           callUUID,
+					"time_since_last_rtp": timeSinceLastRTP.String(),
+					"timeout_threshold":   forwarder.Timeout.String(),
+					"local_port":          forwarder.LocalPort,
+					"remote_addr":         remoteAddr,
+					"ssrc":                forwarder.RemoteSSRC,
+				}).Warn("RTP stream inactive - no packets received for extended period")
+			}
+
+			// Check if we've timed out
+			if timeSinceLastRTP > forwarder.Timeout {
+				forwarder.remoteMutex.Lock()
+				remoteAddr := forwarder.RemoteRTPAddr
+				forwarder.remoteMutex.Unlock()
+
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid":           callUUID,
+					"last_rtp_time":       forwarder.LastRTPTime.Format(time.RFC3339),
+					"time_since_last_rtp": timeSinceLastRTP.String(),
+					"timeout_threshold":   forwarder.Timeout.String(),
+					"local_port":          forwarder.LocalPort,
+					"remote_addr":         remoteAddr,
+					"remote_ssrc":         forwarder.RemoteSSRC,
+				}).Error("RTP timeout detected - closing forwarder. Check firewall/NAT configuration and ensure RTP packets are reaching the server.")
 
 				// Signal the main goroutine to stop
 				forwarder.Stop()
@@ -805,6 +844,45 @@ func readIncomingRTCP(forwarder *RTPForwarder, conn *net.UDPConn) {
 		}
 		handleRTCPPacket(forwarder, buffer[:n], addr)
 	}
+}
+
+// prepareRecordingAndTranscriptionPayloads returns the PCM slice that should be written to disk
+// and the slice that should be forwarded to the STT pipeline. Disk recordings always receive
+// the untouched PCM to keep compliance copies independent of any audio processing.
+func prepareRecordingAndTranscriptionPayloads(pcm []byte, forwarder *RTPForwarder, audioProcessingEnabled bool, callUUID string) ([]byte, []byte, error) {
+	if len(pcm) == 0 {
+		return pcm, pcm, nil
+	}
+
+	recordingPayload := pcm
+	transcriptionPayload := pcm
+
+	if !audioProcessingEnabled {
+		return recordingPayload, transcriptionPayload, nil
+	}
+
+	processingManager, ok := forwarder.AudioProcessor.(*audio.ProcessingManager)
+	if !ok || processingManager == nil {
+		return recordingPayload, transcriptionPayload, nil
+	}
+
+	// Copy the raw PCM before running processing so the on-disk recording keeps the original samples.
+	recordingPayload = append([]byte(nil), pcm...)
+
+	var finishProcessingTimer func()
+	if metrics.IsMetricsEnabled() {
+		finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "audio_processing")
+	}
+
+	processed, err := processingManager.ProcessAudio(pcm)
+	if finishProcessingTimer != nil {
+		finishProcessingTimer()
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return recordingPayload, processed, nil
 }
 
 func isRTCPPacket(payload []byte) bool {

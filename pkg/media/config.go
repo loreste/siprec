@@ -11,6 +11,7 @@ type Config struct {
 	// RTP configuration
 	RTPPortMin  int
 	RTPPortMax  int
+	RTPTimeout  time.Duration // Timeout for RTP inactivity before closing forwarder (default: 30s)
 	EnableSRTP  bool
 	RequireSRTP bool
 
