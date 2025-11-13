@@ -1100,7 +1100,11 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		for range audioStreams {
-			forwarder, err := media.NewRTPForwarder(30*time.Second, recordingSession, s.logger, mediaConfig.PIIAudioEnabled, mediaConfig.EncryptedRecorder)
+			rtpTimeout := mediaConfig.RTPTimeout
+			if rtpTimeout == 0 {
+				rtpTimeout = 30 * time.Second
+			}
+			forwarder, err := media.NewRTPForwarder(rtpTimeout, recordingSession, s.logger, mediaConfig.PIIAudioEnabled, mediaConfig.EncryptedRecorder)
 			if err != nil {
 				cleanupForwarders()
 				inviteErr = err
@@ -1528,7 +1532,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		// Allocate additional forwarders if the SRC added new streams
 		existingCount := len(forwarders)
 		for len(forwarders) < len(audioStreams) {
-			forwarder, err := media.NewRTPForwarder(30*time.Second, callState.RecordingSession, s.logger, mediaConfig.PIIAudioEnabled, mediaConfig.EncryptedRecorder)
+			rtpTimeout := mediaConfig.RTPTimeout
+			if rtpTimeout == 0 {
+				rtpTimeout = 30 * time.Second
+			}
+			forwarder, err := media.NewRTPForwarder(rtpTimeout, callState.RecordingSession, s.logger, mediaConfig.PIIAudioEnabled, mediaConfig.EncryptedRecorder)
 			if err != nil {
 				logger.WithError(err).Error("Failed to create additional RTP forwarder for re-INVITE")
 				s.sendResponse(message, 500, "Internal Server Error", nil, nil)
