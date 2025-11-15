@@ -115,6 +115,7 @@ The server is configured via environment variables. See `.env.example` for a com
 | `RTP_PORT_MIN` | Minimum RTP port | `10000` |
 | `RTP_PORT_MAX` | Maximum RTP port | `20000` |
 | `RTP_TIMEOUT` | RTP inactivity timeout before a call is dropped | `30s` |
+| `RTP_BIND_IP` | Specific IP address to bind RTP listener to (empty = all interfaces) | `` |
 | `ENABLE_SRTP` | Enable SRTP support | `false` |
 
 ### Speech-to-Text
