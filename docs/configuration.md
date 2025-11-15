@@ -11,9 +11,53 @@ All settings are provided through environment variables. The core service only r
 | `BEHIND_NAT` | Enable NAT rewriting (Via/Contact) | `false` |
 | `EXTERNAL_IP` | Public IP override or `auto` for STUN | `auto` |
 | `STUN_SERVER` | STUN server used when `EXTERNAL_IP=auto` | `stun:stun.l.google.com:19302` |
+
+### RTP Configuration
+
+| Variable | Description | Default |
+| --- | --- | --- |
 | `RTP_PORT_MIN` / `RTP_PORT_MAX` | RTP port range | `10000-20000` |
 | `RTP_TIMEOUT` | RTP inactivity timeout before cleanup | `30s` |
 | `RTP_BIND_IP` | Bind RTP listener to specific IP (empty = all interfaces) | `` |
+
+**RTP Timeout Configuration:**
+
+The `RTP_TIMEOUT` setting controls how long the server waits for RTP packets before considering a stream dead. This is useful for handling network issues:
+
+- **Default (30s)**: Works for most deployments
+- **Increased timeout (60s-120s)**: For networks with intermittent packet loss or high latency
+- **Decreased timeout (10s-20s)**: For environments where quick cleanup is preferred
+
+```bash
+# Example: Tolerate longer network interruptions
+RTP_TIMEOUT=90s
+
+# Example: Fast cleanup for unstable connections
+RTP_TIMEOUT=15s
+```
+
+**RTP Interface Binding:**
+
+By default, the RTP listener binds to all network interfaces (`0.0.0.0`), which is the most robust configuration. However, you can bind to a specific interface when needed:
+
+```bash
+# Default: Bind to all interfaces (recommended)
+# RTP_BIND_IP=  # (empty or not set)
+
+# Bind to specific private IP
+RTP_BIND_IP=192.168.1.100
+
+# Bind to specific public IP
+RTP_BIND_IP=203.0.113.50
+```
+
+**Use cases for specific interface binding:**
+- **Security**: Restrict RTP to internal network only
+- **Multi-homing**: Server has multiple IPs, bind to specific one
+- **Routing**: Force RTP through specific network path
+- **Firewall**: Bind to IP with specific firewall rules
+
+**Note**: If an invalid IP is provided, the server will fall back to binding on all interfaces and log a warning.
 
 ## Recording
 
