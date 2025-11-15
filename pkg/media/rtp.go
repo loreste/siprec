@@ -219,10 +219,18 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		listenAddr := &net.UDPAddr{Port: forwarder.LocalPort}
+
+		// Allow binding to a specific interface if configured
+		bindAddr := "0.0.0.0"
+		if config.RTPBindIP != "" {
+			listenAddr.IP = net.ParseIP(config.RTPBindIP)
+			bindAddr = config.RTPBindIP
+		}
+
 		forwarder.Logger.WithFields(logrus.Fields{
-			"port":        forwarder.LocalPort,
-			"listen_addr": "0.0.0.0",
-		}).Info("Binding RTP listener on all interfaces")
+			"port":     forwarder.LocalPort,
+			"bind_ip":  bindAddr,
+		}).Info("Binding RTP listener")
 
 		udpConn, err := net.ListenUDP("udp", listenAddr)
 		if err != nil {

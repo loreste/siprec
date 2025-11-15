@@ -898,6 +898,7 @@ func initialize() error {
 		RTPPortMin:       appConfig.Network.RTPPortMin,
 		RTPPortMax:       appConfig.Network.RTPPortMax,
 		RTPTimeout:       appConfig.Network.RTPTimeout,
+		RTPBindIP:        appConfig.Network.RTPBindIP,
 		EnableSRTP:       appConfig.Network.EnableSRTP,
 		RequireSRTP:      appConfig.Network.RequireSRTP,
 		RecordingDir:     appConfig.Recording.Directory,
