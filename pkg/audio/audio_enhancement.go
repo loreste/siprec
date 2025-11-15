@@ -491,6 +491,9 @@ func (ec *EchoCanceller) Process(samples []float64) []float64 {
 
 // updateReferenceBuffer updates the reference signal buffer
 func (ec *EchoCanceller) updateReferenceBuffer(sample float64) {
+	if len(ec.referenceBuffer) == 0 {
+		return
+	}
 	// Shift buffer and add new sample
 	copy(ec.referenceBuffer[1:], ec.referenceBuffer[:len(ec.referenceBuffer)-1])
 	ec.referenceBuffer[0] = sample
