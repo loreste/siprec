@@ -897,6 +897,7 @@ func initialize() error {
 	mediaConfig := &media.Config{
 		RTPPortMin:       appConfig.Network.RTPPortMin,
 		RTPPortMax:       appConfig.Network.RTPPortMax,
+		RTPTimeout:       appConfig.Network.RTPTimeout,
 		EnableSRTP:       appConfig.Network.EnableSRTP,
 		RequireSRTP:      appConfig.Network.RequireSRTP,
 		RecordingDir:     appConfig.Recording.Directory,
@@ -924,7 +925,7 @@ func initialize() error {
 			ctx:        rootCtx,
 		},
 		AudioMetricsInterval: 5 * time.Second,
-		EncryptedRecorder:   encryptedRecordingManager,
+		EncryptedRecorder:    encryptedRecordingManager,
 	}
 
 	if gdprEnabled && dbRepo != nil {

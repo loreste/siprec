@@ -114,6 +114,7 @@ The server is configured via environment variables. See `.env.example` for a com
 | `STUN_SERVER` | STUN server for IP detection | `stun.l.google.com:19302` |
 | `RTP_PORT_MIN` | Minimum RTP port | `10000` |
 | `RTP_PORT_MAX` | Maximum RTP port | `20000` |
+| `RTP_TIMEOUT` | RTP inactivity timeout before a call is dropped | `30s` |
 | `ENABLE_SRTP` | Enable SRTP support | `false` |
 
 ### Speech-to-Text
