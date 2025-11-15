@@ -219,23 +219,10 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		listenAddr := &net.UDPAddr{Port: forwarder.LocalPort}
-		if config.BehindNAT {
-			if config.InternalIP != "" {
-				listenAddr.IP = net.ParseIP(config.InternalIP)
-			}
-			forwarder.Logger.WithFields(logrus.Fields{
-				"port":        forwarder.LocalPort,
-				"ip":          listenAddr.IP,
-				"behind_nat":  true,
-				"internal_ip": config.InternalIP,
-			}).Info("Binding RTP listener with NAT considerations")
-		} else {
-			forwarder.Logger.WithFields(logrus.Fields{
-				"port":        forwarder.LocalPort,
-				"listen_addr": listenAddr.String(),
-				"behind_nat":  false,
-			}).Info("Binding RTP listener on all interfaces")
-		}
+		forwarder.Logger.WithFields(logrus.Fields{
+			"port":        forwarder.LocalPort,
+			"listen_addr": "0.0.0.0",
+		}).Info("Binding RTP listener on all interfaces")
 
 		udpConn, err := net.ListenUDP("udp", listenAddr)
 		if err != nil {
