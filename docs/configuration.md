@@ -13,6 +13,7 @@ All settings are provided through environment variables. The core service only r
 | `STUN_SERVER` | STUN server used when `EXTERNAL_IP=auto` | `stun:stun.l.google.com:19302` |
 | `RTP_PORT_MIN` / `RTP_PORT_MAX` | RTP port range | `10000-20000` |
 | `RTP_TIMEOUT` | RTP inactivity timeout before cleanup | `30s` |
+| `RTP_BIND_IP` | Bind RTP listener to specific IP (empty = all interfaces) | `` |
 
 ## Recording
 
