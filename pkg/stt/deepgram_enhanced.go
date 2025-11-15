@@ -638,7 +638,9 @@ func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, 
 			return
 		}
 
+		c.mutex.Lock()
 		c.lastActivity = time.Now()
+		c.mutex.Unlock()
 
 		// Parse WebSocket response
 		var response DeepgramWebSocketResponse
