@@ -96,6 +96,9 @@ type NetworkConfig struct {
 	// RTP inactivity timeout before a forwarder is closed
 	RTPTimeout time.Duration `json:"rtp_timeout" env:"RTP_TIMEOUT" default:"30s"`
 
+	// RTP bind IP address (empty = 0.0.0.0 - all interfaces)
+	RTPBindIP string `json:"rtp_bind_ip" env:"RTP_BIND_IP" default:""`
+
 	// TLS certificate file
 	TLSCertFile string `json:"tls_cert_file" env:"TLS_CERT_PATH"`
 
@@ -1199,6 +1202,20 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 		config.RTPTimeout = rtpTimeout
 	}
 	logger.WithField("rtp_timeout", config.RTPTimeout).Info("Configured RTP timeout")
+
+	// Load RTP bind IP address (optional - defaults to all interfaces)
+	config.RTPBindIP = getEnv("RTP_BIND_IP", "")
+	if config.RTPBindIP != "" {
+		// Validate that it's a valid IP address
+		if ip := net.ParseIP(config.RTPBindIP); ip == nil {
+			logger.WithField("rtp_bind_ip", config.RTPBindIP).Warn("Invalid RTP_BIND_IP, binding to all interfaces instead")
+			config.RTPBindIP = ""
+		} else {
+			logger.WithField("rtp_bind_ip", config.RTPBindIP).Info("RTP listener will bind to specific interface")
+		}
+	} else {
+		logger.Info("RTP listener will bind to all interfaces (0.0.0.0)")
+	}
 
 	// Load TLS configuration
 	config.TLSCertFile = getEnv("TLS_CERT_PATH", "")
