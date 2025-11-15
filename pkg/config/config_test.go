@@ -17,6 +17,7 @@ func TestConfigLoading(t *testing.T) {
 	os.Setenv("ENABLE_SRTP", "true")
 	os.Setenv("RTP_PORT_MIN", "10001")
 	os.Setenv("RTP_PORT_MAX", "20001")
+	os.Setenv("RTP_TIMEOUT", "45s")
 	os.Setenv("ENABLE_TLS", "true")
 	os.Setenv("TLS_PORT", "5063")
 	os.Setenv("TLS_CERT_PATH", "./certs/cert.pem")
@@ -69,7 +70,7 @@ func TestConfigLoading(t *testing.T) {
 		// Unset environment variables
 		vars := []string{
 			"EXTERNAL_IP", "INTERNAL_IP", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
-			"RTP_PORT_MAX", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
+			"RTP_PORT_MAX", "RTP_TIMEOUT", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 			"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
 			"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
 			"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "RECORDING_STORAGE_ENABLED",
@@ -101,6 +102,7 @@ func TestConfigLoading(t *testing.T) {
 	assert.True(t, config.Network.EnableSRTP)
 	assert.Equal(t, 10001, config.Network.RTPPortMin)
 	assert.Equal(t, 20001, config.Network.RTPPortMax)
+	assert.Equal(t, 45*time.Second, config.Network.RTPTimeout)
 	assert.True(t, config.Network.EnableTLS)
 	assert.Equal(t, 5063, config.Network.TLSPort)
 	assert.Equal(t, "./certs/cert.pem", config.Network.TLSCertFile)
@@ -157,7 +159,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	// Ensure no environment variables are set
 	vars := []string{
 		"EXTERNAL_IP", "INTERNAL_IP", "SIP_HOST", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
-		"RTP_PORT_MAX", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
+		"RTP_PORT_MAX", "RTP_TIMEOUT", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 		"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
 		"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
 		"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "SUPPORTED_VENDORS",
@@ -188,6 +190,7 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.False(t, config.Network.EnableSRTP)
 	assert.Equal(t, 10000, config.Network.RTPPortMin)
 	assert.Equal(t, 20000, config.Network.RTPPortMax)
+	assert.Equal(t, 30*time.Second, config.Network.RTPTimeout)
 	assert.False(t, config.Network.EnableTLS)
 	assert.Equal(t, 5062, config.Network.TLSPort)
 	assert.Equal(t, "", config.Network.TLSCertFile)
