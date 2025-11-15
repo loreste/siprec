@@ -117,9 +117,9 @@ func TestRTPTimeoutBehavior(t *testing.T) {
 func TestRTPTimeoutWarning(t *testing.T) {
 	metrics.EnableMetrics(false)
 
-	var logBuffer bytes.Buffer
+	logBuffer := &lockedBuffer{}
 	logger := logrus.New()
-	logger.SetOutput(&logBuffer)
+	logger.SetOutput(logBuffer)
 	logger.SetLevel(logrus.WarnLevel)
 
 	// Create a forwarder with a short timeout for testing
@@ -147,6 +147,23 @@ func TestRTPTimeoutWarning(t *testing.T) {
 	// Clean up
 	forwarder.Stop()
 	time.Sleep(100 * time.Millisecond)
+}
+
+type lockedBuffer struct {
+	buf bytes.Buffer
+	mux sync.Mutex
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.String()
 }
 
 // TestRTPTimeoutConfigurable verifies that timeout value is configurable

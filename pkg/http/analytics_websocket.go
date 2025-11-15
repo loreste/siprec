@@ -31,6 +31,7 @@ type AnalyticsClient struct {
 	handler   *AnalyticsWebSocketHandler
 	callID    string // Optional: filter by specific call
 	sessionID string
+	mu        sync.RWMutex
 }
 
 // AnalyticsMessage represents a message to broadcast
@@ -78,9 +79,12 @@ func (h *AnalyticsWebSocketHandler) run() {
 			h.clientsMu.Lock()
 			h.clients[client] = true
 			h.clientsMu.Unlock()
+			client.mu.RLock()
+			callID := client.callID
+			client.mu.RUnlock()
 			h.logger.WithFields(logrus.Fields{
 				"session_id": client.sessionID,
-				"call_id":    client.callID,
+				"call_id":    callID,
 			}).Debug("Analytics WebSocket client registered")
 
 		case client := <-h.unregister:
@@ -115,18 +119,19 @@ func (h *AnalyticsWebSocketHandler) broadcastMessage(message *AnalyticsMessage) 
 	}
 
 	h.clientsMu.RLock()
-	clients := make([]*AnalyticsClient, 0, len(h.clients))
-	for client := range h.clients {
-		// Filter by call ID if client has specified one
-		if client.callID != "" && client.callID != message.CallID {
-			continue
-		}
-		clients = append(clients, client)
-	}
-	h.clientsMu.RUnlock()
+	defer h.clientsMu.RUnlock()
 
 	var stale []*AnalyticsClient
-	for _, client := range clients {
+	for client := range h.clients {
+		client.mu.RLock()
+		callID := client.callID
+		client.mu.RUnlock()
+
+		// Filter by call ID if client has specified one
+		if callID != "" && callID != message.CallID {
+			continue
+		}
+
 		select {
 		case client.send <- data:
 		default:
@@ -358,7 +363,9 @@ func (c *AnalyticsClient) handleMessage(message []byte) {
 	case "subscribe":
 		// Handle subscription to specific call
 		if callID, ok := msg["call_id"].(string); ok {
+			c.mu.Lock()
 			c.callID = callID
+			c.mu.Unlock()
 			c.handler.logger.WithFields(logrus.Fields{
 				"session_id": c.sessionID,
 				"call_id":    callID,
@@ -367,7 +374,9 @@ func (c *AnalyticsClient) handleMessage(message []byte) {
 
 	case "unsubscribe":
 		// Clear call filter
+		c.mu.Lock()
 		c.callID = ""
+		c.mu.Unlock()
 		c.handler.logger.WithField("session_id", c.sessionID).Debug("Client unsubscribed from call")
 
 	case "ping":
