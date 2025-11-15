@@ -15,6 +15,7 @@ type Configuration struct {
 	EnableSRTP  bool
 	RTPPortMin  int
 	RTPPortMax  int
+	RTPTimeout  time.Duration
 	TLSCertFile string
 	TLSKeyFile  string
 	TLSPort     int
@@ -72,6 +73,7 @@ func (c *Config) ToLegacyConfig(logger *logrus.Logger) *Configuration {
 		EnableSRTP:  c.Network.EnableSRTP,
 		RTPPortMin:  c.Network.RTPPortMin,
 		RTPPortMax:  c.Network.RTPPortMax,
+		RTPTimeout:  c.Network.RTPTimeout,
 		TLSCertFile: c.Network.TLSCertFile,
 		TLSKeyFile:  c.Network.TLSKeyFile,
 		TLSPort:     c.Network.TLSPort,

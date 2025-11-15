@@ -93,6 +93,9 @@ type NetworkConfig struct {
 	// RTP port range maximum
 	RTPPortMax int `json:"rtp_port_max" env:"RTP_PORT_MAX" default:"20000"`
 
+	// RTP inactivity timeout before a forwarder is closed
+	RTPTimeout time.Duration `json:"rtp_timeout" env:"RTP_TIMEOUT" default:"30s"`
+
 	// TLS certificate file
 	TLSCertFile string `json:"tls_cert_file" env:"TLS_CERT_PATH"`
 
@@ -1185,6 +1188,17 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	if (config.RTPPortMax - config.RTPPortMin) < 100 {
 		logger.Warn("RTP port range too small, at least 100 ports are recommended")
 	}
+
+	// Load RTP timeout duration
+	rtpTimeoutStr := getEnv("RTP_TIMEOUT", "30s")
+	rtpTimeout, err := time.ParseDuration(rtpTimeoutStr)
+	if err != nil || rtpTimeout <= 0 {
+		logger.WithError(err).Warn("Invalid RTP_TIMEOUT value, defaulting to 30s")
+		config.RTPTimeout = 30 * time.Second
+	} else {
+		config.RTPTimeout = rtpTimeout
+	}
+	logger.WithField("rtp_timeout", config.RTPTimeout).Info("Configured RTP timeout")
 
 	// Load TLS configuration
 	config.TLSCertFile = getEnv("TLS_CERT_PATH", "")
