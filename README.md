@@ -351,6 +351,87 @@ siprec/
 - [Whisper Setup Guide](docs/whisper-setup.md)
 - [CHANGELOG](CHANGELOG.md)
 
+## Troubleshooting
+
+### Empty or Silent WAV Files
+
+If recordings contain no audio or are unexpectedly small:
+
+**1. Check RTP Timeout Settings**
+
+The server may be timing out before receiving RTP packets. Symptoms include logs showing:
+```
+RTP timeout detected - closing forwarder
+```
+
+**Solution**: Increase the RTP timeout to accommodate network conditions:
+```bash
+# Default is 30s, try increasing for unreliable networks
+RTP_TIMEOUT=60s  # or 90s, 120s depending on needs
+```
+
+**2. Verify RTP Packets Are Reaching the Server**
+
+Check logs for:
+```
+First RTP packet received successfully
+```
+
+If you see warnings about no RTP packets:
+- Verify firewall rules allow UDP traffic on your RTP port range (`RTP_PORT_MIN` to `RTP_PORT_MAX`)
+- Check NAT/routing configuration
+- Ensure the SIP client is sending RTP to the correct IP address
+
+**3. Network Interface Binding Issues**
+
+By default, the server binds to all interfaces (`0.0.0.0`). If you have multiple network interfaces and RTP packets aren't being received:
+
+```bash
+# Bind to a specific interface
+RTP_BIND_IP=192.168.1.100  # Your server's IP address
+```
+
+**4. Enable Diagnostic Logging**
+
+The server logs detailed RTP timeout information at 50% threshold:
+```
+RTP stream inactive - no packets received for extended period
+```
+
+This helps identify whether the issue is:
+- No packets arriving at all (firewall/routing issue)
+- Intermittent packet loss (network quality issue)
+- Premature timeout (configuration issue)
+
+### NAT and Firewall Configuration
+
+For servers behind NAT or firewalls:
+
+```bash
+# Enable NAT handling
+BEHIND_NAT=true
+
+# Set your public IP (or use 'auto' for STUN detection)
+EXTERNAL_IP=auto
+STUN_SERVER=stun.l.google.com:19302
+
+# Ensure RTP port range is open in firewall
+# Default range: 10000-20000 UDP
+```
+
+### High Latency or Packet Loss Networks
+
+For deployments with unreliable network conditions:
+
+```bash
+# Increase RTP timeout
+RTP_TIMEOUT=90s
+
+# Consider wider port range for better allocation
+RTP_PORT_MIN=10000
+RTP_PORT_MAX=30000
+```
+
 ## Performance
 
 - **Concurrent Calls**: Tested with 1000+ simultaneous sessions
