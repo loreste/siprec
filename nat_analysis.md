@@ -32,16 +32,16 @@
 ### ⚠️ **LIMITATIONS & GAPS**
 
 #### 1. **STUN Protocol Implementation**
-- ❌ **No active STUN client implementation**
-- ❌ STUN servers configured but not actively used for NAT discovery
-- ❌ No NAT type detection (Cone, Symmetric, etc.)
-- ❌ No STUN binding requests for external port discovery
+- ✅ **Active STUN client implementation** (`pkg/media/stun.go`)
+- ✅ Basic STUN binding requests used for auto-detection of `ExternalIP`
+- ✅ NAT type detection enabled (Full Cone vs Symmetric)
+- ⚠️ STUN servers must be configured for this to be active
 
 #### 2. **ICE Implementation**
-- ⚠️ **Basic ICE attributes only** (`rtcp-mux`)
-- ❌ No full ICE candidate gathering
-- ❌ No ICE connectivity checks
-- ❌ No peer-reflexive candidate discovery
+- ✅ **Basic (Srflx) ICE Candidates** supported (`pkg/sip/sdp.go`)
+- ✅ Generates Host and Srflx candidates based on NAT config
+- ✅ Supports `rtcp-mux` optimization
+- ⚠️ Full connectivity checks still rely on client-side triggering (Lite ICE)
 
 #### 3. **TURN Support**
 - ❌ **No TURN relay support**

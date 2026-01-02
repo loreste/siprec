@@ -91,6 +91,19 @@ Redis connection parameters can be set via:
 | `REDIS_DATABASE` | Database index | `0` |
 | `REDIS_SESSION_TTL` | TTL for stored sessions | `24h` |
 
+## High Availability & Redundancy
+
+The server supports session redundancy to handle failovers without losing call state. This allows a backup instance to take over if the primary fails.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ENABLE_REDUNDANCY` | Enable session redundancy | `true` |
+| `REDUNDANCY_STORAGE_TYPE` | Storage backend (`memory`, `redis`) | `memory` |
+| `SESSION_TIMEOUT` | Time until an inactive session is considered dead | `30s` |
+| `SESSION_CHECK_INTERVAL` | Frequency of stale session checks | `10s` |
+
+> **Note**: For production HA, set `REDUNDANCY_STORAGE_TYPE=redis` so that multiple instances can share session state.
+
 ## Speech-to-Text (Optional)
 
 The project exposes hooks for a provider manager. Each provider has its own credentials (see `pkg/stt`). Typical variables include:

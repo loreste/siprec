@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"siprec-server/pkg/cdr"
+	"siprec-server/pkg/cluster"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/realtime/analytics"
@@ -72,6 +73,9 @@ type Config struct {
 
 	// Timeout for delivering metadata notifications
 	MetadataNotifyTimeout time.Duration
+
+	// Cluster configuration
+	Cluster cluster.Config
 }
 
 // Handler for SIP requests - now works with CustomSIPServer
@@ -103,6 +107,7 @@ type Handler struct {
 	analyticsDispatcher *analytics.Dispatcher
 	cdrService          *cdr.CDRService
 	sttManager          *stt.ProviderManager
+	clusterManager      *cluster.Manager
 }
 
 // CallData holds information about an active call
@@ -239,6 +244,29 @@ func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderM
 
 	// Initialize the custom SIP server
 	handler.Server = NewCustomSIPServer(logger, handler)
+
+	// Initialize Cluster Manager if enabled
+	if config.Cluster.Enabled && handler.SessionStore != nil {
+		// Attempt to extract Redis client from the session store
+		// handler.SessionStore is likely a *SharedSessionStore (same package)
+		// which wraps a sessions.SessionStore
+		if sharedStore, ok := handler.SessionStore.(*SharedSessionStore); ok {
+			// sharedStore.store is sessions.SessionStore
+			if redisStore, ok := sharedStore.store.(*sessions.RedisSessionStore); ok {
+				handler.clusterManager = cluster.NewManager(
+					config.Cluster,
+					redisStore.GetClient(),
+					logger,
+					config.SessionNodeID,
+				)
+				if err := handler.clusterManager.Start(); err != nil {
+					logger.WithError(err).Error("Failed to start cluster manager")
+				} else {
+					logger.Info("Cluster manager started")
+				}
+			}
+		}
+	}
 
 	return handler, nil
 }
@@ -683,6 +711,11 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 		if err := closer.Close(); err != nil {
 			logger.WithError(err).Warn("Error closing session store")
 		}
+	}
+
+	// Stop cluster manager
+	if h.clusterManager != nil {
+		h.clusterManager.Stop()
 	}
 
 	logger.Info("SIP handler shutdown complete")
