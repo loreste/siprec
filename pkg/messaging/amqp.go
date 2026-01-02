@@ -278,7 +278,10 @@ func buildAMQPTLSConfig(cfg AMQPTLSConfig) (*tls.Config, error) {
 		InsecureSkipVerify: cfg.SkipVerify,
 	}
 
-	if cfg.CertFile != "" && cfg.KeyFile != "" {
+	if cfg.CertFile != "" || cfg.KeyFile != "" {
+		if cfg.CertFile == "" || cfg.KeyFile == "" {
+			return nil, fmt.Errorf("both cert class and key file must be provided for AMQP TLS")
+		}
 		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AMQP TLS certificate: %w", err)

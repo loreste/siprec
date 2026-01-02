@@ -73,12 +73,17 @@ func NewRedisSessionStore(config RedisConfig, logger *logrus.Logger) (*RedisSess
 	}
 
 	logger.WithFields(logrus.Fields{
-		"address": config.Address,
+		"address":  config.Address,
 		"database": config.Database,
-		"ttl": config.TTL,
+		"ttl":      config.TTL,
 	}).Info("Redis session store initialized")
 
 	return store, nil
+}
+
+// GetClient returns the underlying Redis client
+func (r *RedisSessionStore) GetClient() redis.UniversalClient {
+	return r.client
 }
 
 // Store saves a session to Redis
@@ -428,7 +433,7 @@ func (r *RedisSessionStore) cleanupIndex() error {
 			pipe.HDel(ctx, r.indexKey(), sessionID)
 		}
 		_, err = pipe.Exec(ctx)
-		
+
 		if err == nil && len(toRemove) > 0 {
 			r.logger.WithField("count", len(toRemove)).Info("Cleaned up orphaned session index entries")
 		}

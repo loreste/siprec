@@ -458,6 +458,39 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 			// Add ICE attributes for NAT traversal
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "ice-ufrag", Value: "randomufrag"})
 			newAttributes = append(newAttributes, sdp.Attribute{Key: "ice-pwd", Value: "randomicepwd"})
+
+			// Add Host candidate (Priority 2130706431 = 126 | 65535 | 256 - 1)
+			if options.InternalIP != "" {
+				newAttributes = append(newAttributes, sdp.Attribute{
+					Key:   "candidate",
+					Value: fmt.Sprintf("1 1 UDP 2130706431 %s %d typ host", options.InternalIP, rtpPort),
+				})
+			}
+
+			// Add Server Reflexive candidate (Priority 1694498815 = 100 | 65535 | 256 - 1)
+			// We assume 1:1 port mapping for static NAT/EIP scenarios
+			if options.ExternalIP != "" && options.ExternalIP != options.InternalIP {
+				newAttributes = append(newAttributes, sdp.Attribute{
+					Key:   "candidate",
+					Value: fmt.Sprintf("2 1 UDP 1694498815 %s %d typ srflx raddr %s rport %d", options.ExternalIP, rtpPort, options.InternalIP, rtpPort),
+				})
+			}
+
+			// Add RTCP candidates if not using rtcp-mux
+			if !options.UseRTCPMux && rtcpPort > 0 {
+				if options.InternalIP != "" {
+					newAttributes = append(newAttributes, sdp.Attribute{
+						Key:   "candidate",
+						Value: fmt.Sprintf("1 2 UDP 2130706430 %s %d typ host", options.InternalIP, rtcpPort),
+					})
+				}
+				if options.ExternalIP != "" && options.ExternalIP != options.InternalIP {
+					newAttributes = append(newAttributes, sdp.Attribute{
+						Key:   "candidate",
+						Value: fmt.Sprintf("2 2 UDP 1694498814 %s %d typ srflx raddr %s rport %d", options.ExternalIP, rtcpPort, options.InternalIP, rtcpPort),
+					})
+				}
+			}
 		}
 
 		// Add SRTP crypto attributes if SRTP is enabled

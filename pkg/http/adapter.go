@@ -1,8 +1,6 @@
 package http
 
 import (
-	"siprec-server/pkg/errors"
-
 	"github.com/sirupsen/logrus"
 )
 
@@ -10,44 +8,40 @@ import (
 // to the HTTP server
 type SIPHandlerAdapter struct {
 	logger     *logrus.Logger
-	sipHandler interface{} // Replace with actual SIP handler interface
+	sipHandler SIPHandler // Strictly typed interface
+}
+
+// SIPHandler defines the interface required by the adapter
+type SIPHandler interface {
+	GetActiveCallCount() int
+	GetAllSessions() ([]interface{}, error)
+	GetSession(id string) (interface{}, error)
+	GetSessionStatistics() map[string]interface{}
 }
 
 // NewSIPHandlerAdapter creates a new SIP handler adapter
 func NewSIPHandlerAdapter(logger *logrus.Logger, sipHandler interface{}) *SIPHandlerAdapter {
 	return &SIPHandlerAdapter{
 		logger:     logger,
-		sipHandler: sipHandler,
+		sipHandler: sipHandler.(SIPHandler), // Ensure it implements our interface
 	}
 }
 
 // GetActiveCallCount returns the number of active calls
 func (a *SIPHandlerAdapter) GetActiveCallCount() int {
-	// Call the actual SIP handler method
-	// This is a simplified implementation
-	if handler, ok := a.sipHandler.(interface{ GetActiveCallCount() int }); ok {
-		return handler.GetActiveCallCount()
-	}
-
-	a.logger.Warn("SIP handler does not implement GetActiveCallCount")
-	return 0
+	return a.sipHandler.GetActiveCallCount()
 }
 
 // GetMetrics returns all metrics
 func (a *SIPHandlerAdapter) GetMetrics() map[string]interface{} {
-	// This is a simplified implementation
-	// In a real implementation, we would get metrics from the SIP handler
 	metrics := map[string]interface{}{
 		"active_calls": a.GetActiveCallCount(),
 	}
 
-	// Add more metrics as needed
-	if handler, ok := a.sipHandler.(interface{ GetPeakCallCount() int }); ok {
-		metrics["peak_calls"] = handler.GetPeakCallCount()
-	}
-
-	if handler, ok := a.sipHandler.(interface{ GetTotalCallCount() int }); ok {
-		metrics["total_calls"] = handler.GetTotalCallCount()
+	// Merge with full statistics
+	stats := a.sipHandler.GetSessionStatistics()
+	for k, v := range stats {
+		metrics[k] = v
 	}
 
 	return metrics
@@ -55,38 +49,15 @@ func (a *SIPHandlerAdapter) GetMetrics() map[string]interface{} {
 
 // GetSessionByID returns session information by ID
 func (a *SIPHandlerAdapter) GetSessionByID(id string) (interface{}, error) {
-	// Call the SIP handler to get the session
-	if handler, ok := a.sipHandler.(interface {
-		GetSession(id string) (interface{}, error)
-	}); ok {
-		return handler.GetSession(id)
-	}
-
-	a.logger.Warn("SIP handler does not implement GetSession")
-	return nil, errors.NewNotImplemented("GetSession not implemented")
+	return a.sipHandler.GetSession(id)
 }
 
 // GetAllSessions returns information about all active sessions
 func (a *SIPHandlerAdapter) GetAllSessions() ([]interface{}, error) {
-	// Call the SIP handler to get all sessions
-	if handler, ok := a.sipHandler.(interface{ GetAllSessions() ([]interface{}, error) }); ok {
-		return handler.GetAllSessions()
-	}
-
-	a.logger.Warn("SIP handler does not implement GetAllSessions")
-	return nil, errors.NewNotImplemented("GetAllSessions not implemented")
+	return a.sipHandler.GetAllSessions()
 }
 
 // GetSessionStatistics returns session statistics
 func (a *SIPHandlerAdapter) GetSessionStatistics() map[string]interface{} {
-	// Call the SIP handler to get session statistics
-	if handler, ok := a.sipHandler.(interface{ GetSessionStatistics() map[string]interface{} }); ok {
-		return handler.GetSessionStatistics()
-	}
-
-	// Fallback to basic statistics
-	return map[string]interface{}{
-		"active_calls":      a.GetActiveCallCount(),
-		"metrics_available": false,
-	}
+	return a.sipHandler.GetSessionStatistics()
 }

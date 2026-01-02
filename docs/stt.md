@@ -28,9 +28,32 @@ If you do not supply a manager, the handler returns `ErrNoProviderAvailable` and
 ## Configuration Tips
 
 - Set `STT_DEFAULT_VENDOR` to the provider you want to use by default.
-- Include vendors in `SUPPORTED_VENDORS` if you plan to route dynamically.
+- Includes support for: **Google**, **Deepgram**, **ElevenLabs**, **Speechmatics**, **Azure**, **Amazon Transcribe**, **OpenAI (Whisper API)**, and **Local Whisper**.
 - Review provider-specific environment variables in `pkg/stt` (API keys, endpoints, etc.).
 - Integration tests for some providers require credentials; run `go test ./pkg/stt -run Provider` selectively when secrets are available.
+
+## Advanced Features
+
+### PII Redaction
+Some providers (e.g., Deepgram) support real-time redaction of sensitive information.
+- **Deepgram**: Configure `DEEPGRAM_REDACT` with a comma-separated list of entities (e.g., `pci,ssn,email`).
+
+### Language Switching
+The server supports automatic language detection and switching for providers that offer it.
+- **Deepgram**: Enable `DEEPGRAM_REALTIME_SWITCHING=true` to allow the model to switch languages mid-stream.
+- **Language Routing**: You can map specific language codes to different providers via configuration if needed.
+
+## Supported Providers & Configuration
+(See `configuration.md` for full environment variable list)
+
+### Cloud Providers
+- **Google Cloud STT**: `GOOGLE_STT_ENABLED=true`
+- **Deepgram**: `DEEPGRAM_STT_ENABLED=true`
+- **ElevenLabs**: `ELEVENLABS_STT_ENABLED=true`
+- **Speechmatics**: `SPEECHMATICS_STT_ENABLED=true`
+- **Azure Speech**: `AZURE_STT_ENABLED=true`
+- **Amazon Transcribe**: `AMAZON_STT_ENABLED=true`
+- **OpenAI Whisper API**: `OPENAI_STT_ENABLED=true`
 
 ## Local Whisper (open-source)
 

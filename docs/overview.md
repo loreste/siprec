@@ -8,7 +8,8 @@ The SIPREC server provides a compact implementation of RFC 7865/7866 recording
 - **Metadata processor** – Multipart parsing and validation for SIPREC metadata. The handler keeps the decoded `RSMetadata` alongside the SDP describing the recording streams.
 - **Session manager bridge** – The SIP handler and the high-level session manager share the same persistence layer. By default, an in-memory store is used; any implementation of `pkg/session.SessionStore` (for example the Redis store) can be injected at runtime.
 - **Pause / resume service** – Runtime controls for toggling recording/transcription state without dropping the SIP dialog.
-- **Optional STT streaming** – A provider manager routes captured audio to whichever speech-to-text provider you configure. The SIP handler exposes hooks but does not require STT to be enabled.
+- **High Availability** – Built-in session redundancy and failover handling (configurable via Redis).
+- **Optional STT streaming** – A provider manager routes captured audio to providers like Google, Deepgram, or Whisper. Supports **PII Redaction** and **Language Switching**.
 
 ## Data Flow Summary
 
