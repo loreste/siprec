@@ -26,6 +26,7 @@ type RTPForwarder struct {
 	TranscriptChan   chan string
 	RecordingFile    *os.File                 // Used to store the recorded media stream
 	LastRTPTime      time.Time                // Tracks the last time an RTP packet was received
+	lastRTPMutex     sync.RWMutex             // Mutex to protect LastRTPTime access
 	Timeout          time.Duration            // Timeout duration for inactive RTP streams
 	RecordingSession *siprec.RecordingSession // SIPREC session information
 	RecordingPaused  bool                     // Flag to indicate if recording is paused
@@ -187,24 +188,24 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 	}
 
 	return &RTPForwarder{
-		LocalPort:        portPair.RTPPort,  // Even port for RTP
-		RTCPPort:         portPair.RTCPPort, // Odd port for RTCP
-		StopChan:         make(chan struct{}),
-		TranscriptChan:   make(chan string, 10), // Buffer up to 10 transcriptions
-		Timeout:          timeout,
-		RecordingSession: recordingSession,
-		Logger:           logger,
-		SRTPEnabled:      false,
-		SRTPProfile:      "AES_CM_128_HMAC_SHA1_80", // Default profile
-		SRTPKeyLifetime:  1 << 31,                   // Default lifetime from RFC 3711
-		AudioProcessor:   nil,                       // Will be initialized in StartRTPForwarding
-		PIIAudioMarker:   piiAudioMarker,            // PII audio tracking
+		LocalPort:         portPair.RTPPort,  // Even port for RTP
+		RTCPPort:          portPair.RTCPPort, // Odd port for RTCP
+		StopChan:          make(chan struct{}),
+		TranscriptChan:    make(chan string, 10), // Buffer up to 10 transcriptions
+		Timeout:           timeout,
+		RecordingSession:  recordingSession,
+		Logger:            logger,
+		SRTPEnabled:       false,
+		SRTPProfile:       "AES_CM_128_HMAC_SHA1_80", // Default profile
+		SRTPKeyLifetime:   1 << 31,                   // Default lifetime from RFC 3711
+		AudioProcessor:    nil,                       // Will be initialized in StartRTPForwarding
+		PIIAudioMarker:    piiAudioMarker,            // PII audio tracking
 		EncryptedRecorder: encryptedRecorder,
-		isCleanedUp:      false,                     // Not cleaned up initially
-		MarkedForCleanup: false,                     // Not marked for cleanup initially
-		LocalSSRC:        generateRandomSSRC(),
-		RTPStats:         newRTPStreamStats(),
-		rtcpStopChan:     make(chan struct{}, 1),
+		isCleanedUp:       false, // Not cleaned up initially
+		MarkedForCleanup:  false, // Not marked for cleanup initially
+		LocalSSRC:         generateRandomSSRC(),
+		RTPStats:          newRTPStreamStats(),
+		rtcpStopChan:      make(chan struct{}, 1),
 	}, nil
 }
 

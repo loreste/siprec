@@ -62,8 +62,12 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 
 	transcriptionIndex := 0
 
+	// Create a channel to signal when streaming is done
+	streamDone := make(chan struct{})
+
 	// Simulate reading from the audio stream
 	go func() {
+		defer close(streamDone)
 		buffer := make([]byte, 1024)
 		for {
 			select {
@@ -90,6 +94,9 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 		case <-ctx.Done():
 			p.logger.WithField("call_uuid", callUUID).Info("Mock STT processing stopped")
 			return nil
+		case <-streamDone:
+			p.logger.WithField("call_uuid", callUUID).Info("Mock STT stream finished (EOF)")
+			return nil
 		case <-ticker.C:
 			transcription := mockTranscriptions[transcriptionIndex]
 			transcriptionIndex = (transcriptionIndex + 1) % len(mockTranscriptions)
@@ -109,8 +116,15 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 						"interim":  true,
 					})
 
-					// Wait a bit before sending final
-					time.Sleep(time.Duration(500+rand.Intn(1500)) * time.Millisecond)
+					// Wait a bit before sending final, but respect context/done channels
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-streamDone:
+						return nil
+					case <-time.After(time.Duration(500+rand.Intn(1500)) * time.Millisecond):
+						// Continue
+					}
 				}
 
 				// Then send the final transcription
