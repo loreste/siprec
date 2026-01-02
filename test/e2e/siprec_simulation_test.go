@@ -89,21 +89,24 @@ func TestSimulatedSiprecFullFlow(t *testing.T) {
 			default:
 				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 				n, _, err := conn.ReadFromUDP(buffer)
-				if err != nil {
-					if !strings.Contains(err.Error(), "timeout") {
-						logger.WithError(err).Error("Failed to read RTP packet")
+					if err != nil {
+						// Ignore timeout errors and closed connection errors (normal shutdown)
+						if !strings.Contains(err.Error(), "timeout") && 
+						   !strings.Contains(err.Error(), "use of closed network connection") {
+							logger.WithError(err).Error("Failed to read RTP packet")
+						}
+						continue
 					}
-					continue
-				}
 
-				// We received data - write to the audio pipe
-				// In a real implementation, we'd parse RTP header and extract audio
-				// For testing, we'll just write the data directly
-				audioPW.Write(buffer[:n])
-				logger.WithField("bytes", n).Debug("Received RTP packet")
+					// We received data - write to the audio pipe
+					// In a real implementation, we'd parse RTP header and extract audio
+					// For testing, we'll just write the data directly
+					// Ignore errors if pipe is closed
+					_, _ = audioPW.Write(buffer[:n])
+					logger.WithField("bytes", n).Debug("Received RTP packet")
+				}
 			}
-		}
-	}()
+		}()
 
 	// Simulate sending RTP packets (acting as the SIP client)
 	go func() {
@@ -159,12 +162,23 @@ func TestSimulatedSiprecFullFlow(t *testing.T) {
 		logger.Info("Finished sending test RTP packets")
 	}()
 
+	// Wait for the traffic simulation to finish (slightly longer than the sender loop)
+	time.Sleep(3500 * time.Millisecond)
+
+	// Simulate call teardown:
+	// 1. Close UDP listener to stop receiving data
+	conn.Close()
+	// 2. Close audio pipe writer to signal EOF to the STT provider
+	audioPW.Close()
+
 	// Wait for the STT processing to complete or timeout
 	select {
 	case <-call.Done:
 		logger.Info("STT processing completed normally")
-	case <-time.After(5 * time.Second):
-		logger.Warn("Test timed out waiting for STT processing")
+	case <-time.After(2 * time.Second):
+		// If we timed out here, it means StreamToText didn't return after EOF
+		logger.Warn("Test timed out waiting for STT processing cleanup")
+		t.Fail()
 	}
 
 	// Simulate call teardown
