@@ -110,7 +110,7 @@ The project exposes hooks for a provider manager. Each provider has its own cred
 
 | Variable | Description |
 | --- | --- |
-| `STT_DEFAULT_VENDOR` | Preferred provider (e.g. `google`) |
+| `DEFAULT_SPEECH_VENDOR` | Preferred provider (e.g. `google`) |
 | `SUPPORTED_VENDORS` | Comma-separated provider list |
 | Provider-specific keys | e.g. Google service-account JSON, Deepgram API key |
 
@@ -153,3 +153,55 @@ See [Speech-to-Text Integration](stt.md) for detailed Whisper configuration incl
 | `HTTP_PORT` | HTTP listen port | `8080` |
 
 Health (`/healthz`) and readiness (`/readyz`) checks automatically reflect the SIP handler and shared session store.
+
+## Audio Processing & VAD
+
+Basic audio enhancement can be applied before transcription.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AUDIO_ENHANCEMENT_ENABLED` | Enable audio enhancement pipeline | `true` |
+| `NOISE_SUPPRESSION_ENABLED` | Enable noise suppression | `true` |
+| `VAD_THRESHOLD` | Energy threshold for speech detection (0.0-1.0) | `0.3` |
+| `NOISE_SUPPRESSION_LEVEL` | Aggressiveness of noise reduction (0.0-1.0) | `0.7` |
+| `AGC_ENABLED` | Enable Automatic Gain Control | `true` |
+| `ECHO_CANCELLATION_ENABLED` | Enable Acoustic Echo Cancellation | `true` |
+
+
+## PII Detection & Redaction
+
+The server can detect and redact Personally Identifiable Information (PII) from transcripts and mark it in audio.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PII_DETECTION_ENABLED` | Master switch for PII subsystem | `false` |
+| `PII_ENABLED_TYPES` | Comma-separated types: `ssn,credit_card,phone,email` | `ssn,credit_card` |
+| `PII_REDACTION_CHAR` | Character used for masking (e.g. `*` or `#`) | `*` |
+| `PII_PRESERVE_FORMAT` | If `true`, keeps separators (e.g. `***-**-1234`) | `true` |
+| `PII_APPLY_TO_TRANSCRIPTIONS`| Redact text in real-time streams | `true` |
+| `PII_APPLY_TO_RECORDINGS` | Mark audio metadata for post-processing redaction | `false` |
+
+
+## End-to-End Encryption
+
+Secure your data both in transit and at rest.
+
+### Transport Layer
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ENABLE_TLS` | Enable TLS for SIP signaling | `false` |
+| `TLS_CERT_PATH` | Path to server certificate (PEM) | `` |
+| `TLS_KEY_PATH` | Path to private key (PEM) | `` |
+| `SIP_REQUIRE_TLS` | Reject non-TLS connections | `false` |
+| `ENABLE_SRTP` | Enable SRTP for media (SDES key exchange) | `false` |
+| `SIP_REQUIRE_SRTP` | Reject non-SRTP media sessions | `false` |
+
+### Storage Layer (At-Rest)
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ENABLE_RECORDING_ENCRYPTION` | Encrypt WAV files before writing to disk | `false` |
+| `ENABLE_METADATA_ENCRYPTION` | Encrypt session metadata JSON | `false` |
+| `ENCRYPTION_ALGORITHM` | `AES-256-GCM` or `ChaCha20-Poly1305` | `AES-256-GCM` |
+| `MASTER_KEY_PATH` | Directory for encryption keys | `./keys` |
+| `KEY_ROTATION_INTERVAL` | Time before rotating active key | `24h` |
+
