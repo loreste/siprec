@@ -122,7 +122,7 @@ The server is configured via environment variables. See `.env.example` for a com
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `STT_VENDOR` | Default STT provider | `google` |
+| `DEFAULT_SPEECH_VENDOR` | Default STT provider | `google` |
 | `STT_SUPPORTED_VENDORS` | Comma-separated list of vendors | `google,deepgram` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google credentials | - |
 | `DEEPGRAM_API_KEY` | Deepgram API key | - |
@@ -138,7 +138,7 @@ The server is configured via environment variables. See `.env.example` for a com
 | `TLS_KEY_FILE` | Path to TLS private key | - |
 | `ENABLE_RECORDING_ENCRYPTION` | Encrypt recordings | `false` |
 | `ENCRYPTION_ALGORITHM` | Encryption algorithm | `aes-256-gcm` |
-| `PII_ENABLED` | Enable PII detection | `false` |
+| `PII_DETECTION_ENABLED` | Enable PII detection | `false` |
 | `PII_ENABLED_TYPES` | Comma-separated types | `ssn,credit_card,phone,email` |
 | `PCI_COMPLIANCE_MODE` | Enable PCI DSS mode | `false` |
 

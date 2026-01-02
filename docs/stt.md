@@ -27,7 +27,7 @@ If you do not supply a manager, the handler returns `ErrNoProviderAvailable` and
 
 ## Configuration Tips
 
-- Set `STT_DEFAULT_VENDOR` to the provider you want to use by default.
+- Set `DEFAULT_SPEECH_VENDOR` to the provider you want to use by default.
 - Includes support for: **Google**, **Deepgram**, **ElevenLabs**, **Speechmatics**, **Azure**, **Amazon Transcribe**, **OpenAI (Whisper API)**, and **Local Whisper**.
 - Review provider-specific environment variables in `pkg/stt` (API keys, endpoints, etc.).
 - Integration tests for some providers require credentials; run `go test ./pkg/stt -run Provider` selectively when secrets are available.
@@ -78,7 +78,7 @@ If you need to keep audio on-prem, you can route the PCM stream to the open-sour
 | `WHISPER_MAX_CONCURRENT` | Max concurrent calls (`-1`=auto, `0`=unlimited) | `-1` |
 | `WHISPER_EXTRA_ARGS` | Additional CLI arguments (e.g., `--device cuda`) | `""` |
 
-Add `whisper` to `SUPPORTED_VENDORS` (and optionally `STT_DEFAULT_VENDOR`) to route calls to the local CLI. The PCM stream is still available for WebSocket/AMQP listeners, and the CLI output is published with provider metadata like any other STT vendor.
+Add `whisper` to `SUPPORTED_VENDORS` (and optionally `DEFAULT_SPEECH_VENDOR`) to route calls to the local CLI. The PCM stream is still available for WebSocket/AMQP listeners, and the CLI output is published with provider metadata like any other STT vendor.
 
 ### Model Selection
 
