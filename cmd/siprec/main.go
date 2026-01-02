@@ -908,16 +908,16 @@ func initialize() error {
 		InternalIP:       appConfig.Network.InternalIP,
 		ExternalIP:       appConfig.Network.ExternalIP,
 		DefaultVendor:    appConfig.STT.DefaultVendor,
-		// Initialize audio processing configuration with sensible defaults
+		// Initialize audio processing configuration
 		AudioProcessing: media.AudioProcessingConfig{
-			Enabled:              true, // Force enable for testing
-			EnableVAD:            true,
-			VADThreshold:         0.02,
-			VADHoldTimeMs:        400,
-			EnableNoiseReduction: true,
-			NoiseReductionLevel:  0.01,
-			ChannelCount:         1,
-			MixChannels:          true,
+			Enabled:              appConfig.AudioProcessing.Enabled,
+			EnableVAD:            appConfig.AudioProcessing.NoiseSuppression.Enabled, // VAD often tied to NS or enabled by default if NS is on
+			VADThreshold:         appConfig.AudioProcessing.NoiseSuppression.VADThreshold,
+			VADHoldTimeMs:        400, // Default hold time, could be exposed if needed
+			EnableNoiseReduction: appConfig.AudioProcessing.NoiseSuppression.Enabled,
+			NoiseReductionLevel:  appConfig.AudioProcessing.NoiseSuppression.SuppressionLevel,
+			ChannelCount:         appConfig.AudioProcessing.MultiChannel.ChannelCount,
+			MixChannels:          appConfig.AudioProcessing.MultiChannel.EnableMixing,
 		},
 		// PII detection configuration
 		PIIAudioEnabled: appConfig.PII.Enabled && appConfig.PII.ApplyToRecordings,

@@ -19,27 +19,37 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
-	Network        NetworkConfig        `json:"network"`
-	HTTP           HTTPConfig           `json:"http"`
-	Recording      RecordingConfig      `json:"recording"`
-	STT            STTConfig            `json:"stt"`
-	Resources      ResourceConfig       `json:"resources"`
-	Logging        LoggingConfig        `json:"logging"`
-	Messaging      MessagingConfig      `json:"messaging"`
-	Redundancy     RedundancyConfig     `json:"redundancy"`
-	Encryption     EncryptionConfig     `json:"encryption"`
-	AsyncSTT       AsyncSTTConfig       `json:"async_stt"`
-	HotReload      HotReloadConfig      `json:"hot_reload"`
-	Performance    PerformanceConfig    `json:"performance"`
-	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker"`
-	PauseResume    PauseResumeConfig    `json:"pause_resume"`
-	PII            PIIConfig            `json:"pii"`
-	Tracing        TracingConfig        `json:"tracing"`
-	Analytics      AnalyticsConfig      `json:"analytics"`
-	Database       DatabaseConfig       `json:"database"`
-	Compliance     ComplianceConfig     `json:"compliance"`
-	Auth           AuthConfig           `json:"auth"`
-	Alerting       AlertingConfig       `json:"alerting"`
+	Network         NetworkConfig          `json:"network"`
+	HTTP            HTTPConfig             `json:"http"`
+	Recording       RecordingConfig        `json:"recording"`
+	STT             STTConfig              `json:"stt"`
+	Resources       ResourceConfig         `json:"resources"`
+	Logging         LoggingConfig          `json:"logging"`
+	Messaging       MessagingConfig        `json:"messaging"`
+	Redundancy      RedundancyConfig       `json:"redundancy"`
+	Encryption      EncryptionConfig       `json:"encryption"`
+	AsyncSTT        AsyncSTTConfig         `json:"async_stt"`
+	HotReload       HotReloadConfig        `json:"hot_reload"`
+	Performance     PerformanceConfig      `json:"performance"`
+	CircuitBreaker  CircuitBreakerConfig   `json:"circuit_breaker"`
+	PauseResume     PauseResumeConfig      `json:"pause_resume"`
+	PII             PIIConfig              `json:"pii"`
+	Tracing         TracingConfig          `json:"tracing"`
+	Analytics       AnalyticsConfig        `json:"analytics"`
+	Database        DatabaseConfig         `json:"database"`
+	Compliance      ComplianceConfig       `json:"compliance"`
+	Auth            AuthConfig             `json:"auth"`
+	Alerting        AlertingConfig         `json:"alerting"`
+	Cluster         ClusterConfig          `json:"cluster"`
+	AudioProcessing AudioEnhancementConfig `json:"audio_processing"`
+}
+
+// ClusterConfig holds cluster management configuration
+type ClusterConfig struct {
+	Enabled           bool          `json:"enabled" env:"CLUSTER_ENABLED" default:"false"`
+	NodeID            string        `json:"node_id" env:"CLUSTER_NODE_ID" default:"node-1"`
+	HeartbeatInterval time.Duration `json:"heartbeat_interval" env:"CLUSTER_HEARTBEAT_INTERVAL" default:"5s"`
+	NodeTTL           time.Duration `json:"node_ttl" env:"CLUSTER_NODE_TTL" default:"15s"`
 }
 
 // DatabaseConfig controls database persistence

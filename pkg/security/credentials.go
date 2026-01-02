@@ -42,7 +42,7 @@ func (cp *CredentialProvider) GetCredential(name string) (string, error) {
 	cp.mu.RUnlock()
 
 	// Try multiple sources in order of preference
-	
+
 	// 1. Environment variable
 	envName := strings.ToUpper(strings.ReplaceAll(name, ".", "_"))
 	if value := os.Getenv(envName); value != "" {
@@ -79,7 +79,7 @@ func (cp *CredentialProvider) GetCredential(name string) (string, error) {
 func (cp *CredentialProvider) cacheCredential(name, value string, ttl time.Duration) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	
+
 	cp.cache[name] = &cachedCredential{
 		value:     value,
 		expiresAt: time.Now().Add(ttl),
@@ -90,12 +90,15 @@ func (cp *CredentialProvider) cacheCredential(name, value string, ttl time.Durat
 func (cp *CredentialProvider) getFromAWSSecretsManager(name string) (string, error) {
 	// Check if we're running in AWS
 	if os.Getenv("AWS_EXECUTION_ENV") == "" && os.Getenv("AWS_REGION") == "" {
+		// Not in AWS, return specific error so we fall through to next provider
 		return "", fmt.Errorf("not running in AWS environment")
 	}
 
 	// In production, this would use the AWS SDK
-	// For now, return empty to avoid external dependencies
-	return "", fmt.Errorf("AWS Secrets Manager integration not implemented")
+	// For now, return empty to avoid external dependencies or complex mocking
+	// This allows the chain to continue to other providers (Local File)
+	cp.logger.Debug("AWS Secrets Manager lookup skipped (stub implementation)")
+	return "", fmt.Errorf("credential not found in AWS Secrets Manager")
 }
 
 // getFromKubernetesSecret retrieves credential from Kubernetes secret
@@ -146,13 +149,13 @@ func (cp *CredentialProvider) getFromSecureFile(name string) (string, error) {
 func (cp *CredentialProvider) ClearCache() {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	
+
 	// Clear sensitive data before removing
 	for _, cached := range cp.cache {
 		// Overwrite the credential value
 		cached.value = strings.Repeat("X", len(cached.value))
 	}
-	
+
 	cp.cache = make(map[string]*cachedCredential)
 }
 
@@ -168,7 +171,7 @@ func GetCredential(name string) (string, error) {
 		logger := logrus.New()
 		globalCredProvider = NewCredentialProvider(logger)
 	})
-	
+
 	return globalCredProvider.GetCredential(name)
 }
 
