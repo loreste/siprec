@@ -466,13 +466,16 @@ func TestStreamContinuityAfterFailover(t *testing.T) {
 	audioStreams := make(map[string][]byte)
 	audioPipes := make(map[string]*io.PipeWriter)
 	var audioMutex sync.Mutex // Mutex to protect access to audioStreams map
+	var wgCallbacks sync.WaitGroup
 
 	for _, stream := range []string{"audio1", "audio2"} {
 		pr, pw := io.Pipe()
 		audioPipes[stream] = pw
+		wgCallbacks.Add(1)
 
 		// Collect audio in a separate goroutine
 		go func(stream string, reader io.Reader) {
+			defer wgCallbacks.Done()
 			buf := make([]byte, 1024)
 			for {
 				n, err := reader.Read(buf)
@@ -517,6 +520,9 @@ func TestStreamContinuityAfterFailover(t *testing.T) {
 	for _, pw := range audioPipes {
 		pw.Close()
 	}
+
+	// Wait for all audio collection to finish
+	wgCallbacks.Wait()
 
 	// Verify stream continuity by checking participants' media streams
 	for i, p := range recoveredSession.Participants {

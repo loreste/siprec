@@ -228,8 +228,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		forwarder.Logger.WithFields(logrus.Fields{
-			"port":     forwarder.LocalPort,
-			"bind_ip":  bindAddr,
+			"port":    forwarder.LocalPort,
+			"bind_ip": bindAddr,
 		}).Info("Binding RTP listener")
 
 		udpConn, err := net.ListenUDP("udp", listenAddr)
@@ -243,7 +243,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			return
 		}
 		forwarder.Conn = udpConn
+		forwarder.lastRTPMutex.Lock()
 		forwarder.LastRTPTime = time.Now()
+		forwarder.lastRTPMutex.Unlock()
 
 		SetUDPSocketBuffers(udpConn, forwarder.Logger)
 
@@ -490,20 +492,22 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
+			forwarder.lastRTPMutex.Lock()
 			forwarder.LastRTPTime = time.Now()
+			forwarder.lastRTPMutex.Unlock()
 
 			// Log first RTP packet for diagnostics
 			if !firstPacketReceived {
 				firstPacketReceived = true
 				forwarder.Logger.WithFields(logrus.Fields{
-					"call_uuid":      callUUID,
-					"remote_addr":    remoteAddr.String(),
-					"ssrc":           rtpPacket.SSRC,
-					"payload_type":   rtpPacket.PayloadType,
-					"sequence":       rtpPacket.SequenceNumber,
-					"timestamp":      rtpPacket.Timestamp,
-					"local_port":     forwarder.LocalPort,
-					"payload_size":   len(rtpPacket.Payload),
+					"call_uuid":    callUUID,
+					"remote_addr":  remoteAddr.String(),
+					"ssrc":         rtpPacket.SSRC,
+					"payload_type": rtpPacket.PayloadType,
+					"sequence":     rtpPacket.SequenceNumber,
+					"timestamp":    rtpPacket.Timestamp,
+					"local_port":   forwarder.LocalPort,
+					"payload_size": len(rtpPacket.Payload),
 				}).Info("First RTP packet received successfully")
 			}
 
@@ -751,7 +755,10 @@ func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
 			return
 		case <-ticker.C:
 			// Check how long since last RTP packet
-			timeSinceLastRTP := time.Since(forwarder.LastRTPTime)
+			forwarder.lastRTPMutex.RLock()
+			lastActivity := forwarder.LastRTPTime
+			forwarder.lastRTPMutex.RUnlock()
+			timeSinceLastRTP := time.Since(lastActivity)
 
 			// Issue warning at 50% timeout threshold
 			if !timeoutWarningIssued && timeSinceLastRTP > forwarder.Timeout/2 {
@@ -778,7 +785,7 @@ func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
 
 				forwarder.Logger.WithFields(logrus.Fields{
 					"call_uuid":           callUUID,
-					"last_rtp_time":       forwarder.LastRTPTime.Format(time.RFC3339),
+					"last_rtp_time":       lastActivity.Format(time.RFC3339),
 					"time_since_last_rtp": timeSinceLastRTP.String(),
 					"timeout_threshold":   forwarder.Timeout.String(),
 					"local_port":          forwarder.LocalPort,

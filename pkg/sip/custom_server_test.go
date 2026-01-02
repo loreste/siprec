@@ -443,6 +443,80 @@ func TestHandleSiprecInviteRejectsMissingSDP(t *testing.T) {
 	require.Equal(t, 400, last.StatusCode)
 }
 
+func TestHandleSiprecInitialInviteSuccess(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{
+			MediaConfig: &media.Config{
+				RTPPortMin: 10000,
+				RTPPortMax: 20000,
+			},
+		},
+	}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-invite-initial-success"
+	boundary := "OSS-unique-boundary-42"
+
+	sdp := "v=0\r\no=test 1 1 IN IP4 127.0.0.1\r\ns=Test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 1234 RTP/AVP 0\r\na=sendonly\r\na=label:0\r\n"
+
+	metadata := `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="sess-1" state="active">
+  <session session_id="sess-1">
+    <sipSessionID>session-1@test</sipSessionID>
+  </session>
+  <participant participant_id="p1">
+    <aor>sip:alice@example.com</aor>
+    <name>Alice</name>
+  </participant>
+  <stream stream_id="str-1" label="0">
+    <label>0</label>
+  </stream>
+  <sessionrecordingassoc session_id="sess-1"/>
+</recording>`
+
+	body := fmt.Sprintf("--%s\r\nContent-Type: application/sdp\r\n\r\n%s\r\n--%s\r\nContent-Type: application/rs-metadata+xml\r\n\r\n%s\r\n--%s--\r\n", boundary, sdp, boundary, metadata, boundary)
+
+	req := sipparser.NewRequest(sipparser.INVITE, sipparser.Uri{Host: "recorder"})
+	req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 127.0.0.1;branch=z9hG4bK-test"))
+	req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag=src"))
+	req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>"))
+	req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+	req.AppendHeader(sipparser.NewHeader("CSeq", "1 INVITE"))
+	req.AppendHeader(sipparser.NewHeader("Contact", "<sip:src@example.com>"))
+
+	tx := newTestServerTransaction(req)
+	message := &SIPMessage{
+		Method:      "INVITE",
+		CallID:      callID,
+		CSeq:        "1 INVITE",
+		ContentType: fmt.Sprintf("multipart/mixed; boundary=%s", boundary),
+		Body:        []byte(body),
+		Request:     req,
+		Parsed:      req,
+		Transaction: tx,
+	}
+
+	sipServer.handleSiprecInvite(message)
+
+	// Check response
+	require.NotEmpty(t, tx.responses)
+	last := tx.responses[len(tx.responses)-1]
+	require.Equal(t, 200, last.StatusCode)
+
+	// Verify session state was created
+	sipServer.callMutex.RLock()
+	state, exists := sipServer.callStates[callID]
+	sipServer.callMutex.RUnlock()
+	require.True(t, exists, "Call state should exist")
+	require.NotNil(t, state.RecordingSession, "Recording session should be populated")
+	require.Equal(t, "sess-1", state.RecordingSession.ID)
+	require.Equal(t, "active", state.RecordingSession.RecordingState)
+	require.Len(t, state.RecordingSession.Participants, 1)
+}
+
 type testServerTransaction struct {
 	req       *sipparser.Request
 	resp      *sipparser.Response
