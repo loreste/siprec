@@ -1467,6 +1467,47 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	callState.LastActivity = time.Now()
 	mediaIP := s.resolveMediaIPAddress(message)
 
+	// Fix for Resume after Long Hold:
+	// Check for dead/timed-out forwarders and remove them so new ones are allocated.
+	if callState.RTPForwarder != nil {
+		select {
+		case <-callState.RTPForwarder.StopChan:
+			logger.Warn("Cleanup: Removing dead RTP forwarder (legacy primary) before re-INVITE")
+			callState.RTPForwarder = nil
+		default:
+			// Forwarder is still active
+		}
+	}
+
+	if len(callState.RTPForwarders) > 0 {
+		var activeForwarders []*media.RTPForwarder
+		for _, f := range callState.RTPForwarders {
+			isDead := false
+			select {
+			case <-f.StopChan:
+				isDead = true
+			default:
+			}
+			if !isDead {
+				activeForwarders = append(activeForwarders, f)
+			} else {
+				logger.Warn("Cleanup: Removing dead RTP forwarder from list")
+			}
+		}
+		callState.RTPForwarders = activeForwarders
+	}
+
+	if len(callState.StreamForwarders) > 0 {
+		for id, f := range callState.StreamForwarders {
+			select {
+			case <-f.StopChan:
+				logger.WithField("stream_id", id).Warn("Cleanup: Removing dead stream forwarder")
+				delete(callState.StreamForwarders, id)
+			default:
+			}
+		}
+	}
+
 	// Generate response using existing RTP forwarder
 	responseHeaders := map[string]string{
 		"Contact":   s.buildContactHeader(message),
@@ -1475,7 +1516,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	}
 
 	var responseSDP []byte
-	if callState.RTPForwarder != nil {
+	if callState.RTPForwarder != nil || (sdpData != nil && len(sdpData) > 0) {
 		var parsedSDP *sdp.SessionDescription
 		if sdpData != nil && len(sdpData) > 0 {
 			parsed, err := ParseSDPTolerant(sdpData, s.logger)

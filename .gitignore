@@ -20,7 +20,7 @@ coverage.html
 # Build artifacts
 /build/
 /dist/
-siprec
+/siprec
 testenv
 
 # Dependency directories

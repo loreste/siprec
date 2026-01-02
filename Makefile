@@ -338,11 +338,30 @@ db-up: ## Start PostgreSQL database
 db-down: ## Stop PostgreSQL database
 	docker-compose -f $(DEV_COMPOSE_FILE) --profile postgres down
 
-db-migrate: ## Run database migrations (placeholder)
-	@echo "Database migrations not implemented yet"
+db-migrate: ## Run database migrations
+	@echo "Running database migrations..."
+	@if [ -f "scripts/init_db.sql" ]; then \
+		echo "Applying scripts/init_db.sql..."; \
+		if command -v psql >/dev/null 2>&1; then \
+			psql -h localhost -U postgres -d siprec -f scripts/init_db.sql; \
+		elif command -v mysql >/dev/null 2>&1; then \
+			mysql -h 127.0.0.1 -u root -p siprec < scripts/init_db.sql; \
+		else \
+			echo "No supported database client found (psql, mysql). Please apply scripts/init_db.sql manually."; \
+		fi \
+	else \
+		echo "Migration script not found!"; \
+	fi
 
-db-seed: ## Seed database with test data (placeholder)
-	@echo "Database seeding not implemented yet"
+db-seed: ## Seed database with test data
+	@echo "Seeding database..."
+	@echo "INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at) VALUES ('1', 'admin', 'admin@example.com', 'hash', 'admin', NOW(), NOW()) ON CONFLICT DO NOTHING;" > scripts/seed.sql
+	@if command -v psql >/dev/null 2>&1; then \
+		psql -h localhost -U postgres -d siprec -f scripts/seed.sql; \
+		echo "Seeded admin user."; \
+	else \
+		echo "Skipping execution (no db client). Generated scripts/seed.sql."; \
+	fi
 
 ##@ Security
 

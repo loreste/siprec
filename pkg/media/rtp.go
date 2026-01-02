@@ -242,7 +242,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 			return
 		}
+		forwarder.CleanupMutex.Lock()
 		forwarder.Conn = udpConn
+		forwarder.CleanupMutex.Unlock()
 		forwarder.lastRTPMutex.Lock()
 		forwarder.LastRTPTime = time.Now()
 		forwarder.lastRTPMutex.Unlock()
@@ -269,12 +271,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 				return
 			}
+			forwarder.CleanupMutex.Lock()
 			forwarder.RTCPConn = rtcpConn
+			forwarder.CleanupMutex.Unlock()
 			SetUDPSocketBuffers(rtcpConn, forwarder.Logger)
 		}
 
 		sanitizedUUID := security.SanitizeCallUUID(callUUID)
+		forwarder.CleanupMutex.Lock()
 		forwarder.CallUUID = callUUID
+		forwarder.CleanupMutex.Unlock()
 		forwarder.Storage = config.RecordingStorage
 
 		sampleRate := forwarder.SampleRate
