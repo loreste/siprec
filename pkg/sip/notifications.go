@@ -15,14 +15,19 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// LeaderChecker is a function that returns true if this node is the cluster leader
+type LeaderChecker func() bool
+
 // MetadataNotifier delivers SIPREC metadata lifecycle events to interested listeners.
 type MetadataNotifier struct {
-	logger  *logrus.Logger
-	client  *http.Client
-	global  []string
-	timeout time.Duration
-	mu      sync.RWMutex
-	perCall map[string][]string
+	logger        *logrus.Logger
+	client        *http.Client
+	global        []string
+	timeout       time.Duration
+	mu            sync.RWMutex
+	perCall       map[string][]string
+	leaderChecker LeaderChecker // Optional: if set, only leader sends notifications
+	leaderOnly    bool          // If true, only send notifications when this node is leader
 }
 
 // NotificationEvent represents a metadata lifecycle event.
@@ -90,8 +95,41 @@ func (n *MetadataNotifier) ClearCallEndpoints(callID string) {
 	n.mu.Unlock()
 }
 
+// SetLeaderChecker sets the function used to check if this node is the cluster leader.
+// If leaderOnly is true, notifications will only be sent when this node is the leader.
+func (n *MetadataNotifier) SetLeaderChecker(checker LeaderChecker, leaderOnly bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.leaderChecker = checker
+	n.leaderOnly = leaderOnly
+}
+
+// isLeader returns true if this node should send notifications
+func (n *MetadataNotifier) isLeader() bool {
+	n.mu.RLock()
+	checker := n.leaderChecker
+	leaderOnly := n.leaderOnly
+	n.mu.RUnlock()
+
+	// If no leader checking configured, always allow
+	if checker == nil || !leaderOnly {
+		return true
+	}
+
+	return checker()
+}
+
 // Notify dispatches a metadata event to all registered endpoints.
 func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.RecordingSession, callID, event string, extra map[string]interface{}) {
+	// Check if this node should send notifications (leader check)
+	if !n.isLeader() {
+		n.logger.WithFields(logrus.Fields{
+			"call_id": callID,
+			"event":   event,
+		}).Debug("Skipping notification - not cluster leader")
+		return
+	}
+
 	endpoints := n.collectEndpoints(callID, session)
 	if len(endpoints) == 0 {
 		return

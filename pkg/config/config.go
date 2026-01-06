@@ -50,6 +50,11 @@ type ClusterConfig struct {
 	NodeID            string        `json:"node_id" env:"CLUSTER_NODE_ID" default:"node-1"`
 	HeartbeatInterval time.Duration `json:"heartbeat_interval" env:"CLUSTER_HEARTBEAT_INTERVAL" default:"5s"`
 	NodeTTL           time.Duration `json:"node_ttl" env:"CLUSTER_NODE_TTL" default:"15s"`
+
+	// Leader election configuration
+	LeaderElectionEnabled bool          `json:"leader_election_enabled" env:"CLUSTER_LEADER_ELECTION_ENABLED" default:"true"`
+	LeaderLockTTL         time.Duration `json:"leader_lock_ttl" env:"CLUSTER_LEADER_LOCK_TTL" default:"10s"`
+	LeaderRetryInterval   time.Duration `json:"leader_retry_interval" env:"CLUSTER_LEADER_RETRY_INTERVAL" default:"3s"`
 }
 
 // DatabaseConfig controls database persistence
@@ -172,6 +177,18 @@ type RecordingConfig struct {
 
 	// CombineLegs determines whether multi-stream SIPREC legs are merged into a single file
 	CombineLegs bool `json:"combine_legs" env:"RECORDING_COMBINE_LEGS" default:"true"`
+
+	// Audio format for recordings: wav, mp3, opus, mp4, ogg
+	Format string `json:"format" env:"RECORDING_FORMAT" default:"wav"`
+
+	// MP3 encoding settings (when format=mp3)
+	MP3Bitrate int `json:"mp3_bitrate" env:"RECORDING_MP3_BITRATE" default:"128"`
+
+	// Opus encoding settings (when format=opus or ogg)
+	OpusBitrate int `json:"opus_bitrate" env:"RECORDING_OPUS_BITRATE" default:"64"`
+
+	// Quality setting (1-10, higher is better, affects MP3/Opus)
+	Quality int `json:"quality" env:"RECORDING_QUALITY" default:"5"`
 }
 
 // RecordingStorageConfig defines remote storage options for recordings
@@ -944,6 +961,48 @@ type AuthConfig struct {
 
 	// Default admin password (only used if not already set)
 	AdminPassword string `json:"admin_password" env:"AUTH_ADMIN_PASSWORD"`
+
+	// SIP Authentication configuration
+	SIP SIPAuthConfig `json:"sip"`
+}
+
+// SIPAuthConfig holds SIP-specific authentication configuration
+type SIPAuthConfig struct {
+	// Whether SIP authentication is enabled
+	Enabled bool `json:"enabled" env:"SIP_AUTH_ENABLED" default:"false"`
+
+	// Authentication realm (typically the domain)
+	Realm string `json:"realm" env:"SIP_AUTH_REALM" default:"siprec.local"`
+
+	// Nonce timeout in seconds
+	NonceTimeout int `json:"nonce_timeout" env:"SIP_AUTH_NONCE_TIMEOUT" default:"300"`
+
+	// SIP users for digest authentication (format: "user1:pass1,user2:pass2")
+	Users string `json:"users" env:"SIP_AUTH_USERS"`
+
+	// IP-based access control
+	IPAccess SIPIPAccessConfig `json:"ip_access"`
+}
+
+// SIPIPAccessConfig holds IP-based access control configuration
+type SIPIPAccessConfig struct {
+	// Whether IP-based access control is enabled
+	Enabled bool `json:"enabled" env:"SIP_IP_ACCESS_ENABLED" default:"false"`
+
+	// Default policy: true = allow all except blocked, false = block all except allowed
+	DefaultAllow bool `json:"default_allow" env:"SIP_IP_DEFAULT_ALLOW" default:"true"`
+
+	// Comma-separated list of allowed IP addresses
+	AllowedIPs string `json:"allowed_ips" env:"SIP_IP_ALLOWED_IPS"`
+
+	// Comma-separated list of allowed networks (CIDR notation)
+	AllowedNetworks string `json:"allowed_networks" env:"SIP_IP_ALLOWED_NETWORKS"`
+
+	// Comma-separated list of blocked IP addresses
+	BlockedIPs string `json:"blocked_ips" env:"SIP_IP_BLOCKED_IPS"`
+
+	// Comma-separated list of blocked networks (CIDR notation)
+	BlockedNetworks string `json:"blocked_networks" env:"SIP_IP_BLOCKED_NETWORKS"`
 }
 
 // AlertingConfig holds alerting system configuration
@@ -1376,6 +1435,50 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 
 	// Whether to merge SIPREC legs into a single WAV
 	config.CombineLegs = getEnvBool("RECORDING_COMBINE_LEGS", true)
+
+	// Load recording format settings
+	config.Format = strings.ToLower(getEnv("RECORDING_FORMAT", "wav"))
+	if config.Format != "wav" && config.Format != "mp3" && config.Format != "opus" &&
+		config.Format != "ogg" && config.Format != "mp4" && config.Format != "m4a" && config.Format != "flac" {
+		logger.WithField("format", config.Format).Warn("Invalid RECORDING_FORMAT, defaulting to wav")
+		config.Format = "wav"
+	}
+
+	// Load MP3 bitrate (kbps)
+	mp3BitrateStr := getEnv("RECORDING_MP3_BITRATE", "128")
+	mp3Bitrate, err := strconv.Atoi(mp3BitrateStr)
+	if err != nil || mp3Bitrate < 32 || mp3Bitrate > 320 {
+		config.MP3Bitrate = 128
+	} else {
+		config.MP3Bitrate = mp3Bitrate
+	}
+
+	// Load Opus bitrate (kbps)
+	opusBitrateStr := getEnv("RECORDING_OPUS_BITRATE", "64")
+	opusBitrate, err := strconv.Atoi(opusBitrateStr)
+	if err != nil || opusBitrate < 6 || opusBitrate > 510 {
+		config.OpusBitrate = 64
+	} else {
+		config.OpusBitrate = opusBitrate
+	}
+
+	// Load quality setting (1-10)
+	qualityStr := getEnv("RECORDING_QUALITY", "5")
+	quality, err := strconv.Atoi(qualityStr)
+	if err != nil || quality < 1 || quality > 10 {
+		config.Quality = 5
+	} else {
+		config.Quality = quality
+	}
+
+	if config.Format != "wav" {
+		logger.WithFields(logrus.Fields{
+			"format":       config.Format,
+			"mp3_bitrate":  config.MP3Bitrate,
+			"opus_bitrate": config.OpusBitrate,
+			"quality":      config.Quality,
+		}).Info("Recording format encoding configured")
+	}
 
 	return nil
 }
@@ -3036,6 +3139,43 @@ func loadAuthConfig(logger *logrus.Logger, config *AuthConfig) error {
 		}).Info("Authentication enabled")
 	} else {
 		logger.Debug("Authentication disabled")
+	}
+
+	// Load SIP authentication configuration
+	config.SIP.Enabled = getEnvBool("SIP_AUTH_ENABLED", false)
+	config.SIP.Realm = getEnv("SIP_AUTH_REALM", "siprec.local")
+	config.SIP.NonceTimeout = getEnvInt("SIP_AUTH_NONCE_TIMEOUT", 300)
+	config.SIP.Users = getEnv("SIP_AUTH_USERS", "")
+
+	// Load IP-based access control configuration
+	config.SIP.IPAccess.Enabled = getEnvBool("SIP_IP_ACCESS_ENABLED", false)
+	config.SIP.IPAccess.DefaultAllow = getEnvBool("SIP_IP_DEFAULT_ALLOW", true)
+	config.SIP.IPAccess.AllowedIPs = getEnv("SIP_IP_ALLOWED_IPS", "")
+	config.SIP.IPAccess.AllowedNetworks = getEnv("SIP_IP_ALLOWED_NETWORKS", "")
+	config.SIP.IPAccess.BlockedIPs = getEnv("SIP_IP_BLOCKED_IPS", "")
+	config.SIP.IPAccess.BlockedNetworks = getEnv("SIP_IP_BLOCKED_NETWORKS", "")
+
+	// Log SIP auth configuration
+	if config.SIP.Enabled {
+		userCount := 0
+		if config.SIP.Users != "" {
+			userCount = len(strings.Split(config.SIP.Users, ","))
+		}
+		logger.WithFields(logrus.Fields{
+			"realm":         config.SIP.Realm,
+			"nonce_timeout": config.SIP.NonceTimeout,
+			"user_count":    userCount,
+		}).Info("SIP Digest authentication enabled")
+	}
+
+	if config.SIP.IPAccess.Enabled {
+		logger.WithFields(logrus.Fields{
+			"default_allow":    config.SIP.IPAccess.DefaultAllow,
+			"allowed_ips":      config.SIP.IPAccess.AllowedIPs != "",
+			"allowed_networks": config.SIP.IPAccess.AllowedNetworks != "",
+			"blocked_ips":      config.SIP.IPAccess.BlockedIPs != "",
+			"blocked_networks": config.SIP.IPAccess.BlockedNetworks != "",
+		}).Info("SIP IP-based access control enabled")
 	}
 
 	return nil

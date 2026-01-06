@@ -67,6 +67,93 @@ RTP_BIND_IP=203.0.113.50
 | `RECORDING_MAX_DURATION` | Max duration per call | `4h` |
 | `RECORDING_COMBINE_LEGS` | Merge SIPREC legs into one multi-channel WAV | `true` |
 
+### Audio Format Configuration
+
+The server supports multiple audio output formats via FFmpeg encoding. By default, recordings are saved as WAV files, but you can configure automatic conversion to compressed formats.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `RECORDING_FORMAT` | Output format: `wav`, `mp3`, `opus`, `ogg`, `mp4`, `m4a`, `flac` | `wav` |
+| `RECORDING_MP3_BITRATE` | MP3 bitrate in kbps | `128` |
+| `RECORDING_OPUS_BITRATE` | Opus bitrate in kbps | `64` |
+| `RECORDING_QUALITY` | Quality setting 1-10 (higher = better) | `5` |
+
+**Supported Formats:**
+
+| Format | Codec | Use Case |
+| --- | --- | --- |
+| `wav` | PCM | Lossless, maximum compatibility |
+| `mp3` | LAME MP3 | Good compression, universal playback |
+| `opus` | Opus | Excellent compression, VoIP optimized |
+| `ogg` | Opus in OGG | Opus in OGG container |
+| `mp4` | AAC | Modern container format |
+| `m4a` | AAC | Apple-compatible audio |
+| `flac` | FLAC | Lossless compression |
+
+**Requirements:**
+- FFmpeg must be installed and available in PATH for non-WAV formats
+- If FFmpeg is not available, the server falls back to WAV format
+
+**Examples:**
+```bash
+# High-quality MP3 recordings
+RECORDING_FORMAT=mp3
+RECORDING_MP3_BITRATE=192
+RECORDING_QUALITY=8
+
+# Bandwidth-efficient Opus recordings
+RECORDING_FORMAT=opus
+RECORDING_OPUS_BITRATE=48
+RECORDING_QUALITY=7
+
+# Lossless FLAC compression
+RECORDING_FORMAT=flac
+RECORDING_QUALITY=8
+```
+
+### Per-Call Timeout Configuration
+
+In addition to global timeout settings, the server supports per-call timeout overrides via SIP headers or SIPREC metadata. This allows SRC devices to specify custom timeouts for specific recordings.
+
+**SIP Headers for Per-Call Timeouts:**
+
+| Header | Description | Example |
+| --- | --- | --- |
+| `X-Recording-Timeout` | RTP inactivity timeout for this call | `X-Recording-Timeout: 60s` |
+| `X-Recording-Max-Duration` | Maximum recording duration for this call | `X-Recording-Max-Duration: 2h` |
+| `X-Recording-Retention` | Retention period for this recording | `X-Recording-Retention: 30d` |
+
+**SIPREC Metadata:**
+
+Per-call timeouts can also be specified in the SIPREC metadata XML:
+
+```xml
+<recording xmlns="urn:ietf:params:xml:ns:recording:1">
+  <session>
+    <siprecTimeout>90s</siprecTimeout>
+    <siprecMaxDuration>1h</siprecMaxDuration>
+    <siprecRetention>7d</siprecRetention>
+  </session>
+</recording>
+```
+
+**Priority Order:**
+1. SIP headers (highest priority)
+2. SIPREC metadata
+3. Global configuration (lowest priority)
+
+**Example: Per-Call Override via SIP INVITE:**
+```
+INVITE sip:recorder@192.168.1.100:5060 SIP/2.0
+Via: SIP/2.0/UDP 192.168.1.50:5060
+From: <sip:src@192.168.1.50>;tag=abc123
+To: <sip:recorder@192.168.1.100>
+Call-ID: call-12345@192.168.1.50
+X-Recording-Timeout: 120s
+X-Recording-Max-Duration: 30m
+Content-Type: multipart/mixed;boundary=boundary1
+```
+
 ## Session Persistence
 
 To persist session data across restarts, initialise a session manager store (e.g. Redis) and pass it to the SIP handler through code:
@@ -204,4 +291,88 @@ Secure your data both in transit and at rest.
 | `ENCRYPTION_ALGORITHM` | `AES-256-GCM` or `ChaCha20-Poly1305` | `AES-256-GCM` |
 | `MASTER_KEY_PATH` | Directory for encryption keys | `./keys` |
 | `KEY_ROTATION_INTERVAL` | Time before rotating active key | `24h` |
+
+## Audit Trail & SIP Headers Logging
+
+The server maintains a comprehensive audit trail for compliance and troubleshooting. All SIP-related events now include complete SIP header information for full traceability.
+
+### Audit Events
+
+The following events are automatically logged with SIP header information:
+
+| Event | Description | Headers Included |
+| --- | --- | --- |
+| `sip.invite.success` | Successful SIPREC session establishment | Full INVITE headers |
+| `sip.invite.failure` | Failed session establishment | Full INVITE headers + error details |
+| `sip.bye.received` | BYE received from SRC | Full BYE headers |
+| `sip.cancel.received` | CANCEL received before session established | Full CANCEL headers |
+| `recording.started` | Recording stream started | Session metadata |
+| `recording.stopped` | Recording stream stopped | Session metadata + duration |
+
+### Captured SIP Headers
+
+Each audit event captures the following SIP header categories:
+
+**Core Headers:**
+- `Method`, `Request-URI`, `From`, `To`, `Call-ID`, `CSeq`, `Via`, `Contact`
+
+**Authentication Headers:**
+- `Authorization`, `Proxy-Authorization`, `WWW-Authenticate`
+
+**Routing Headers:**
+- `Route`, `Record-Route`
+
+**Session Headers:**
+- `Allow`, `Supported`, `Require`, `User-Agent`, `Server`
+
+**Media Headers:**
+- `Content-Type`, `Content-Length`, `Accept`
+
+**Transport Info:**
+- Transport protocol (UDP/TCP/TLS), Remote address, Local address
+
+**Custom Headers:**
+- Any vendor-specific or custom headers (e.g., `X-Recording-*`)
+
+### Audit Log Format
+
+Audit events are logged in structured JSON format with the `audit: true` field for easy filtering:
+
+```json
+{
+  "audit": true,
+  "audit_category": "sip",
+  "audit_action": "invite.success",
+  "audit_outcome": "success",
+  "call_id": "call-12345@192.168.1.50",
+  "session_id": "sess-abc123",
+  "tenant": "customer-1",
+  "timestamp": "2024-01-15T10:30:45.123456789Z",
+  "sip_method": "INVITE",
+  "sip_from": "<sip:agent@pbx.example.com>;tag=xyz",
+  "sip_to": "<sip:recorder@srs.example.com>",
+  "sip_via": "SIP/2.0/UDP 192.168.1.50:5060;branch=z9hG4bK-abc",
+  "sip_user_agent": "Cisco-Gateway/1.0",
+  "sip_remote_addr": "192.168.1.50:5060"
+}
+```
+
+### Filtering Audit Logs
+
+Use log aggregation tools to filter audit events:
+
+```bash
+# Filter all audit events
+grep '"audit":true' /var/log/siprec.log
+
+# Filter failed sessions
+grep '"audit_outcome":"failure"' /var/log/siprec.log
+
+# Filter by Call-ID
+grep '"call_id":"call-12345"' /var/log/siprec.log
+```
+
+### Security Note
+
+Authorization headers are automatically redacted in audit logs to prevent credential exposure. The redacted format shows `[REDACTED-<length>]` to indicate the header was present without exposing sensitive data.
 

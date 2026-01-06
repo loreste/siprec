@@ -1235,3 +1235,164 @@ func IsSessionExpired(session *RecordingSession) bool {
 	now := time.Now()
 	return !session.EndTime.IsZero() && now.After(session.EndTime)
 }
+
+// PerCallTimeoutConfig holds per-call timeout configuration extracted from various sources
+type PerCallTimeoutConfig struct {
+	RTPTimeout   time.Duration
+	MaxDuration  time.Duration
+	Retention    time.Duration
+	Source       string // "metadata", "header", "policy", "global"
+}
+
+// ExtractPerCallTimeout extracts per-call timeout configuration from metadata and headers
+func ExtractPerCallTimeout(metadata *RSMetadata, sipHeaders map[string]string, globalRTPTimeout, globalMaxDuration time.Duration) *PerCallTimeoutConfig {
+	config := &PerCallTimeoutConfig{
+		RTPTimeout:  globalRTPTimeout,
+		MaxDuration: globalMaxDuration,
+		Source:      "global",
+	}
+
+	// Priority: SIP Headers > Metadata > Global defaults
+
+	// 1. Check metadata for timeout settings
+	if metadata != nil {
+		// Check extended metadata for timeout values
+		if timeout := extractTimeoutFromMetadataMap(metadata); timeout > 0 {
+			config.RTPTimeout = timeout
+			config.Source = "metadata"
+		}
+
+		// Check retention from metadata expires field
+		if expires := strings.TrimSpace(metadata.Expires); expires != "" {
+			if expiresTime, err := time.Parse(time.RFC3339, expires); err == nil {
+				config.Retention = time.Until(expiresTime)
+				if config.Source == "global" {
+					config.Source = "metadata"
+				}
+			}
+		}
+	}
+
+	// 2. Check SIP headers for timeout overrides
+	if sipHeaders != nil {
+		// Check for X-Recording-Timeout header (custom header for per-call timeout)
+		if timeout := sipHeaders["X-Recording-Timeout"]; timeout != "" {
+			if d, err := time.ParseDuration(timeout); err == nil && d > 0 {
+				config.RTPTimeout = d
+				config.Source = "header"
+			}
+		}
+
+		// Check for X-Recording-Max-Duration header
+		if maxDur := sipHeaders["X-Recording-Max-Duration"]; maxDur != "" {
+			if d, err := time.ParseDuration(maxDur); err == nil && d > 0 {
+				config.MaxDuration = d
+				config.Source = "header"
+			}
+		}
+
+		// Check for X-Recording-Retention header
+		if retention := sipHeaders["X-Recording-Retention"]; retention != "" {
+			if d, err := time.ParseDuration(retention); err == nil && d > 0 {
+				config.Retention = d
+				if config.Source == "global" {
+					config.Source = "header"
+				}
+			}
+		}
+
+		// Check Session-Expires header (RFC 4028)
+		if sessionExpires := sipHeaders["Session-Expires"]; sessionExpires != "" {
+			// Session-Expires format: "1800;refresher=uac"
+			parts := strings.Split(sessionExpires, ";")
+			if len(parts) > 0 {
+				if seconds, err := strconv.Atoi(strings.TrimSpace(parts[0])); err == nil && seconds > 0 {
+					// Use session expires as max duration hint
+					sessionDur := time.Duration(seconds) * time.Second
+					if sessionDur > config.MaxDuration || config.MaxDuration == 0 {
+						config.MaxDuration = sessionDur
+					}
+				}
+			}
+		}
+	}
+
+	return config
+}
+
+// extractTimeoutFromMetadataMap extracts timeout from RSMetadata extensions
+func extractTimeoutFromMetadataMap(metadata *RSMetadata) time.Duration {
+	if metadata == nil {
+		return 0
+	}
+
+	// Check various places timeout might be specified in metadata
+	// These keys are checked in session recording association attributes
+	// and extended metadata fields
+	_ = []string{
+		"rtp_timeout", "timeout", "inactivity_timeout",
+		"recording_timeout", "session_timeout",
+	}
+
+	// Future: Parse custom XML attributes for timeout values
+	// This would require extending RSMetadata to capture raw XML attributes
+
+	return 0
+}
+
+// ApplyPerCallTimeout applies per-call timeout configuration to a recording session
+func ApplyPerCallTimeout(session *RecordingSession, config *PerCallTimeoutConfig) {
+	if session == nil || config == nil {
+		return
+	}
+
+	if config.RTPTimeout > 0 {
+		session.CustomRTPTimeout = config.RTPTimeout
+	}
+	if config.MaxDuration > 0 {
+		session.CustomMaxDuration = config.MaxDuration
+	}
+	if config.Retention > 0 {
+		session.CustomRetention = config.Retention
+		session.RetentionPeriod = config.Retention
+	}
+	session.TimeoutSource = config.Source
+
+	// Also set the general timeout field
+	if config.RTPTimeout > 0 {
+		session.Timeout = config.RTPTimeout
+	}
+}
+
+// GetEffectiveRTPTimeout returns the RTP timeout to use for a session
+// considering per-call overrides
+func GetEffectiveRTPTimeout(session *RecordingSession, globalTimeout time.Duration) time.Duration {
+	if session != nil && session.CustomRTPTimeout > 0 {
+		return session.CustomRTPTimeout
+	}
+	if session != nil && session.Timeout > 0 {
+		return session.Timeout
+	}
+	return globalTimeout
+}
+
+// GetEffectiveMaxDuration returns the max duration to use for a session
+// considering per-call overrides
+func GetEffectiveMaxDuration(session *RecordingSession, globalMaxDuration time.Duration) time.Duration {
+	if session != nil && session.CustomMaxDuration > 0 {
+		return session.CustomMaxDuration
+	}
+	return globalMaxDuration
+}
+
+// GetEffectiveRetention returns the retention period to use for a session
+// considering per-call overrides
+func GetEffectiveRetention(session *RecordingSession, globalRetention time.Duration) time.Duration {
+	if session != nil && session.CustomRetention > 0 {
+		return session.CustomRetention
+	}
+	if session != nil && session.RetentionPeriod > 0 {
+		return session.RetentionPeriod
+	}
+	return globalRetention
+}

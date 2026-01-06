@@ -410,6 +410,21 @@ func ExtractRSMetadataFromRequest(req *sip.Request) (*RSMetadata, error) {
 		fmt.Printf("Warning: SIPREC metadata validation warnings: %v\n", validation.Warnings)
 	}
 
+	// RFC 7865 interdependency validation
+	rfcValidation := RFC7865InterdependencyCheck(&rsMetadata)
+	if len(rfcValidation.Errors) > 0 {
+		return nil, errors.NewInvalidInput(fmt.Sprintf("RFC 7865 interdependency validation failure: %v", rfcValidation.Errors)).
+			WithCode("RFC7865_VIOLATION").
+			WithFields(map[string]interface{}{
+				"violations": rfcValidation.Errors,
+				"session_id": rsMetadata.SessionID,
+			})
+	}
+
+	if len(rfcValidation.Warnings) > 0 {
+		fmt.Printf("Warning: RFC 7865 compliance warnings: %v\n", rfcValidation.Warnings)
+	}
+
 	return &rsMetadata, nil
 }
 
@@ -537,6 +552,205 @@ func normalizedAssocSessionID(assoc RSAssociation) string {
 		}
 	}
 	return ""
+}
+
+// RFC7865InterdependencyCheck performs strict RFC 7865 interdependency validation.
+// This ensures all cross-references between participants, streams, and sessions are valid.
+func RFC7865InterdependencyCheck(rsMetadata *RSMetadata) ValidationResult {
+	result := ValidationResult{}
+
+	if rsMetadata == nil {
+		result.addError("metadata is nil")
+		return result
+	}
+
+	// Build reference maps for cross-validation
+	participantIDs := make(map[string]bool)
+	streamIDs := make(map[string]bool)
+	sessionIDs := make(map[string]bool)
+
+	// 1. Collect all declared IDs
+	for _, p := range rsMetadata.Participants {
+		id := normalizedParticipantID(p)
+		if id != "" {
+			participantIDs[id] = true
+		}
+	}
+
+	for _, s := range rsMetadata.Streams {
+		id := normalizedStreamID(s)
+		if id != "" {
+			streamIDs[id] = true
+		}
+	}
+
+	for _, sess := range rsMetadata.Sessions {
+		id := strings.TrimSpace(sess.ID)
+		if id == "" {
+			id = strings.TrimSpace(sess.LegacyID)
+		}
+		if id != "" {
+			sessionIDs[id] = true
+		}
+	}
+
+	// 2. RFC 7865 §5.3: Every participant MUST have at least one valid AOR
+	for _, p := range rsMetadata.Participants {
+		id := normalizedParticipantID(p)
+		hasValidAOR := false
+		for _, aor := range p.Aor {
+			if strings.TrimSpace(aor.Value) != "" || strings.TrimSpace(aor.URI) != "" {
+				hasValidAOR = true
+				break
+			}
+		}
+		if !hasValidAOR {
+			for _, ni := range p.NameInfos {
+				if strings.TrimSpace(ni.AOR) != "" || strings.TrimSpace(ni.URI) != "" {
+					hasValidAOR = true
+					break
+				}
+			}
+		}
+		if !hasValidAOR {
+			result.addError(fmt.Sprintf("RFC 7865 violation: participant %s has no valid address-of-record", id))
+		}
+	}
+
+	// 3. RFC 7865 §5.4: Every stream MUST reference at least one participant via association
+	streamParticipantMap := make(map[string]bool) // track which streams have participant associations
+	for _, psa := range rsMetadata.ParticipantStreamAssoc {
+		// Get stream reference
+		streamRef := strings.TrimSpace(psa.Stream)
+		if streamRef == "" {
+			streamRef = strings.TrimSpace(psa.StreamID)
+		}
+		if streamRef == "" {
+			for _, send := range psa.Send {
+				if s := strings.TrimSpace(send); s != "" {
+					streamRef = s
+					break
+				}
+			}
+		}
+		if streamRef == "" {
+			for _, recv := range psa.Receive {
+				if r := strings.TrimSpace(recv); r != "" {
+					streamRef = r
+					break
+				}
+			}
+		}
+		if streamRef != "" {
+			streamParticipantMap[streamRef] = true
+		}
+
+		// Validate participant reference
+		participantRef := strings.TrimSpace(psa.Participant)
+		if participantRef == "" {
+			participantRef = strings.TrimSpace(psa.ParticipantID)
+		}
+		if participantRef != "" && !participantIDs[participantRef] {
+			result.addError(fmt.Sprintf("RFC 7865 violation: participantstreamassoc references non-existent participant %s", participantRef))
+		}
+
+		// Validate stream reference
+		if streamRef != "" && !streamIDs[streamRef] {
+			result.addError(fmt.Sprintf("RFC 7865 violation: participantstreamassoc references non-existent stream %s", streamRef))
+		}
+	}
+
+	// Check all streams have at least one participant association
+	for _, s := range rsMetadata.Streams {
+		id := normalizedStreamID(s)
+		if id != "" && !streamParticipantMap[id] {
+			// Check if stream has inline participant-ref
+			if len(s.ParticipantRef) == 0 {
+				result.addWarning(fmt.Sprintf("RFC 7865 recommendation: stream %s has no participant associations", id))
+			}
+		}
+	}
+
+	// 4. RFC 7865 §5.2: Session references must be valid
+	for _, sess := range rsMetadata.Sessions {
+		sessID := strings.TrimSpace(sess.ID)
+		if sessID == "" {
+			sessID = strings.TrimSpace(sess.LegacyID)
+		}
+
+		// Validate participant references in session
+		for _, pref := range sess.ParticipantRefs {
+			if !participantIDs[strings.TrimSpace(pref)] {
+				result.addError(fmt.Sprintf("RFC 7865 violation: session %s references non-existent participant %s", sessID, pref))
+			}
+		}
+
+		// Validate stream references in session
+		for _, sref := range sess.StreamRefs {
+			if !streamIDs[strings.TrimSpace(sref)] {
+				result.addError(fmt.Sprintf("RFC 7865 violation: session %s references non-existent stream %s", sessID, sref))
+			}
+		}
+	}
+
+	// 5. RFC 7865 §5.5: Group references must be valid
+	for _, g := range rsMetadata.Group {
+		groupID := strings.TrimSpace(g.ID)
+		if groupID == "" {
+			groupID = strings.TrimSpace(g.LegacyID)
+		}
+
+		for _, pref := range g.ParticipantRefs {
+			if !participantIDs[strings.TrimSpace(pref)] {
+				result.addError(fmt.Sprintf("RFC 7865 violation: group %s references non-existent participant %s", groupID, pref))
+			}
+		}
+
+		for _, sref := range g.SessionRefs {
+			if !sessionIDs[strings.TrimSpace(sref)] {
+				result.addWarning(fmt.Sprintf("RFC 7865 recommendation: group %s references unknown session %s", groupID, sref))
+			}
+		}
+	}
+
+	// 6. RFC 7865 §5.6: participantsessionassoc validation
+	for _, psa := range rsMetadata.ParticipantSessionAssoc {
+		participantRef := strings.TrimSpace(psa.ParticipantID)
+		sessionRef := strings.TrimSpace(psa.SessionID)
+
+		if participantRef != "" && !participantIDs[participantRef] {
+			result.addError(fmt.Sprintf("RFC 7865 violation: participantsessionassoc references non-existent participant %s", participantRef))
+		}
+
+		if sessionRef != "" && !sessionIDs[sessionRef] && sessionRef != rsMetadata.SessionID {
+			result.addWarning(fmt.Sprintf("RFC 7865 recommendation: participantsessionassoc references unknown session %s", sessionRef))
+		}
+	}
+
+	// 7. RFC 7865 §4.3: Bidirectional association integrity
+	// Each participant should have at least one stream association for proper recording
+	participantStreamMap := make(map[string]bool)
+	for _, psa := range rsMetadata.ParticipantStreamAssoc {
+		participantRef := strings.TrimSpace(psa.Participant)
+		if participantRef == "" {
+			participantRef = strings.TrimSpace(psa.ParticipantID)
+		}
+		if participantRef != "" {
+			participantStreamMap[participantRef] = true
+		}
+	}
+
+	for _, p := range rsMetadata.Participants {
+		id := normalizedParticipantID(p)
+		if id != "" && !participantStreamMap[id] {
+			// Check inline send/receive
+			if len(p.Send) == 0 && len(p.Receive) == 0 {
+				result.addWarning(fmt.Sprintf("RFC 7865 recommendation: participant %s has no stream associations", id))
+			}
+		}
+	}
+
+	return result
 }
 
 // ValidateSiprecMessage performs a comprehensive validation of a SIPREC message

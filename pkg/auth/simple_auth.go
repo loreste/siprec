@@ -67,7 +67,9 @@ func NewSimpleAuthenticator(secretKey, issuer string, tokenExpiry time.Duration,
 	} else {
 		// Generate random secret if not provided
 		secret = make([]byte, 32)
-		rand.Read(secret)
+		if _, err := rand.Read(secret); err != nil {
+			logger.WithError(err).Error("Failed to generate JWT secret")
+		}
 		logger.Warning("No JWT secret provided, using generated key")
 	}
 
@@ -79,9 +81,6 @@ func NewSimpleAuthenticator(secretKey, issuer string, tokenExpiry time.Duration,
 		tokenExpiry: tokenExpiry,
 		logger:      logger,
 	}
-
-	// Add default admin user
-	auth.AddUser("admin", "admin123", "admin")
 	
 	logger.Info("Simple authenticator initialized")
 	return auth
@@ -119,7 +118,9 @@ func (s *SimpleAuthenticator) GenerateAPIKey(username string) (string, error) {
 
 	// Generate random API key
 	keyBytes := make([]byte, 32)
-	rand.Read(keyBytes)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", fmt.Errorf("failed to generate api key: %w", err)
+	}
 	apiKey := hex.EncodeToString(keyBytes)
 
 	s.mutex.Lock()
@@ -245,7 +246,9 @@ func (s *SimpleAuthenticator) generateToken(user *SimpleUser) (string, error) {
 // generateJTI generates a unique token ID
 func (s *SimpleAuthenticator) generateJTI() string {
 	bytes := make([]byte, 16)
-	rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		s.logger.WithError(err).Error("Failed to generate JWT ID")
+	}
 	return hex.EncodeToString(bytes)
 }
 
