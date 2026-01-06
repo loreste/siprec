@@ -1,5 +1,7 @@
 # Binaries
 /siprec-server
+/siprec-server-linux*
+/main
 /env-test
 /test_audio
 *.exe

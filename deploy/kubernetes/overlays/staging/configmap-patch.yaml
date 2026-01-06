@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siprec-config
+data:
+  # Staging-specific overrides
+  LOG_LEVEL: "debug"
+
+  # Lower limits for staging
+  RATE_LIMIT_REQUESTS_PER_SECOND: "50"
+  RATE_LIMIT_BURST_SIZE: "100"
+  RATE_LIMIT_SIP_INVITES_PER_SECOND: "25"
+  RATE_LIMIT_SIP_BURST_SIZE: "50"
+
+  # Fewer resources
+  RESOURCES_MAX_CALLS: "100"
+  PERFORMANCE_MAX_CONCURRENT_CALLS: "200"
+  PERFORMANCE_WORKER_POOL_SIZE: "50"
+
+  # Shorter retention for staging
+  RECORDING_CLEANUP_DAYS: "7"
+  ANALYTICS_RETENTION_DAYS: "14"

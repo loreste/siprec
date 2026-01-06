@@ -1,0 +1,98 @@
+---
+# HTTP Service for health checks, metrics, and API
+apiVersion: v1
+kind: Service
+metadata:
+  name: siprec-http
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+    app.kubernetes.io/component: http
+spec:
+  type: ClusterIP
+  selector:
+    app: siprec-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+
+---
+# SIP UDP Service - requires NodePort or LoadBalancer for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: siprec-sip-udp
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+    app.kubernetes.io/component: sip-udp
+  annotations:
+    # For cloud load balancers that support UDP
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app: siprec-server
+  ports:
+    - name: sip-udp
+      port: 5060
+      targetPort: 5060
+      protocol: UDP
+
+---
+# SIP TCP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: siprec-sip-tcp
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+    app.kubernetes.io/component: sip-tcp
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app: siprec-server
+  ports:
+    - name: sip-tcp
+      port: 5060
+      targetPort: 5060
+      protocol: TCP
+    - name: sip-tls
+      port: 5061
+      targetPort: 5061
+      protocol: TCP
+
+---
+# Headless service for StatefulSet (if using StatefulSet for sticky sessions)
+apiVersion: v1
+kind: Service
+metadata:
+  name: siprec-headless
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+    app.kubernetes.io/component: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: siprec-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: sip-udp
+      port: 5060
+      targetPort: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      targetPort: 5060
+      protocol: TCP
