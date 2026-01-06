@@ -1,0 +1,59 @@
+# Prometheus configuration for SIPREC Server monitoring
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load alert rules
+rule_files:
+  - "alerts.yml"
+
+# Scrape configuration
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # SIPREC Server
+  - job_name: 'siprec-server'
+    static_configs:
+      - targets: ['siprec-server:8080']
+    metrics_path: /metrics
+    scheme: http
+    # For HTTPS with self-signed certs:
+    # scheme: https
+    # tls_config:
+    #   insecure_skip_verify: true
+
+  # SIPREC Server (Kubernetes service discovery)
+  - job_name: 'siprec-k8s'
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names:
+            - siprec
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: siprec-server
+        action: keep
+      - source_labels: [__meta_kubernetes_endpoint_port_name]
+        regex: http
+        action: keep
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_service_name]
+        target_label: kubernetes_service
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: kubernetes_pod
+
+  # Node Exporter (optional)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
