@@ -13,6 +13,7 @@ import (
 	"siprec-server/pkg/cluster"
 	"siprec-server/pkg/errors"
 	"siprec-server/pkg/media"
+	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/realtime/analytics"
 	sessions "siprec-server/pkg/session"
 	"siprec-server/pkg/siprec"
@@ -401,14 +402,18 @@ func (h *Handler) AuthenticateRequest(authHeader, method, uri, clientIP string) 
 	if h.ipAccessController != nil {
 		if !h.ipAccessController.IsAllowed(clientIP) {
 			h.Logger.WithField("client_ip", clientIP).Warn("SIP request blocked by IP access control")
+			metrics.RecordIPAccessBlocked(clientIP, "ip_filter")
 			return false, "" // No challenge, just reject
 		}
+		// Record allowed access
+		metrics.RecordIPAccessAllowed(clientIP, "ip_filter")
 	}
 
 	// Check Digest authentication if enabled
 	if h.sipAuthenticator != nil {
 		result := h.sipAuthenticator.Authenticate(authHeader, method, uri, clientIP)
 		if !result.Success {
+			metrics.RecordSIPAuthFailure(clientIP, result.Reason)
 			return false, result.Challenge
 		}
 		h.Logger.WithFields(logrus.Fields{
