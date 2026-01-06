@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siprec-config
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+data:
+  # Network Configuration
+  SIP_HOST: "0.0.0.0"
+  PORTS: "5060,5061"
+  RTP_PORT_MIN: "10000"
+  RTP_PORT_MAX: "20000"
+  RTP_TIMEOUT: "30s"
+  BEHIND_NAT: "true"
+
+  # HTTP Configuration
+  HTTP_PORT: "8080"
+  HTTP_ENABLED: "true"
+  HTTP_ENABLE_METRICS: "true"
+  HTTP_ENABLE_API: "true"
+  HTTP_READ_TIMEOUT: "10s"
+  HTTP_WRITE_TIMEOUT: "30s"
+
+  # Recording Configuration
+  RECORDING_DIR: "/data/recordings"
+  RECORDING_FORMAT: "wav"
+  RECORDING_MAX_DURATION_HOURS: "4h"
+  RECORDING_CLEANUP_DAYS: "30"
+  RECORDING_COMBINE_LEGS: "true"
+
+  # Logging Configuration
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  LOG_DIR: "/data/logs"
+
+  # Rate Limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_REQUESTS_PER_SECOND: "100"
+  RATE_LIMIT_BURST_SIZE: "200"
+  RATE_LIMIT_SIP_INVITES_PER_SECOND: "50"
+  RATE_LIMIT_SIP_BURST_SIZE: "100"
+  RATE_LIMIT_BLOCK_DURATION: "5m"
+
+  # Cluster Configuration
+  CLUSTER_ENABLED: "true"
+  CLUSTER_HEARTBEAT_INTERVAL: "5s"
+  CLUSTER_NODE_TTL: "15s"
+  CLUSTER_LEADER_ELECTION_ENABLED: "true"
+
+  # Circuit Breaker
+  CIRCUIT_BREAKER_ENABLED: "true"
+  CIRCUIT_BREAKER_MAX_FAILURES: "5"
+  CIRCUIT_BREAKER_RESET_TIMEOUT: "30s"
+
+  # Performance
+  PERFORMANCE_WORKER_POOL_SIZE: "100"
+  PERFORMANCE_MAX_CONCURRENT_CALLS: "1000"
+
+  # Resources
+  RESOURCES_MAX_CALLS: "500"
+
+  # STT Configuration (disabled by default, enable with secrets)
+  STT_ENABLED: "false"
+  STT_PROVIDER: "google"
+
+  # Messaging (AMQP/RabbitMQ)
+  AMQP_ENABLED: "false"
+
+  # Analytics
+  ANALYTICS_ENABLED: "true"
+  ANALYTICS_RETENTION_DAYS: "90"
+
+  # Compliance
+  COMPLIANCE_PCI_ENABLED: "false"
+  COMPLIANCE_GDPR_ENABLED: "false"
+  COMPLIANCE_AUDIT_TAMPER_PROOF: "true"
+  COMPLIANCE_AUDIT_LOG_PATH: "/data/logs/audit-chain.log"
+
+  # TLS (certificates mounted from secret)
+  ENABLE_TLS: "false"
+  TLS_CERT_PATH: "/etc/siprec/certs/tls.crt"
+  TLS_KEY_PATH: "/etc/siprec/certs/tls.key"

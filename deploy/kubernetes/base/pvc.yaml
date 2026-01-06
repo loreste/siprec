@@ -1,0 +1,22 @@
+---
+# PersistentVolumeClaim for recordings storage
+# In production, consider using a shared storage solution (NFS, EFS, etc.)
+# for multi-pod access, or use object storage (S3) for recordings
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: siprec-recordings
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    # ReadWriteMany for multi-pod deployments (requires NFS/EFS)
+    # Use ReadWriteOnce for single-pod or when using object storage
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  # Uncomment to use a specific storage class
+  # storageClassName: gp3

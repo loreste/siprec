@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siprec-config
+data:
+  # Production-specific overrides
+  LOG_LEVEL: "warn"
+
+  # Higher rate limits for production
+  RATE_LIMIT_REQUESTS_PER_SECOND: "500"
+  RATE_LIMIT_BURST_SIZE: "1000"
+  RATE_LIMIT_SIP_INVITES_PER_SECOND: "200"
+  RATE_LIMIT_SIP_BURST_SIZE: "400"
+
+  # More resources
+  RESOURCES_MAX_CALLS: "2000"
+  PERFORMANCE_MAX_CONCURRENT_CALLS: "5000"
+  PERFORMANCE_WORKER_POOL_SIZE: "500"
+
+  # Enable TLS in production
+  ENABLE_TLS: "true"
+
+  # Compliance
+  COMPLIANCE_PCI_ENABLED: "true"
+  COMPLIANCE_AUDIT_TAMPER_PROOF: "true"
