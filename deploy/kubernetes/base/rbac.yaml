@@ -1,0 +1,51 @@
+---
+# ServiceAccount for the SIPREC server
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: siprec-server
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+
+---
+# Role for cluster operations (leader election, peer discovery)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: siprec-server
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+rules:
+  # For leader election using ConfigMaps or Leases
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # For peer discovery
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: siprec-server
+  labels:
+    app: siprec-server
+    app.kubernetes.io/name: siprec-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: siprec-server
+subjects:
+  - kind: ServiceAccount
+    name: siprec-server

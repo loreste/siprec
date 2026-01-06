@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: siprec-production
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+patches:
+  - path: deployment-patch.yaml
+  - path: hpa-patch.yaml
+  - path: configmap-patch.yaml
+
+# Production-specific images
+images:
+  - name: siprec-server
+    newName: your-registry.com/siprec-server
+    newTag: "1.0.0"
