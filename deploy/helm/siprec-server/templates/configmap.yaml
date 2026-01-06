@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "siprec-server.fullname" . }}-config
+  labels:
+    {{- include "siprec-server.labels" . | nindent 4 }}
+data:
+  # Network Configuration
+  SIP_HOST: {{ .Values.config.network.host | quote }}
+  PORTS: {{ .Values.config.network.ports | quote }}
+  RTP_PORT_MIN: {{ .Values.config.network.rtpPortMin | quote }}
+  RTP_PORT_MAX: {{ .Values.config.network.rtpPortMax | quote }}
+  RTP_TIMEOUT: {{ .Values.config.network.rtpTimeout | quote }}
+  BEHIND_NAT: {{ .Values.config.network.behindNat | quote }}
+  ENABLE_TLS: {{ .Values.config.network.enableTls | quote }}
+  SIP_REQUIRE_TLS: {{ .Values.config.network.requireTlsOnly | quote }}
+
+  # HTTP Configuration
+  HTTP_PORT: {{ .Values.config.http.port | quote }}
+  HTTP_ENABLED: {{ .Values.config.http.enabled | quote }}
+  HTTP_ENABLE_METRICS: {{ .Values.config.http.enableMetrics | quote }}
+  HTTP_ENABLE_API: {{ .Values.config.http.enableApi | quote }}
+  HTTP_READ_TIMEOUT: {{ .Values.config.http.readTimeout | quote }}
+  HTTP_WRITE_TIMEOUT: {{ .Values.config.http.writeTimeout | quote }}
+
+  # Recording Configuration
+  RECORDING_DIR: {{ .Values.config.recording.directory | quote }}
+  RECORDING_FORMAT: {{ .Values.config.recording.format | quote }}
+  RECORDING_MAX_DURATION_HOURS: {{ .Values.config.recording.maxDuration | quote }}
+  RECORDING_CLEANUP_DAYS: {{ .Values.config.recording.cleanupDays | quote }}
+  RECORDING_COMBINE_LEGS: {{ .Values.config.recording.combineLegs | quote }}
+
+  # Logging Configuration
+  LOG_LEVEL: {{ .Values.config.logging.level | quote }}
+  LOG_FORMAT: {{ .Values.config.logging.format | quote }}
+  LOG_DIR: {{ .Values.config.logging.directory | quote }}
+
+  # Rate Limiting
+  RATE_LIMIT_ENABLED: {{ .Values.config.rateLimit.enabled | quote }}
+  RATE_LIMIT_REQUESTS_PER_SECOND: {{ .Values.config.rateLimit.requestsPerSecond | quote }}
+  RATE_LIMIT_BURST_SIZE: {{ .Values.config.rateLimit.burstSize | quote }}
+  RATE_LIMIT_SIP_INVITES_PER_SECOND: {{ .Values.config.rateLimit.sipInvitesPerSecond | quote }}
+  RATE_LIMIT_SIP_BURST_SIZE: {{ .Values.config.rateLimit.sipBurstSize | quote }}
+  RATE_LIMIT_BLOCK_DURATION: {{ .Values.config.rateLimit.blockDuration | quote }}
+
+  # Cluster Configuration
+  CLUSTER_ENABLED: {{ .Values.config.cluster.enabled | quote }}
+  CLUSTER_HEARTBEAT_INTERVAL: {{ .Values.config.cluster.heartbeatInterval | quote }}
+  CLUSTER_NODE_TTL: {{ .Values.config.cluster.nodeTtl | quote }}
+  CLUSTER_LEADER_ELECTION_ENABLED: {{ .Values.config.cluster.leaderElectionEnabled | quote }}
+
+  # Circuit Breaker
+  CIRCUIT_BREAKER_ENABLED: {{ .Values.config.circuitBreaker.enabled | quote }}
+  CIRCUIT_BREAKER_MAX_FAILURES: {{ .Values.config.circuitBreaker.maxFailures | quote }}
+  CIRCUIT_BREAKER_RESET_TIMEOUT: {{ .Values.config.circuitBreaker.resetTimeout | quote }}
+
+  # Performance
+  PERFORMANCE_WORKER_POOL_SIZE: {{ .Values.config.performance.workerPoolSize | quote }}
+  PERFORMANCE_MAX_CONCURRENT_CALLS: {{ .Values.config.performance.maxConcurrentCalls | quote }}
+
+  # Resources
+  RESOURCES_MAX_CALLS: {{ .Values.config.maxCalls | quote }}
+
+  # Compliance
+  COMPLIANCE_PCI_ENABLED: {{ .Values.config.compliance.pciEnabled | quote }}
+  COMPLIANCE_GDPR_ENABLED: {{ .Values.config.compliance.gdprEnabled | quote }}
+  COMPLIANCE_AUDIT_TAMPER_PROOF: {{ .Values.config.compliance.auditTamperProof | quote }}
+  COMPLIANCE_AUDIT_LOG_PATH: "/data/logs/audit-chain.log"
+
+  # TLS paths
+  TLS_CERT_PATH: "/etc/siprec/certs/tls.crt"
+  TLS_KEY_PATH: "/etc/siprec/certs/tls.key"

@@ -1,0 +1,243 @@
+# Default values for siprec-server
+
+replicaCount: 2
+
+image:
+  repository: siprec-server
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to chart appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+
+# HTTP service configuration
+service:
+  http:
+    type: ClusterIP
+    port: 8080
+
+# SIP services configuration
+sipServices:
+  udp:
+    enabled: true
+    type: LoadBalancer
+    port: 5060
+    externalTrafficPolicy: Local
+    annotations: {}
+  tcp:
+    enabled: true
+    type: LoadBalancer
+    port: 5060
+    tlsPort: 5061
+    externalTrafficPolicy: Local
+    annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: siprec.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: siprec-server
+          topologyKey: kubernetes.io/hostname
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Persistent storage for recordings
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 100Gi
+  annotations: {}
+
+# Application configuration
+config:
+  # Network settings
+  network:
+    host: "0.0.0.0"
+    ports: "5060,5061"
+    rtpPortMin: 10000
+    rtpPortMax: 20000
+    rtpTimeout: "30s"
+    behindNat: true
+    enableTls: false
+    requireTlsOnly: false
+
+  # HTTP settings
+  http:
+    port: 8080
+    enabled: true
+    enableMetrics: true
+    enableApi: true
+    readTimeout: "10s"
+    writeTimeout: "30s"
+
+  # Recording settings
+  recording:
+    directory: "/data/recordings"
+    format: "wav"
+    maxDuration: "4h"
+    cleanupDays: 30
+    combineLegs: true
+
+  # Logging settings
+  logging:
+    level: "info"
+    format: "json"
+    directory: "/data/logs"
+
+  # Rate limiting
+  rateLimit:
+    enabled: true
+    requestsPerSecond: 100
+    burstSize: 200
+    sipInvitesPerSecond: 50
+    sipBurstSize: 100
+    blockDuration: "5m"
+
+  # Cluster settings
+  cluster:
+    enabled: true
+    heartbeatInterval: "5s"
+    nodeTtl: "15s"
+    leaderElectionEnabled: true
+
+  # Circuit breaker
+  circuitBreaker:
+    enabled: true
+    maxFailures: 5
+    resetTimeout: "30s"
+
+  # Performance
+  performance:
+    workerPoolSize: 100
+    maxConcurrentCalls: 1000
+
+  # Resources
+  maxCalls: 500
+
+  # Compliance
+  compliance:
+    pciEnabled: false
+    gdprEnabled: false
+    auditTamperProof: true
+
+# Secrets configuration
+secrets:
+  # API authentication
+  apiKey: ""  # Set via --set or external secret
+  adminPasswordHash: ""  # bcrypt hash
+
+  # TLS certificates (if using built-in TLS)
+  tls:
+    enabled: false
+    cert: ""
+    key: ""
+
+  # STT provider credentials
+  stt:
+    enabled: false
+    provider: ""  # google, aws, azure, deepgram
+    # Provider-specific credentials set via external secrets
+
+  # AMQP/RabbitMQ
+  amqp:
+    enabled: false
+    url: ""
+
+# Extra environment variables
+extraEnv: []
+
+# Extra volumes
+extraVolumes: []
+
+# Extra volume mounts
+extraVolumeMounts: []
+
+# Probes configuration
+probes:
+  liveness:
+    enabled: true
+    path: /health/live
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /health/ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startup:
+    enabled: true
+    path: /health/live
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 30
+
+# Graceful shutdown
+terminationGracePeriodSeconds: 60
