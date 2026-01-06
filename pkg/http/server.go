@@ -29,6 +29,7 @@ type Server struct {
 	config                *Config
 	logger                *logrus.Logger
 	httpServer            *http.Server
+	mux                   *http.ServeMux
 	metricsProvider       MetricsProvider
 	startTime             time.Time
 	additionalHandlers    map[string]http.HandlerFunc
@@ -36,6 +37,7 @@ type Server struct {
 	wsHub                 *TranscriptionHub
 	amqpClient            interface{} // Reference to AMQP client
 	analyticsWSHandler    *AnalyticsWebSocketHandler
+	authMiddleware        *AuthMiddleware
 }
 
 // NewServer creates a new HTTP server instance
@@ -53,6 +55,14 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	}
 
 	mux := http.NewServeMux()
+	server.mux = mux
+	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler := http.Handler(mux)
+		if server.authMiddleware != nil {
+			handler = server.authMiddleware.Middleware(handler)
+		}
+		handler.ServeHTTP(w, r)
+	})
 
 	// Wrap handlers with middleware that adds Server header
 	addServerHeader := func(next http.HandlerFunc) http.HandlerFunc {
@@ -101,7 +111,7 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	// Create the HTTP server
 	server.httpServer = &http.Server{
 		Addr:         fmt.Sprintf(":%d", config.Port),
-		Handler:      mux,
+		Handler:      rootHandler,
 		ReadTimeout:  config.ReadTimeout,
 		WriteTimeout: config.WriteTimeout,
 	}
@@ -109,13 +119,19 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	return server
 }
 
+// SetAuthMiddleware sets the authentication middleware for the server.
+func (s *Server) SetAuthMiddleware(middleware *AuthMiddleware) {
+	s.authMiddleware = middleware
+}
+
 // RegisterHandler adds a custom handler to the server
 func (s *Server) RegisterHandler(path string, handler http.HandlerFunc) {
 	s.additionalHandlers[path] = handler
 
 	// Add to mux
-	mux := s.httpServer.Handler.(*http.ServeMux)
-	mux.HandleFunc(path, handler)
+	if s.mux != nil {
+		s.mux.HandleFunc(path, handler)
+	}
 
 	s.logger.WithField("path", path).Info("Registered custom HTTP handler")
 }
@@ -133,13 +149,11 @@ func (s *Server) SetWebSocketHub(hub *TranscriptionHub) {
 // SetAnalyticsWebSocketHandler sets the analytics WebSocket handler
 func (s *Server) SetAnalyticsWebSocketHandler(handler *AnalyticsWebSocketHandler) {
 	s.analyticsWSHandler = handler
-	
+
 	// Register the WebSocket endpoint
-	if s.httpServer != nil && s.httpServer.Handler != nil {
-		if mux, ok := s.httpServer.Handler.(*http.ServeMux); ok {
-			mux.HandleFunc("/ws/analytics", handler.ServeHTTP)
-			s.logger.Info("Analytics WebSocket endpoint registered at /ws/analytics")
-		}
+	if s.mux != nil {
+		s.mux.HandleFunc("/ws/analytics", handler.ServeHTTP)
+		s.logger.Info("Analytics WebSocket endpoint registered at /ws/analytics")
 	}
 }
 

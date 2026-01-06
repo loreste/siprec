@@ -56,6 +56,12 @@ type RecordingSession struct {
 	Timeout           time.Duration // Session timeout
 	LogicalResourceID string        // ID for load balancing/clustering
 	OriginalRequest   *sip.Request  // The original SIP request that started this session
+
+	// Per-call configuration (can override global settings)
+	CustomRTPTimeout   time.Duration // Per-call RTP timeout (0 = use global)
+	CustomMaxDuration  time.Duration // Per-call max duration (0 = use global)
+	CustomRetention    time.Duration // Per-call retention period (0 = use global)
+	TimeoutSource      string        // Where timeout was configured: "global", "metadata", "header"
 }
 
 // Participant represents a participant in a recording session

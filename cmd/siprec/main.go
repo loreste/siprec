@@ -416,6 +416,8 @@ func initialize() error {
 		if appConfig.Auth.AdminPassword != "" {
 			authenticator.AddUser(appConfig.Auth.AdminUsername, appConfig.Auth.AdminPassword, "admin")
 			logger.WithField("username", appConfig.Auth.AdminUsername).Info("Admin user configured")
+		} else {
+			logger.Warn("Authentication enabled without admin password; no admin user configured")
 		}
 
 		logger.WithFields(logrus.Fields{
@@ -941,6 +943,56 @@ func initialize() error {
 		SIPPorts:           appConfig.Network.Ports, // Pass SIP ports for dynamic NAT configuration
 	}
 
+	// Configure SIP authentication if enabled
+	if appConfig.Auth.SIP.Enabled || appConfig.Auth.SIP.IPAccess.Enabled {
+		sipAuthConfig := &sip.SIPAuthConfig{
+			DigestEnabled: appConfig.Auth.SIP.Enabled,
+			Realm:         appConfig.Auth.SIP.Realm,
+			NonceTimeout:  appConfig.Auth.SIP.NonceTimeout,
+			Users:         make(map[string]string),
+		}
+
+		// Parse users from comma-separated list (format: "user1:pass1,user2:pass2")
+		if appConfig.Auth.SIP.Users != "" {
+			for _, userPair := range strings.Split(appConfig.Auth.SIP.Users, ",") {
+				parts := strings.SplitN(strings.TrimSpace(userPair), ":", 2)
+				if len(parts) == 2 {
+					sipAuthConfig.Users[parts[0]] = parts[1]
+				}
+			}
+		}
+
+		// Configure IP-based access control
+		sipAuthConfig.IPAccessEnabled = appConfig.Auth.SIP.IPAccess.Enabled
+		sipAuthConfig.DefaultAllow = appConfig.Auth.SIP.IPAccess.DefaultAllow
+
+		if appConfig.Auth.SIP.IPAccess.AllowedIPs != "" {
+			sipAuthConfig.AllowedIPs = strings.Split(appConfig.Auth.SIP.IPAccess.AllowedIPs, ",")
+		}
+		if appConfig.Auth.SIP.IPAccess.AllowedNetworks != "" {
+			sipAuthConfig.AllowedNetworks = strings.Split(appConfig.Auth.SIP.IPAccess.AllowedNetworks, ",")
+		}
+		if appConfig.Auth.SIP.IPAccess.BlockedIPs != "" {
+			sipAuthConfig.BlockedIPs = strings.Split(appConfig.Auth.SIP.IPAccess.BlockedIPs, ",")
+		}
+		if appConfig.Auth.SIP.IPAccess.BlockedNetworks != "" {
+			sipAuthConfig.BlockedNetworks = strings.Split(appConfig.Auth.SIP.IPAccess.BlockedNetworks, ",")
+		}
+
+		sipConfig.SIPAuth = sipAuthConfig
+	}
+
+	// Configure recording format settings
+	sipConfig.Recording = &sip.RecordingConfig{
+		Format:      appConfig.Recording.Format,
+		MP3Bitrate:  appConfig.Recording.MP3Bitrate,
+		OpusBitrate: appConfig.Recording.OpusBitrate,
+		Quality:     appConfig.Recording.Quality,
+	}
+	if sipConfig.Recording.Format == "" {
+		sipConfig.Recording.Format = "wav"
+	}
+
 	// Initialize SIP handler
 	sipHandler, err = sip.NewHandler(logger, sipConfig, sttManager)
 	if err != nil {
@@ -972,6 +1024,23 @@ func initialize() error {
 	// Create HTTP server with SIP handler adapter for metrics
 	sipAdapter := http_server.NewSIPHandlerAdapter(logger, sipHandler)
 	httpServer = http_server.NewServer(logger, httpServerConfig, sipAdapter)
+
+	var httpAuthMiddleware *http_server.AuthMiddleware
+	if appConfig.Auth.Enabled && authenticator != nil {
+		httpAuthMiddleware = http_server.NewAuthMiddleware(authenticator, logger, &http_server.AuthConfig{
+			Enabled:     true,
+			RequireAuth: true,
+			AllowAPIKey: appConfig.Auth.EnableAPIKeys,
+			AllowJWT:    true,
+			ExemptPaths: []string{
+				"/health",
+				"/metrics",
+				"/status",
+				"/websocket-client",
+			},
+		})
+		httpServer.SetAuthMiddleware(httpAuthMiddleware)
+	}
 
 	// Set the SIP handler reference for health checks
 	httpServer.SetSIPHandler(sipHandler)
@@ -1055,6 +1124,9 @@ func initialize() error {
 
 	// Create and register WebSocket handler
 	wsHandler = http_server.NewWebSocketHandler(logger, wsHub)
+	if httpAuthMiddleware != nil {
+		wsHandler.SetAuthMiddleware(httpAuthMiddleware)
+	}
 	wsHandler.RegisterHandlers(httpServer)
 
 	logger.Info("WebSocket real-time transcription streaming initialized")
