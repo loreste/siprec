@@ -24,6 +24,11 @@ type MetricsProvider interface {
 	GetMetrics() map[string]interface{}
 }
 
+// RateLimitMiddleware interface for rate limiting
+type RateLimitMiddleware interface {
+	Middleware(next http.Handler) http.Handler
+}
+
 // Server represents the HTTP server for health checks and metrics
 type Server struct {
 	config                *Config
@@ -38,6 +43,7 @@ type Server struct {
 	amqpClient            interface{} // Reference to AMQP client
 	analyticsWSHandler    *AnalyticsWebSocketHandler
 	authMiddleware        *AuthMiddleware
+	rateLimitMiddleware   RateLimitMiddleware
 }
 
 // NewServer creates a new HTTP server instance
@@ -58,8 +64,13 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	server.mux = mux
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handler := http.Handler(mux)
+		// Apply auth middleware (inner layer)
 		if server.authMiddleware != nil {
 			handler = server.authMiddleware.Middleware(handler)
+		}
+		// Apply rate limiting middleware (outer layer - checks first)
+		if server.rateLimitMiddleware != nil {
+			handler = server.rateLimitMiddleware.Middleware(handler)
 		}
 		handler.ServeHTTP(w, r)
 	})
@@ -122,6 +133,12 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 // SetAuthMiddleware sets the authentication middleware for the server.
 func (s *Server) SetAuthMiddleware(middleware *AuthMiddleware) {
 	s.authMiddleware = middleware
+}
+
+// SetRateLimitMiddleware sets the rate limiting middleware for the server.
+func (s *Server) SetRateLimitMiddleware(middleware RateLimitMiddleware) {
+	s.rateLimitMiddleware = middleware
+	s.logger.Info("Rate limiting middleware configured")
 }
 
 // RegisterHandler adds a custom handler to the server

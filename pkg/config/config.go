@@ -42,6 +42,7 @@ type Config struct {
 	Alerting        AlertingConfig         `json:"alerting"`
 	Cluster         ClusterConfig          `json:"cluster"`
 	AudioProcessing AudioEnhancementConfig `json:"audio_processing"`
+	RateLimit       RateLimitConfig        `json:"rate_limit"`
 }
 
 // ClusterConfig holds cluster management configuration
@@ -1014,6 +1015,34 @@ type AlertingConfig struct {
 	EvaluationInterval time.Duration `json:"evaluation_interval" env:"ALERTING_EVALUATION_INTERVAL" default:"30s"`
 }
 
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	// Whether HTTP rate limiting is enabled
+	Enabled bool `json:"enabled" env:"RATE_LIMIT_ENABLED" default:"false"`
+
+	// RequestsPerSecond is the sustained rate of HTTP requests allowed per second per client
+	RequestsPerSecond float64 `json:"requests_per_second" env:"RATE_LIMIT_RPS" default:"100"`
+
+	// BurstSize is the maximum number of HTTP requests allowed in a burst
+	BurstSize int `json:"burst_size" env:"RATE_LIMIT_BURST" default:"200"`
+
+	// BlockDuration is how long to block a client after exceeding limits
+	BlockDuration time.Duration `json:"block_duration" env:"RATE_LIMIT_BLOCK_DURATION" default:"1m"`
+
+	// WhitelistedIPs is a comma-separated list of IPs/CIDRs that bypass rate limiting
+	WhitelistedIPs string `json:"whitelisted_ips" env:"RATE_LIMIT_WHITELIST_IPS"`
+
+	// WhitelistedPaths is a comma-separated list of URL paths that bypass rate limiting
+	WhitelistedPaths string `json:"whitelisted_paths" env:"RATE_LIMIT_WHITELIST_PATHS"`
+
+	// SIP-specific rate limiting settings
+	SIPEnabled           bool    `json:"sip_enabled" env:"RATE_LIMIT_SIP_ENABLED" default:"false"`
+	SIPInvitesPerSecond  float64 `json:"sip_invites_per_second" env:"RATE_LIMIT_SIP_INVITE_RPS" default:"10"`
+	SIPInviteBurst       int     `json:"sip_invite_burst" env:"RATE_LIMIT_SIP_INVITE_BURST" default:"50"`
+	SIPRequestsPerSecond float64 `json:"sip_requests_per_second" env:"RATE_LIMIT_SIP_RPS" default:"100"`
+	SIPRequestBurst      int     `json:"sip_request_burst" env:"RATE_LIMIT_SIP_REQUEST_BURST" default:"200"`
+}
+
 // Load loads the configuration from environment variables or .env file
 func Load(logger *logrus.Logger) (*Config, error) {
 	// Get current working directory
@@ -1167,6 +1196,11 @@ func Load(logger *logrus.Logger) (*Config, error) {
 	// Load alerting configuration
 	if err := loadAlertingConfig(logger, &config.Alerting); err != nil {
 		return nil, errors.Wrap(err, "failed to load alerting configuration")
+	}
+
+	// Load rate limiting configuration
+	if err := loadRateLimitConfig(logger, &config.RateLimit); err != nil {
+		return nil, errors.Wrap(err, "failed to load rate limit configuration")
 	}
 
 	// Validate the complete configuration
@@ -3201,6 +3235,54 @@ func loadAlertingConfig(logger *logrus.Logger, config *AlertingConfig) error {
 		logger.Warn("Alerting is enabled but no alert rules or channels are configured - alerts will not be sent")
 	} else {
 		logger.Debug("Alerting system disabled")
+	}
+
+	return nil
+}
+
+// loadRateLimitConfig loads rate limiting configuration
+func loadRateLimitConfig(logger *logrus.Logger, config *RateLimitConfig) error {
+	// Load HTTP rate limiting settings
+	config.Enabled = getEnvBool("RATE_LIMIT_ENABLED", false)
+	config.RequestsPerSecond = getEnvFloat("RATE_LIMIT_RPS", 100)
+	config.BurstSize = getEnvInt("RATE_LIMIT_BURST", 200)
+
+	// Load block duration
+	blockDurationStr := getEnv("RATE_LIMIT_BLOCK_DURATION", "1m")
+	var err error
+	config.BlockDuration, err = time.ParseDuration(blockDurationStr)
+	if err != nil {
+		logger.Warnf("Invalid RATE_LIMIT_BLOCK_DURATION '%s', defaulting to 1m", blockDurationStr)
+		config.BlockDuration = time.Minute
+	}
+
+	// Load whitelisted IPs and paths
+	config.WhitelistedIPs = getEnv("RATE_LIMIT_WHITELIST_IPS", "127.0.0.1,::1")
+	config.WhitelistedPaths = getEnv("RATE_LIMIT_WHITELIST_PATHS", "/health,/health/live,/health/ready")
+
+	// Load SIP rate limiting settings
+	config.SIPEnabled = getEnvBool("RATE_LIMIT_SIP_ENABLED", false)
+	config.SIPInvitesPerSecond = getEnvFloat("RATE_LIMIT_SIP_INVITE_RPS", 10)
+	config.SIPInviteBurst = getEnvInt("RATE_LIMIT_SIP_INVITE_BURST", 50)
+	config.SIPRequestsPerSecond = getEnvFloat("RATE_LIMIT_SIP_RPS", 100)
+	config.SIPRequestBurst = getEnvInt("RATE_LIMIT_SIP_REQUEST_BURST", 200)
+
+	// Log configuration
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"rps":       config.RequestsPerSecond,
+			"burst":     config.BurstSize,
+			"block":     config.BlockDuration,
+		}).Info("HTTP rate limiting enabled")
+	}
+
+	if config.SIPEnabled {
+		logger.WithFields(logrus.Fields{
+			"invite_rps":   config.SIPInvitesPerSecond,
+			"invite_burst": config.SIPInviteBurst,
+			"request_rps":  config.SIPRequestsPerSecond,
+			"request_burst": config.SIPRequestBurst,
+		}).Info("SIP rate limiting enabled")
 	}
 
 	return nil
