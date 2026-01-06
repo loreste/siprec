@@ -9,6 +9,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	// bcryptCost is the cost factor for bcrypt hashing (10-14 recommended for production)
+	bcryptCost = 12
 )
 
 // UserInfo represents user information
@@ -41,11 +47,11 @@ type SimpleAuthenticator struct {
 
 // SimpleUser represents a simple user
 type SimpleUser struct {
-	Username    string
-	Password    string // In production, this should be hashed
-	Role        string
-	IsActive    bool
-	Permissions []string
+	Username       string
+	PasswordHash   string // bcrypt hash of the password
+	Role           string
+	IsActive       bool
+	Permissions    []string
 }
 
 // SimpleAPIKey represents a simple API key
@@ -86,24 +92,33 @@ func NewSimpleAuthenticator(secretKey, issuer string, tokenExpiry time.Duration,
 	return auth
 }
 
-// AddUser adds a user
-func (s *SimpleAuthenticator) AddUser(username, password, role string) {
+// AddUser adds a user with bcrypt-hashed password
+func (s *SimpleAuthenticator) AddUser(username, password, role string) error {
+	// Hash the password using bcrypt
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		s.logger.WithError(err).WithField("username", username).Error("Failed to hash password")
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	permissions := s.getRolePermissions(role)
 	s.users[username] = &SimpleUser{
-		Username:    username,
-		Password:    password,
-		Role:        role,
-		IsActive:    true,
-		Permissions: permissions,
+		Username:     username,
+		PasswordHash: string(hashedPassword),
+		Role:         role,
+		IsActive:     true,
+		Permissions:  permissions,
 	}
 
 	s.logger.WithFields(logrus.Fields{
 		"username": username,
 		"role":     role,
-	}).Info("User added")
+	}).Info("User added with hashed password")
+
+	return nil
 }
 
 // GenerateAPIKey generates a new API key for a user
@@ -168,11 +183,17 @@ func (s *SimpleAuthenticator) Login(username, password string) (string, error) {
 	s.mutex.RUnlock()
 
 	if !exists || !user.IsActive {
+		// Use constant-time comparison to prevent timing attacks
+		// Hash a dummy password to maintain consistent response time
+		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$dummy.hash.for.timing.attack.prevention"), []byte(password))
 		return "", fmt.Errorf("invalid username or password")
 	}
 
-	// Simple password check (in production, use bcrypt)
-	if user.Password != password {
+	// Verify password using bcrypt (constant-time comparison)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		s.logger.WithFields(logrus.Fields{
+			"username": username,
+		}).Warn("Failed login attempt - invalid password")
 		return "", fmt.Errorf("invalid username or password")
 	}
 
