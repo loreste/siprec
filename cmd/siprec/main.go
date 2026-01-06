@@ -33,6 +33,7 @@ import (
 	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/performance"
 	"siprec-server/pkg/pii"
+	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/ratelimit"
 	"siprec-server/pkg/realtime/analytics"
 	"siprec-server/pkg/security/audit"
@@ -1080,6 +1081,14 @@ func initialize() error {
 			"burst": appConfig.RateLimit.BurstSize,
 		}).Info("HTTP rate limiting enabled")
 	}
+
+	// Configure correlation ID middleware for request tracking
+	correlationMiddleware := correlation.NewHTTPMiddleware(logger, &correlation.HTTPMiddlewareConfig{
+		GenerateIfMissing: true,
+		LogRequests:       true,
+	})
+	httpServer.SetCorrelationMiddleware(correlationMiddleware)
+	logger.Info("Request correlation ID tracking enabled")
 
 	// Set the SIP handler reference for health checks
 	httpServer.SetSIPHandler(sipHandler)

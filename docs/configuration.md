@@ -387,6 +387,47 @@ When rate limiting is enabled, the following Prometheus metrics are exported:
 | `siprec_rate_limit_bucket_tokens` | Current tokens in rate limit bucket |
 | `siprec_sip_rate_limited_total` | SIP requests blocked by rate limiter |
 
+### Request Correlation IDs
+
+Correlation IDs enable distributed tracing and request tracking across the system. Every HTTP and SIP request is assigned a unique correlation ID that flows through the entire request lifecycle.
+
+**Features:**
+- Automatic correlation ID generation for all requests
+- Support for incoming correlation IDs via standard headers
+- Correlation IDs included in all log entries
+- Correlation IDs returned in HTTP response headers
+- SIP responses include correlation ID in custom header
+
+**HTTP Headers:**
+| Header | Description |
+| --- | --- |
+| `X-Correlation-ID` | Primary correlation ID header (request/response) |
+| `X-Request-ID` | Alternative correlation ID header (request/response) |
+| `X-Trace-ID` | OpenTelemetry-compatible trace ID (request only) |
+
+**SIP Headers:**
+| Header | Description |
+| --- | --- |
+| `X-Correlation-ID` | Correlation ID for SIP request tracking |
+
+**Usage:**
+- Send `X-Correlation-ID` header with requests to use your own correlation ID
+- If no correlation ID is provided, one is automatically generated
+- Use correlation IDs to trace requests across logs and systems
+- Correlation IDs appear in all audit logs for security events
+
+**Example log entry:**
+```json
+{
+  "correlation_id": "1704531234567-a1b2c3d4-0001",
+  "client_ip": "192.168.1.100",
+  "method": "POST",
+  "path": "/api/sessions",
+  "status": 200,
+  "duration_ms": 45
+}
+```
+
 ## Audio Processing & VAD
 
 Basic audio enhancement can be applied before transcription.

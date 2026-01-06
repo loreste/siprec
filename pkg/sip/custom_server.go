@@ -27,6 +27,7 @@ import (
 
 	"siprec-server/pkg/audio"
 	"siprec-server/pkg/cdr"
+	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/security"
 	"siprec-server/pkg/security/audit"
@@ -778,10 +779,23 @@ func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 
 // handleInviteMessage handles INVITE requests
 func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
-	logger := s.logger.WithField("method", "INVITE")
+	// Generate correlation ID for request tracking
+	// Try to extract from SIP header first, otherwise generate new
+	correlationID := correlation.FromString(s.getHeaderValue(message, correlation.SIPHeader))
+	if correlationID.IsEmpty() {
+		correlationID = correlation.New()
+	}
+
+	logger := s.logger.WithFields(logrus.Fields{
+		"method":         "INVITE",
+		"correlation_id": correlationID.String(),
+		"call_id":        message.CallID,
+	})
 	logger.Info("Received INVITE request")
 
-	// Authentication check
+	// Create context with correlation ID for downstream operations
+	ctx := correlation.WithCorrelationID(context.Background(), correlationID)
+
 	// Extract client IP for authentication and rate limiting
 	clientIP := ""
 	if message.Connection != nil && message.Connection.remoteAddr != "" {
@@ -791,6 +805,8 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 			clientIP = host
 		}
 	}
+	ctx = correlation.WithClientIP(ctx, clientIP)
+	ctx = correlation.WithMethod(ctx, "INVITE")
 
 	// Check SIP rate limiting first (before authentication)
 	if s.handler != nil && s.handler.IsSIPRateLimitEnabled() {
@@ -798,20 +814,22 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 			// Rate limited - send 503 Service Unavailable
 			logger.WithField("client_ip", clientIP).Warn("INVITE rate limited")
 			headers := map[string]string{
-				"Retry-After": "60",
+				"Retry-After":            "60",
+				correlation.SIPHeader:    correlationID.String(),
 			}
 			s.sendResponse(message, 503, "Service Unavailable - Rate Limit Exceeded", headers, nil)
 			// Audit log for rate limiting
-			audit.Log(context.Background(), s.logger, &audit.Event{
+			audit.Log(ctx, s.logger, &audit.Event{
 				Category:   "security",
 				Action:     "rate_limited",
 				Outcome:    audit.OutcomeFailure,
 				CallID:     message.CallID,
 				SIPHeaders: s.extractSIPHeadersForAudit(message),
 				Details: map[string]interface{}{
-					"client_ip": clientIP,
-					"method":    "INVITE",
-					"reason":    "rate_limit_exceeded",
+					"client_ip":      clientIP,
+					"method":         "INVITE",
+					"reason":         "rate_limit_exceeded",
+					"correlation_id": correlationID.String(),
 				},
 			})
 			return
@@ -831,37 +849,43 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 				// Send 401 Unauthorized with WWW-Authenticate challenge
 				logger.WithField("client_ip", clientIP).Info("Sending authentication challenge")
 				headers := map[string]string{
-					"WWW-Authenticate": challenge,
+					"WWW-Authenticate":       challenge,
+					correlation.SIPHeader:    correlationID.String(),
 				}
 				s.sendResponse(message, 401, "Unauthorized", headers, nil)
 				// Audit log for auth challenge
-				audit.Log(context.Background(), s.logger, &audit.Event{
+				audit.Log(ctx, s.logger, &audit.Event{
 					Category:   "security",
 					Action:     "auth_challenge",
 					Outcome:    audit.OutcomeFailure,
 					CallID:     message.CallID,
 					SIPHeaders: s.extractSIPHeadersForAudit(message),
 					Details: map[string]interface{}{
-						"client_ip":   clientIP,
-						"reason":      "authentication_required",
-						"request_uri": requestURI,
+						"client_ip":      clientIP,
+						"reason":         "authentication_required",
+						"request_uri":    requestURI,
+						"correlation_id": correlationID.String(),
 					},
 				})
 			} else {
 				// IP blocked - send 403 Forbidden
 				logger.WithField("client_ip", clientIP).Warn("Request blocked by IP access control")
-				s.sendResponse(message, 403, "Forbidden", nil, nil)
+				headers := map[string]string{
+					correlation.SIPHeader: correlationID.String(),
+				}
+				s.sendResponse(message, 403, "Forbidden", headers, nil)
 				// Audit log for IP block
-				audit.Log(context.Background(), s.logger, &audit.Event{
+				audit.Log(ctx, s.logger, &audit.Event{
 					Category:   "security",
 					Action:     "ip_blocked",
 					Outcome:    audit.OutcomeFailure,
 					CallID:     message.CallID,
 					SIPHeaders: s.extractSIPHeadersForAudit(message),
 					Details: map[string]interface{}{
-						"client_ip":   clientIP,
-						"reason":      "ip_access_denied",
-						"request_uri": requestURI,
+						"client_ip":      clientIP,
+						"reason":         "ip_access_denied",
+						"request_uri":    requestURI,
+						"correlation_id": correlationID.String(),
 					},
 				})
 			}

@@ -29,21 +29,27 @@ type RateLimitMiddleware interface {
 	Middleware(next http.Handler) http.Handler
 }
 
+// CorrelationMiddleware interface for request correlation
+type CorrelationMiddleware interface {
+	Middleware(next http.Handler) http.Handler
+}
+
 // Server represents the HTTP server for health checks and metrics
 type Server struct {
-	config                *Config
-	logger                *logrus.Logger
-	httpServer            *http.Server
-	mux                   *http.ServeMux
-	metricsProvider       MetricsProvider
-	startTime             time.Time
-	additionalHandlers    map[string]http.HandlerFunc
-	sipHandler            interface{} // Reference to SIP handler
-	wsHub                 *TranscriptionHub
-	amqpClient            interface{} // Reference to AMQP client
-	analyticsWSHandler    *AnalyticsWebSocketHandler
-	authMiddleware        *AuthMiddleware
-	rateLimitMiddleware   RateLimitMiddleware
+	config                  *Config
+	logger                  *logrus.Logger
+	httpServer              *http.Server
+	mux                     *http.ServeMux
+	metricsProvider         MetricsProvider
+	startTime               time.Time
+	additionalHandlers      map[string]http.HandlerFunc
+	sipHandler              interface{} // Reference to SIP handler
+	wsHub                   *TranscriptionHub
+	amqpClient              interface{} // Reference to AMQP client
+	analyticsWSHandler      *AnalyticsWebSocketHandler
+	authMiddleware          *AuthMiddleware
+	rateLimitMiddleware     RateLimitMiddleware
+	correlationMiddleware   CorrelationMiddleware
 }
 
 // NewServer creates a new HTTP server instance
@@ -68,9 +74,13 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 		if server.authMiddleware != nil {
 			handler = server.authMiddleware.Middleware(handler)
 		}
-		// Apply rate limiting middleware (outer layer - checks first)
+		// Apply rate limiting middleware
 		if server.rateLimitMiddleware != nil {
 			handler = server.rateLimitMiddleware.Middleware(handler)
+		}
+		// Apply correlation middleware (outermost - adds correlation ID first)
+		if server.correlationMiddleware != nil {
+			handler = server.correlationMiddleware.Middleware(handler)
 		}
 		handler.ServeHTTP(w, r)
 	})
@@ -139,6 +149,12 @@ func (s *Server) SetAuthMiddleware(middleware *AuthMiddleware) {
 func (s *Server) SetRateLimitMiddleware(middleware RateLimitMiddleware) {
 	s.rateLimitMiddleware = middleware
 	s.logger.Info("Rate limiting middleware configured")
+}
+
+// SetCorrelationMiddleware sets the correlation ID middleware for request tracking.
+func (s *Server) SetCorrelationMiddleware(middleware CorrelationMiddleware) {
+	s.correlationMiddleware = middleware
+	s.logger.Info("Correlation ID middleware configured")
 }
 
 // RegisterHandler adds a custom handler to the server
