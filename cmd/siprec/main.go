@@ -33,6 +33,7 @@ import (
 	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/performance"
 	"siprec-server/pkg/pii"
+	"siprec-server/pkg/ratelimit"
 	"siprec-server/pkg/realtime/analytics"
 	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/session"
@@ -1009,6 +1010,24 @@ func initialize() error {
 		sipHandler.SetAnalyticsDispatcher(analyticsDispatcher)
 	}
 
+	// Configure SIP rate limiting if enabled
+	if appConfig.RateLimit.SIPEnabled {
+		sipRateLimitConfig := &ratelimit.Config{
+			SIPEnabled:           appConfig.RateLimit.SIPEnabled,
+			SIPInvitesPerSecond:  appConfig.RateLimit.SIPInvitesPerSecond,
+			SIPInviteBurst:       appConfig.RateLimit.SIPInviteBurst,
+			SIPRequestsPerSecond: appConfig.RateLimit.SIPRequestsPerSecond,
+			SIPRequestBurst:      appConfig.RateLimit.SIPRequestBurst,
+			WhitelistedIPs:       strings.Split(appConfig.RateLimit.WhitelistedIPs, ","),
+		}
+		sipRateLimiter := ratelimit.NewSIPLimiter(sipRateLimitConfig, logger)
+		sipHandler.SetSIPRateLimiter(sipRateLimiter)
+		logger.WithFields(logrus.Fields{
+			"invite_rps":   appConfig.RateLimit.SIPInvitesPerSecond,
+			"invite_burst": appConfig.RateLimit.SIPInviteBurst,
+		}).Info("SIP rate limiting enabled")
+	}
+
 	// Register SIP handlers
 	sipHandler.SetupHandlers()
 
@@ -1042,6 +1061,24 @@ func initialize() error {
 			},
 		})
 		httpServer.SetAuthMiddleware(httpAuthMiddleware)
+	}
+
+	// Configure rate limiting if enabled
+	if appConfig.RateLimit.Enabled {
+		rateLimitConfig := &ratelimit.Config{
+			Enabled:           appConfig.RateLimit.Enabled,
+			RequestsPerSecond: appConfig.RateLimit.RequestsPerSecond,
+			BurstSize:         appConfig.RateLimit.BurstSize,
+			BlockDuration:     appConfig.RateLimit.BlockDuration,
+			WhitelistedIPs:    strings.Split(appConfig.RateLimit.WhitelistedIPs, ","),
+			WhitelistedPaths:  strings.Split(appConfig.RateLimit.WhitelistedPaths, ","),
+		}
+		rateLimitMiddleware := ratelimit.NewHTTPMiddleware(rateLimitConfig, logger)
+		httpServer.SetRateLimitMiddleware(rateLimitMiddleware)
+		logger.WithFields(logrus.Fields{
+			"rps":   appConfig.RateLimit.RequestsPerSecond,
+			"burst": appConfig.RateLimit.BurstSize,
+		}).Info("HTTP rate limiting enabled")
 	}
 
 	// Set the SIP handler reference for health checks

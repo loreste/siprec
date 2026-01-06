@@ -782,16 +782,43 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 	logger.Info("Received INVITE request")
 
 	// Authentication check
-	if s.handler != nil && s.handler.IsAuthenticationEnabled() {
-		clientIP := ""
-		if message.Connection != nil && message.Connection.remoteAddr != "" {
-			clientIP = message.Connection.remoteAddr
-			// Extract just the IP without port
-			if host, _, err := net.SplitHostPort(clientIP); err == nil {
-				clientIP = host
-			}
+	// Extract client IP for authentication and rate limiting
+	clientIP := ""
+	if message.Connection != nil && message.Connection.remoteAddr != "" {
+		clientIP = message.Connection.remoteAddr
+		// Extract just the IP without port
+		if host, _, err := net.SplitHostPort(clientIP); err == nil {
+			clientIP = host
 		}
+	}
 
+	// Check SIP rate limiting first (before authentication)
+	if s.handler != nil && s.handler.IsSIPRateLimitEnabled() {
+		if !s.handler.CheckSIPRateLimit(clientIP, "INVITE") {
+			// Rate limited - send 503 Service Unavailable
+			logger.WithField("client_ip", clientIP).Warn("INVITE rate limited")
+			headers := map[string]string{
+				"Retry-After": "60",
+			}
+			s.sendResponse(message, 503, "Service Unavailable - Rate Limit Exceeded", headers, nil)
+			// Audit log for rate limiting
+			audit.Log(context.Background(), s.logger, &audit.Event{
+				Category:   "security",
+				Action:     "rate_limited",
+				Outcome:    audit.OutcomeFailure,
+				CallID:     message.CallID,
+				SIPHeaders: s.extractSIPHeadersForAudit(message),
+				Details: map[string]interface{}{
+					"client_ip": clientIP,
+					"method":    "INVITE",
+					"reason":    "rate_limit_exceeded",
+				},
+			})
+			return
+		}
+	}
+
+	if s.handler != nil && s.handler.IsAuthenticationEnabled() {
 		authHeader := s.getHeaderValue(message, "Authorization")
 		requestURI := message.RequestURI
 		if requestURI == "" && message.Request != nil {
