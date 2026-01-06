@@ -35,6 +35,12 @@ var (
 	SIPIPAccessAllowed  *prometheus.CounterVec
 	SIPAuthFailures     *prometheus.CounterVec
 
+	// Rate limiting metrics
+	RateLimitRequestsTotal  *prometheus.CounterVec
+	RateLimitBlockedTotal   *prometheus.CounterVec
+	RateLimitCurrentBucket  *prometheus.GaugeVec
+	SIPRateLimitedTotal     *prometheus.CounterVec
+
 	// SRTP metrics
 	SRTPEncryptionErrors *prometheus.CounterVec
 	SRTPDecryptionErrors *prometheus.CounterVec
@@ -189,6 +195,39 @@ func Init(logger *logrus.Logger) {
 				Help: "Total number of SIP authentication failures",
 			},
 			[]string{"source_ip", "reason"},
+		)
+
+		// Initialize rate limiting metrics
+		RateLimitRequestsTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_rate_limit_requests_total",
+				Help: "Total number of requests processed by rate limiter",
+			},
+			[]string{"client_ip", "path", "status"},
+		)
+
+		RateLimitBlockedTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_rate_limit_blocked_total",
+				Help: "Total number of requests blocked by rate limiter",
+			},
+			[]string{"client_ip", "path"},
+		)
+
+		RateLimitCurrentBucket = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "siprec_rate_limit_bucket_tokens",
+				Help: "Current number of tokens in rate limit bucket",
+			},
+			[]string{"client_ip"},
+		)
+
+		SIPRateLimitedTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_sip_rate_limited_total",
+				Help: "Total number of SIP requests blocked by rate limiter",
+			},
+			[]string{"client_ip", "method"},
 		)
 
 		// Initialize SRTP metrics
@@ -425,6 +464,12 @@ func Init(logger *logrus.Logger) {
 			SIPIPAccessBlocked,
 			SIPIPAccessAllowed,
 			SIPAuthFailures,
+
+			// Rate limiting metrics
+			RateLimitRequestsTotal,
+			RateLimitBlockedTotal,
+			RateLimitCurrentBucket,
+			SIPRateLimitedTotal,
 
 			// SRTP metrics
 			SRTPEncryptionErrors,
@@ -794,5 +839,33 @@ func RecordIPAccessAllowed(sourceIP, matchType string) {
 func RecordSIPAuthFailure(sourceIP, reason string) {
 	if metricsEnabled {
 		SIPAuthFailures.WithLabelValues(sourceIP, reason).Inc()
+	}
+}
+
+// RecordRateLimitRequest records a rate-limited request (allowed or blocked)
+func RecordRateLimitRequest(clientIP, path, status string) {
+	if metricsEnabled {
+		RateLimitRequestsTotal.WithLabelValues(clientIP, path, status).Inc()
+	}
+}
+
+// RecordRateLimitBlocked records a blocked request due to rate limiting
+func RecordRateLimitBlocked(clientIP, path string) {
+	if metricsEnabled {
+		RateLimitBlockedTotal.WithLabelValues(clientIP, path).Inc()
+	}
+}
+
+// UpdateRateLimitBucket updates the current token count for a client
+func UpdateRateLimitBucket(clientIP string, tokens float64) {
+	if metricsEnabled {
+		RateLimitCurrentBucket.WithLabelValues(clientIP).Set(tokens)
+	}
+}
+
+// RecordSIPRateLimited records a SIP request blocked by rate limiting
+func RecordSIPRateLimited(clientIP, method string) {
+	if metricsEnabled {
+		SIPRateLimitedTotal.WithLabelValues(clientIP, method).Inc()
 	}
 }
