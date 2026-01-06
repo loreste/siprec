@@ -152,8 +152,19 @@ type Handler struct {
 	sipAuthenticator   *auth.SIPAuthenticator
 	ipAccessController *auth.IPAccessController
 
+	// SIP Rate Limiting
+	sipRateLimiter SIPRateLimiter
+
 	// Policy enforcement
 	policyManager *siprec.PolicyManager
+}
+
+// SIPRateLimiter interface for rate limiting SIP requests
+type SIPRateLimiter interface {
+	AllowRequest(clientIP string, method string) bool
+	AllowINVITE(clientIP string) bool
+	BlockClient(clientIP string, duration time.Duration)
+	IsBlocked(clientIP string) bool
 }
 
 // CallData holds information about an active call
@@ -439,6 +450,35 @@ func (h *Handler) IsIPAccessEnabled() bool {
 // IsDigestAuthEnabled returns whether SIP Digest authentication is enabled
 func (h *Handler) IsDigestAuthEnabled() bool {
 	return h.sipAuthenticator != nil
+}
+
+// SetSIPRateLimiter sets the SIP rate limiter for the handler
+func (h *Handler) SetSIPRateLimiter(limiter SIPRateLimiter) {
+	h.sipRateLimiter = limiter
+	h.Logger.Info("SIP rate limiter configured")
+}
+
+// IsSIPRateLimitEnabled returns whether SIP rate limiting is enabled
+func (h *Handler) IsSIPRateLimitEnabled() bool {
+	return h.sipRateLimiter != nil
+}
+
+// CheckSIPRateLimit checks if a SIP request should be allowed based on rate limits
+// Returns true if allowed, false if rate limited
+func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
+	if h.sipRateLimiter == nil {
+		return true
+	}
+
+	allowed := h.sipRateLimiter.AllowRequest(clientIP, method)
+	if !allowed {
+		h.Logger.WithFields(logrus.Fields{
+			"client_ip": clientIP,
+			"method":    method,
+		}).Warn("SIP request rate limited")
+		metrics.RecordSIPRateLimited(clientIP, method)
+	}
+	return allowed
 }
 
 // IsClusterLeader returns true if this node is the cluster leader

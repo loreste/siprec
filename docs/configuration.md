@@ -314,6 +314,79 @@ See [Speech-to-Text Integration](stt.md) for detailed Whisper configuration incl
 
 Health (`/healthz`) and readiness (`/readyz`) checks automatically reflect the SIP handler and shared session store.
 
+### Rate Limiting
+
+Rate limiting protects the server from DDoS attacks and abuse. Both HTTP API and SIP requests can be rate-limited.
+
+#### HTTP Rate Limiting
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `RATE_LIMIT_ENABLED` | Enable HTTP rate limiting | `false` |
+| `RATE_LIMIT_RPS` | Requests per second per client | `100` |
+| `RATE_LIMIT_BURST` | Maximum burst size | `200` |
+| `RATE_LIMIT_BLOCK_DURATION` | How long to block after exceeding limits | `1m` |
+| `RATE_LIMIT_WHITELIST_IPS` | IPs/CIDRs that bypass rate limiting | `127.0.0.1,::1` |
+| `RATE_LIMIT_WHITELIST_PATHS` | Paths that bypass rate limiting | `/health,/health/live,/health/ready` |
+
+**Example configurations:**
+
+```bash
+# Production: Enable rate limiting with standard settings
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_RPS=100
+RATE_LIMIT_BURST=200
+RATE_LIMIT_BLOCK_DURATION=1m
+
+# High-traffic API: Allow more requests
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_RPS=500
+RATE_LIMIT_BURST=1000
+RATE_LIMIT_WHITELIST_IPS=10.0.0.0/8,192.168.0.0/16
+
+# Strict mode: Lower limits for public-facing servers
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_RPS=20
+RATE_LIMIT_BURST=50
+RATE_LIMIT_BLOCK_DURATION=5m
+```
+
+#### SIP Rate Limiting
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `RATE_LIMIT_SIP_ENABLED` | Enable SIP rate limiting | `false` |
+| `RATE_LIMIT_SIP_INVITE_RPS` | INVITE requests per second per IP | `10` |
+| `RATE_LIMIT_SIP_INVITE_BURST` | Maximum INVITE burst | `50` |
+| `RATE_LIMIT_SIP_RPS` | Other SIP requests per second per IP | `100` |
+| `RATE_LIMIT_SIP_REQUEST_BURST` | Maximum general request burst | `200` |
+
+**SIP rate limiting notes:**
+- INVITE requests have stricter limits since they consume more resources
+- Other methods (BYE, ACK, OPTIONS) use the general request limits
+- Whitelisted IPs from HTTP rate limiting also apply to SIP
+
+```bash
+# Protect against SIP flooding attacks
+RATE_LIMIT_SIP_ENABLED=true
+RATE_LIMIT_SIP_INVITE_RPS=10
+RATE_LIMIT_SIP_INVITE_BURST=50
+
+# Whitelist trusted SBC IPs
+RATE_LIMIT_WHITELIST_IPS=192.168.1.10,192.168.1.11,10.0.0.0/8
+```
+
+**Rate limit metrics:**
+
+When rate limiting is enabled, the following Prometheus metrics are exported:
+
+| Metric | Description |
+| --- | --- |
+| `siprec_rate_limit_requests_total` | Total requests processed by rate limiter |
+| `siprec_rate_limit_blocked_total` | Total requests blocked by rate limiter |
+| `siprec_rate_limit_bucket_tokens` | Current tokens in rate limit bucket |
+| `siprec_sip_rate_limited_total` | SIP requests blocked by rate limiter |
+
 ## Audio Processing & VAD
 
 Basic audio enhancement can be applied before transcription.
