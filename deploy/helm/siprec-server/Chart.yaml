@@ -1,0 +1,15 @@
+apiVersion: v2
+name: siprec-server
+description: A Helm chart for SIPREC recording server
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - siprec
+  - voip
+  - recording
+  - sip
+  - rtp
+home: https://github.com/loreste/siprec
+maintainers:
+  - name: SIPREC Team

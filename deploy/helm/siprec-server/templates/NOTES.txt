@@ -1,0 +1,42 @@
+SIPREC Server has been deployed!
+
+1. Get the HTTP service URL:
+{{- if contains "NodePort" .Values.service.http.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "siprec-server.fullname" . }}-http)
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "HTTP API: http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.service.http.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  You can watch the status with: kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "siprec-server.fullname" . }}-http
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "siprec-server.fullname" . }}-http --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "HTTP API: http://$SERVICE_IP:{{ .Values.service.http.port }}"
+{{- else if contains "ClusterIP" .Values.service.http.type }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "siprec-server.fullname" . }}-http 8080:{{ .Values.service.http.port }}
+  echo "HTTP API: http://127.0.0.1:8080"
+{{- end }}
+
+2. Get the SIP service endpoints:
+{{- if .Values.sipServices.udp.enabled }}
+{{- if contains "LoadBalancer" .Values.sipServices.udp.type }}
+  export SIP_UDP_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "siprec-server.fullname" . }}-sip-udp --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "SIP UDP: $SIP_UDP_IP:{{ .Values.sipServices.udp.port }}"
+{{- end }}
+{{- end }}
+{{- if .Values.sipServices.tcp.enabled }}
+{{- if contains "LoadBalancer" .Values.sipServices.tcp.type }}
+  export SIP_TCP_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "siprec-server.fullname" . }}-sip-tcp --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo "SIP TCP: $SIP_TCP_IP:{{ .Values.sipServices.tcp.port }}"
+  echo "SIP TLS: $SIP_TCP_IP:{{ .Values.sipServices.tcp.tlsPort }}"
+{{- end }}
+{{- end }}
+
+3. Check the health status:
+  curl http://<SERVICE_IP>:{{ .Values.service.http.port }}/health
+
+4. View metrics:
+  curl http://<SERVICE_IP>:{{ .Values.service.http.port }}/metrics
+
+5. View logs:
+  kubectl logs -f -l app.kubernetes.io/name={{ include "siprec-server.name" . }} --namespace {{ .Release.Namespace }}
+
+For more information, visit: https://github.com/loreste/siprec

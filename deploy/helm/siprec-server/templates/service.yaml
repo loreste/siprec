@@ -1,0 +1,101 @@
+---
+# HTTP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siprec-server.fullname" . }}-http
+  labels:
+    {{- include "siprec-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: http
+spec:
+  type: {{ .Values.service.http.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.http.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "siprec-server.selectorLabels" . | nindent 4 }}
+
+{{- if .Values.sipServices.udp.enabled }}
+---
+# SIP UDP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siprec-server.fullname" . }}-sip-udp
+  labels:
+    {{- include "siprec-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sip-udp
+  {{- with .Values.sipServices.udp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.sipServices.udp.type }}
+  externalTrafficPolicy: {{ .Values.sipServices.udp.externalTrafficPolicy }}
+  ports:
+    - name: sip-udp
+      port: {{ .Values.sipServices.udp.port }}
+      targetPort: sip-udp
+      protocol: UDP
+  selector:
+    {{- include "siprec-server.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+{{- if .Values.sipServices.tcp.enabled }}
+---
+# SIP TCP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siprec-server.fullname" . }}-sip-tcp
+  labels:
+    {{- include "siprec-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sip-tcp
+  {{- with .Values.sipServices.tcp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.sipServices.tcp.type }}
+  externalTrafficPolicy: {{ .Values.sipServices.tcp.externalTrafficPolicy }}
+  ports:
+    - name: sip-tcp
+      port: {{ .Values.sipServices.tcp.port }}
+      targetPort: sip-tcp
+      protocol: TCP
+    - name: sip-tls
+      port: {{ .Values.sipServices.tcp.tlsPort }}
+      targetPort: sip-tls
+      protocol: TCP
+  selector:
+    {{- include "siprec-server.selectorLabels" . | nindent 4 }}
+{{- end }}
+
+---
+# Headless Service for pod discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siprec-server.fullname" . }}-headless
+  labels:
+    {{- include "siprec-server.labels" . | nindent 4 }}
+    app.kubernetes.io/component: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: {{ .Values.service.http.port }}
+      targetPort: http
+    - name: sip-udp
+      port: 5060
+      targetPort: sip-udp
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      targetPort: sip-tcp
+      protocol: TCP
+  selector:
+    {{- include "siprec-server.selectorLabels" . | nindent 4 }}
