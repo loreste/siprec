@@ -59,6 +59,79 @@ RTP_BIND_IP=203.0.113.50
 
 **Note**: If an invalid IP is provided, the server will fall back to binding on all interfaces and log a warning.
 
+### SIP Authentication & IP Filtering
+
+The server supports SIP Digest authentication and IP-based access control to restrict which SRC devices can send SIPREC sessions.
+
+#### IP-Based Access Control
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SIP_IP_ACCESS_ENABLED` | Enable IP-based filtering | `false` |
+| `SIP_IP_DEFAULT_ALLOW` | Default policy when IP not in any list | `true` |
+| `SIP_IP_ALLOWED_IPS` | Comma-separated list of allowed IPs | `` |
+| `SIP_IP_ALLOWED_NETWORKS` | Comma-separated list of allowed CIDRs | `` |
+| `SIP_IP_BLOCKED_IPS` | Comma-separated list of blocked IPs | `` |
+| `SIP_IP_BLOCKED_NETWORKS` | Comma-separated list of blocked CIDRs | `` |
+
+**Evaluation Order:**
+1. Check if IP is in blocked list → **DENY**
+2. Check if IP is in blocked network → **DENY**
+3. Check if IP is in allowed list → **ALLOW**
+4. Check if IP is in allowed network → **ALLOW**
+5. Apply default policy (`SIP_IP_DEFAULT_ALLOW`)
+
+**Examples:**
+
+```bash
+# Whitelist mode: Only allow specific SBCs
+SIP_IP_ACCESS_ENABLED=true
+SIP_IP_DEFAULT_ALLOW=false
+SIP_IP_ALLOWED_IPS=192.168.1.10,192.168.1.11
+SIP_IP_ALLOWED_NETWORKS=10.0.0.0/8
+
+# Blacklist mode: Block known bad actors
+SIP_IP_ACCESS_ENABLED=true
+SIP_IP_DEFAULT_ALLOW=true
+SIP_IP_BLOCKED_IPS=203.0.113.50
+SIP_IP_BLOCKED_NETWORKS=198.51.100.0/24
+
+# Production example: Allow internal networks only
+SIP_IP_ACCESS_ENABLED=true
+SIP_IP_DEFAULT_ALLOW=false
+SIP_IP_ALLOWED_NETWORKS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+#### SIP Digest Authentication
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SIP_AUTH_ENABLED` | Enable SIP Digest authentication | `false` |
+| `SIP_AUTH_REALM` | Authentication realm | `siprec.local` |
+| `SIP_AUTH_NONCE_TIMEOUT` | Nonce validity in seconds | `300` |
+| `SIP_AUTH_USERS` | Comma-separated user:password pairs | `` |
+
+**Example:**
+
+```bash
+# Enable digest authentication
+SIP_AUTH_ENABLED=true
+SIP_AUTH_REALM=mycompany.com
+SIP_AUTH_USERS=sbc1:secretpass1,sbc2:secretpass2
+```
+
+**Combined Example (IP filtering + Digest auth):**
+
+```bash
+# Defense in depth: IP whitelist + digest auth
+SIP_IP_ACCESS_ENABLED=true
+SIP_IP_DEFAULT_ALLOW=false
+SIP_IP_ALLOWED_NETWORKS=10.0.0.0/8
+SIP_AUTH_ENABLED=true
+SIP_AUTH_REALM=secure.example.com
+SIP_AUTH_USERS=sbc-primary:$(cat /run/secrets/sbc_password)
+```
+
 ## Recording
 
 | Variable | Description | Default |
