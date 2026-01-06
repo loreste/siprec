@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<scenario name="SIPREC with RTP Media">
+
+  <send retrans="500">
+    <![CDATA[
+      INVITE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: sipp <sip:sipp@[local_ip]:[local_port]>;tag=[pid]SIPpTag00[call_number]
+      To: sut <sip:[service]@[remote_ip]:[remote_port]>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: sip:sipp@[local_ip]:[local_port]
+      Max-Forwards: 70
+      Subject: Media Test Call [call_number]
+      Content-Type: multipart/mixed;boundary=boundary123
+      Content-Length: [len]
+
+--boundary123
+Content-Type: application/sdp
+Content-Disposition: session;handling=required
+
+v=0
+o=user1 53655765 2353687637 IN IP[local_ip_type] [local_ip]
+s=SIPREC Media Test
+c=IN IP[media_ip_type] [media_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+a=ptime:20
+a=sendrecv
+
+--boundary123
+Content-Type: application/rs-metadata+xml
+Content-Disposition: recording-session
+
+<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1">
+  <datamode>complete</datamode>
+  <session session_id="[call_id]">
+    <sipSessionID>[call_id]</sipSessionID>
+  </session>
+  <participant participant_id="caller-[call_number]">
+    <nameID aor="sip:caller[call_number]@example.com">
+      <name xml:lang="en">Caller [call_number]</name>
+    </nameID>
+  </participant>
+  <participant participant_id="callee-[call_number]">
+    <nameID aor="sip:callee[call_number]@example.com">
+      <name xml:lang="en">Callee [call_number]</name>
+    </nameID>
+  </participant>
+  <stream stream_id="audio-[call_number]" session_id="[call_id]">
+    <label>main-audio</label>
+  </stream>
+  <sessionrecordingassoc session_id="[call_id]"/>
+  <participantsessionassoc participant_id="caller-[call_number]" session_id="[call_id]"/>
+  <participantsessionassoc participant_id="callee-[call_number]" session_id="[call_id]"/>
+  <participantstreamassoc participant_id="caller-[call_number]">
+    <send>audio-[call_number]</send>
+  </participantstreamassoc>
+  <participantstreamassoc participant_id="callee-[call_number]">
+    <recv>audio-[call_number]</recv>
+  </participantstreamassoc>
+</recording>
+--boundary123--
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"/>
+  <recv response="180" optional="true"/>
+  <recv response="183" optional="true"/>
+  <recv response="200" rtd="true"/>
+
+  <send>
+    <![CDATA[
+      ACK sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: sipp <sip:sipp@[local_ip]:[local_port]>;tag=[pid]SIPpTag00[call_number]
+      To: sut <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Contact: sip:sipp@[local_ip]:[local_port]
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Play RTP audio from pcap file -->
+  <nop>
+    <action>
+      <exec play_pcap_audio="g711_audio.pcap"/>
+    </action>
+  </nop>
+
+  <!-- Wait for audio to play (10 seconds) plus buffer -->
+  <pause milliseconds="11000"/>
+
+  <send retrans="500">
+    <![CDATA[
+      BYE sip:[service]@[remote_ip]:[remote_port] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: sipp <sip:sipp@[local_ip]:[local_port]>;tag=[pid]SIPpTag00[call_number]
+      To: sut <sip:[service]@[remote_ip]:[remote_port]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Contact: sip:sipp@[local_ip]:[local_port]
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200" crlf="true"/>
+
+</scenario>
