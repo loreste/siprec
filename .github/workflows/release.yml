@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+        cache: true
+
+    - name: Run tests
+      run: go test -race -short ./pkg/... ./cmd/...
+
+    - name: Build binaries
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        COMMIT=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
+
+        mkdir -p dist
+
+        # Linux AMD64
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-linux-amd64 ./cmd/siprec
+        tar -czvf dist/siprec-linux-amd64.tar.gz -C dist siprec-linux-amd64
+        rm dist/siprec-linux-amd64
+
+        # Linux ARM64
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-linux-arm64 ./cmd/siprec
+        tar -czvf dist/siprec-linux-arm64.tar.gz -C dist siprec-linux-arm64
+        rm dist/siprec-linux-arm64
+
+        # Darwin AMD64
+        GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-darwin-amd64 ./cmd/siprec
+        tar -czvf dist/siprec-darwin-amd64.tar.gz -C dist siprec-darwin-amd64
+        rm dist/siprec-darwin-amd64
+
+        # Darwin ARM64
+        GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-darwin-arm64 ./cmd/siprec
+        tar -czvf dist/siprec-darwin-arm64.tar.gz -C dist siprec-darwin-arm64
+        rm dist/siprec-darwin-arm64
+
+        # Windows AMD64
+        GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-windows-amd64.exe ./cmd/siprec
+        zip -j dist/siprec-windows-amd64.zip dist/siprec-windows-amd64.exe
+        rm dist/siprec-windows-amd64.exe
+
+        # Generate checksums
+        cd dist && sha256sum *.tar.gz *.zip > checksums.txt
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        if [ -n "$PREV_TAG" ]; then
+          echo "## Changes since ${PREV_TAG}" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          git log --oneline --no-merges ${PREV_TAG}..HEAD >> CHANGELOG.md
+        else
+          echo "## Initial Release" > CHANGELOG.md
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        body_path: CHANGELOG.md
+        files: |
+          dist/*.tar.gz
+          dist/*.zip
+          dist/checksums.txt
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-release:
+    name: Release Docker Image
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ghcr.io/${{ github.repository }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/siprec-server
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+
+    - name: Build and push
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        target: production
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  helm-release:
+    name: Release Helm Chart
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Update Helm chart version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        sed -i "s/^version:.*/version: ${VERSION}/" deploy/helm/siprec-server/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" deploy/helm/siprec-server/Chart.yaml
+
+    - name: Package Helm chart
+      run: |
+        helm package deploy/helm/siprec-server -d dist/
+
+    - name: Upload Helm chart to release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*.tgz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
