@@ -19,11 +19,13 @@ import (
 
 	"github.com/emiago/sipgo"
 	sipparser "github.com/emiago/sipgo/sip"
+	"github.com/google/uuid"
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"siprec-server/pkg/audio"
 	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/security"
@@ -204,6 +206,21 @@ func (s *CustomSIPServer) initializeTransactionLayer() {
 	})
 	server.OnSubscribe(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
 		s.handleTransactionRequest(req, tx, "SUBSCRIBE")
+	})
+	server.OnUpdate(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "UPDATE")
+	})
+	server.OnInfo(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "INFO")
+	})
+	server.OnRefer(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "REFER")
+	})
+	server.OnNotify(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "NOTIFY")
+	})
+	server.OnMessage(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
+		s.handleTransactionRequest(req, tx, "MESSAGE")
 	})
 	// Default handler for unsupported methods
 	server.OnNoRoute(func(req *sipparser.Request, tx sipparser.ServerTransaction) {
@@ -525,6 +542,16 @@ func (s *CustomSIPServer) handleTransactionRequest(req *sipparser.Request, tx si
 		s.handleOptionsMessage(message)
 	case "SUBSCRIBE":
 		s.handleSubscribeMessage(message)
+	case "UPDATE":
+		s.handleUpdateMessage(message)
+	case "INFO":
+		s.handleInfoMessage(message)
+	case "REFER":
+		s.handleReferMessage(message)
+	case "NOTIFY":
+		s.handleNotifyMessage(message)
+	case "MESSAGE":
+		s.handleMessageMessage(message)
 	default:
 		s.logger.WithField("method", method).Warn("Unhandled SIP method in transaction handler")
 		s.sendResponse(message, 501, "Not Implemented", nil, nil)
@@ -741,8 +768,8 @@ func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 	logger.Info("Received OPTIONS request")
 
 	headers := map[string]string{
-		"Allow":     "INVITE, ACK, BYE, CANCEL, PRACK, OPTIONS",
-		"Supported": "replaces, siprec",
+		"Allow":     "INVITE, ACK, BYE, CANCEL, PRACK, OPTIONS, UPDATE, INFO, REFER, NOTIFY, MESSAGE, SUBSCRIBE",
+		"Supported": "replaces, siprec, norefersub",
 	}
 
 	s.sendResponse(message, 200, "OK", headers, nil)
@@ -753,6 +780,41 @@ func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "INVITE")
 	logger.Info("Received INVITE request")
+
+	// Authentication check
+	if s.handler != nil && s.handler.IsAuthenticationEnabled() {
+		clientIP := ""
+		if message.Connection != nil && message.Connection.remoteAddr != "" {
+			clientIP = message.Connection.remoteAddr
+			// Extract just the IP without port
+			if host, _, err := net.SplitHostPort(clientIP); err == nil {
+				clientIP = host
+			}
+		}
+
+		authHeader := s.getHeaderValue(message, "Authorization")
+		requestURI := message.RequestURI
+		if requestURI == "" && message.Request != nil {
+			requestURI = message.Request.Recipient.String()
+		}
+
+		authenticated, challenge := s.handler.AuthenticateRequest(authHeader, "INVITE", requestURI, clientIP)
+		if !authenticated {
+			if challenge != "" {
+				// Send 401 Unauthorized with WWW-Authenticate challenge
+				logger.WithField("client_ip", clientIP).Info("Sending authentication challenge")
+				headers := map[string]string{
+					"WWW-Authenticate": challenge,
+				}
+				s.sendResponse(message, 401, "Unauthorized", headers, nil)
+			} else {
+				// IP blocked - send 403 Forbidden
+				logger.WithField("client_ip", clientIP).Warn("Request blocked by IP access control")
+				s.sendResponse(message, 403, "Forbidden", nil, nil)
+			}
+			return
+		}
+	}
 
 	// Check if this is a re-INVITE (session update)
 	existingCallState := s.getCallState(message.CallID)
@@ -1002,7 +1064,50 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 		if len(parsedMetadata.PolicyUpdates) > 0 {
 			logger.WithField("policy_updates", parsedMetadata.PolicyUpdates).Info("Policy updates acknowledged")
+			// Process policy updates through policy manager
+			s.handler.ProcessPolicyUpdates(recordingSession.ID, parsedMetadata)
 		}
+
+		// RFC 7866 Policy enforcement check
+		policyDecision := s.handler.EvaluateRecordingPolicy(recordingSession, parsedMetadata)
+		if policyDecision.IsBlocked() {
+			inviteErr = fmt.Errorf("recording blocked by policy: %s", policyDecision.Reason)
+			callScope.RecordError(inviteErr)
+			logger.WithFields(logrus.Fields{
+				"policy_id": policyDecision.PolicyID,
+				"reason":    policyDecision.Reason,
+			}).Warn("Recording blocked by policy")
+			s.notifyMetadataEvent(callCtx, recordingSession, message.CallID, "policy.blocked", map[string]interface{}{
+				"policy_id": policyDecision.PolicyID,
+				"reason":    policyDecision.Reason,
+			})
+			audit.Log(callCtx, s.logger, &audit.Event{
+				Category: "policy",
+				Action:   "recording_blocked",
+				Outcome:  audit.OutcomeFailure,
+				CallID:   message.CallID,
+				Details: map[string]interface{}{
+					"policy_id": policyDecision.PolicyID,
+					"reason":    policyDecision.Reason,
+				},
+			})
+			s.sendResponse(message, 403, "Forbidden - Recording not permitted by policy", nil, nil)
+			return
+		}
+
+		// Store policy decision on recording session
+		recordingSession.PolicyID = policyDecision.PolicyID
+		if policyDecision.RetentionDays > 0 {
+			recordingSession.RetentionPeriod = time.Duration(policyDecision.RetentionDays) * 24 * time.Hour
+		}
+
+		logger.WithFields(logrus.Fields{
+			"policy_action":     policyDecision.Action,
+			"policy_id":         policyDecision.PolicyID,
+			"allow_audio":       policyDecision.AllowAudio,
+			"allow_video":       policyDecision.AllowVideo,
+			"retention_days":    policyDecision.RetentionDays,
+		}).Debug("Policy evaluation completed")
 	}
 
 	// Parse the received SDP if available
@@ -1100,7 +1205,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		for range audioStreams {
-			rtpTimeout := mediaConfig.RTPTimeout
+			// Use per-call timeout if configured, otherwise fall back to global
+			rtpTimeout := siprec.GetEffectiveRTPTimeout(recordingSession, mediaConfig.RTPTimeout)
 			if rtpTimeout == 0 {
 				rtpTimeout = 30 * time.Second
 			}
@@ -1128,6 +1234,38 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				return
 			}
 			forwarders = append(forwarders, forwarder)
+		}
+
+		// Configure audio encoder for format conversion if not using WAV
+		recordingFormat := "wav"
+		if s.handler.Config.Recording != nil && s.handler.Config.Recording.Format != "" {
+			recordingFormat = s.handler.Config.Recording.Format
+		}
+		if recordingFormat != "wav" {
+			encoderConfig := &audio.EncoderConfig{
+				Format:     audio.ParseFormat(recordingFormat),
+				SampleRate: 8000,
+				Channels:   1,
+				BitRate:    128,
+				Quality:    5,
+			}
+			if s.handler.Config.Recording != nil {
+				if s.handler.Config.Recording.MP3Bitrate > 0 {
+					encoderConfig.BitRate = s.handler.Config.Recording.MP3Bitrate
+				}
+				if s.handler.Config.Recording.OpusBitrate > 0 && (recordingFormat == "opus" || recordingFormat == "ogg") {
+					encoderConfig.BitRate = s.handler.Config.Recording.OpusBitrate
+				}
+				if s.handler.Config.Recording.Quality > 0 {
+					encoderConfig.Quality = s.handler.Config.Recording.Quality
+				}
+			}
+			encoder := audio.NewAudioEncoder(encoderConfig, s.logger)
+			for _, f := range forwarders {
+				f.AudioEncoder = encoder
+				f.TargetFormat = recordingFormat
+			}
+			logger.WithField("format", recordingFormat).Debug("Audio encoder configured for format conversion")
 		}
 
 		callState.RTPForwarders = forwarders
@@ -1290,11 +1428,12 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		))
 	}
 	audit.Log(callCtx, s.logger, &audit.Event{
-		Category:  "sip",
-		Action:    "invite",
-		Outcome:   audit.OutcomeSuccess,
-		CallID:    message.CallID,
-		SessionID: sessionIDFromState(callState),
+		Category:   "sip",
+		Action:     "invite",
+		Outcome:    audit.OutcomeSuccess,
+		CallID:     message.CallID,
+		SessionID:  sessionIDFromState(callState),
+		SIPHeaders: s.extractSIPHeadersForAudit(message),
 		Details: map[string]interface{}{
 			"transport":       transport,
 			"siprec_metadata": recordingSession != nil,
@@ -1573,7 +1712,8 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		// Allocate additional forwarders if the SRC added new streams
 		existingCount := len(forwarders)
 		for len(forwarders) < len(audioStreams) {
-			rtpTimeout := mediaConfig.RTPTimeout
+			// Use per-call timeout if configured, otherwise fall back to global
+			rtpTimeout := siprec.GetEffectiveRTPTimeout(callState.RecordingSession, mediaConfig.RTPTimeout)
 			if rtpTimeout == 0 {
 				rtpTimeout = 30 * time.Second
 			}
@@ -1856,122 +1996,35 @@ func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSessio
 	return nil
 }
 
-// handleRegularInvite handles regular INVITE requests
+// handleRegularInvite rejects regular (non-SIPREC) INVITE requests
+// This server is a SIPREC Recording Server (SRS) and only accepts SIPREC sessions
 func (s *CustomSIPServer) handleRegularInvite(message *SIPMessage) {
 	logger := s.logger.WithField("siprec", false)
-	logger.Info("Processing regular INVITE")
-
-	// Create or update call state
-	callState := &CallState{
-		CallID:           message.CallID,
-		State:            "trying",
-		RemoteTag:        message.FromTag,
-		LocalTag:         generateTag(),
-		RemoteCSeq:       extractCSeqNumber(message.CSeq),
-		CreatedAt:        time.Now(),
-		LastActivity:     time.Now(),
-		IsRecording:      false,
-		OriginalInvite:   message,
-		RTPForwarders:    make([]*media.RTPForwarder, 0),
-		StreamForwarders: make(map[string]*media.RTPForwarder),
-	}
-	mediaIP := s.resolveMediaIPAddress(message)
-
-	// Store call state
-	s.callMutex.Lock()
-	s.callStates[message.CallID] = callState
-	s.callMutex.Unlock()
-
-	// Establish early dialog with 180 Ringing
-	var provisionalHeaders map[string]string
-	contactHeader := s.buildContactHeader(message)
-	provisionalHeaders = map[string]string{}
-	if contactHeader != "" {
-		provisionalHeaders["Contact"] = contactHeader
-	}
-	s.sendResponse(message, 180, "Ringing", provisionalHeaders, nil)
-	callState.State = "early"
-	callState.LastActivity = time.Now()
-
-	// For regular calls, we should generate proper SDP response
-	// Parse received SDP if available
-	var receivedSDP *sdp.SessionDescription
-	var responseSDP []byte
-
-	if len(message.Body) > 0 && strings.Contains(s.getHeaderValue(message, "content-type"), "application/sdp") {
-		parsed, err := ParseSDPTolerant(message.Body, s.logger)
-		if err != nil {
-			logger.WithError(err).Warn("Failed to parse received SDP in regular INVITE")
-		} else {
-			receivedSDP = parsed
-		}
-	}
-
-	// Allocate RTP/RTCP port pair for the call
-	portPair, err := media.GetPortManager().AllocatePortPair()
-	if err != nil {
-		logger.WithError(err).Error("Failed to allocate RTP/RTCP ports for regular call")
-		s.sendResponse(message, 503, "Service Unavailable", nil, nil)
-		return
-	}
-
-	callState.AllocatedPortPair = portPair
-
-	// Generate SDP response
-	if s.handler != nil && receivedSDP != nil {
-		// Use handler's SDP generation for better compatibility
-		sdpResponse := s.handler.generateSDPResponseWithPort(receivedSDP, mediaIP, portPair.RTPPort, nil)
-		responseSDP, _ = sdpResponse.Marshal()
-	} else {
-		// Fallback to simple SDP generation
-		responseSDP = s.generateSiprecSDP(mediaIP, portPair.RTPPort)
-	}
-
-	// Update call state
-	callState.State = "awaiting_ack"
-	callState.PendingAckCSeq = callState.RemoteCSeq
-	callState.SDP = responseSDP
-	callState.LastActivity = time.Now()
 
 	logger.WithFields(logrus.Fields{
-		"call_id":   message.CallID,
-		"rtp_port":  portPair.RTPPort,
-		"rtcp_port": portPair.RTCPPort,
-	}).Info("Allocated ports for regular call")
+		"call_id":    message.CallID,
+		"from":       s.getHeaderValue(message, "From"),
+		"to":         s.getHeaderValue(message, "To"),
+		"user_agent": s.getHeaderValue(message, "User-Agent"),
+	}).Warn("Rejecting non-SIPREC INVITE - this server only accepts SIPREC sessions")
 
-	// Send response with SDP
-	responseHeaders := map[string]string{
-		"Contact": s.buildContactHeader(message),
-	}
-	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
-	logger.Info("Successfully responded to regular INVITE with SDP")
+	// Reject with 403 Forbidden - this is a SIPREC-only server
+	// Include a reason phrase that clearly indicates why the call was rejected
+	s.sendResponse(message, 403, "Forbidden - SIPREC sessions only", nil, nil)
 }
 
-// handleRegularReInvite handles regular re-INVITE requests
+// handleRegularReInvite rejects regular (non-SIPREC) re-INVITE requests
+// Since initial regular INVITEs are rejected, this should rarely be called
 func (s *CustomSIPServer) handleRegularReInvite(message *SIPMessage, callState *CallState) {
 	logger := s.logger.WithField("regular_reinvite", true)
 
 	logger.WithFields(logrus.Fields{
 		"call_id":        message.CallID,
 		"existing_state": callState.State,
-		"body_size":      len(message.Body),
-	}).Info("Processing regular re-INVITE")
+	}).Warn("Rejecting non-SIPREC re-INVITE - this server only accepts SIPREC sessions")
 
-	// Update SDP if provided
-	if len(message.Body) > 0 {
-		callState.SDP = message.Body
-		logger.WithField("sdp_size", len(message.Body)).Debug("Updated SDP from regular re-INVITE")
-	}
-
-	// Update call state
-	callState.RemoteCSeq = extractCSeqNumber(message.CSeq)
-	callState.LastActivity = time.Now()
-
-	// Simple response for regular re-INVITE
-	callState.State = "awaiting_ack"
-	callState.PendingAckCSeq = callState.RemoteCSeq
-	s.sendResponse(message, 200, "OK", nil, nil)
-	logger.WithField("call_id", message.CallID).Info("Successfully responded to regular re-INVITE")
+	// Reject with 403 Forbidden
+	s.sendResponse(message, 403, "Forbidden - SIPREC sessions only", nil, nil)
 }
 
 // handleByeMessage handles BYE requests
@@ -2113,11 +2166,12 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 	}
 
 	audit.Log(byeCtx, s.logger, &audit.Event{
-		Category:  "sip",
-		Action:    "bye",
-		Outcome:   auditOutcome,
-		CallID:    message.CallID,
-		SessionID: sessionID,
+		Category:   "sip",
+		Action:     "bye",
+		Outcome:    auditOutcome,
+		CallID:     message.CallID,
+		SessionID:  sessionID,
+		SIPHeaders: s.extractSIPHeadersForAudit(message),
 		Details: map[string]interface{}{
 			"call_state_present": callState != nil,
 		},
@@ -2169,11 +2223,12 @@ func (s *CustomSIPServer) handleCancelMessage(message *SIPMessage) {
 	logger.WithField("call_id", message.CallID).Info("Call state cleaned up after CANCEL")
 
 	audit.Log(cancelCtx, s.logger, &audit.Event{
-		Category:  "sip",
-		Action:    "cancel",
-		Outcome:   audit.OutcomeSuccess,
-		CallID:    message.CallID,
-		SessionID: sessionIDFromState(callState),
+		Category:   "sip",
+		Action:     "cancel",
+		Outcome:    audit.OutcomeSuccess,
+		CallID:     message.CallID,
+		SessionID:  sessionIDFromState(callState),
+		SIPHeaders: s.extractSIPHeadersForAudit(message),
 	})
 }
 
@@ -2291,6 +2346,290 @@ func (s *CustomSIPServer) handleSubscribeMessage(message *SIPMessage) {
 		"Expires": "300",
 	}
 	s.sendResponse(message, 202, "Accepted", responseHeaders, nil)
+}
+
+// handleUpdateMessage handles UPDATE requests for mid-call SDP renegotiation
+// UPDATE allows changing session parameters without affecting dialog state (RFC 3311)
+func (s *CustomSIPServer) handleUpdateMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "UPDATE")
+	logger.Info("Received UPDATE request")
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("UPDATE received for unknown Call-ID")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
+	// UPDATE is used for mid-call SDP renegotiation (hold/resume, codec changes)
+	// For a SIPREC server, we primarily care about tracking session state
+	callState.LastActivity = time.Now()
+
+	// Check if there's SDP in the UPDATE
+	contentType := s.getHeaderValue(message, "Content-Type")
+	if len(message.Body) > 0 && strings.Contains(strings.ToLower(contentType), "application/sdp") {
+		// Parse the new SDP
+		parsedSDP, err := ParseSDPTolerant(message.Body, s.logger)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to parse SDP in UPDATE")
+			s.sendResponse(message, 400, "Bad Request - Invalid SDP", nil, nil)
+			return
+		}
+
+		// Check for hold indication (c=0.0.0.0 or a=sendonly/inactive)
+		isHold := false
+		for _, md := range parsedSDP.MediaDescriptions {
+			if md.ConnectionInformation != nil && md.ConnectionInformation.Address != nil {
+				if md.ConnectionInformation.Address.Address == "0.0.0.0" {
+					isHold = true
+					break
+				}
+			}
+			for _, attr := range md.Attributes {
+				if attr.Key == "sendonly" || attr.Key == "inactive" {
+					isHold = true
+					break
+				}
+			}
+		}
+
+		if isHold {
+			logger.WithField("call_id", message.CallID).Info("Call placed on hold via UPDATE")
+			// Optionally pause recording during hold
+			if callState.RTPForwarder != nil {
+				callState.RTPForwarder.Pause(false, true) // Pause transcription only during hold
+			}
+		} else {
+			logger.WithField("call_id", message.CallID).Info("Call resumed from hold via UPDATE")
+			if callState.RTPForwarder != nil {
+				callState.RTPForwarder.Resume()
+			}
+		}
+
+		// Update stored SDP
+		callState.SDP = message.Body
+	}
+
+	// Send 200 OK response
+	// For UPDATE, we should echo back the SDP if we received one
+	var responseSDP []byte
+	if len(message.Body) > 0 && strings.Contains(strings.ToLower(contentType), "application/sdp") {
+		// Generate response SDP based on current state
+		mediaIP := s.resolveMediaIPAddress(message)
+		if callState.RTPForwarder != nil {
+			responseSDP = s.generateSiprecSDP(mediaIP, callState.RTPForwarder.LocalPort)
+		}
+	}
+
+	responseHeaders := map[string]string{
+		"Contact": s.buildContactHeader(message),
+	}
+	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
+	logger.WithField("call_id", message.CallID).Info("Successfully responded to UPDATE")
+}
+
+// handleInfoMessage handles INFO requests for mid-call signaling
+// INFO is used for DTMF, call progress, and other in-dialog information (RFC 6086)
+func (s *CustomSIPServer) handleInfoMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "INFO")
+	logger.Info("Received INFO request")
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("INFO received for unknown Call-ID")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
+	callState.LastActivity = time.Now()
+
+	// Parse INFO content type to determine what kind of info this is
+	contentType := s.getHeaderValue(message, "Content-Type")
+
+	switch {
+	case strings.Contains(strings.ToLower(contentType), "application/dtmf-relay"):
+		// DTMF via INFO (RFC 2833 alternative)
+		s.handleDTMFInfo(message, callState, logger)
+
+	case strings.Contains(strings.ToLower(contentType), "application/dtmf"):
+		// Simple DTMF
+		s.handleDTMFInfo(message, callState, logger)
+
+	case strings.Contains(strings.ToLower(contentType), "application/media_control+xml"):
+		// Media control (e.g., picture fast update for video)
+		logger.WithField("call_id", message.CallID).Debug("Received media control INFO")
+
+	case strings.Contains(strings.ToLower(contentType), "application/broadsoft"):
+		// Broadsoft proprietary info
+		logger.WithField("call_id", message.CallID).Debug("Received Broadsoft INFO")
+
+	default:
+		logger.WithFields(logrus.Fields{
+			"call_id":      message.CallID,
+			"content_type": contentType,
+		}).Debug("Received INFO with unhandled content type")
+	}
+
+	// Always acknowledge INFO requests
+	s.sendResponse(message, 200, "OK", nil, nil)
+	logger.WithField("call_id", message.CallID).Debug("Acknowledged INFO request")
+}
+
+// handleDTMFInfo processes DTMF digits received via INFO
+func (s *CustomSIPServer) handleDTMFInfo(message *SIPMessage, callState *CallState, logger *logrus.Entry) {
+	if len(message.Body) == 0 {
+		return
+	}
+
+	body := string(message.Body)
+	var digit string
+
+	// Parse DTMF-Relay format: Signal=5\r\nDuration=160
+	if strings.Contains(body, "Signal=") {
+		for _, line := range strings.Split(body, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "Signal=") {
+				digit = strings.TrimPrefix(line, "Signal=")
+				digit = strings.TrimSpace(digit)
+				break
+			}
+		}
+	} else {
+		// Simple digit format
+		digit = strings.TrimSpace(body)
+	}
+
+	if digit != "" {
+		logger.WithFields(logrus.Fields{
+			"call_id": message.CallID,
+			"digit":   digit,
+		}).Info("Received DTMF digit via INFO")
+
+		// Could store DTMF history in recording session metadata
+		if callState.RecordingSession != nil {
+			// Add to metadata if needed
+		}
+	}
+}
+
+// handleReferMessage handles REFER requests for call transfers
+// REFER is used for blind and attended transfers (RFC 3515)
+func (s *CustomSIPServer) handleReferMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "REFER")
+	logger.Info("Received REFER request")
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		logger.WithField("call_id", message.CallID).Warn("REFER received for unknown Call-ID")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
+	callState.LastActivity = time.Now()
+
+	// Get the Refer-To header which contains the transfer target
+	referTo := s.getHeaderValue(message, "Refer-To")
+	if referTo == "" {
+		logger.Warn("REFER request missing Refer-To header")
+		s.sendResponse(message, 400, "Bad Request - Missing Refer-To", nil, nil)
+		return
+	}
+
+	// For a SIPREC server, we don't actually perform the transfer
+	// We just acknowledge that we're aware of it and continue recording
+	// The actual transfer happens between the SBC and the endpoints
+	logger.WithFields(logrus.Fields{
+		"call_id":  message.CallID,
+		"refer_to": referTo,
+	}).Info("Call transfer initiated via REFER - continuing recording")
+
+	// Accept the REFER with 202 Accepted
+	// This tells the referrer we'll attempt the transfer (even though we won't)
+	responseHeaders := map[string]string{
+		"Contact": s.buildContactHeader(message),
+	}
+	s.sendResponse(message, 202, "Accepted", responseHeaders, nil)
+
+	// Send NOTIFY to indicate transfer progress
+	// For SIPREC, we can send a 200 OK NOTIFY to indicate success
+	// (since we're just continuing to record)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		s.sendReferNotify(message, callState, "SIP/2.0 200 OK")
+	}()
+}
+
+// sendReferNotify sends a NOTIFY for REFER progress
+func (s *CustomSIPServer) sendReferNotify(originalRefer *SIPMessage, callState *CallState, sipfrag string) {
+	// Note: Sending NOTIFY requires creating a new request, which is complex
+	// For now, we'll just log that we would send it
+	s.logger.WithFields(logrus.Fields{
+		"call_id":  originalRefer.CallID,
+		"sipfrag":  sipfrag,
+	}).Debug("Would send REFER NOTIFY (not implemented)")
+}
+
+// handleNotifyMessage handles NOTIFY requests for event notifications
+// NOTIFY is used to deliver event state (RFC 3265)
+func (s *CustomSIPServer) handleNotifyMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "NOTIFY")
+	logger.Info("Received NOTIFY request")
+
+	callState := s.getCallState(message.CallID)
+	if callState == nil {
+		// NOTIFY might come for subscriptions we don't track
+		logger.WithField("call_id", message.CallID).Debug("NOTIFY received for unknown Call-ID")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
+	callState.LastActivity = time.Now()
+
+	// Get the Event header
+	event := s.getHeaderValue(message, "Event")
+	subscriptionState := s.getHeaderValue(message, "Subscription-State")
+
+	logger.WithFields(logrus.Fields{
+		"call_id":            message.CallID,
+		"event":              event,
+		"subscription_state": subscriptionState,
+	}).Debug("Processing NOTIFY")
+
+	// Check for refer event (transfer progress)
+	if strings.HasPrefix(strings.ToLower(event), "refer") {
+		// This is a NOTIFY for a REFER we initiated (which we don't do as SRS)
+		// Just acknowledge it
+		logger.WithField("call_id", message.CallID).Debug("Received REFER progress NOTIFY")
+	}
+
+	// Acknowledge the NOTIFY
+	s.sendResponse(message, 200, "OK", nil, nil)
+}
+
+// handleMessageMessage handles MESSAGE requests for instant messaging
+// MESSAGE is used for SIP-based instant messaging (RFC 3428)
+func (s *CustomSIPServer) handleMessageMessage(message *SIPMessage) {
+	logger := s.logger.WithField("method", "MESSAGE")
+	logger.Info("Received MESSAGE request")
+
+	// MESSAGE can be in-dialog or out-of-dialog
+	// For SIPREC, we generally don't need to handle instant messages
+	// but we should acknowledge them gracefully
+
+	callState := s.getCallState(message.CallID)
+	if callState != nil {
+		callState.LastActivity = time.Now()
+	}
+
+	contentType := s.getHeaderValue(message, "Content-Type")
+	logger.WithFields(logrus.Fields{
+		"call_id":      message.CallID,
+		"content_type": contentType,
+		"body_size":    len(message.Body),
+	}).Debug("MESSAGE content received")
+
+	// Acknowledge the message
+	s.sendResponse(message, 200, "OK", nil, nil)
 }
 
 // sendResponse sends a SIP response
@@ -2780,6 +3119,79 @@ func generateTag() string {
 	return fmt.Sprintf("tag-%d", time.Now().UnixNano())
 }
 
+// generateUUID generates a new UUID string for session failover tracking
+func generateUUID() string {
+	return uuid.New().String()
+}
+
+// extractSIPHeadersForAudit extracts SIP headers from a message for audit logging
+func (s *CustomSIPServer) extractSIPHeadersForAudit(message *SIPMessage) *audit.SIPHeadersAudit {
+	if message == nil {
+		return nil
+	}
+
+	h := &audit.SIPHeadersAudit{
+		Method:        message.Method,
+		RequestURI:    message.RequestURI,
+		CallID:        message.CallID,
+		CSeq:          message.CSeq,
+		ContentType:   message.ContentType,
+		CustomHeaders: make(map[string]string),
+	}
+
+	// Extract headers from message.Headers map
+	if message.Headers != nil {
+		getFirst := func(key string) string {
+			if vals, ok := message.Headers[key]; ok && len(vals) > 0 {
+				return vals[0]
+			}
+			return ""
+		}
+
+		h.From = getFirst("From")
+		h.To = getFirst("To")
+		h.Via = getFirst("Via")
+		h.Contact = getFirst("Contact")
+		h.Authorization = getFirst("Authorization")
+		h.ProxyAuthorization = getFirst("Proxy-Authorization")
+		h.Route = getFirst("Route")
+		h.RecordRoute = getFirst("Record-Route")
+		h.Allow = getFirst("Allow")
+		h.Supported = getFirst("Supported")
+		h.Require = getFirst("Require")
+		h.UserAgent = getFirst("User-Agent")
+		h.Server = getFirst("Server")
+		h.Accept = getFirst("Accept")
+
+		// Capture vendor-specific headers
+		vendorHeaders := []string{
+			"X-Session-ID", "Session-ID", "P-Asserted-Identity",
+			"P-Preferred-Identity", "Remote-Party-ID", "Diversion",
+			"X-UCID", "X-Call-Info", "P-Charging-Vector",
+			"X-Recording-Timeout", "X-Recording-Max-Duration",
+		}
+		for _, hdr := range vendorHeaders {
+			if val := getFirst(hdr); val != "" {
+				h.CustomHeaders[hdr] = val
+			}
+		}
+	}
+
+	// Add response info if present
+	if message.StatusCode > 0 {
+		h.StatusCode = message.StatusCode
+		h.ReasonPhrase = message.Reason
+	}
+
+	// Add transport info
+	if message.Connection != nil {
+		h.Transport = message.Connection.transport
+		h.RemoteAddr = message.Connection.remoteAddr
+	}
+
+	return h
+}
+
 // extractSiprecContent extracts SDP and rs-metadata from multipart SIPREC body
 func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) ([]byte, []byte) {
 	// Validate multipart body size
@@ -3029,8 +3441,48 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 	if metadata.SessionRecordingAssoc.Group != "" {
 		session.ExtendedMetadata["group"] = metadata.SessionRecordingAssoc.Group
 	}
+
+	// RFC 7245/7866 Session Recovery Markers
+	// Handle FailoverID for session recovery support
 	if metadata.SessionRecordingAssoc.FixedID != "" {
+		session.FailoverID = metadata.SessionRecordingAssoc.FixedID
 		session.ExtendedMetadata["fixed_id"] = metadata.SessionRecordingAssoc.FixedID
+		session.ExtendedMetadata["failover_id"] = metadata.SessionRecordingAssoc.FixedID
+	} else {
+		// Generate a new FailoverID for future recovery support
+		session.FailoverID = generateUUID()
+		session.ExtendedMetadata["failover_id"] = session.FailoverID
+	}
+
+	// Check if this is a session recovery scenario
+	isRecovery := strings.EqualFold(session.RecordingState, "recovering") ||
+		strings.EqualFold(session.StateReason, "failover") ||
+		strings.Contains(strings.ToLower(session.StateReasonRef), "failover")
+
+	if isRecovery {
+		logger.WithFields(logrus.Fields{
+			"session_id":   session.ID,
+			"failover_id":  session.FailoverID,
+			"state":        session.RecordingState,
+			"state_reason": session.StateReason,
+		}).Info("Detected session recovery scenario")
+
+		// Process stream recovery information
+		siprec.ProcessStreamRecovery(session, metadata)
+
+		// Mark this session as recovering
+		session.ExtendedMetadata["recovery_mode"] = "true"
+		session.ExtendedMetadata["recovery_timestamp"] = time.Now().UTC().Format(time.RFC3339)
+
+		// If we have an original session ID reference, mark it
+		if metadata.SessionRecordingAssoc.SessionID != "" && metadata.SessionRecordingAssoc.SessionID != session.ID {
+			session.ReplacesSessionID = metadata.SessionRecordingAssoc.SessionID
+			session.ExtendedMetadata["replaces_session_id"] = session.ReplacesSessionID
+			logger.WithFields(logrus.Fields{
+				"new_session_id":      session.ID,
+				"replaces_session_id": session.ReplacesSessionID,
+			}).Info("Session recovery: new session replaces previous session")
+		}
 	}
 
 	logger.WithFields(logrus.Fields{

@@ -95,6 +95,20 @@ func (p *MockProvider) StreamToText(ctx context.Context, audioStream io.Reader, 
 			p.logger.WithField("call_uuid", callUUID).Info("Mock STT processing stopped")
 			return nil
 		case <-streamDone:
+			// Emit at least one transcription when stream ends
+			if p.transcriptionSvc != nil {
+				finalTranscription := mockTranscriptions[transcriptionIndex]
+				p.transcriptionSvc.PublishTranscription(callUUID, finalTranscription, true, map[string]interface{}{
+					"provider":   p.Name(),
+					"confidence": 0.95,
+					"word_count": len(strings.Fields(finalTranscription)),
+					"final":      true,
+				})
+				p.logger.WithFields(logrus.Fields{
+					"call_uuid":     callUUID,
+					"transcription": finalTranscription,
+				}).Info("Mock final transcription emitted on stream end")
+			}
 			p.logger.WithField("call_uuid", callUUID).Info("Mock STT stream finished (EOF)")
 			return nil
 		case <-ticker.C:

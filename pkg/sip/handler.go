@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"siprec-server/pkg/auth"
 	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/cluster"
 	"siprec-server/pkg/errors"
@@ -76,6 +77,43 @@ type Config struct {
 
 	// Cluster configuration
 	Cluster cluster.Config
+
+	// SIP Authentication configuration
+	SIPAuth *SIPAuthConfig
+
+	// Recording configuration
+	Recording *RecordingConfig
+}
+
+// RecordingConfig holds recording-specific settings for the SIP handler
+type RecordingConfig struct {
+	Format      string // Recording format: wav, mp3, opus, ogg, mp4
+	MP3Bitrate  int    // MP3 bitrate in kbps
+	OpusBitrate int    // Opus bitrate in kbps
+	Quality     int    // Quality setting 1-10
+}
+
+// SIPAuthConfig holds SIP-specific authentication settings
+type SIPAuthConfig struct {
+	// Whether SIP Digest authentication is enabled
+	DigestEnabled bool
+
+	// Authentication realm
+	Realm string
+
+	// Nonce timeout in seconds
+	NonceTimeout int
+
+	// Users map (username -> password)
+	Users map[string]string
+
+	// IP-based access control
+	IPAccessEnabled bool
+	DefaultAllow    bool
+	AllowedIPs      []string
+	AllowedNetworks []string
+	BlockedIPs      []string
+	BlockedNetworks []string
 }
 
 // Handler for SIP requests - now works with CustomSIPServer
@@ -108,6 +146,13 @@ type Handler struct {
 	cdrService          *cdr.CDRService
 	sttManager          *stt.ProviderManager
 	clusterManager      *cluster.Manager
+
+	// SIP Authentication
+	sipAuthenticator   *auth.SIPAuthenticator
+	ipAccessController *auth.IPAccessController
+
+	// Policy enforcement
+	policyManager *siprec.PolicyManager
 }
 
 // CallData holds information about an active call
@@ -242,6 +287,10 @@ func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderM
 		go handler.monitorSessions(handler.monitorCtx)
 	}
 
+	// Initialize policy manager for RFC 7866 policy enforcement
+	handler.policyManager = siprec.NewPolicyManager(siprec.PolicyActionRecord)
+	logger.Info("Policy enforcement manager initialized")
+
 	// Initialize the custom SIP server
 	handler.Server = NewCustomSIPServer(logger, handler)
 
@@ -263,8 +312,60 @@ func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderM
 					logger.WithError(err).Error("Failed to start cluster manager")
 				} else {
 					logger.Info("Cluster manager started")
+
+					// Wire leader checker into metadata notifier for leader-only callbacks
+					if handler.Notifier != nil && config.Cluster.LeaderElectionEnabled {
+						handler.Notifier.SetLeaderChecker(handler.clusterManager.IsLeader, true)
+						logger.Info("Metadata notifier configured for leader-only callbacks")
+					}
 				}
 			}
+		}
+	}
+
+	// Initialize SIP authentication if configured
+	if config.SIPAuth != nil {
+		if config.SIPAuth.DigestEnabled {
+			handler.sipAuthenticator = auth.NewSIPAuthenticator(config.SIPAuth.Realm, logger)
+			// Add configured users
+			for username, password := range config.SIPAuth.Users {
+				handler.sipAuthenticator.AddUser(username, password)
+			}
+			logger.WithFields(logrus.Fields{
+				"realm":      config.SIPAuth.Realm,
+				"user_count": len(config.SIPAuth.Users),
+			}).Info("SIP Digest authentication initialized")
+		}
+
+		if config.SIPAuth.IPAccessEnabled {
+			handler.ipAccessController = auth.NewIPAccessController(logger, config.SIPAuth.DefaultAllow)
+			// Add allowed IPs
+			for _, ip := range config.SIPAuth.AllowedIPs {
+				if ip != "" {
+					handler.ipAccessController.AddAllowedIP(ip)
+				}
+			}
+			// Add allowed networks
+			for _, network := range config.SIPAuth.AllowedNetworks {
+				if network != "" {
+					handler.ipAccessController.AddAllowedNetwork(network)
+				}
+			}
+			// Add blocked IPs
+			for _, ip := range config.SIPAuth.BlockedIPs {
+				if ip != "" {
+					handler.ipAccessController.AddBlockedIP(ip)
+				}
+			}
+			// Add blocked networks
+			for _, network := range config.SIPAuth.BlockedNetworks {
+				if network != "" {
+					handler.ipAccessController.AddBlockedNetwork(network)
+				}
+			}
+			logger.WithFields(logrus.Fields{
+				"default_allow": config.SIPAuth.DefaultAllow,
+			}).Info("SIP IP-based access control initialized")
 		}
 	}
 
@@ -291,6 +392,106 @@ func (h *Handler) SetCDRService(service *cdr.CDRService) {
 // CDRService returns the configured CDR service.
 func (h *Handler) CDRService() *cdr.CDRService {
 	return h.cdrService
+}
+
+// AuthenticateRequest checks if a SIP request is authenticated
+// Returns: (authenticated bool, challenge string if auth required)
+func (h *Handler) AuthenticateRequest(authHeader, method, uri, clientIP string) (bool, string) {
+	// Check IP-based access control first
+	if h.ipAccessController != nil {
+		if !h.ipAccessController.IsAllowed(clientIP) {
+			h.Logger.WithField("client_ip", clientIP).Warn("SIP request blocked by IP access control")
+			return false, "" // No challenge, just reject
+		}
+	}
+
+	// Check Digest authentication if enabled
+	if h.sipAuthenticator != nil {
+		result := h.sipAuthenticator.Authenticate(authHeader, method, uri, clientIP)
+		if !result.Success {
+			return false, result.Challenge
+		}
+		h.Logger.WithFields(logrus.Fields{
+			"username":  result.Username,
+			"client_ip": clientIP,
+			"method":    method,
+		}).Debug("SIP request authenticated")
+	}
+
+	return true, ""
+}
+
+// IsAuthenticationEnabled returns whether any form of SIP authentication is enabled
+func (h *Handler) IsAuthenticationEnabled() bool {
+	return h.sipAuthenticator != nil || h.ipAccessController != nil
+}
+
+// IsIPAccessEnabled returns whether IP-based access control is enabled
+func (h *Handler) IsIPAccessEnabled() bool {
+	return h.ipAccessController != nil
+}
+
+// IsDigestAuthEnabled returns whether SIP Digest authentication is enabled
+func (h *Handler) IsDigestAuthEnabled() bool {
+	return h.sipAuthenticator != nil
+}
+
+// IsClusterLeader returns true if this node is the cluster leader
+// Returns true if clustering is disabled (single node mode)
+func (h *Handler) IsClusterLeader() bool {
+	if h.clusterManager == nil {
+		return true // Single node mode - always leader
+	}
+	return h.clusterManager.IsLeader()
+}
+
+// GetClusterManager returns the cluster manager, or nil if clustering is disabled
+func (h *Handler) GetClusterManager() *cluster.Manager {
+	return h.clusterManager
+}
+
+// GetPolicyManager returns the policy manager for RFC 7866 policy enforcement
+func (h *Handler) GetPolicyManager() *siprec.PolicyManager {
+	return h.policyManager
+}
+
+// EvaluateRecordingPolicy evaluates whether a session should be recorded based on policy
+func (h *Handler) EvaluateRecordingPolicy(session *siprec.RecordingSession, metadata *siprec.RSMetadata) *siprec.PolicyDecision {
+	if h.policyManager == nil {
+		// No policy manager - default to allowing recording
+		return &siprec.PolicyDecision{
+			Action:     siprec.PolicyActionRecord,
+			AllowAudio: true,
+			AllowVideo: true,
+			AllowText:  true,
+		}
+	}
+	return h.policyManager.EvaluateSession(session, metadata)
+}
+
+// AddPolicyRule adds a recording policy rule
+func (h *Handler) AddPolicyRule(rule *siprec.PolicyRule) error {
+	if h.policyManager == nil {
+		return errors.New("policy manager not initialized")
+	}
+	return h.policyManager.AddRule(rule)
+}
+
+// ProcessPolicyUpdates handles policy updates from SIPREC metadata
+func (h *Handler) ProcessPolicyUpdates(sessionID string, metadata *siprec.RSMetadata) {
+	if h.policyManager == nil || metadata == nil {
+		return
+	}
+
+	for _, update := range metadata.PolicyUpdates {
+		h.policyManager.ProcessPolicyUpdate(sessionID, update)
+		h.Logger.WithFields(logrus.Fields{
+			"session_id": sessionID,
+			"policy_id":  update.PolicyID,
+			"status":     update.Status,
+			"acked":      update.Acknowledged,
+		}).Debug("Processed policy update from metadata")
+	}
 }
 
 // ClearSTTRouting removes call-specific STT routing information.

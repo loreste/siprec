@@ -66,6 +66,10 @@ type RTPForwarder struct {
 	// Audio processing
 	AudioProcessor interface{} // Audio processing manager (will be *audio.ProcessingManager)
 
+	// Audio format encoding
+	AudioEncoder     *audio.AudioEncoder // Encoder for converting WAV to other formats
+	TargetFormat     string              // Target recording format (wav, mp3, opus, etc.)
+
 	// PII audio tracking
 	PIIAudioMarker *PIIAudioMarker // Tracks PII detection events for audio redaction
 
@@ -379,6 +383,29 @@ func (f *RTPForwarder) Cleanup() {
 		}
 		f.RecordingFile.Close()
 		f.RecordingFile = nil
+	}
+
+	// Convert recording to target format if encoder is configured and format is not WAV
+	if f.AudioEncoder != nil && f.RecordingPath != "" && f.TargetFormat != "" && f.TargetFormat != "wav" {
+		outputPath := strings.TrimSuffix(f.RecordingPath, ".wav") + "." + f.TargetFormat
+		if err := f.AudioEncoder.EncodeFile(f.RecordingPath, outputPath); err != nil {
+			f.Logger.WithError(err).WithFields(logrus.Fields{
+				"input":  f.RecordingPath,
+				"output": outputPath,
+				"format": f.TargetFormat,
+			}).Warn("Failed to convert recording to target format, keeping WAV")
+		} else {
+			// Remove original WAV file after successful conversion
+			if err := os.Remove(f.RecordingPath); err != nil {
+				f.Logger.WithError(err).WithField("path", f.RecordingPath).Warn("Failed to remove original WAV after conversion")
+			}
+			// Update recording path to point to converted file
+			f.RecordingPath = outputPath
+			f.Logger.WithFields(logrus.Fields{
+				"format": f.TargetFormat,
+				"path":   outputPath,
+			}).Info("Recording converted to target format")
+		}
 	}
 
 	if f.EncryptedRecorder != nil && f.EncryptedSessionID != "" {

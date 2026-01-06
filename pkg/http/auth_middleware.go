@@ -144,7 +144,7 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 
 		// Check for token in query params (for WebSocket)
 		token := r.URL.Query().Get("token")
-		if token != "" {
+		if token != "" && isWebSocketRequest(r) {
 			claims, err := am.simpleAuth.ValidateToken(token)
 			if err == nil {
 				return &auth.UserInfo{
@@ -170,9 +170,9 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 			am.logger.WithError(err).Debug("API key authentication failed")
 		}
 
-		// Check for API key in query params
+		// Check for API key in query params (for WebSocket)
 		apiKey = r.URL.Query().Get("api_key")
-		if apiKey != "" {
+		if apiKey != "" && isWebSocketRequest(r) {
 			userInfo, err := am.simpleAuth.ValidateAPIKey(apiKey)
 			if err == nil {
 				return userInfo, nil
@@ -212,6 +212,21 @@ func (am *AuthMiddleware) hasRequiredScopes(path string, userPermissions []strin
 					return true
 				}
 			}
+		}
+	}
+
+	return false
+}
+
+func isWebSocketRequest(r *http.Request) bool {
+	upgrade := r.Header.Get("Upgrade")
+	if strings.EqualFold(upgrade, "websocket") {
+		return true
+	}
+
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return true
 		}
 	}
 

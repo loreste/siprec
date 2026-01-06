@@ -49,8 +49,7 @@ func NewAnalyticsWebSocketHandler(logger *logrus.Logger) *AnalyticsWebSocketHand
 		logger: logger,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				// Configure CORS as needed
-				return true
+				return isSameOrigin(r)
 			},
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,

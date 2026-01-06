@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +41,7 @@ type TranscriptionHub struct {
 	register        chan *Client
 	unregister      chan *Client
 	mutex           sync.RWMutex
+	running         bool
 }
 
 // WebSocketUpgrader configures the WebSocket connection
@@ -46,8 +49,7 @@ var WebSocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow all connections
-		return true
+		return isSameOrigin(r)
 	},
 }
 
@@ -66,11 +68,13 @@ func NewTranscriptionHub(logger *logrus.Logger) *TranscriptionHub {
 // Run starts the transcription hub
 func (h *TranscriptionHub) Run(ctx context.Context) {
 	h.logger.Info("Starting WebSocket transcription hub")
+	h.setRunning(true)
 
 	for {
 		select {
 		case <-ctx.Done():
 			h.logger.Info("Shutting down WebSocket transcription hub")
+			h.setRunning(false)
 			return
 
 		case client := <-h.register:
@@ -120,37 +124,11 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 				continue
 			}
 
-			h.mutex.RLock()
+			callSubscribers := h.getCallSubscribers(message.CallUUID)
+			clients := h.getBroadcastClients()
 
-			// Send to subscribers of this specific call
-			if subscribers, exists := h.callSubscribers[message.CallUUID]; exists && len(subscribers) > 0 {
-				for client := range subscribers {
-					select {
-					case client.send <- data:
-					default:
-						close(client.send)
-						delete(h.clients, client)
-						delete(subscribers, client)
-					}
-				}
-			}
-
-			// Also broadcast to clients that want all transcriptions
-			for client := range h.clients {
-				// Skip clients that are subscribed to specific calls
-				if client.callUUID != "" {
-					continue
-				}
-
-				select {
-				case client.send <- data:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
-			}
-
-			h.mutex.RUnlock()
+			h.sendToClients(data, callSubscribers)
+			h.sendToClients(data, clients)
 		}
 	}
 }
@@ -168,19 +146,7 @@ func (h *TranscriptionHub) BroadcastTranscription(message interface{}) {
 	default:
 		// Try to convert from generic structure
 		if msg, ok := message.(map[string]interface{}); ok {
-			typedMessage = &TranscriptionMessage{
-				CallUUID:      msg["call_uuid"].(string),
-				Transcription: msg["transcription"].(string),
-				IsFinal:       msg["is_final"].(bool),
-			}
-			if ts, ok := msg["timestamp"].(time.Time); ok {
-				typedMessage.Timestamp = ts
-			} else {
-				typedMessage.Timestamp = time.Now()
-			}
-			if meta, ok := msg["metadata"].(map[string]interface{}); ok {
-				typedMessage.Metadata = meta
-			}
+			typedMessage = mapToTranscriptionMessage(msg)
 		} else {
 			// Use reflection to extract fields
 			val := reflect.ValueOf(message)
@@ -334,5 +300,135 @@ func (c *Client) readPump() {
 func (h *TranscriptionHub) IsRunning() bool {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
-	return len(h.clients) >= 0 // Always true if hub exists
+	return h.running
+}
+
+func (h *TranscriptionHub) setRunning(running bool) {
+	h.mutex.Lock()
+	h.running = running
+	h.mutex.Unlock()
+}
+
+func (h *TranscriptionHub) getCallSubscribers(callUUID string) []*Client {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	subscribers := h.callSubscribers[callUUID]
+	if len(subscribers) == 0 {
+		return nil
+	}
+
+	clients := make([]*Client, 0, len(subscribers))
+	for client := range subscribers {
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+func (h *TranscriptionHub) getBroadcastClients() []*Client {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
+	clients := make([]*Client, 0, len(h.clients))
+	for client := range h.clients {
+		if client.callUUID != "" {
+			continue
+		}
+		clients = append(clients, client)
+	}
+	return clients
+}
+
+func (h *TranscriptionHub) sendToClients(payload []byte, clients []*Client) {
+	if len(clients) == 0 {
+		return
+	}
+
+	for _, client := range clients {
+		select {
+		case client.send <- payload:
+		default:
+			h.removeClient(client)
+		}
+	}
+}
+
+func (h *TranscriptionHub) removeClient(client *Client) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	if _, ok := h.clients[client]; !ok {
+		return
+	}
+
+	delete(h.clients, client)
+	close(client.send)
+
+	if client.callUUID != "" {
+		if subscribers, exists := h.callSubscribers[client.callUUID]; exists {
+			delete(subscribers, client)
+			if len(subscribers) == 0 {
+				delete(h.callSubscribers, client.callUUID)
+			}
+		}
+	}
+}
+
+func mapToTranscriptionMessage(msg map[string]interface{}) *TranscriptionMessage {
+	callUUID, ok := msg["call_uuid"].(string)
+	if !ok || callUUID == "" {
+		return nil
+	}
+
+	transcription, ok := msg["transcription"].(string)
+	if !ok {
+		transcription = ""
+	}
+
+	isFinal, ok := msg["is_final"].(bool)
+	if !ok {
+		isFinal = false
+	}
+
+	typedMessage := &TranscriptionMessage{
+		CallUUID:      callUUID,
+		Transcription: transcription,
+		IsFinal:       isFinal,
+		Timestamp:     time.Now(),
+	}
+
+	if ts, ok := msg["timestamp"].(time.Time); ok {
+		typedMessage.Timestamp = ts
+	}
+
+	if meta, ok := msg["metadata"].(map[string]interface{}); ok {
+		typedMessage.Metadata = meta
+	}
+
+	return typedMessage
+}
+
+func isSameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	host := requestHost(r)
+	return strings.EqualFold(parsed.Host, host)
+}
+
+func requestHost(r *http.Request) string {
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		if idx := strings.Index(forwardedHost, ","); idx > 0 {
+			return strings.TrimSpace(forwardedHost[:idx])
+		}
+		return strings.TrimSpace(forwardedHost)
+	}
+	return r.Host
 }

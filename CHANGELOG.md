@@ -4,12 +4,38 @@ All notable changes to the SIPREC server project will be documented in this file
 
 ## [Unreleased]
 
+### Added
+- **Multi-Format Audio Recording**: Support for multiple audio output formats via FFmpeg encoding
+  - Supported formats: WAV, MP3, Opus, OGG, MP4/M4A (AAC), FLAC
+  - Configurable bitrate for lossy formats (MP3, Opus, AAC)
+  - Quality settings for VBR encoding
+  - Automatic fallback to WAV if FFmpeg is unavailable
+  - Batch encoding support for converting existing recordings
+  - New environment variables: `RECORDING_FORMAT`, `RECORDING_MP3_BITRATE`, `RECORDING_OPUS_BITRATE`, `RECORDING_QUALITY`
+
+- **Per-Call Timeout Configuration**: Override global timeouts on a per-recording basis
+  - SIP header support: `X-Recording-Timeout`, `X-Recording-Max-Duration`, `X-Recording-Retention`
+  - SIPREC metadata support: `siprecTimeout`, `siprecMaxDuration`, `siprecRetention` elements
+  - Priority order: SIP headers > SIPREC metadata > global configuration
+  - Timeout source tracking for debugging and audit
+
+- **Enhanced Audit Trail with SIP Headers**: Complete SIP header capture for compliance
+  - All SIP-related audit events now include full header information
+  - Core headers: Method, Request-URI, From, To, Call-ID, CSeq, Via, Contact
+  - Authentication headers: Authorization, Proxy-Authorization (auto-redacted)
+  - Routing headers: Route, Record-Route
+  - Session headers: Allow, Supported, Require, User-Agent, Server
+  - Transport info: Protocol, remote/local addresses
+  - Custom/vendor headers captured in dedicated map
+
+- **Leg-Merge Regression Tests**: `pkg/sip/custom_server_test.go` now exercises the WAV combiner to ensure multi-leg SIPREC recordings produce the expected multi-channel output and metadata path.
+
 ### Documentation
 - **Recording Format Reference**: README now explains how SIPREC preserves multi-channel WAV layouts from the SDP offer and how to keep both legs in a single stereo file.
 - **Configuration Guide**: Added `RECORDING_COMBINE_LEGS` so operators can explicitly control whether the SRC legs are merged into a single multi-channel WAV.
-
-### Added
-- **Leg-Merge Regression Tests**: `pkg/sip/custom_server_test.go` now exercises the WAV combiner to ensure multi-leg SIPREC recordings produce the expected multi-channel output and metadata path.
+- **Audio Format Configuration**: New section documenting supported formats, codec options, and FFmpeg requirements.
+- **Per-Call Timeout Configuration**: New section documenting SIP headers and SIPREC metadata for per-call overrides.
+- **Audit Trail & SIP Headers**: New section documenting captured headers, log format, and filtering examples.
 
 ### Fixed
 - **Recording Reliability**: Audio capture is now decoupled from the STT pipeline. Transcription crashes or disabled providers no longer produce zero-byte recordings or keep analytics publishers running past BYE. The server logs when an STT stream shuts down and completes recording/cleanup normally.
