@@ -1,0 +1,364 @@
+groups:
+  - name: siprec-server-alerts
+    rules:
+      # Service Health Alerts
+      - alert: SiprecServerDown
+        expr: up{job="siprec-server"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SIPREC server is down"
+          description: "The SIPREC server {{ $labels.instance }} has been down for more than 1 minute."
+
+      - alert: SiprecHighCPUUsage
+        expr: siprec_system_cpu_usage_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on SIPREC server"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}, exceeding 80% threshold."
+
+      - alert: SiprecCriticalCPUUsage
+        expr: siprec_system_cpu_usage_percent > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU usage on SIPREC server"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}, exceeding 95% threshold."
+
+      - alert: SiprecHighMemoryUsage
+        expr: siprec_system_memory_usage_bytes > 2147483648
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on SIPREC server"
+          description: "Memory usage is {{ humanize $value }} on {{ $labels.instance }}."
+
+      - alert: SiprecHighGoroutineCount
+        expr: siprec_system_goroutines > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High goroutine count"
+          description: "Goroutine count is {{ $value }} on {{ $labels.instance }}, which may indicate a leak."
+
+      # SIP/Call Alerts
+      - alert: SiprecNoActiveCalls
+        expr: siprec_active_calls == 0 and hour() >= 8 and hour() <= 18
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No active calls during business hours"
+          description: "There have been no active calls for 30 minutes during business hours."
+
+      - alert: SiprecHighCallVolume
+        expr: siprec_active_calls > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High call volume"
+          description: "Active calls ({{ $value }}) exceeds threshold on {{ $labels.instance }}."
+
+      - alert: SiprecHighSIPErrorRate
+        expr: sum(rate(siprec_sip_requests_total{status!="success"}[5m])) / sum(rate(siprec_sip_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High SIP error rate"
+          description: "SIP error rate is {{ humanizePercentage $value }} on {{ $labels.instance }}."
+
+      - alert: SiprecSlowSessionEstablishment
+        expr: histogram_quantile(0.95, rate(siprec_sip_session_establish_time_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow SIP session establishment"
+          description: "95th percentile session establishment time is {{ $value }}s."
+
+      # RTP Alerts
+      - alert: SiprecHighRTPDropRate
+        expr: sum(rate(siprec_rtp_dropped_packets_total[5m])) / sum(rate(siprec_rtp_packets_received_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High RTP packet drop rate"
+          description: "RTP packet drop rate is {{ humanizePercentage $value }}."
+
+      - alert: SiprecHighRTPLatency
+        expr: histogram_quantile(0.95, rate(siprec_rtp_packet_latency_seconds_bucket[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High RTP packet latency"
+          description: "95th percentile RTP latency is {{ humanizeDuration $value }}."
+
+      - alert: SiprecNoRTPTraffic
+        expr: rate(siprec_rtp_packets_received_total[5m]) == 0 and siprec_active_calls > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No RTP traffic with active calls"
+          description: "There are active calls but no RTP packets being received."
+
+      # Rate Limiting Alerts
+      - alert: SiprecHighRateLimiting
+        expr: sum(rate(siprec_sip_rate_limited_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate limiting activity"
+          description: "Rate limiting is blocking {{ $value }} requests/sec."
+
+      - alert: SiprecIPAccessBlocked
+        expr: sum(increase(siprec_sip_ip_access_blocked_total[5m])) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High IP access blocking"
+          description: "{{ $value }} requests blocked by IP access control in last 5 minutes."
+
+      - alert: SiprecAuthFailures
+        expr: sum(increase(siprec_sip_auth_failures_total[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High authentication failure rate"
+          description: "{{ $value }} authentication failures in last 5 minutes."
+
+      # SRTP Security Alerts
+      - alert: SiprecSRTPEncryptionErrors
+        expr: sum(rate(siprec_srtp_encryption_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SRTP encryption errors detected"
+          description: "SRTP encryption errors are occurring at {{ $value }}/s."
+
+      - alert: SiprecSRTPDecryptionErrors
+        expr: sum(rate(siprec_srtp_decryption_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SRTP decryption errors detected"
+          description: "SRTP decryption errors are occurring at {{ $value }}/s."
+
+      # STT Provider Alerts
+      - alert: SiprecSTTProviderUnhealthy
+        expr: siprec_provider_health_status == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "STT provider unhealthy"
+          description: "STT provider {{ $labels.provider }} is unhealthy."
+
+      - alert: SiprecSTTCircuitBreakerOpen
+        expr: siprec_provider_circuit_breaker_status == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "STT circuit breaker open"
+          description: "Circuit breaker for {{ $labels.provider }} is open, provider is being bypassed."
+
+      - alert: SiprecSTTHighLatency
+        expr: histogram_quantile(0.95, rate(siprec_stt_latency_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High STT latency"
+          description: "95th percentile STT latency for {{ $labels.vendor }} is {{ $value }}s."
+
+      - alert: SiprecSTTHighErrorRate
+        expr: sum(rate(siprec_stt_errors_total[5m])) by (vendor) / sum(rate(siprec_stt_requests_total[5m])) by (vendor) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High STT error rate"
+          description: "STT error rate for {{ $labels.vendor }} is {{ humanizePercentage $value }}."
+
+      - alert: SiprecWhisperTimeouts
+        expr: sum(increase(siprec_whisper_timeouts_total[1h])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Whisper CLI timeouts"
+          description: "{{ $value }} Whisper timeouts in the last hour."
+
+      # Recording Alerts
+      - alert: SiprecRecordingErrors
+        expr: sum(rate(siprec_recording_errors_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Recording errors detected"
+          description: "Recording errors are occurring at {{ $value }}/s."
+
+      - alert: SiprecRecordingStorageHigh
+        expr: siprec_recording_storage_usage_bytes > 107374182400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High recording storage usage"
+          description: "Recording storage is using {{ humanize $value }}B."
+
+      - alert: SiprecRecordingStorageCritical
+        expr: siprec_recording_storage_usage_bytes > 429496729600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical recording storage usage"
+          description: "Recording storage is using {{ humanize $value }}B - disk may fill soon."
+
+      # AMQP Alerts
+      - alert: SiprecAMQPDisconnected
+        expr: siprec_amqp_connection_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AMQP connection lost"
+          description: "AMQP connection is down on {{ $labels.instance }}."
+
+      - alert: SiprecAMQPReconnecting
+        expr: sum(rate(siprec_amqp_reconnect_attempts_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AMQP reconnection attempts"
+          description: "AMQP is reconnecting at {{ $value }} attempts/sec."
+
+      - alert: SiprecAMQPPublishErrors
+        expr: sum(rate(siprec_amqp_published_messages_total{status!="success"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AMQP publish errors"
+          description: "AMQP message publishing is failing at {{ $value }}/s."
+
+      # Resource Alerts
+      - alert: SiprecHighPortUsage
+        expr: siprec_ports_in_use / 1000 > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High RTP port usage"
+          description: "{{ $value }}% of RTP ports are in use."
+
+      - alert: SiprecPortExhaustion
+        expr: siprec_ports_in_use / 1000 > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RTP port exhaustion imminent"
+          description: "{{ $value }}% of RTP ports are in use - new calls may fail."
+
+      # Database Alerts
+      - alert: SiprecDatabaseSlowQueries
+        expr: histogram_quantile(0.95, rate(siprec_database_query_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries"
+          description: "95th percentile database query time is {{ $value }}s."
+
+      - alert: SiprecDatabaseConnectionErrors
+        expr: sum(rate(siprec_database_connection_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection errors"
+          description: "Database connection errors at {{ $value }}/s."
+
+      # Redis Alerts
+      - alert: SiprecRedisErrors
+        expr: sum(rate(siprec_redis_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis errors detected"
+          description: "Redis errors at {{ $value }}/s."
+
+      - alert: SiprecRedisHighLatency
+        expr: histogram_quantile(0.95, rate(siprec_redis_latency_seconds_bucket[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis latency"
+          description: "95th percentile Redis latency is {{ humanizeDuration $value }}."
+
+  - name: siprec-slo-alerts
+    rules:
+      # SLO-based alerts
+      - alert: SiprecCallSuccessRateSLOBreach
+        expr: |
+          (
+            sum(rate(siprec_sessions_terminated_total{reason="normal"}[1h]))
+            /
+            sum(rate(siprec_sessions_created_total[1h]))
+          ) < 0.99
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Call success rate SLO breach"
+          description: "Call success rate is {{ humanizePercentage $value }}, below 99% SLO."
+
+      - alert: SiprecTranscriptionAvailabilitySLOBreach
+        expr: |
+          (
+            sum(rate(siprec_stt_requests_total{status="success"}[1h]))
+            /
+            sum(rate(siprec_stt_requests_total[1h]))
+          ) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transcription availability SLO breach"
+          description: "Transcription success rate is {{ humanizePercentage $value }}, below 95% SLO."
+
+      - alert: SiprecRecordingAvailabilitySLOBreach
+        expr: |
+          (
+            sum(rate(siprec_recordings_completed_total{status="success"}[1h]))
+            /
+            sum(rate(siprec_recordings_started_total[1h]))
+          ) < 0.99
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Recording availability SLO breach"
+          description: "Recording completion rate is {{ humanizePercentage $value }}, below 99% SLO."
