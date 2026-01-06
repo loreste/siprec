@@ -30,6 +30,11 @@ var (
 	SIPSessionDuration      *prometheus.HistogramVec
 	SIPSessionEstablishTime *prometheus.HistogramVec
 
+	// IP Access Control metrics
+	SIPIPAccessBlocked  *prometheus.CounterVec
+	SIPIPAccessAllowed  *prometheus.CounterVec
+	SIPAuthFailures     *prometheus.CounterVec
+
 	// SRTP metrics
 	SRTPEncryptionErrors *prometheus.CounterVec
 	SRTPDecryptionErrors *prometheus.CounterVec
@@ -159,6 +164,31 @@ func Init(logger *logrus.Logger) {
 				Buckets: prometheus.ExponentialBuckets(0.001, 2, 10), // 1ms to ~1s
 			},
 			[]string{"session_type"},
+		)
+
+		// Initialize IP Access Control metrics
+		SIPIPAccessBlocked = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_sip_ip_access_blocked_total",
+				Help: "Total number of SIP requests blocked by IP access control",
+			},
+			[]string{"source_ip", "reason"},
+		)
+
+		SIPIPAccessAllowed = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_sip_ip_access_allowed_total",
+				Help: "Total number of SIP requests allowed by IP access control",
+			},
+			[]string{"source_ip", "match_type"},
+		)
+
+		SIPAuthFailures = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_sip_auth_failures_total",
+				Help: "Total number of SIP authentication failures",
+			},
+			[]string{"source_ip", "reason"},
 		)
 
 		// Initialize SRTP metrics
@@ -390,6 +420,11 @@ func Init(logger *logrus.Logger) {
 			SIPSessionsActive,
 			SIPSessionDuration,
 			SIPSessionEstablishTime,
+
+			// IP Access Control metrics
+			SIPIPAccessBlocked,
+			SIPIPAccessAllowed,
+			SIPAuthFailures,
 
 			// SRTP metrics
 			SRTPEncryptionErrors,
@@ -738,5 +773,26 @@ func AddWhisperTempFileUsage(bytes int64) {
 func SubWhisperTempFileUsage(bytes int64) {
 	if metricsEnabled {
 		WhisperTempFileDiskUsage.Sub(float64(bytes))
+	}
+}
+
+// RecordIPAccessBlocked records a blocked IP access attempt
+func RecordIPAccessBlocked(sourceIP, reason string) {
+	if metricsEnabled {
+		SIPIPAccessBlocked.WithLabelValues(sourceIP, reason).Inc()
+	}
+}
+
+// RecordIPAccessAllowed records an allowed IP access
+func RecordIPAccessAllowed(sourceIP, matchType string) {
+	if metricsEnabled {
+		SIPIPAccessAllowed.WithLabelValues(sourceIP, matchType).Inc()
+	}
+}
+
+// RecordSIPAuthFailure records a SIP authentication failure
+func RecordSIPAuthFailure(sourceIP, reason string) {
+	if metricsEnabled {
+		SIPAuthFailures.WithLabelValues(sourceIP, reason).Inc()
 	}
 }

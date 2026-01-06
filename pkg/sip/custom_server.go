@@ -807,10 +807,36 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 					"WWW-Authenticate": challenge,
 				}
 				s.sendResponse(message, 401, "Unauthorized", headers, nil)
+				// Audit log for auth challenge
+				audit.Log(context.Background(), s.logger, &audit.Event{
+					Category:   "security",
+					Action:     "auth_challenge",
+					Outcome:    audit.OutcomeFailure,
+					CallID:     message.CallID,
+					SIPHeaders: s.extractSIPHeadersForAudit(message),
+					Details: map[string]interface{}{
+						"client_ip":   clientIP,
+						"reason":      "authentication_required",
+						"request_uri": requestURI,
+					},
+				})
 			} else {
 				// IP blocked - send 403 Forbidden
 				logger.WithField("client_ip", clientIP).Warn("Request blocked by IP access control")
 				s.sendResponse(message, 403, "Forbidden", nil, nil)
+				// Audit log for IP block
+				audit.Log(context.Background(), s.logger, &audit.Event{
+					Category:   "security",
+					Action:     "ip_blocked",
+					Outcome:    audit.OutcomeFailure,
+					CallID:     message.CallID,
+					SIPHeaders: s.extractSIPHeadersForAudit(message),
+					Details: map[string]interface{}{
+						"client_ip":   clientIP,
+						"reason":      "ip_access_denied",
+						"request_uri": requestURI,
+					},
+				})
 			}
 			return
 		}
