@@ -414,8 +414,10 @@ func initialize() error {
 
 		// Override default admin password if configured
 		if appConfig.Auth.AdminPassword != "" {
-			authenticator.AddUser(appConfig.Auth.AdminUsername, appConfig.Auth.AdminPassword, "admin")
-			logger.WithField("username", appConfig.Auth.AdminUsername).Info("Admin user configured")
+			if err := authenticator.AddUser(appConfig.Auth.AdminUsername, appConfig.Auth.AdminPassword, "admin"); err != nil {
+				logger.WithError(err).Fatal("Failed to create admin user")
+			}
+			logger.WithField("username", appConfig.Auth.AdminUsername).Info("Admin user configured with hashed password")
 		} else {
 			logger.Warn("Authentication enabled without admin password; no admin user configured")
 		}
