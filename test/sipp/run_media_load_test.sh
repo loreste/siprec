@@ -1,3 +1,35 @@
+#!/bin/bash
+# Run SIPREC load test with actual RTP media
+# Requires sudo for SIPp to send RTP packets
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER="${1:-192.227.78.77}"
+PORT="${2:-5060}"
+CALLS="${3:-100}"
+RATE="${4:-20}"
+DURATION="${5:-30}"
+
+# Update scenario with desired duration
+PAUSE_MS=$((DURATION * 1000))
+
+echo "=== SIPREC Media Load Test ==="
+echo "Server: $SERVER:$PORT"
+echo "Calls: $CALLS"
+echo "Rate: $RATE cps"
+echo "Duration: ${DURATION}s per call"
+echo ""
+
+# Check if pcap file exists
+if [ ! -f "$SCRIPT_DIR/test_audio_5min.pcap" ]; then
+    echo "Error: test_audio_5min.pcap not found"
+    echo "Please run the audio preparation scripts first"
+    exit 1
+fi
+
+# Create a temporary scenario with the pcap reference
+cat > "$SCRIPT_DIR/siprec_media_test_temp.xml" << 'EOF'
 <?xml version="1.0" encoding="ISO-8859-1" ?>
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
@@ -54,15 +86,6 @@ Content-Disposition: recording-session
   <stream stream_id="audio-[call_number]" session_id="[call_id]">
     <label>main-audio</label>
   </stream>
-  <sessionrecordingassoc session_id="[call_id]"/>
-  <participantsessionassoc participant_id="caller-[call_number]" session_id="[call_id]"/>
-  <participantsessionassoc participant_id="callee-[call_number]" session_id="[call_id]"/>
-  <participantstreamassoc participant_id="caller-[call_number]">
-    <send>audio-[call_number]</send>
-  </participantstreamassoc>
-  <participantstreamassoc participant_id="callee-[call_number]">
-    <recv>audio-[call_number]</recv>
-  </participantstreamassoc>
 </recording>
 --boundary123--
     ]]>
@@ -88,8 +111,15 @@ Content-Disposition: recording-session
     ]]>
   </send>
 
-  <!-- 5 minute call duration -->
-  <pause milliseconds="300000"/>
+  <!-- Play RTP audio -->
+  <nop>
+    <action>
+      <exec play_pcap_audio="test_audio_5min.pcap"/>
+    </action>
+  </nop>
+
+  <!-- Wait for call duration -->
+  <pause milliseconds="PAUSE_PLACEHOLDER"/>
 
   <send retrans="500">
     <![CDATA[
@@ -109,3 +139,28 @@ Content-Disposition: recording-session
   <recv response="200" crlf="true"/>
 
 </scenario>
+EOF
+
+# Replace pause duration
+sed -i.bak "s/PAUSE_PLACEHOLDER/$PAUSE_MS/" "$SCRIPT_DIR/siprec_media_test_temp.xml"
+
+echo "Starting SIPp with RTP media playback..."
+echo "Note: This requires sudo for raw socket access"
+echo ""
+
+cd "$SCRIPT_DIR"
+
+sudo sipp "$SERVER:$PORT" \
+    -t u1 \
+    -sf siprec_media_test_temp.xml \
+    -l "$CALLS" \
+    -m "$CALLS" \
+    -r "$RATE" \
+    -timeout $((DURATION + 120)) \
+    -trace_stat \
+    -stf media_test_stats.csv
+
+rm -f siprec_media_test_temp.xml siprec_media_test_temp.xml.bak
+
+echo ""
+echo "Test complete!"

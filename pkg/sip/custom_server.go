@@ -1421,26 +1421,47 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			responseSDP, _ = sdpResponse.Marshal()
 		}
 	} else {
-		// For non-SIPREC calls, allocate ports and generate SDP
-		// Allocate RTP/RTCP port pair following RFC 3550
-		portPair, err := media.GetPortManager().AllocatePortPair()
-		if err != nil {
-			logger.WithError(err).Error("Failed to allocate RTP/RTCP ports")
+		// For non-SIPREC calls, create an RTP forwarder to receive and record audio
+		mediaConfig := s.handler.Config.MediaConfig
+		if mediaConfig == nil {
+			logger.Error("Media configuration missing for non-SIPREC call")
 			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
 			return
 		}
 
-		callState.AllocatedPortPair = portPair
+		// Use default RTP timeout
+		rtpTimeout := mediaConfig.RTPTimeout
+		if rtpTimeout == 0 {
+			rtpTimeout = 30 * time.Second
+		}
+
+		// Create RTP forwarder (allocates ports internally)
+		forwarder, err := media.NewRTPForwarder(rtpTimeout, nil, s.logger, false, nil)
+		if err != nil {
+			logger.WithError(err).Error("Failed to create RTP forwarder for non-SIPREC call")
+			s.sendResponse(message, 500, "Internal Server Error", nil, nil)
+			return
+		}
+
+		// Store forwarder in call state for cleanup
+		callState.RTPForwarder = forwarder
 
 		// Generate SDP with the allocated port
-		responseSDP = s.generateSiprecSDP(mediaIP, portPair.RTPPort)
+		responseSDP = s.generateSiprecSDP(mediaIP, forwarder.LocalPort)
 
-		// Note: In a real implementation, you'd want to create an RTP listener
-		// on these ports and store them for cleanup later
+		// Create a no-op STT provider for non-SIPREC calls
+		sttProvider := func(ctx context.Context, vendor string, reader io.Reader, callUUID string) error {
+			_, err := io.Copy(io.Discard, reader)
+			return err
+		}
+
+		// Start RTP forwarding to create the UDP listener
+		media.StartRTPForwarding(callCtx, forwarder, message.CallID, mediaConfig, sttProvider)
+
 		logger.WithFields(logrus.Fields{
-			"rtp_port":  portPair.RTPPort,
-			"rtcp_port": portPair.RTCPPort,
-		}).Debug("Allocated ports for non-SIPREC call")
+			"rtp_port":  forwarder.LocalPort,
+			"rtcp_port": forwarder.RTCPPort,
+		}).Info("Started RTP listener for non-SIPREC call")
 	}
 
 	// Create clean SDP response using existing media config
