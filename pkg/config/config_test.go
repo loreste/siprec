@@ -31,6 +31,9 @@ func TestConfigLoading(t *testing.T) {
 	os.Setenv("HTTP_ENABLE_API", "true")
 	os.Setenv("HTTP_READ_TIMEOUT", "15s")
 	os.Setenv("HTTP_WRITE_TIMEOUT", "45s")
+	os.Setenv("HTTP_TLS_ENABLED", "true")
+	os.Setenv("HTTP_TLS_CERT_FILE", "./certs/cert.pem")
+	os.Setenv("HTTP_TLS_KEY_FILE", "./certs/key.pem")
 
 	os.Setenv("RECORDING_DIR", "./test-recordings")
 	os.Setenv("RECORDING_MAX_DURATION_HOURS", "6")
@@ -55,6 +58,8 @@ func TestConfigLoading(t *testing.T) {
 
 	os.Setenv("AMQP_URL", "amqp://guest:guest@localhost:5672/")
 	os.Setenv("AMQP_QUEUE_NAME", "siprec-transcriptions")
+	os.Setenv("AUTH_ENABLED", "true")
+	os.Setenv("AUTH_JWT_SECRET", "test-secret")
 
 	os.Setenv("ENABLE_REDUNDANCY", "true")
 	os.Setenv("SESSION_TIMEOUT", "45s")
@@ -68,18 +73,19 @@ func TestConfigLoading(t *testing.T) {
 	// Clean up when test finishes
 	defer func() {
 		// Unset environment variables
-		vars := []string{
+		var vars = []string{
 			"EXTERNAL_IP", "INTERNAL_IP", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
 			"RTP_PORT_MAX", "RTP_TIMEOUT", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 			"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
-			"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
+			"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "HTTP_TLS_ENABLED",
+			"HTTP_TLS_CERT_FILE", "HTTP_TLS_KEY_FILE", "RECORDING_DIR",
 			"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "RECORDING_STORAGE_ENABLED",
 			"RECORDING_STORAGE_KEEP_LOCAL", "RECORDING_STORAGE_S3_ENABLED", "RECORDING_STORAGE_S3_BUCKET",
 			"RECORDING_STORAGE_S3_REGION", "RECORDING_STORAGE_S3_ACCESS_KEY", "RECORDING_STORAGE_S3_SECRET_KEY",
 			"RECORDING_STORAGE_S3_PREFIX", "SUPPORTED_VENDORS",
 			"SUPPORTED_CODECS", "DEFAULT_SPEECH_VENDOR", "MAX_CONCURRENT_CALLS", "LOG_LEVEL",
 			"LOG_FORMAT", "AMQP_URL", "AMQP_QUEUE_NAME", "ENABLE_REDUNDANCY", "SESSION_TIMEOUT",
-			"SESSION_CHECK_INTERVAL", "REDUNDANCY_STORAGE_TYPE",
+			"SESSION_CHECK_INTERVAL", "REDUNDANCY_STORAGE_TYPE", "AUTH_ENABLED", "AUTH_JWT_SECRET",
 		}
 
 		for _, v := range vars {
@@ -117,6 +123,9 @@ func TestConfigLoading(t *testing.T) {
 	assert.True(t, config.HTTP.EnableAPI)
 	assert.Equal(t, 15*time.Second, config.HTTP.ReadTimeout)
 	assert.Equal(t, 45*time.Second, config.HTTP.WriteTimeout)
+	assert.True(t, config.HTTP.TLSEnabled)
+	assert.Equal(t, "./certs/cert.pem", config.HTTP.TLSCertFile)
+	assert.Equal(t, "./certs/key.pem", config.HTTP.TLSKeyFile)
 
 	// Verify recording configuration
 	assert.Equal(t, "./test-recordings", config.Recording.Directory)
@@ -161,7 +170,8 @@ func TestDefaultConfiguration(t *testing.T) {
 		"EXTERNAL_IP", "INTERNAL_IP", "SIP_HOST", "PORTS", "ENABLE_SRTP", "RTP_PORT_MIN",
 		"RTP_PORT_MAX", "RTP_TIMEOUT", "ENABLE_TLS", "TLS_PORT", "TLS_CERT_PATH", "TLS_KEY_PATH",
 		"BEHIND_NAT", "STUN_SERVER", "HTTP_PORT", "HTTP_ENABLED", "HTTP_ENABLE_METRICS",
-		"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "RECORDING_DIR",
+		"HTTP_ENABLE_API", "HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "HTTP_TLS_ENABLED",
+		"HTTP_TLS_CERT_FILE", "HTTP_TLS_KEY_FILE", "RECORDING_DIR",
 		"RECORDING_MAX_DURATION_HOURS", "RECORDING_CLEANUP_DAYS", "SUPPORTED_VENDORS",
 		"SUPPORTED_CODECS", "DEFAULT_SPEECH_VENDOR", "MAX_CONCURRENT_CALLS", "LOG_LEVEL",
 		"LOG_FORMAT", "AMQP_URL", "AMQP_QUEUE_NAME", "ENABLE_REDUNDANCY", "SESSION_TIMEOUT",
@@ -171,6 +181,8 @@ func TestDefaultConfiguration(t *testing.T) {
 	for _, v := range vars {
 		os.Unsetenv(v)
 	}
+	// Authentication defaults to enabled; disable it for default-config test to avoid missing secret errors
+	os.Setenv("AUTH_ENABLED", "false")
 
 	// Create logger for testing
 	logger := logrus.New()
@@ -204,6 +216,9 @@ func TestDefaultConfiguration(t *testing.T) {
 	assert.True(t, config.HTTP.EnableAPI)
 	assert.Equal(t, 10*time.Second, config.HTTP.ReadTimeout)
 	assert.Equal(t, 30*time.Second, config.HTTP.WriteTimeout)
+	assert.False(t, config.HTTP.TLSEnabled)
+	assert.Equal(t, "", config.HTTP.TLSCertFile)
+	assert.Equal(t, "", config.HTTP.TLSKeyFile)
 
 	// Verify recording defaults
 	assert.Equal(t, "./recordings", config.Recording.Directory)

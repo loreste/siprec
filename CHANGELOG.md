@@ -5,6 +5,13 @@ All notable changes to the SIPREC server project will be documented in this file
 ## [Unreleased]
 
 ### Added
+- **Load Testing Validation**: Comprehensive load testing with documented results
+  - Validated up to 20,000 concurrent calls with 100% success rate
+  - 6,000 concurrent 5-minute calls over TCP with zero failures
+  - Memory efficiency: ~55 KB per concurrent call (signaling only)
+  - CPU efficiency: Linear scaling at ~0.001% per concurrent call
+  - New SIPp test scenarios in `test/sipp/` directory
+
 - **Multi-Format Audio Recording**: Support for multiple audio output formats via FFmpeg encoding
   - Supported formats: WAV, MP3, Opus, OGG, MP4/M4A (AAC), FLAC
   - Configurable bitrate for lossy formats (MP3, Opus, AAC)

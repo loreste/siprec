@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -36,20 +37,20 @@ type CorrelationMiddleware interface {
 
 // Server represents the HTTP server for health checks and metrics
 type Server struct {
-	config                  *Config
-	logger                  *logrus.Logger
-	httpServer              *http.Server
-	mux                     *http.ServeMux
-	metricsProvider         MetricsProvider
-	startTime               time.Time
-	additionalHandlers      map[string]http.HandlerFunc
-	sipHandler              interface{} // Reference to SIP handler
-	wsHub                   *TranscriptionHub
-	amqpClient              interface{} // Reference to AMQP client
-	analyticsWSHandler      *AnalyticsWebSocketHandler
-	authMiddleware          *AuthMiddleware
-	rateLimitMiddleware     RateLimitMiddleware
-	correlationMiddleware   CorrelationMiddleware
+	config                *Config
+	logger                *logrus.Logger
+	httpServer            *http.Server
+	mux                   *http.ServeMux
+	metricsProvider       MetricsProvider
+	startTime             time.Time
+	additionalHandlers    map[string]http.HandlerFunc
+	sipHandler            interface{} // Reference to SIP handler
+	wsHub                 *TranscriptionHub
+	amqpClient            interface{} // Reference to AMQP client
+	analyticsWSHandler    *AnalyticsWebSocketHandler
+	authMiddleware        *AuthMiddleware
+	rateLimitMiddleware   RateLimitMiddleware
+	correlationMiddleware CorrelationMiddleware
 }
 
 // NewServer creates a new HTTP server instance
@@ -207,6 +208,21 @@ func (s *Server) Start() {
 	// Start serving in a goroutine
 	go func() {
 		s.logger.Infof("HTTP server listening on port %d", s.config.Port)
+		if s.config.TLSEnabled {
+			if s.config.TLSCertFile == "" || s.config.TLSKeyFile == "" {
+				s.logger.Error("TLS is enabled but certificate or key path is missing; refusing to start HTTP server")
+				return
+			}
+
+			// Enforce modern TLS settings
+			s.httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+
+			if err := s.httpServer.ListenAndServeTLS(s.config.TLSCertFile, s.config.TLSKeyFile); err != nil && err != http.ErrServerClosed {
+				s.logger.WithError(err).Error("HTTP TLS server failed")
+			}
+			return
+		}
+
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.WithError(err).Error("HTTP server failed")
 		}
