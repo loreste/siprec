@@ -20,12 +20,12 @@ type AuthMiddleware struct {
 
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
-	Enabled          bool
-	RequireAuth      bool
-	AllowAPIKey      bool
-	AllowJWT         bool
-	ExemptPaths      []string // Paths that don't require authentication
-	RequiredScopes   map[string][]string // Required scopes per path
+	Enabled        bool
+	RequireAuth    bool
+	AllowAPIKey    bool
+	AllowJWT       bool
+	ExemptPaths    []string            // Paths that don't require authentication
+	RequiredScopes map[string][]string // Required scopes per path
 }
 
 // NewAuthMiddleware creates a new authentication middleware
@@ -124,6 +124,9 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 		return nil, errors.ErrUnauthorized
 	}
 
+	// Extract token presented via WebSocket subprotocols to avoid query parameters leaking in logs
+	wsProtocolToken := getWebSocketToken(r)
+
 	// Try JWT authentication first
 	if am.config.AllowJWT {
 		// Check Authorization header
@@ -142,10 +145,8 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 			am.logger.WithError(err).Debug("JWT authentication failed")
 		}
 
-		// Check for token in query params (for WebSocket)
-		token := r.URL.Query().Get("token")
-		if token != "" && isWebSocketRequest(r) {
-			claims, err := am.simpleAuth.ValidateToken(token)
+		if wsProtocolToken != "" && isWebSocketRequest(r) {
+			claims, err := am.simpleAuth.ValidateToken(wsProtocolToken)
 			if err == nil {
 				return &auth.UserInfo{
 					UserID:      claims.UserID,
@@ -154,7 +155,7 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 					Permissions: claims.Permissions,
 				}, nil
 			}
-			am.logger.WithError(err).Debug("JWT query param authentication failed")
+			am.logger.WithError(err).Debug("JWT WebSocket subprotocol authentication failed")
 		}
 	}
 
@@ -170,14 +171,12 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (*auth.UserInfo, error) 
 			am.logger.WithError(err).Debug("API key authentication failed")
 		}
 
-		// Check for API key in query params (for WebSocket)
-		apiKey = r.URL.Query().Get("api_key")
-		if apiKey != "" && isWebSocketRequest(r) {
-			userInfo, err := am.simpleAuth.ValidateAPIKey(apiKey)
+		if wsProtocolToken != "" && isWebSocketRequest(r) {
+			userInfo, err := am.simpleAuth.ValidateAPIKey(wsProtocolToken)
 			if err == nil {
 				return userInfo, nil
 			}
-			am.logger.WithError(err).Debug("API key query param authentication failed")
+			am.logger.WithError(err).Debug("API key WebSocket subprotocol authentication failed")
 		}
 	}
 
@@ -264,4 +263,24 @@ func (am *AuthMiddleware) getRolePermissions(role string) []string {
 func GetUserFromContext(ctx context.Context) (*auth.UserInfo, bool) {
 	user, ok := ctx.Value("user").(*auth.UserInfo)
 	return user, ok
+}
+
+// getWebSocketToken extracts a token from the Sec-WebSocket-Protocol header to avoid leaking secrets in query strings
+func getWebSocketToken(r *http.Request) string {
+	if !isWebSocketRequest(r) {
+		return ""
+	}
+
+	protocolHeader := r.Header.Get("Sec-WebSocket-Protocol")
+	if protocolHeader == "" {
+		return ""
+	}
+
+	// Take the first protocol entry as the token
+	parts := strings.Split(protocolHeader, ",")
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[0])
 }

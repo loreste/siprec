@@ -196,8 +196,13 @@ func (h *TranscriptionHub) BroadcastTranscription(message interface{}) {
 
 // ServeWs handles WebSocket requests from clients
 func (h *TranscriptionHub) ServeWs(w http.ResponseWriter, r *http.Request) {
+	responseHeaders := http.Header{}
+	if protocol := getWebSocketToken(r); protocol != "" {
+		responseHeaders.Set("Sec-WebSocket-Protocol", protocol)
+	}
+
 	// Upgrade HTTP connection to WebSocket
-	conn, err := WebSocketUpgrader.Upgrade(w, r, nil)
+	conn, err := WebSocketUpgrader.Upgrade(w, r, responseHeaders)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to upgrade connection to WebSocket")
 		return

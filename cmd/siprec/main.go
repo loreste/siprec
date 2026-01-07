@@ -24,6 +24,7 @@ import (
 	"siprec-server/pkg/circuitbreaker"
 	"siprec-server/pkg/compliance"
 	"siprec-server/pkg/config"
+	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/database"
 	"siprec-server/pkg/elasticsearch"
 	"siprec-server/pkg/encryption"
@@ -33,7 +34,6 @@ import (
 	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/performance"
 	"siprec-server/pkg/pii"
-	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/ratelimit"
 	"siprec-server/pkg/realtime/analytics"
 	"siprec-server/pkg/security/audit"
@@ -407,6 +407,10 @@ func initialize() error {
 
 	// Initialize authentication system if enabled
 	if appConfig.Auth.Enabled {
+		if strings.TrimSpace(appConfig.Auth.JWTSecret) == "" {
+			return fmt.Errorf("authentication is enabled but AUTH_JWT_SECRET is not set; set a strong secret or disable auth explicitly")
+		}
+
 		authenticator = auth.NewSimpleAuthenticator(
 			appConfig.Auth.JWTSecret,
 			appConfig.Auth.JWTIssuer,
@@ -1041,6 +1045,9 @@ func initialize() error {
 		Enabled:         appConfig.HTTP.Enabled,
 		EnableMetrics:   appConfig.HTTP.EnableMetrics,
 		EnableAPI:       appConfig.HTTP.EnableAPI,
+		TLSEnabled:      appConfig.HTTP.TLSEnabled,
+		TLSCertFile:     appConfig.HTTP.TLSCertFile,
+		TLSKeyFile:      appConfig.HTTP.TLSKeyFile,
 	}
 
 	// Create HTTP server with SIP handler adapter for metrics
@@ -1058,7 +1065,6 @@ func initialize() error {
 				"/health",
 				"/metrics",
 				"/status",
-				"/websocket-client",
 			},
 		})
 		httpServer.SetAuthMiddleware(httpAuthMiddleware)

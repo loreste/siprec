@@ -48,7 +48,7 @@ func (h *WebSocketHandler) handleTranscriptionWS(w http.ResponseWriter, r *http.
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		
+
 		// Log authenticated connection
 		h.logger.WithFields(logrus.Fields{
 			"remote_addr": r.RemoteAddr,
@@ -155,7 +155,7 @@ func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *h
     <div class="controls">
         <p>Connect to receive real-time transcriptions. Optionally specify a Call UUID to get transcriptions for a specific call only.</p>
         <input type="text" id="callUUID" placeholder="Call UUID (optional)">
-        <input type="text" id="authToken" placeholder="Auth Token (optional)">
+        <input type="text" id="authToken" placeholder="Auth Token (required - sent via WebSocket subprotocol)">
         <button id="connect">Connect</button>
         <button id="disconnect" disabled>Disconnect</button>
         <div id="status" class="disconnected">Disconnected</div>
@@ -185,22 +185,22 @@ func (h *WebSocketHandler) handleWebSocketClientPage(w http.ResponseWriter, r *h
             const callUUID = callUUIDInput.value.trim();
             const authToken = authTokenInput.value.trim();
             let wsUrl = window.location.origin.replace('http', 'ws') + '/ws/transcriptions';
-            
+
             const params = new URLSearchParams();
             if (callUUID) {
                 params.append('call_uuid', callUUID);
             }
-            if (authToken) {
-                params.append('token', authToken);
-            }
-            
+
             if (params.toString()) {
                 wsUrl += '?' + params.toString();
             }
-            
+
+            // Send the auth token via WebSocket subprotocol to avoid leaking it in URLs
+            const protocols = authToken ? [authToken] : [];
+
             // Create WebSocket connection
             updateStatus('Connecting...', 'connecting');
-            socket = new WebSocket(wsUrl);
+            socket = new WebSocket(wsUrl, protocols);
             
             // Connection opened
             socket.addEventListener('open', function(event) {
