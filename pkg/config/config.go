@@ -1,7 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
 	"fmt"
 	"net"
 	"net/http"
@@ -160,6 +159,15 @@ type HTTPConfig struct {
 
 	// Write timeout for HTTP responses
 	WriteTimeout time.Duration `json:"write_timeout" env:"HTTP_WRITE_TIMEOUT" default:"30s"`
+
+	// Enable TLS for the HTTP server
+	TLSEnabled bool `json:"tls_enabled" env:"HTTP_TLS_ENABLED" default:"false"`
+
+	// TLS certificate path for HTTP server
+	TLSCertFile string `json:"tls_cert_file" env:"HTTP_TLS_CERT_FILE"`
+
+	// TLS key path for HTTP server
+	TLSKeyFile string `json:"tls_key_file" env:"HTTP_TLS_KEY_FILE"`
 }
 
 // RecordingConfig holds recording-related configurations
@@ -1407,6 +1415,10 @@ func loadHTTPConfig(logger *logrus.Logger, config *HTTPConfig) error {
 	} else {
 		config.WriteTimeout = writeTimeout
 	}
+
+	config.TLSEnabled = getEnvBool("HTTP_TLS_ENABLED", false)
+	config.TLSCertFile = getEnv("HTTP_TLS_CERT_FILE", "")
+	config.TLSKeyFile = getEnv("HTTP_TLS_KEY_FILE", "")
 
 	return nil
 }
@@ -3134,13 +3146,7 @@ func loadAuthConfig(logger *logrus.Logger, config *AuthConfig) error {
 	// Load JWT secret - required if auth is enabled
 	config.JWTSecret = getEnv("AUTH_JWT_SECRET", "")
 	if config.Enabled && config.JWTSecret == "" {
-		logger.Warn("AUTH_ENABLED is true but AUTH_JWT_SECRET is not set, generating random secret (not suitable for production with multiple instances)")
-		// Generate a random secret for development
-		randomBytes := make([]byte, 32)
-		if _, err := rand.Read(randomBytes); err != nil {
-			return errors.Wrap(err, "failed to generate random JWT secret")
-		}
-		config.JWTSecret = fmt.Sprintf("%x", randomBytes)
+		return errors.New("AUTH_ENABLED is true but AUTH_JWT_SECRET is not set; configure a strong secret")
 	}
 
 	// Load JWT issuer
@@ -3270,17 +3276,17 @@ func loadRateLimitConfig(logger *logrus.Logger, config *RateLimitConfig) error {
 	// Log configuration
 	if config.Enabled {
 		logger.WithFields(logrus.Fields{
-			"rps":       config.RequestsPerSecond,
-			"burst":     config.BurstSize,
-			"block":     config.BlockDuration,
+			"rps":   config.RequestsPerSecond,
+			"burst": config.BurstSize,
+			"block": config.BlockDuration,
 		}).Info("HTTP rate limiting enabled")
 	}
 
 	if config.SIPEnabled {
 		logger.WithFields(logrus.Fields{
-			"invite_rps":   config.SIPInvitesPerSecond,
-			"invite_burst": config.SIPInviteBurst,
-			"request_rps":  config.SIPRequestsPerSecond,
+			"invite_rps":    config.SIPInvitesPerSecond,
+			"invite_burst":  config.SIPInviteBurst,
+			"request_rps":   config.SIPRequestsPerSecond,
 			"request_burst": config.SIPRequestBurst,
 		}).Info("SIP rate limiting enabled")
 	}

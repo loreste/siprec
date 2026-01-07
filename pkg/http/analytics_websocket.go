@@ -188,7 +188,12 @@ func (h *AnalyticsWebSocketHandler) cleanupClients(clients []*AnalyticsClient) {
 
 // ServeHTTP handles WebSocket upgrade requests
 func (h *AnalyticsWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	responseHeaders := http.Header{}
+	if protocol := getWebSocketToken(r); protocol != "" {
+		responseHeaders.Set("Sec-WebSocket-Protocol", protocol)
+	}
+
+	conn, err := h.upgrader.Upgrade(w, r, responseHeaders)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to upgrade to WebSocket")
 		return
