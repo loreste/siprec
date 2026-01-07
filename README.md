@@ -434,10 +434,37 @@ RTP_PORT_MAX=30000
 
 ## Performance
 
-- **Concurrent Calls**: Tested with 1000+ simultaneous sessions
+### Load Test Results
+
+The server has been extensively load tested with the following results:
+
+| Concurrent Calls | Duration | Transport | Success Rate | Peak Memory | Peak CPU |
+|-----------------|----------|-----------|--------------|-------------|----------|
+| 100 | 30s | UDP | 100% | 46 MB | ~1% |
+| 1,000 | 30s | UDP | 100% | 70 MB | ~2% |
+| 5,000 | 30s | UDP | 100% | 356 MB | ~7% |
+| 6,000 | 5 min | TCP | 100% | 1,006 MB | ~5% |
+| 10,000 | 30s | UDP | 100% | 548 MB | ~11% |
+| 20,000 | 30s | UDP | 100% | 1,554 MB | ~17% |
+
+**Key Performance Metrics:**
+- **Concurrent Calls**: Tested up to 20,000 simultaneous sessions
+- **Call Duration**: Validated with 5-minute sustained calls at 6,000 concurrent
+- **Memory Efficiency**: ~55 KB per concurrent call (signaling only)
+- **CPU Efficiency**: Linear scaling, ~0.001% per concurrent call
 - **Latency**: Sub-50ms for SIP signaling, <100ms for STT streaming
-- **Memory**: ~2-3 MB per active session (with audio processing)
 - **Throughput**: 10,000+ RTP packets/sec per core
+
+### SIPp Load Testing
+
+For load testing with SIPp, use TCP with `tn` mode (one socket per call) for best reliability:
+
+```bash
+# 6000 concurrent calls, 5-minute duration, 100 calls/sec ramp-up
+sipp <server>:5060 -t tn -sf siprec_scenario.xml -l 6000 -m 6000 -r 100 -timeout 600
+```
+
+**Note:** On macOS, the standard TCP mode (`-t t1`) may fail with "Address already in use" errors. Use `-t tn` instead for reliable TCP testing.
 
 ## Compliance & Security
 

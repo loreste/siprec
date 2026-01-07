@@ -211,6 +211,20 @@ func (v *ConfigValidator) validateHTTPConfig(config *Config) {
 		if config.HTTP.WriteTimeout < time.Second || config.HTTP.WriteTimeout > 5*time.Minute {
 			v.addError("http_write_timeout", config.HTTP.WriteTimeout, "range", "HTTP write timeout must be between 1s and 5m")
 		}
+
+		if config.HTTP.TLSEnabled {
+			if config.HTTP.TLSCertFile == "" {
+				v.addError("http_tls_cert_file", config.HTTP.TLSCertFile, "required", "HTTP TLS certificate file is required when TLS is enabled")
+			} else if !v.fileExists(config.HTTP.TLSCertFile) {
+				v.addError("http_tls_cert_file", config.HTTP.TLSCertFile, "exists", "HTTP TLS certificate file does not exist")
+			}
+
+			if config.HTTP.TLSKeyFile == "" {
+				v.addError("http_tls_key_file", config.HTTP.TLSKeyFile, "required", "HTTP TLS key file is required when TLS is enabled")
+			} else if !v.fileExists(config.HTTP.TLSKeyFile) {
+				v.addError("http_tls_key_file", config.HTTP.TLSKeyFile, "exists", "HTTP TLS key file does not exist")
+			}
+		}
 	}
 }
 
