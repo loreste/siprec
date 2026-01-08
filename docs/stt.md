@@ -48,12 +48,100 @@ The server supports automatic language detection and switching for providers tha
 
 ### Cloud Providers
 - **Google Cloud STT**: `GOOGLE_STT_ENABLED=true`
-- **Deepgram**: `DEEPGRAM_STT_ENABLED=true`
+- **Deepgram**: `DEEPGRAM_ENABLED=true`
 - **ElevenLabs**: `ELEVENLABS_STT_ENABLED=true`
 - **Speechmatics**: `SPEECHMATICS_STT_ENABLED=true`
 - **Azure Speech**: `AZURE_STT_ENABLED=true`
 - **Amazon Transcribe**: `AMAZON_STT_ENABLED=true`
 - **OpenAI Whisper API**: `OPENAI_STT_ENABLED=true`
+
+### Deepgram Configuration
+
+Deepgram is a popular choice for real-time speech-to-text with excellent accuracy and low latency.
+
+#### Basic Configuration
+
+```bash
+# Enable Deepgram
+DEEPGRAM_ENABLED=true
+DEEPGRAM_API_KEY=your_api_key_here
+STT_DEFAULT_VENDOR=deepgram
+
+# Model selection
+DEEPGRAM_MODEL=nova-2          # Options: nova-2, nova, enhanced, base
+DEEPGRAM_LANGUAGE=en-US
+```
+
+#### Audio Encoding Configuration
+
+The SIPREC server decodes RTP audio (typically G.711 µ-law) to linear PCM before sending to Deepgram. Configure the encoding to match:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEEPGRAM_ENCODING` | Audio encoding format | `mulaw` |
+| `DEEPGRAM_SAMPLE_RATE` | Sample rate in Hz | `8000` |
+| `DEEPGRAM_CHANNELS` | Number of audio channels | `1` |
+
+**Important**: For decoded PCM audio from G.711 sources, use:
+```bash
+DEEPGRAM_ENCODING=linear16
+DEEPGRAM_SAMPLE_RATE=8000
+DEEPGRAM_CHANNELS=1
+```
+
+#### Feature Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEEPGRAM_PUNCTUATE` | Add punctuation | `true` |
+| `DEEPGRAM_DIARIZE` | Speaker diarization | `false` |
+| `DEEPGRAM_NUMERALS` | Convert numbers to digits | `true` |
+| `DEEPGRAM_SMART_FORMAT` | Smart formatting | `true` |
+| `DEEPGRAM_PROFANITY_FILTER` | Filter profanity | `false` |
+| `DEEPGRAM_REDACT` | PII redaction (comma-separated: `pci,ssn,email`) | `""` |
+| `DEEPGRAM_KEYWORDS` | Keyword boosting (comma-separated) | `""` |
+
+#### Language Detection (Paid Feature)
+
+Multi-language detection requires a Deepgram plan that supports it:
+
+```bash
+DEEPGRAM_DETECT_LANGUAGE=true
+DEEPGRAM_SUPPORTED_LANGUAGES=en-US,es-ES,fr-FR
+DEEPGRAM_LANGUAGE_CONFIDENCE=0.7
+DEEPGRAM_FALLBACK_LANGUAGE=en-US
+```
+
+**Note**: If you receive "Project does not have access to the requested model" errors, disable language detection:
+```bash
+DEEPGRAM_DETECT_LANGUAGE=false
+```
+
+#### Complete Example Configuration
+
+```bash
+# Deepgram STT Configuration
+DEEPGRAM_ENABLED=true
+DEEPGRAM_API_KEY=your_api_key_here
+DEEPGRAM_MODEL=nova-2
+DEEPGRAM_LANGUAGE=en-US
+
+# Audio format (for decoded G.711 PCM)
+DEEPGRAM_ENCODING=linear16
+DEEPGRAM_SAMPLE_RATE=8000
+DEEPGRAM_CHANNELS=1
+
+# Features
+DEEPGRAM_PUNCTUATE=true
+DEEPGRAM_SMART_FORMAT=true
+DEEPGRAM_NUMERALS=true
+
+# Disable language detection if not supported by your plan
+DEEPGRAM_DETECT_LANGUAGE=false
+
+# Set as default provider
+STT_DEFAULT_VENDOR=deepgram
+```
 
 ## Local Whisper (open-source)
 
