@@ -135,31 +135,67 @@ const (
 )
 
 // DeepgramWebSocketResponse defines the structure for WebSocket streaming responses
+// Note: The channel field is polymorphic - it's an object for Results but an array for SpeechStarted
 type DeepgramWebSocketResponse struct {
-	Type         string  `json:"type"` // "Results" or "UtteranceEnd" or "SpeechStarted"
-	ChannelIndex []int   `json:"channel_index"`
-	Duration     float64 `json:"duration"`
-	Start        float64 `json:"start"`
-	IsFinal      bool    `json:"is_final"`
-	SpeechFinal  bool    `json:"speech_final"`
-	Channel      struct {
-		Alternatives []struct {
-			Transcript string  `json:"transcript"`
-			Confidence float64 `json:"confidence"`
-			Words      []struct {
-				Word       string  `json:"word"`
-				Start      float64 `json:"start"`
-				End        float64 `json:"end"`
-				Confidence float64 `json:"confidence"`
-				Speaker    int     `json:"speaker,omitempty"`
-			} `json:"words"`
-		} `json:"alternatives"`
-	} `json:"channel"`
-	Metadata struct {
+	Type         string          `json:"type"` // "Results", "UtteranceEnd", "SpeechStarted", or "Metadata"
+	ChannelIndex []int           `json:"channel_index"`
+	Duration     float64         `json:"duration"`
+	Start        float64         `json:"start"`
+	IsFinal      bool            `json:"is_final"`
+	SpeechFinal  bool            `json:"speech_final"`
+	Channel      json.RawMessage `json:"channel,omitempty"` // Can be object or array depending on message type
+	Metadata     struct {
 		RequestID string `json:"request_id"`
 		ModelName string `json:"model_name"`
 		ModelUUID string `json:"model_uuid"`
+		ModelInfo *struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+			Arch    string `json:"arch"`
+		} `json:"model_info,omitempty"`
 	} `json:"metadata"`
+	FromFinalize bool    `json:"from_finalize,omitempty"`
+	Timestamp    float64 `json:"timestamp,omitempty"`     // For SpeechStarted
+	LastWordEnd  float64 `json:"last_word_end,omitempty"` // For UtteranceEnd
+}
+
+// ParseChannel safely parses the channel field for Results messages
+func (r *DeepgramWebSocketResponse) ParseChannel() *DeepgramChannel {
+	if len(r.Channel) == 0 {
+		return nil
+	}
+	// Check if it's an object (starts with '{')
+	if r.Channel[0] == '{' {
+		var ch DeepgramChannel
+		if err := json.Unmarshal(r.Channel, &ch); err == nil {
+			return &ch
+		}
+	}
+	return nil
+}
+
+// DeepgramChannel represents the channel object in Results messages
+type DeepgramChannel struct {
+	Alternatives []DeepgramAlternative `json:"alternatives"`
+}
+
+// DeepgramAlternative represents a transcription alternative
+type DeepgramAlternative struct {
+	Transcript string         `json:"transcript"`
+	Confidence float64        `json:"confidence"`
+	Languages  []string       `json:"languages,omitempty"`
+	Words      []DeepgramWord `json:"words,omitempty"`
+}
+
+// DeepgramWord represents a word with timing and confidence information
+type DeepgramWord struct {
+	Word           string  `json:"word"`
+	Start          float64 `json:"start"`
+	End            float64 `json:"end"`
+	Confidence     float64 `json:"confidence"`
+	Language       string  `json:"language,omitempty"`
+	PunctuatedWord string  `json:"punctuated_word,omitempty"`
+	Speaker        int     `json:"speaker,omitempty"`
 }
 
 // NewDeepgramProviderEnhanced creates a new enhanced Deepgram provider
@@ -472,10 +508,25 @@ func (p *DeepgramProviderEnhanced) createWebSocketConnection(ctx context.Context
 	connCtx, cancel := context.WithCancel(ctx)
 
 	// Dial WebSocket
-	conn, _, err := websocket.DefaultDialer.DialContext(connCtx, wsURL.String(), headers)
+	conn, resp, err := websocket.DefaultDialer.DialContext(connCtx, wsURL.String(), headers)
 	if err != nil {
 		cancel()
+		// Capture the HTTP response for debugging handshake failures
+		if resp != nil {
+			defer resp.Body.Close()
+			bodyBytes := make([]byte, 1024)
+			n, _ := resp.Body.Read(bodyBytes)
+			p.logger.WithFields(logrus.Fields{
+				"status_code":   resp.StatusCode,
+				"status":        resp.Status,
+				"response_body": string(bodyBytes[:n]),
+				"error":         err.Error(),
+			}).Error("WebSocket handshake failed")
+		}
 		return nil, fmt.Errorf("failed to dial WebSocket: %w", err)
+	}
+	if resp != nil {
+		resp.Body.Close()
 	}
 
 	// Create connection wrapper
@@ -494,35 +545,50 @@ func (p *DeepgramProviderEnhanced) createWebSocketConnection(ctx context.Context
 }
 
 // buildQueryParams builds query parameters for Deepgram API
+// Note: Only parameters valid for streaming API are included
 func (p *DeepgramProviderEnhanced) buildQueryParams() url.Values {
 	query := url.Values{}
 
-	// Basic parameters
+	// Basic parameters - model and language
 	query.Set("model", p.config.Model)
-	query.Set("language", p.config.Language)
-	query.Set("version", p.config.Version)
-	query.Set("tier", p.config.Tier)
+	if p.config.Language != "" {
+		query.Set("language", p.config.Language)
+	}
+	// Note: version and tier are NOT valid for streaming API
 
-	// Audio parameters
+	// Audio parameters - required for streaming
 	query.Set("encoding", p.config.Encoding)
 	query.Set("sample_rate", fmt.Sprintf("%d", p.config.SampleRate))
 	query.Set("channels", fmt.Sprintf("%d", p.config.Channels))
 
-	// Feature parameters
-	query.Set("punctuate", fmt.Sprintf("%t", p.config.Punctuate))
-	query.Set("diarize", fmt.Sprintf("%t", p.config.Diarize))
-	query.Set("smart_format", fmt.Sprintf("%t", p.config.SmartFormat))
-	query.Set("profanity_filter", fmt.Sprintf("%t", p.config.ProfanityFilter))
-	query.Set("utterances", fmt.Sprintf("%t", p.config.Utterances))
-	query.Set("interim_results", fmt.Sprintf("%t", p.config.InterimResults))
+	// Feature parameters - verified for streaming API
+	if p.config.Punctuate {
+		query.Set("punctuate", "true")
+	}
+	if p.config.Diarize {
+		query.Set("diarize", "true")
+	}
+	if p.config.SmartFormat {
+		query.Set("smart_format", "true")
+	}
+	if p.config.ProfanityFilter {
+		query.Set("profanity_filter", "true")
+	}
+	if p.config.Utterances {
+		query.Set("utterances", "true")
+	}
+	if p.config.InterimResults {
+		query.Set("interim_results", "true")
+	}
 
-	// Advanced features
-	query.Set("vad_events", fmt.Sprintf("%t", p.config.VAD))
-	query.Set("endpointing", fmt.Sprintf("%t", p.config.Endpointing))
-	query.Set("include_metadata", fmt.Sprintf("%t", p.config.Confidence))
-	query.Set("timestamps", fmt.Sprintf("%t", p.config.Timestamps))
-	query.Set("paragraphs", fmt.Sprintf("%t", p.config.Paragraphs))
-	query.Set("sentences", fmt.Sprintf("%t", p.config.Sentences))
+	// Advanced features - verified for streaming API
+	if p.config.VAD {
+		query.Set("vad_events", "true")
+	}
+	if p.config.Endpointing {
+		query.Set("endpointing", "true")
+	}
+	// Note: include_metadata, timestamps, paragraphs, sentences are NOT valid for streaming API
 
 	// Redaction
 	if len(p.config.Redact) > 0 {
@@ -534,7 +600,7 @@ func (p *DeepgramProviderEnhanced) buildQueryParams() url.Values {
 		query.Set("keywords", strings.Join(p.config.Keywords, ","))
 	}
 
-	// Custom model
+	// Custom model overrides default model
 	if p.config.CustomModel != "" {
 		query.Set("model", p.config.CustomModel)
 	}
@@ -545,6 +611,12 @@ func (p *DeepgramProviderEnhanced) buildQueryParams() url.Values {
 // getContentType returns the appropriate content type for the audio encoding
 func (p *DeepgramProviderEnhanced) getContentType() string {
 	switch p.config.Encoding {
+	case "linear16":
+		return fmt.Sprintf("audio/l16;rate=%d;channels=%d", p.config.SampleRate, p.config.Channels)
+	case "mulaw":
+		return fmt.Sprintf("audio/basic;rate=%d", p.config.SampleRate)
+	case "alaw":
+		return fmt.Sprintf("audio/alaw;rate=%d", p.config.SampleRate)
 	case "wav":
 		return "audio/wav"
 	case "mp3":
@@ -554,7 +626,8 @@ func (p *DeepgramProviderEnhanced) getContentType() string {
 	case "opus":
 		return "audio/ogg; codecs=opus"
 	default:
-		return "audio/wav"
+		// Default to linear16 format with sample rate info
+		return fmt.Sprintf("audio/l16;rate=%d;channels=%d", p.config.SampleRate, p.config.Channels)
 	}
 }
 
@@ -657,6 +730,8 @@ func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, 
 			c.processUtteranceEnd(&response, callback)
 		case "SpeechStarted":
 			c.logger.Debug("Speech started detected")
+		case "Metadata":
+			c.logger.WithField("request_id", response.Metadata.RequestID).Debug("Received Deepgram metadata")
 		default:
 			c.logger.WithField("type", response.Type).Debug("Unknown response type")
 		}
@@ -665,11 +740,12 @@ func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, 
 
 // processResults processes transcription results
 func (c *DeepgramConnection) processResults(response *DeepgramWebSocketResponse, callback func(string, string, bool, map[string]interface{})) {
-	if len(response.Channel.Alternatives) == 0 {
+	channel := response.ParseChannel()
+	if channel == nil || len(channel.Alternatives) == 0 {
 		return
 	}
 
-	alternative := response.Channel.Alternatives[0]
+	alternative := channel.Alternatives[0]
 	transcript := strings.TrimSpace(alternative.Transcript)
 
 	if transcript == "" {
