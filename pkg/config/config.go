@@ -318,6 +318,15 @@ type DeepgramSTTConfig struct {
 	// Language
 	Language string `json:"language" env:"DEEPGRAM_LANGUAGE" default:"en-US"`
 
+	// Audio encoding (mulaw, alaw, linear16, etc.)
+	Encoding string `json:"encoding" env:"DEEPGRAM_ENCODING" default:"mulaw"`
+
+	// Audio sample rate
+	SampleRate int `json:"sample_rate" env:"DEEPGRAM_SAMPLE_RATE" default:"8000"`
+
+	// Number of audio channels
+	Channels int `json:"channels" env:"DEEPGRAM_CHANNELS" default:"1"`
+
 	// Tier (nova, enhanced, base)
 	Tier string `json:"tier" env:"DEEPGRAM_TIER" default:"nova"`
 
@@ -2726,6 +2735,9 @@ func loadDeepgramSTTConfig(logger *logrus.Logger, config *DeepgramSTTConfig) err
 	config.APIURL = getEnv("DEEPGRAM_API_URL", "https://api.deepgram.com")
 	config.Model = getEnv("DEEPGRAM_MODEL", "nova-2")
 	config.Language = getEnv("DEEPGRAM_LANGUAGE", "en-US")
+	config.Encoding = getEnv("DEEPGRAM_ENCODING", "mulaw")
+	config.SampleRate = getEnvInt("DEEPGRAM_SAMPLE_RATE", 8000)
+	config.Channels = getEnvInt("DEEPGRAM_CHANNELS", 1)
 	config.Tier = getEnv("DEEPGRAM_TIER", "nova")
 	config.Version = getEnv("DEEPGRAM_VERSION", "latest")
 	config.Punctuate = getEnvBool("DEEPGRAM_PUNCTUATE", true)
