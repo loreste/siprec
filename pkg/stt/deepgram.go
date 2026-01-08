@@ -162,11 +162,33 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 	// Set necessary headers for the request
 	req.Header.Set("Authorization", "Token "+p.config.APIKey)
-	req.Header.Set("Content-Type", "audio/wav")
+
+	// Set Content-Type based on encoding
+	contentType := p.getContentType()
+	req.Header.Set("Content-Type", contentType)
 
 	// Add query parameters to the request URL from configuration
 	query := req.URL.Query()
 	query.Add("model", p.config.Model)
+
+	// Add encoding and sample rate parameters
+	encoding := p.config.Encoding
+	if encoding == "" {
+		encoding = "mulaw" // Default for PCMU
+	}
+	query.Add("encoding", encoding)
+
+	sampleRate := p.config.SampleRate
+	if sampleRate == 0 {
+		sampleRate = 8000 // Default for telephony
+	}
+	query.Add("sample_rate", fmt.Sprintf("%d", sampleRate))
+
+	channels := p.config.Channels
+	if channels == 0 {
+		channels = 1
+	}
+	query.Add("channels", fmt.Sprintf("%d", channels))
 
 	// Enhanced language detection and accent handling
 	if p.config.DetectLanguage && len(p.config.SupportedLanguages) > 0 {
@@ -174,10 +196,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 		query.Add("detect_language", "true")
 		query.Add("language", strings.Join(p.config.SupportedLanguages, ","))
 
-		// Add accent-aware model selection if enabled
-		if p.config.AccentAwareModels {
-			query.Add("model", "nova-2") // Use the most advanced model for accent detection
-		}
+		// Note: model is already set above from config, no need to add again
 
 		// Add confidence threshold for language detection
 		if p.config.LanguageConfidenceThreshold > 0 {
@@ -197,8 +216,16 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 		query.Add("language", language)
 	}
 
-	query.Add("tier", p.config.Tier)
-	query.Add("version", p.config.Version)
+	// Note: tier and version params are deprecated for nova-2 model
+	// Only add them if using legacy models
+	if p.config.Model != "nova-2" && p.config.Model != "nova" {
+		if p.config.Tier != "" {
+			query.Add("tier", p.config.Tier)
+		}
+		if p.config.Version != "" {
+			query.Add("version", p.config.Version)
+		}
+	}
 	query.Add("punctuate", fmt.Sprintf("%t", p.config.Punctuate))
 	query.Add("diarize", fmt.Sprintf("%t", p.config.Diarize))
 	query.Add("numerals", fmt.Sprintf("%t", p.config.Numerals))
@@ -217,6 +244,13 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 	req.URL.RawQuery = query.Encode()
 
+	// Log the request for debugging
+	p.logger.WithFields(logrus.Fields{
+		"url":          req.URL.String(),
+		"content_type": contentType,
+		"call_uuid":    callUUID,
+	}).Info("Sending request to Deepgram")
+
 	// Send the request to Deepgram
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -227,7 +261,13 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 	// Check for non-200 response status
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("deepgram API returned non-200 status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		p.logger.WithFields(logrus.Fields{
+			"status_code":   resp.StatusCode,
+			"response_body": string(body),
+			"call_uuid":     callUUID,
+		}).Error("Deepgram API error response")
+		return fmt.Errorf("deepgram API returned non-200 status code: %d - %s", resp.StatusCode, string(body))
 	}
 
 	// Parse the response body
@@ -237,9 +277,23 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 	}
 
 	// Extract transcription if available and process it
+	p.logger.WithFields(logrus.Fields{
+		"channels_count":     len(deepgramResp.Results.Channels),
+		"call_uuid":          callUUID,
+		"request_id":         deepgramResp.RequestID,
+		"duration":           deepgramResp.Metadata.Duration,
+	}).Info("Deepgram response received")
+
 	if len(deepgramResp.Results.Channels) > 0 && len(deepgramResp.Results.Channels[0].Alternatives) > 0 {
 		alternative := deepgramResp.Results.Channels[0].Alternatives[0]
 		transcript := alternative.Transcript
+
+		p.logger.WithFields(logrus.Fields{
+			"transcript":   transcript,
+			"confidence":   alternative.Confidence,
+			"words_count":  len(alternative.Words),
+			"call_uuid":    callUUID,
+		}).Info("Extracted transcript from Deepgram response")
 
 		if transcript != "" {
 			// Create metadata
@@ -423,7 +477,10 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 			// Publish to transcription service for real-time streaming
 			if p.transcriptionSvc != nil {
+				p.logger.WithField("call_uuid", callUUID).Info("Publishing transcription to transcription service")
 				p.transcriptionSvc.PublishTranscription(callUUID, transcript, true, metadata)
+			} else {
+				p.logger.WithField("call_uuid", callUUID).Warn("Transcription service is nil, cannot publish transcription")
 			}
 		}
 	}
@@ -488,4 +545,40 @@ func (p *DeepgramProvider) GetLanguageSwitchingMetrics() *LanguageSwitchingMetri
 // GetLanguagePersistenceService returns the language persistence service
 func (p *DeepgramProvider) GetLanguagePersistenceService() *LanguagePersistenceService {
 	return p.persistenceService
+}
+
+// getContentType returns the appropriate Content-Type header based on encoding
+func (p *DeepgramProvider) getContentType() string {
+	encoding := p.config.Encoding
+	if encoding == "" {
+		encoding = "mulaw"
+	}
+	sampleRate := p.config.SampleRate
+	if sampleRate == 0 {
+		sampleRate = 8000
+	}
+	channels := p.config.Channels
+	if channels == 0 {
+		channels = 1
+	}
+
+	switch encoding {
+	case "mulaw":
+		return "audio/mulaw"
+	case "alaw":
+		return "audio/alaw"
+	case "linear16":
+		return fmt.Sprintf("audio/l16;rate=%d;channels=%d", sampleRate, channels)
+	case "wav":
+		return "audio/wav"
+	case "mp3":
+		return "audio/mp3"
+	case "flac":
+		return "audio/flac"
+	case "opus":
+		return "audio/ogg;codecs=opus"
+	default:
+		// Default to mulaw for telephony audio
+		return "audio/mulaw"
+	}
 }
