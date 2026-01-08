@@ -88,6 +88,42 @@ Runs a SIPREC test with actual RTP media:
 ./run_media_test.sh <server_ip> <server_port>
 ```
 
+### `run_hold_media_test.sh`
+
+Tests hold/resume functionality with actual RTP media. Runs calls sequentially:
+
+```bash
+# Run 10 sequential calls with hold/resume
+./run_hold_media_test.sh <server_ip> 5060 10
+
+# Set SSH user for remote server commands
+SSH_USER=myuser ./run_hold_media_test.sh <server_ip> 5060 10
+```
+
+### `run_parallel_media_test.sh`
+
+Parallel load testing with RTP media for hold/resume and transfer scenarios:
+
+```bash
+# Run 100 calls, 20 concurrent
+./run_parallel_media_test.sh <server_ip> siprec_hold_resume.xml 100 20
+
+# Test transfer scenarios
+./run_parallel_media_test.sh <server_ip> siprec_transfer.xml 50 10
+
+# Set SSH user for remote server commands
+SSH_USER=myuser ./run_parallel_media_test.sh <server_ip> siprec_hold_resume.xml 100 20
+```
+
+### `rtp_audio_sender.py`
+
+Python script to send RTP audio from a µ-law file:
+
+```bash
+# Send 10 seconds of audio to server
+python3 rtp_audio_sender.py <server_ip> <rtp_port> test_audio.ulaw 10
+```
+
 ### `rtp_sender.py`
 
 Python script to send RTP audio packets:
