@@ -115,6 +115,12 @@ type SIPMessage struct {
 	VendorHeaders   map[string]string
 	UCIDHeaders     []string // Avaya Universal Call ID variations
 	SessionIDHeader string   // Cisco Session-ID header
+
+	// UUI (User-to-User Information) per RFC 7433
+	UUIHeader string // User-to-User header value
+
+	// X-Headers - all custom headers starting with "X-"
+	XHeaders map[string]string
 }
 
 // CallState tracks the state of SIP calls
@@ -1081,6 +1087,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 		// Store session information in call state
 		callState.RecordingSession = recordingSession
+
+		// Store UUI and X-headers in recording session metadata
+		s.storeUUIAndXHeadersInSession(recordingSession, message)
+
 		if callScope.Metadata() != nil {
 			callScope.Metadata().SetSessionID(recordingSession.ID)
 			if tenant := audit.TenantFromSession(recordingSession); tenant != "" {
@@ -1652,6 +1662,10 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 				return
 			}
 			callState.RecordingSession = recordingSession
+
+			// Store UUI and X-headers in recording session metadata
+			s.storeUUIAndXHeadersInSession(recordingSession, message)
+
 			if callScope.Metadata() != nil {
 				callScope.Metadata().SetSessionID(recordingSession.ID)
 			}
@@ -3908,6 +3922,9 @@ func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
 	default:
 		s.extractGenericHeaders(message)
 	}
+
+	// Always extract UUI and X-headers regardless of vendor
+	s.extractUUIAndXHeaders(message)
 }
 
 // detectVendor identifies the vendor type based on headers
@@ -4019,5 +4036,161 @@ func (s *CustomSIPServer) extractGenericHeaders(message *SIPMessage) {
 		if value := s.getHeaderValue(message, header); value != "" {
 			message.VendorHeaders[header] = value
 		}
+	}
+}
+
+// extractUUIAndXHeaders extracts User-to-User Information (RFC 7433) and all X-headers
+func (s *CustomSIPServer) extractUUIAndXHeaders(message *SIPMessage) {
+	if message.XHeaders == nil {
+		message.XHeaders = make(map[string]string)
+	}
+
+	// Extract User-to-User Information header (RFC 7433)
+	// The UUI header can appear in multiple forms
+	uuiVariants := []string{
+		"User-to-User",
+		"user-to-user",
+		"X-User-to-User",
+		"x-user-to-user",
+	}
+	for _, header := range uuiVariants {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.UUIHeader = value
+			message.XHeaders["User-to-User"] = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id": message.CallID,
+				"uui":     value,
+			}).Debug("Extracted UUI header")
+			break
+		}
+	}
+
+	// Extract all X-headers dynamically from the Headers map
+	if message.Headers != nil {
+		for headerName, values := range message.Headers {
+			// Check if this is an X-header (case-insensitive)
+			lowerName := strings.ToLower(headerName)
+			if strings.HasPrefix(lowerName, "x-") && len(values) > 0 {
+				// Normalize header name for storage (preserve original case from first character)
+				normalizedName := headerName
+				if strings.HasPrefix(headerName, "x-") {
+					normalizedName = "X-" + headerName[2:]
+				}
+
+				// Store the first value (or join multiple values)
+				if len(values) == 1 {
+					message.XHeaders[normalizedName] = values[0]
+				} else {
+					message.XHeaders[normalizedName] = strings.Join(values, ", ")
+				}
+			}
+		}
+	}
+
+	// Also check for X-headers using the raw request if available
+	if message.Request != nil {
+		// Common X-headers used in enterprise telephony
+		enterpriseXHeaders := []string{
+			"X-Call-ID",
+			"X-Original-Call-ID",
+			"X-Correlation-ID",
+			"X-Transaction-ID",
+			"X-Customer-ID",
+			"X-Account-ID",
+			"X-Agent-ID",
+			"X-Queue-ID",
+			"X-Campaign-ID",
+			"X-Recording-ID",
+			"X-Session-ID",
+			"X-Tenant-ID",
+			"X-Application-ID",
+			"X-Custom-Data",
+			"X-Metadata",
+			"X-Call-Type",
+			"X-Call-Direction",
+			"X-ANI",
+			"X-DNIS",
+			"X-Called-Number",
+			"X-Calling-Number",
+			"X-Redirect-Number",
+			"X-Original-Called-Number",
+			"X-Diversion-Reason",
+		}
+
+		for _, header := range enterpriseXHeaders {
+			if _, exists := message.XHeaders[header]; !exists {
+				if value := s.getHeaderValue(message, header); value != "" {
+					message.XHeaders[header] = value
+				}
+			}
+		}
+	}
+
+	// Log extracted X-headers count for debugging
+	if len(message.XHeaders) > 0 {
+		s.logger.WithFields(logrus.Fields{
+			"call_id":        message.CallID,
+			"x_header_count": len(message.XHeaders),
+		}).Debug("Extracted X-headers from SIP message")
+	}
+}
+
+// storeUUIAndXHeadersInSession stores UUI and X-headers in the recording session's ExtendedMetadata
+func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.RecordingSession, message *SIPMessage) {
+	if session == nil || message == nil {
+		return
+	}
+
+	// Ensure ExtendedMetadata map exists
+	if session.ExtendedMetadata == nil {
+		session.ExtendedMetadata = make(map[string]string)
+	}
+
+	// Store UUI header if present
+	if message.UUIHeader != "" {
+		session.ExtendedMetadata["sip_uui"] = message.UUIHeader
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"uui":        message.UUIHeader,
+		}).Debug("Stored UUI in recording session metadata")
+	}
+
+	// Store all X-headers with "sip_" prefix to avoid collisions
+	if len(message.XHeaders) > 0 {
+		for name, value := range message.XHeaders {
+			// Normalize the key: convert "X-Custom-Header" to "sip_x_custom_header"
+			normalizedKey := "sip_" + strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+			session.ExtendedMetadata[normalizedKey] = value
+		}
+		s.logger.WithFields(logrus.Fields{
+			"session_id":     session.ID,
+			"x_header_count": len(message.XHeaders),
+		}).Debug("Stored X-headers in recording session metadata")
+	}
+
+	// Also store vendor headers in metadata
+	if len(message.VendorHeaders) > 0 {
+		for name, value := range message.VendorHeaders {
+			normalizedKey := "sip_" + strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+			// Don't overwrite if already set by X-headers
+			if _, exists := session.ExtendedMetadata[normalizedKey]; !exists {
+				session.ExtendedMetadata[normalizedKey] = value
+			}
+		}
+	}
+
+	// Store vendor type for reference
+	if message.VendorType != "" {
+		session.ExtendedMetadata["sip_vendor_type"] = message.VendorType
+	}
+
+	// Store UCID headers if present (Avaya)
+	if len(message.UCIDHeaders) > 0 {
+		session.ExtendedMetadata["sip_ucid"] = strings.Join(message.UCIDHeaders, ";")
+	}
+
+	// Store Cisco Session-ID if present
+	if message.SessionIDHeader != "" {
+		session.ExtendedMetadata["sip_cisco_session_id"] = message.SessionIDHeader
 	}
 }
