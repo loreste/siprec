@@ -1529,6 +1529,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	}
 
 	success = true
+
+	// Sync to handler.ActiveCalls for pause/resume API support
+	s.syncCallToActiveList(message.CallID, callState)
+
 	if callState.TraceScope != nil {
 		callState.TraceScope.SetAttributes(attribute.String("siprec.state", "awaiting_ack"))
 		callState.TraceScope.Span().AddEvent("siprec.invite.accepted", trace.WithAttributes(
@@ -2905,6 +2909,9 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	delete(s.callStates, callID)
 	s.callMutex.Unlock()
 
+	// Remove from handler.ActiveCalls for pause/resume API support
+	s.removeCallFromActiveList(callID)
+
 	if s.handler != nil {
 		s.handler.ClearSTTRouting(callID)
 	}
@@ -4193,4 +4200,52 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 	if message.SessionIDHeader != "" {
 		session.ExtendedMetadata["sip_cisco_session_id"] = message.SessionIDHeader
 	}
+}
+
+// syncCallToActiveList syncs a CallState to handler.ActiveCalls for pause/resume API support
+func (s *CustomSIPServer) syncCallToActiveList(callID string, callState *CallState) {
+	if s.handler == nil || s.handler.ActiveCalls == nil {
+		return
+	}
+
+	// Create CallData from CallState
+	callData := &CallData{
+		Forwarder:        callState.RTPForwarder,
+		RecordingSession: callState.RecordingSession,
+		LastActivity:     callState.LastActivity,
+		TraceScope:       callState.TraceScope,
+	}
+
+	// If there's dialog info in CallState, create DialogInfo
+	if callState.CallID != "" {
+		callData.DialogInfo = &DialogInfo{
+			CallID:    callState.CallID,
+			LocalTag:  callState.LocalTag,
+			RemoteTag: callState.RemoteTag,
+		}
+	}
+
+	// Use the session ID (recording session ID) or call ID as the key
+	sessionID := callID
+	if callState.RecordingSession != nil && callState.RecordingSession.ID != "" {
+		sessionID = callState.RecordingSession.ID
+	}
+
+	s.handler.ActiveCalls.Store(sessionID, callData)
+	s.logger.WithFields(logrus.Fields{
+		"call_id":    callID,
+		"session_id": sessionID,
+	}).Debug("Synced call to ActiveCalls for pause/resume API")
+}
+
+// removeCallFromActiveList removes a call from handler.ActiveCalls
+func (s *CustomSIPServer) removeCallFromActiveList(callID string) {
+	if s.handler == nil || s.handler.ActiveCalls == nil {
+		return
+	}
+
+	// Try to remove by call ID
+	s.handler.ActiveCalls.Delete(callID)
+
+	s.logger.WithField("call_id", callID).Debug("Removed call from ActiveCalls")
 }

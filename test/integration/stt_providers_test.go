@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +53,7 @@ type TranscriptionResult struct {
 
 // TestTranscriptionListener collects transcription results for testing
 type TestTranscriptionListener struct {
+	mu        sync.Mutex
 	results   []TranscriptionResult
 	provider  string
 	startTime time.Time
@@ -67,7 +69,23 @@ func (t *TestTranscriptionListener) OnTranscription(callUUID string, transcripti
 		Timestamp:    time.Now(),
 		ResponseTime: responseTime,
 	}
+	t.mu.Lock()
 	t.results = append(t.results, result)
+	t.mu.Unlock()
+}
+
+// Results returns a copy of the results slice (thread-safe)
+func (t *TestTranscriptionListener) Results() []TranscriptionResult {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]TranscriptionResult(nil), t.results...)
+}
+
+// ResultsLen returns the number of results (thread-safe)
+func (t *TestTranscriptionListener) ResultsLen() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.results)
 }
 
 // SetupSuite initializes the test suite
@@ -260,7 +278,7 @@ func (suite *STTProviderTestSuite) TestBasicTranscription() {
 				// Mock provider should always succeed
 				suite.Assert().NoError(err, "Mock provider should not return error")
 				require.Eventually(suite.T(), func() bool {
-					return len(listener.results) > 0
+					return listener.ResultsLen() > 0
 				}, 5*time.Second, 50*time.Millisecond, "Should receive transcription results")
 			} else {
 				// Real providers might fail due to network/auth issues in test environment
@@ -271,7 +289,7 @@ func (suite *STTProviderTestSuite) TestBasicTranscription() {
 				}
 			}
 
-			suite.results[name] = listener.results
+			suite.results[name] = listener.Results()
 		})
 	}
 }
@@ -361,7 +379,7 @@ func (suite *STTProviderTestSuite) TestProviderPerformance() {
 				"duration_ms":      duration.Milliseconds(),
 				"audio_size_bytes": len(suite.testAudioData),
 				"error":            err != nil,
-				"result_count":     len(listener.results),
+				"result_count":     listener.ResultsLen(),
 			}).Info("Provider performance metrics")
 
 			// Basic performance assertions
@@ -369,7 +387,7 @@ func (suite *STTProviderTestSuite) TestProviderPerformance() {
 
 			if name == "mock" && err == nil {
 				require.Eventually(suite.T(), func() bool {
-					return len(listener.results) > 0
+					return listener.ResultsLen() > 0
 				}, 5*time.Second, 50*time.Millisecond, "Should receive results from mock provider")
 			}
 		})
@@ -457,7 +475,7 @@ func (suite *STTProviderTestSuite) TestLargeAudioData() {
 				"provider":         name,
 				"audio_size_bytes": len(largeAudioData),
 				"error":            err != nil,
-				"result_count":     len(listener.results),
+				"result_count":     listener.ResultsLen(),
 			}).Info("Large audio test results")
 
 			if name == "mock" {
