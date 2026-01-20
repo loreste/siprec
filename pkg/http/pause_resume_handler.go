@@ -17,32 +17,54 @@ import (
 type PauseResumeService interface {
 	// PauseSession pauses recording and/or transcription for a session
 	PauseSession(sessionID string, pauseRecording, pauseTranscription bool) error
-	
+
 	// ResumeSession resumes recording and/or transcription for a session
 	ResumeSession(sessionID string) error
-	
+
 	// PauseAll pauses all active sessions
 	PauseAll(pauseRecording, pauseTranscription bool) error
-	
+
 	// ResumeAll resumes all paused sessions
 	ResumeAll() error
-	
+
 	// GetPauseStatus returns the pause status for a session
 	GetPauseStatus(sessionID string) (*PauseStatus, error)
-	
+
 	// GetAllPauseStatuses returns pause status for all sessions
 	GetAllPauseStatuses() (map[string]*PauseStatus, error)
+
+	// MuteSession mutes inbound (caller) and/or outbound (agent/TTS) audio for a session
+	MuteSession(sessionID string, muteInbound, muteOutbound bool) error
+
+	// UnmuteSession unmutes inbound and/or outbound audio for a session
+	UnmuteSession(sessionID string, unmuteInbound, unmuteOutbound bool) error
+
+	// GetMuteStatus returns the mute status for a session
+	GetMuteStatus(sessionID string) (*MuteStatus, error)
+
+	// GetAllMuteStatuses returns mute status for all sessions
+	GetAllMuteStatuses() (map[string]*MuteStatus, error)
 }
 
 // PauseStatus represents the pause state of a session
 type PauseStatus struct {
-	SessionID            string        `json:"session_id"`
+	SessionID           string        `json:"session_id"`
 	IsPaused            bool          `json:"is_paused"`
 	RecordingPaused     bool          `json:"recording_paused"`
 	TranscriptionPaused bool          `json:"transcription_paused"`
 	PausedAt            *time.Time    `json:"paused_at,omitempty"`
 	PauseDuration       time.Duration `json:"pause_duration,omitempty"`
 	AutoResumeAt        *time.Time    `json:"auto_resume_at,omitempty"`
+}
+
+// MuteStatus represents the mute state of a session
+type MuteStatus struct {
+	SessionID      string        `json:"session_id"`
+	IsMuted        bool          `json:"is_muted"`
+	InboundMuted   bool          `json:"inbound_muted"`   // Caller audio muted
+	OutboundMuted  bool          `json:"outbound_muted"`  // Agent/TTS audio muted
+	MutedAt        *time.Time    `json:"muted_at,omitempty"`
+	MuteDuration   time.Duration `json:"mute_duration,omitempty"`
 }
 
 // PauseResumeHandler handles pause/resume API requests
@@ -73,13 +95,19 @@ func (h *PauseResumeHandler) RegisterHandlers(server *Server) {
 		server.RegisterHandler("/api/sessions/{id}/pause", h.authMiddleware(h.handlePauseSession))
 		server.RegisterHandler("/api/sessions/{id}/resume", h.authMiddleware(h.handleResumeSession))
 		server.RegisterHandler("/api/sessions/{id}/pause-status", h.authMiddleware(h.handleGetPauseStatus))
+		// Mute/Unmute endpoints
+		server.RegisterHandler("/api/sessions/{id}/mute", h.authMiddleware(h.handleMuteSession))
+		server.RegisterHandler("/api/sessions/{id}/unmute", h.authMiddleware(h.handleUnmuteSession))
+		server.RegisterHandler("/api/sessions/{id}/mute-status", h.authMiddleware(h.handleGetMuteStatus))
 	}
-	
+
 	// Register global endpoints
 	server.RegisterHandler("/api/sessions/pause-all", h.authMiddleware(h.handlePauseAll))
 	server.RegisterHandler("/api/sessions/resume-all", h.authMiddleware(h.handleResumeAll))
 	server.RegisterHandler("/api/sessions/pause-status", h.authMiddleware(h.handleGetAllPauseStatuses))
-	
+	// Mute status for all sessions
+	server.RegisterHandler("/api/sessions/mute-status", h.authMiddleware(h.handleGetAllMuteStatuses))
+
 	h.logger.Info("Pause/Resume API handlers registered")
 }
 
@@ -357,6 +385,161 @@ func (h *PauseResumeHandler) handleGetAllPauseStatuses(w http.ResponseWriter, r 
 	statuses, err := h.service.GetAllPauseStatuses()
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to get pause statuses")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONResponse(w, statuses, http.StatusOK)
+}
+
+// handleMuteSession handles mute requests for a specific session
+func (h *PauseResumeHandler) handleMuteSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, errors.New("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract session ID from URL path
+	sessionID := extractSessionID(r.URL.Path)
+	if sessionID == "" {
+		writeJSONError(w, errors.NewInvalidInput("session ID is required"), http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body for mute options
+	var req struct {
+		MuteInbound  bool `json:"mute_inbound"`  // Mute caller audio
+		MuteOutbound bool `json:"mute_outbound"` // Mute agent/TTS audio
+	}
+
+	// Default to muting both if no body provided
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, errors.NewInvalidInput("invalid request body: "+err.Error()), http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Default: mute both streams
+		req.MuteInbound = true
+		req.MuteOutbound = true
+	}
+
+	// Mute the session
+	if err := h.service.MuteSession(sessionID, req.MuteInbound, req.MuteOutbound); err != nil {
+		h.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to mute session")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	// Get updated mute status
+	status, err := h.service.GetMuteStatus(sessionID)
+	if err != nil {
+		h.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to get mute status")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONResponse(w, status, http.StatusOK)
+
+	h.logger.WithFields(logrus.Fields{
+		"session_id":     sessionID,
+		"inbound_muted":  req.MuteInbound,
+		"outbound_muted": req.MuteOutbound,
+	}).Info("Session muted")
+}
+
+// handleUnmuteSession handles unmute requests for a specific session
+func (h *PauseResumeHandler) handleUnmuteSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, errors.New("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract session ID from URL path
+	sessionID := extractSessionID(r.URL.Path)
+	if sessionID == "" {
+		writeJSONError(w, errors.NewInvalidInput("session ID is required"), http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body for unmute options
+	var req struct {
+		UnmuteInbound  bool `json:"unmute_inbound"`  // Unmute caller audio
+		UnmuteOutbound bool `json:"unmute_outbound"` // Unmute agent/TTS audio
+	}
+
+	// Default to unmuting both if no body provided
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, errors.NewInvalidInput("invalid request body: "+err.Error()), http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Default: unmute both streams
+		req.UnmuteInbound = true
+		req.UnmuteOutbound = true
+	}
+
+	// Unmute the session
+	if err := h.service.UnmuteSession(sessionID, req.UnmuteInbound, req.UnmuteOutbound); err != nil {
+		h.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to unmute session")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	// Get updated mute status
+	status, err := h.service.GetMuteStatus(sessionID)
+	if err != nil {
+		h.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to get mute status")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONResponse(w, status, http.StatusOK)
+
+	h.logger.WithFields(logrus.Fields{
+		"session_id":       sessionID,
+		"unmute_inbound":   req.UnmuteInbound,
+		"unmute_outbound":  req.UnmuteOutbound,
+	}).Info("Session unmuted")
+}
+
+// handleGetMuteStatus handles requests for mute status of a specific session
+func (h *PauseResumeHandler) handleGetMuteStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, errors.New("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract session ID from URL path
+	sessionID := extractSessionID(r.URL.Path)
+	if sessionID == "" {
+		writeJSONError(w, errors.NewInvalidInput("session ID is required"), http.StatusBadRequest)
+		return
+	}
+
+	// Get mute status
+	status, err := h.service.GetMuteStatus(sessionID)
+	if err != nil {
+		h.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to get mute status")
+		writeJSONError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSONResponse(w, status, http.StatusOK)
+}
+
+// handleGetAllMuteStatuses handles requests for mute status of all sessions
+func (h *PauseResumeHandler) handleGetAllMuteStatuses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, errors.New("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get all mute statuses
+	statuses, err := h.service.GetAllMuteStatuses()
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get mute statuses")
 		writeJSONError(w, err, http.StatusInternalServerError)
 		return
 	}

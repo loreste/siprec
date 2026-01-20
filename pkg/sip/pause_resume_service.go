@@ -143,14 +143,118 @@ func (s *PauseResumeService) GetPauseStatus(sessionID string) (*http.PauseStatus
 // GetAllPauseStatuses returns pause status for all sessions
 func (s *PauseResumeService) GetAllPauseStatuses() (map[string]*http.PauseStatus, error) {
 	statuses := make(map[string]*http.PauseStatus)
-	
+
 	// Get all active sessions
 	sessions := s.handler.ActiveCalls.Keys()
-	
+
 	for _, sessionID := range sessions {
 		status, err := s.GetPauseStatus(sessionID)
 		if err != nil {
 			s.logger.WithError(err).WithField("session_id", sessionID).Warn("Failed to get pause status")
+			continue
+		}
+		statuses[sessionID] = status
+	}
+
+	return statuses, nil
+}
+
+// MuteSession mutes inbound (caller) and/or outbound (agent/TTS) audio for a session
+func (s *PauseResumeService) MuteSession(sessionID string, muteInbound, muteOutbound bool) error {
+	// Get the call data from the active calls map
+	value, ok := s.handler.ActiveCalls.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	callData, ok := value.(*CallData)
+	if !ok {
+		return fmt.Errorf("invalid call data for session: %s", sessionID)
+	}
+
+	// Mute the RTP forwarder
+	if callData.Forwarder != nil {
+		callData.Forwarder.Mute(muteInbound, muteOutbound)
+		s.logger.WithFields(logrus.Fields{
+			"session_id":     sessionID,
+			"mute_inbound":   muteInbound,
+			"mute_outbound":  muteOutbound,
+		}).Info("Session muted via API")
+	}
+
+	return nil
+}
+
+// UnmuteSession unmutes inbound and/or outbound audio for a session
+func (s *PauseResumeService) UnmuteSession(sessionID string, unmuteInbound, unmuteOutbound bool) error {
+	// Get the call data from the active calls map
+	value, ok := s.handler.ActiveCalls.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	callData, ok := value.(*CallData)
+	if !ok {
+		return fmt.Errorf("invalid call data for session: %s", sessionID)
+	}
+
+	// Unmute the RTP forwarder
+	if callData.Forwarder != nil {
+		callData.Forwarder.Unmute(unmuteInbound, unmuteOutbound)
+		s.logger.WithFields(logrus.Fields{
+			"session_id":       sessionID,
+			"unmute_inbound":   unmuteInbound,
+			"unmute_outbound":  unmuteOutbound,
+		}).Info("Session unmuted via API")
+	}
+
+	return nil
+}
+
+// GetMuteStatus returns the mute status for a session
+func (s *PauseResumeService) GetMuteStatus(sessionID string) (*http.MuteStatus, error) {
+	// Get the call data from the active calls map
+	value, ok := s.handler.ActiveCalls.Load(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	callData, ok := value.(*CallData)
+	if !ok {
+		return nil, fmt.Errorf("invalid call data for session: %s", sessionID)
+	}
+
+	status := &http.MuteStatus{
+		SessionID: sessionID,
+	}
+
+	if callData.Forwarder != nil {
+		inboundMuted, outboundMuted, mutedAt := callData.Forwarder.GetMuteStatus()
+		status.InboundMuted = inboundMuted
+		status.OutboundMuted = outboundMuted
+		status.MutedAt = mutedAt
+		status.IsMuted = inboundMuted || outboundMuted
+
+		// Calculate mute duration if currently muted
+		if status.IsMuted && mutedAt != nil {
+			status.MuteDuration = time.Since(*mutedAt)
+		}
+	}
+
+	return status, nil
+}
+
+// GetAllMuteStatuses returns mute status for all sessions
+func (s *PauseResumeService) GetAllMuteStatuses() (map[string]*http.MuteStatus, error) {
+	statuses := make(map[string]*http.MuteStatus)
+
+	// Get all active sessions
+	sessions := s.handler.ActiveCalls.Keys()
+
+	for _, sessionID := range sessions {
+		status, err := s.GetMuteStatus(sessionID)
+		if err != nil {
+			s.logger.WithError(err).WithField("session_id", sessionID).Warn("Failed to get mute status")
 			continue
 		}
 		statuses[sessionID] = status

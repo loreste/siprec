@@ -247,7 +247,7 @@ func (d *GuaranteedDeliveryService) SendMessage(callUUID, content string, metada
 	// Add to pending queue
 	select {
 	case d.pendingQueue <- msg:
-		d.updateMetrics(msg, false, false)
+		d.updateMetrics(0, false, false)
 		d.logger.WithFields(logrus.Fields{
 			"message_id": messageID,
 			"call_uuid":  callUUID,
@@ -390,12 +390,14 @@ func (d *GuaranteedDeliveryService) scheduleRetry(msg *PendingMessage, err error
 	}
 
 	// Schedule for retry processing
+	// Capture attemptCount before goroutine to avoid race
+	attemptCount := msg.AttemptCount
 	go func() {
 		select {
 		case <-time.After(delay):
 			select {
 			case d.pendingQueue <- msg:
-				d.updateMetrics(msg, false, true)
+				d.updateMetrics(attemptCount, false, true)
 			case <-d.ctx.Done():
 				return
 			}
@@ -419,7 +421,7 @@ func (d *GuaranteedDeliveryService) calculateRetryDelay(attemptCount int) time.D
 // handleSuccessfulDelivery handles a successful message delivery
 func (d *GuaranteedDeliveryService) handleSuccessfulDelivery(msg *PendingMessage, deliveryTime time.Duration, logger *logrus.Entry) {
 	// Update metrics
-	d.updateMetrics(msg, true, false)
+	d.updateMetrics(msg.AttemptCount, true, false)
 
 	// Remove from persistent storage if enabled
 	if d.config.PersistenceEnabled && d.storage != nil {
@@ -443,7 +445,7 @@ func (d *GuaranteedDeliveryService) handleFailedMessage(msg *PendingMessage, err
 	}).Error("Message delivery permanently failed")
 
 	// Update metrics
-	d.updateMetrics(msg, false, false)
+	d.updateMetrics(msg.AttemptCount, false, false)
 	d.metrics.mutex.Lock()
 	d.metrics.FailedDeliveries++
 	if d.config.DeadLetterQueueEnabled {
@@ -643,7 +645,7 @@ func (d *GuaranteedDeliveryService) decompressContent(content string) (string, e
 }
 
 // updateMetrics updates delivery metrics
-func (d *GuaranteedDeliveryService) updateMetrics(msg *PendingMessage, success, retry bool) {
+func (d *GuaranteedDeliveryService) updateMetrics(attemptCount int, success, retry bool) {
 	d.metrics.mutex.Lock()
 	defer d.metrics.mutex.Unlock()
 
@@ -660,9 +662,9 @@ func (d *GuaranteedDeliveryService) updateMetrics(msg *PendingMessage, success, 
 
 	// Update average retry count
 	if d.metrics.TotalMessages == 1 {
-		d.metrics.AverageRetryCount = float64(msg.AttemptCount)
+		d.metrics.AverageRetryCount = float64(attemptCount)
 	} else {
-		d.metrics.AverageRetryCount = (d.metrics.AverageRetryCount*float64(d.metrics.TotalMessages-1) + float64(msg.AttemptCount)) / float64(d.metrics.TotalMessages)
+		d.metrics.AverageRetryCount = (d.metrics.AverageRetryCount*float64(d.metrics.TotalMessages-1) + float64(attemptCount)) / float64(d.metrics.TotalMessages)
 	}
 }
 

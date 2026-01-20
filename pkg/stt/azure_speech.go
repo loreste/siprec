@@ -34,12 +34,15 @@ type AzureSpeechProvider struct {
 
 // AzureStreamSession represents an active streaming session
 type AzureStreamSession struct {
-	callUUID    string
-	conn        *websocket.Conn
-	ctx         context.Context
-	cancel      context.CancelFunc
-	mutex       sync.Mutex
-	lastActivity time.Time
+	callUUID      string
+	conn          *websocket.Conn
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mutex         sync.Mutex
+	lastActivity  time.Time
+	finalReceived chan struct{}
+	streamDone    chan struct{}
+	keepAliveDone chan struct{}
 }
 
 // AzureStreamingResponse represents Azure Speech Services streaming response
@@ -237,7 +240,18 @@ func (p *AzureSpeechProvider) SetCallback(callback TranscriptionCallback) {
 }
 
 // StreamToText streams audio data to Azure Speech Services with real-time support
-func (p *AzureSpeechProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
+func (p *AzureSpeechProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) (err error) {
+	// Panic recovery to prevent crashes from affecting the main server
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"panic":     r,
+			}).Error("Recovered from panic in Azure STT StreamToText")
+			err = fmt.Errorf("panic recovered in Azure STT streaming: %v", r)
+		}
+	}()
+
 	p.mutex.RLock()
 	if p.config.SubscriptionKey == "" {
 		p.mutex.RUnlock()
@@ -265,6 +279,8 @@ func (p *AzureSpeechProvider) StreamToText(ctx context.Context, audioStream io.R
 
 // streamWithWebSocket handles real-time streaming via WebSocket
 func (p *AzureSpeechProvider) streamWithWebSocket(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	logger := p.logger.WithField("call_uuid", callUUID)
+
 	// Create WebSocket URL
 	wsURL, err := p.buildWebSocketURL()
 	if err != nil {
@@ -281,36 +297,49 @@ func (p *AzureSpeechProvider) streamWithWebSocket(ctx context.Context, audioStre
 	if err != nil {
 		return fmt.Errorf("failed to connect to Azure Speech WebSocket: %w", err)
 	}
-	defer conn.Close()
 
 	// Create session context
 	sessionCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
-	// Create and register session
+	// Create and register session with proper channels
 	session := &AzureStreamSession{
-		callUUID:     callUUID,
-		conn:         conn,
-		ctx:          sessionCtx,
-		cancel:       cancel,
-		lastActivity: time.Now(),
+		callUUID:      callUUID,
+		conn:          conn,
+		ctx:           sessionCtx,
+		cancel:        cancel,
+		lastActivity:  time.Now(),
+		finalReceived: make(chan struct{}),
+		streamDone:    make(chan struct{}),
+		keepAliveDone: make(chan struct{}),
 	}
 
 	p.streamsMutex.Lock()
 	p.activeStreams[callUUID] = session
 	p.streamsMutex.Unlock()
 
+	// Cleanup on exit
 	defer func() {
 		p.streamsMutex.Lock()
 		delete(p.activeStreams, callUUID)
 		p.streamsMutex.Unlock()
+
+		// Stop keepalive
+		select {
+		case <-session.keepAliveDone:
+		default:
+			close(session.keepAliveDone)
+		}
+
+		cancel()
+		conn.Close()
 	}()
 
-	// Start response handler
-	responseChan := make(chan *AzureStreamingResponse, 10)
-	errorChan := make(chan error, 2)
+	// Start keepalive goroutine
+	go p.keepAlive(session)
 
-	go p.handleWebSocketResponses(session, responseChan, errorChan)
+	// Start response handler
+	errorChan := make(chan error, 2)
+	go p.handleWebSocketResponses(session, nil, errorChan)
 
 	// Send audio configuration
 	if err := p.sendAudioConfig(conn); err != nil {
@@ -318,7 +347,56 @@ func (p *AzureSpeechProvider) streamWithWebSocket(ctx context.Context, audioStre
 	}
 
 	// Stream audio data
-	return p.streamAudioData(sessionCtx, conn, audioStream, callUUID, errorChan)
+	if err := p.streamAudioData(sessionCtx, conn, audioStream, callUUID, errorChan); err != nil {
+		return err
+	}
+
+	// Wait for final transcription results with timeout
+	logger.Debug("Waiting for final transcription results...")
+	waitTimeout := 5 * time.Second
+	select {
+	case <-session.finalReceived:
+		logger.Debug("Received final transcription")
+	case <-session.streamDone:
+		logger.Debug("Stream completed")
+	case <-time.After(waitTimeout):
+		logger.Debug("Timeout waiting for final transcription")
+	case <-ctx.Done():
+		logger.Debug("Context cancelled while waiting for final results")
+	}
+
+	return nil
+}
+
+// keepAlive sends periodic ping messages to keep the WebSocket connection alive
+func (p *AzureSpeechProvider) keepAlive(session *AzureStreamSession) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-session.keepAliveDone:
+			return
+		case <-session.ctx.Done():
+			return
+		case <-ticker.C:
+			session.mutex.Lock()
+			conn := session.conn
+			session.mutex.Unlock()
+
+			if conn == nil {
+				return
+			}
+
+			// Send ping message
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+				p.logger.WithField("call_uuid", session.callUUID).WithError(err).Debug("Failed to send keepalive ping")
+				return
+			}
+			p.logger.WithField("call_uuid", session.callUUID).Debug("Sent keepalive ping")
+		}
+	}
 }
 
 // streamWithHTTP handles fallback HTTP streaming
@@ -657,28 +735,49 @@ func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websock
 
 // handleWebSocketResponses processes incoming WebSocket responses
 func (p *AzureSpeechProvider) handleWebSocketResponses(session *AzureStreamSession, responseChan chan *AzureStreamingResponse, errorChan chan error) {
-	defer close(responseChan)
-	
+	defer func() {
+		close(session.streamDone)
+		if responseChan != nil {
+			close(responseChan)
+		}
+	}()
+
 	for {
 		select {
 		case <-session.ctx.Done():
 			return
 		default:
+			// Set read deadline to detect stale connections
+			session.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 			var response AzureStreamingResponse
 			if err := session.conn.ReadJSON(&response); err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					errorChan <- fmt.Errorf("websocket read error: %w", err)
+					if errorChan != nil {
+						errorChan <- fmt.Errorf("websocket read error: %w", err)
+					}
 				}
 				return
 			}
-			
+
 			session.mutex.Lock()
 			session.lastActivity = time.Now()
 			session.mutex.Unlock()
-			
+
 			// Process the response
-			if err := p.processStreamingResponse(&response, session.callUUID); err != nil {
+			isFinal, err := p.processStreamingResponseWithFinal(&response, session.callUUID)
+			if err != nil {
 				p.logger.WithError(err).Error("Failed to process streaming response")
+			}
+
+			// Signal if final result received
+			if isFinal {
+				select {
+				case <-session.finalReceived:
+					// Already closed
+				default:
+					close(session.finalReceived)
+				}
 			}
 		}
 	}
@@ -686,39 +785,45 @@ func (p *AzureSpeechProvider) handleWebSocketResponses(session *AzureStreamSessi
 
 // processStreamingResponse processes a streaming response and triggers callbacks
 func (p *AzureSpeechProvider) processStreamingResponse(response *AzureStreamingResponse, callUUID string) error {
+	_, err := p.processStreamingResponseWithFinal(response, callUUID)
+	return err
+}
+
+// processStreamingResponseWithFinal processes a streaming response and returns whether it was final
+func (p *AzureSpeechProvider) processStreamingResponseWithFinal(response *AzureStreamingResponse, callUUID string) (bool, error) {
 	if response.RecognitionStatus != "Success" && response.RecognitionStatus != "InitialSilenceTimeout" {
-		return nil // Skip non-successful responses
+		return false, nil // Skip non-successful responses
 	}
-	
+
 	// Determine if this is a final result
 	isFinal := response.ResultType == "FinalResult" || response.RecognitionStatus == "Success"
-	
+
 	// Extract transcription text
 	transcription := response.DisplayText
 	if transcription == "" && len(response.NBest) > 0 {
 		transcription = response.NBest[0].Display
 	}
-	
+
 	if transcription == "" {
-		return nil // Skip empty transcriptions
+		return false, nil // Skip empty transcriptions
 	}
-	
+
 	// Calculate confidence
 	confidence := 1.0
 	if len(response.NBest) > 0 {
 		confidence = response.NBest[0].Confidence
 	}
-	
+
 	// Build metadata
 	metadata := map[string]interface{}{
 		"provider":           "azure-speech",
 		"confidence":         confidence,
 		"recognition_status": response.RecognitionStatus,
 		"result_type":        response.ResultType,
-		"offset":            response.Offset,
-		"duration":          response.Duration,
+		"offset":             response.Offset,
+		"duration":           response.Duration,
 	}
-	
+
 	// Add word-level details if available
 	if len(response.NBest) > 0 && len(response.NBest[0].Words) > 0 {
 		words := make([]map[string]interface{}, len(response.NBest[0].Words))
@@ -732,20 +837,56 @@ func (p *AzureSpeechProvider) processStreamingResponse(response *AzureStreamingR
 		}
 		metadata["words"] = words
 	}
-	
+
 	// Trigger callback
 	p.callbackMutex.RLock()
 	callback := p.callback
 	p.callbackMutex.RUnlock()
-	
+
 	if callback != nil {
 		callback(callUUID, transcription, isFinal, metadata)
 	}
-	
+
 	// Send to transcription service
 	if p.transcriptionSvc != nil {
 		p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
 	}
-	
+
+	return isFinal, nil
+}
+
+// GetActiveConnections returns the number of active streaming sessions
+func (p *AzureSpeechProvider) GetActiveConnections() int {
+	p.streamsMutex.RLock()
+	defer p.streamsMutex.RUnlock()
+	return len(p.activeStreams)
+}
+
+// Shutdown gracefully shuts down all active streams
+func (p *AzureSpeechProvider) Shutdown(ctx context.Context) error {
+	p.logger.Info("Shutting down Azure Speech provider")
+
+	p.streamsMutex.Lock()
+	for callUUID, session := range p.activeStreams {
+		p.logger.WithField("call_uuid", callUUID).Debug("Closing Azure Speech session")
+
+		// Stop keepalive
+		select {
+		case <-session.keepAliveDone:
+		default:
+			close(session.keepAliveDone)
+		}
+
+		if session.cancel != nil {
+			session.cancel()
+		}
+		if session.conn != nil {
+			session.conn.Close()
+		}
+	}
+	p.activeStreams = make(map[string]*AzureStreamSession)
+	p.streamsMutex.Unlock()
+
+	p.logger.Info("Azure Speech provider shutdown complete")
 	return nil
 }
