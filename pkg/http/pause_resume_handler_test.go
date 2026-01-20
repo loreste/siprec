@@ -16,12 +16,14 @@ import (
 
 // MockPauseResumeService implements PauseResumeService for testing
 type MockPauseResumeService struct {
-	sessions map[string]*PauseStatus
+	sessions    map[string]*PauseStatus
+	muteStates  map[string]*MuteStatus
 }
 
 func NewMockPauseResumeService() *MockPauseResumeService {
 	return &MockPauseResumeService{
-		sessions: make(map[string]*PauseStatus),
+		sessions:   make(map[string]*PauseStatus),
+		muteStates: make(map[string]*MuteStatus),
 	}
 }
 
@@ -89,6 +91,73 @@ func (m *MockPauseResumeService) GetAllPauseStatuses() (map[string]*PauseStatus,
 			v.PauseDuration = time.Since(*v.PausedAt)
 		}
 		result[k] = v
+	}
+	return result, nil
+}
+
+func (m *MockPauseResumeService) MuteSession(sessionID string, muteInbound, muteOutbound bool) error {
+	now := time.Now()
+	if _, exists := m.muteStates[sessionID]; !exists {
+		m.muteStates[sessionID] = &MuteStatus{SessionID: sessionID}
+	}
+	status := m.muteStates[sessionID]
+	if muteInbound {
+		status.InboundMuted = true
+	}
+	if muteOutbound {
+		status.OutboundMuted = true
+	}
+	status.IsMuted = status.InboundMuted || status.OutboundMuted
+	if status.IsMuted && status.MutedAt == nil {
+		status.MutedAt = &now
+	}
+	return nil
+}
+
+func (m *MockPauseResumeService) UnmuteSession(sessionID string, unmuteInbound, unmuteOutbound bool) error {
+	if status, exists := m.muteStates[sessionID]; exists {
+		if unmuteInbound {
+			status.InboundMuted = false
+		}
+		if unmuteOutbound {
+			status.OutboundMuted = false
+		}
+		status.IsMuted = status.InboundMuted || status.OutboundMuted
+		if !status.IsMuted {
+			status.MutedAt = nil
+			status.MuteDuration = 0
+		}
+	}
+	return nil
+}
+
+func (m *MockPauseResumeService) GetMuteStatus(sessionID string) (*MuteStatus, error) {
+	if status, exists := m.muteStates[sessionID]; exists {
+		// Calculate duration if muted
+		if status.IsMuted && status.MutedAt != nil {
+			status.MuteDuration = time.Since(*status.MutedAt)
+		}
+		return status, nil
+	}
+	// Return default status if not found (session exists but never muted)
+	if _, exists := m.sessions[sessionID]; exists {
+		return &MuteStatus{SessionID: sessionID}, nil
+	}
+	return nil, &MockError{"session not found"}
+}
+
+func (m *MockPauseResumeService) GetAllMuteStatuses() (map[string]*MuteStatus, error) {
+	result := make(map[string]*MuteStatus)
+	// Include all sessions, not just those with mute states
+	for sessionID := range m.sessions {
+		if status, exists := m.muteStates[sessionID]; exists {
+			if status.IsMuted && status.MutedAt != nil {
+				status.MuteDuration = time.Since(*status.MutedAt)
+			}
+			result[sessionID] = status
+		} else {
+			result[sessionID] = &MuteStatus{SessionID: sessionID}
+		}
 	}
 	return result, nil
 }
@@ -340,6 +409,167 @@ func TestPauseResumeHandler(t *testing.T) {
 			if result != test.expected {
 				t.Fatalf("path '%s': expected '%s', got '%s'", test.path, test.expected, result)
 			}
+		}
+	})
+
+	t.Run("mute session endpoint", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+		mockService.sessions["test-session"] = &PauseStatus{SessionID: "test-session"}
+
+		cfg := &config.PauseResumeConfig{
+			Enabled:     true,
+			PerSession:  true,
+			RequireAuth: false,
+		}
+
+		handler := NewPauseResumeHandler(logger, cfg, mockService)
+
+		// Create request to mute inbound only
+		reqBody := map[string]bool{
+			"mute_inbound":  true,
+			"mute_outbound": false,
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/api/sessions/test-session/mute", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		handler.handleMuteSession(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response MuteStatus
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if response.SessionID != "test-session" {
+			t.Fatalf("expected session ID 'test-session', got '%s'", response.SessionID)
+		}
+		if !response.InboundMuted {
+			t.Fatal("expected inbound to be muted")
+		}
+		if response.OutboundMuted {
+			t.Fatal("expected outbound to NOT be muted")
+		}
+		if !response.IsMuted {
+			t.Fatal("expected session to be muted")
+		}
+	})
+
+	t.Run("unmute session endpoint", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+		mockService.sessions["test-session"] = &PauseStatus{SessionID: "test-session"}
+		// Pre-mute the session
+		mockService.MuteSession("test-session", true, true)
+
+		cfg := &config.PauseResumeConfig{
+			Enabled:     true,
+			PerSession:  true,
+			RequireAuth: false,
+		}
+
+		handler := NewPauseResumeHandler(logger, cfg, mockService)
+
+		// Create request to unmute both
+		req := httptest.NewRequest("POST", "/api/sessions/test-session/unmute", nil)
+		w := httptest.NewRecorder()
+
+		handler.handleUnmuteSession(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response MuteStatus
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if response.InboundMuted {
+			t.Fatal("expected inbound to be unmuted")
+		}
+		if response.OutboundMuted {
+			t.Fatal("expected outbound to be unmuted")
+		}
+		if response.IsMuted {
+			t.Fatal("expected session to NOT be muted")
+		}
+	})
+
+	t.Run("get mute status endpoint", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+		mockService.sessions["test-session"] = &PauseStatus{SessionID: "test-session"}
+		mockService.MuteSession("test-session", true, false)
+
+		cfg := &config.PauseResumeConfig{
+			Enabled:     true,
+			PerSession:  true,
+			RequireAuth: false,
+		}
+
+		handler := NewPauseResumeHandler(logger, cfg, mockService)
+
+		req := httptest.NewRequest("GET", "/api/sessions/test-session/mute-status", nil)
+		w := httptest.NewRecorder()
+
+		handler.handleGetMuteStatus(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response MuteStatus
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if !response.InboundMuted {
+			t.Fatal("expected inbound to be muted")
+		}
+		if response.OutboundMuted {
+			t.Fatal("expected outbound to NOT be muted")
+		}
+	})
+
+	t.Run("get all mute statuses endpoint", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+		mockService.sessions["session-1"] = &PauseStatus{SessionID: "session-1"}
+		mockService.sessions["session-2"] = &PauseStatus{SessionID: "session-2"}
+		mockService.MuteSession("session-1", true, true)
+
+		cfg := &config.PauseResumeConfig{
+			Enabled:     true,
+			RequireAuth: false,
+		}
+
+		handler := NewPauseResumeHandler(logger, cfg, mockService)
+
+		req := httptest.NewRequest("GET", "/api/sessions/mute-status", nil)
+		w := httptest.NewRecorder()
+
+		handler.handleGetAllMuteStatuses(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response map[string]*MuteStatus
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if len(response) != 2 {
+			t.Fatalf("expected 2 statuses, got %d", len(response))
+		}
+
+		if !response["session-1"].IsMuted {
+			t.Fatal("expected session-1 to be muted")
+		}
+		if response["session-2"].IsMuted {
+			t.Fatal("expected session-2 to NOT be muted")
 		}
 	})
 }

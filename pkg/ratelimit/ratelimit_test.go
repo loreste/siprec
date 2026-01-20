@@ -132,7 +132,8 @@ func TestLimiter_Reset(t *testing.T) {
 }
 
 func TestLimiter_Concurrent(t *testing.T) {
-	limiter := NewLimiter(1000, 100, newTestLogger())
+	// Use a very low rate (1/sec) so no tokens are replenished during the test
+	limiter := NewLimiter(1, 100, newTestLogger())
 
 	var wg sync.WaitGroup
 	allowed := make(chan int, 200)
@@ -157,7 +158,7 @@ func TestLimiter_Concurrent(t *testing.T) {
 		count++
 	}
 
-	// Should allow exactly burst size initially
+	// Should allow exactly burst size initially (with low rate, no token replenishment during test)
 	assert.Equal(t, 100, count, "Expected exactly 100 requests allowed (burst size)")
 }
 
