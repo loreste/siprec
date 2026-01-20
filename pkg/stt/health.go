@@ -376,50 +376,74 @@ func (h *HealthMonitor) IsProviderHealthy(name string) bool {
 func (h *HealthMonitor) GetHealthyProviders() []string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	var healthy []string
 	for name := range h.healthStatus {
-		if h.IsProviderHealthy(name) {
+		if h.isProviderHealthyLocked(name) {
 			healthy = append(healthy, name)
 		}
 	}
-	
+
 	return healthy
+}
+
+// isProviderHealthyLocked checks if a provider is healthy (caller must hold at least RLock)
+func (h *HealthMonitor) isProviderHealthyLocked(name string) bool {
+	health, exists := h.healthStatus[name]
+	if !exists {
+		return false
+	}
+
+	cb, cbExists := h.circuitBreakerStates[name]
+	if !cbExists {
+		return health.Healthy
+	}
+
+	cb.mu.Lock()
+	circuitOpen := cb.state == "open"
+	cb.mu.Unlock()
+
+	return health.Healthy && !circuitOpen
 }
 
 // GetProviderScore calculates a score for provider selection
 func (h *HealthMonitor) GetProviderScore(name string) float64 {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
+	return h.getProviderScoreLocked(name)
+}
+
+// getProviderScoreLocked calculates a score for provider selection (caller must hold at least RLock)
+func (h *HealthMonitor) getProviderScoreLocked(name string) float64 {
 	health, exists := h.healthStatus[name]
 	if !exists || !health.Healthy {
 		return 0
 	}
-	
+
 	// Calculate score based on various factors
 	score := 100.0
-	
+
 	// Deduct for error rate
 	score -= health.ErrorRate * 50
-	
+
 	// Deduct for high latency
 	if health.AverageLatency > 500*time.Millisecond {
 		score -= 20
 	} else if health.AverageLatency > 200*time.Millisecond {
 		score -= 10
 	}
-	
+
 	// Deduct for recent failures
 	if time.Since(health.LastSuccess) > 5*time.Minute {
 		score -= 15
 	}
-	
+
 	// Bonus for long uptime
 	if health.ConsecutiveFails == 0 && health.SuccessCount > 100 {
 		score += 10
 	}
-	
+
 	// Check circuit breaker state
 	if cb, exists := h.circuitBreakerStates[name]; exists {
 		cb.mu.Lock()
@@ -430,11 +454,11 @@ func (h *HealthMonitor) GetProviderScore(name string) float64 {
 		}
 		cb.mu.Unlock()
 	}
-	
+
 	if score < 0 {
 		score = 0
 	}
-	
+
 	return score
 }
 
@@ -442,30 +466,30 @@ func (h *HealthMonitor) GetProviderScore(name string) float64 {
 func (h *HealthMonitor) GetBestProvider(excludeList []string) (string, error) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	excludeMap := make(map[string]bool)
 	for _, name := range excludeList {
 		excludeMap[name] = true
 	}
-	
+
 	var bestProvider string
 	var bestScore float64
-	
+
 	for name := range h.providers {
 		if excludeMap[name] {
 			continue
 		}
-		
-		score := h.GetProviderScore(name)
+
+		score := h.getProviderScoreLocked(name)
 		if score > bestScore {
 			bestScore = score
 			bestProvider = name
 		}
 	}
-	
+
 	if bestProvider == "" {
 		return "", fmt.Errorf("no healthy providers available")
 	}
-	
+
 	return bestProvider, nil
 }

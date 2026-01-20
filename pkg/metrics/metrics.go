@@ -80,6 +80,24 @@ var (
 	WhisperTempFileDiskUsage   prometheus.Gauge
 	WhisperTimeouts            *prometheus.CounterVec
 	WhisperOutputFormatCounter *prometheus.CounterVec
+
+	// High-concurrency transcription metrics
+	TranscriptionServicePublished    prometheus.Counter
+	TranscriptionServiceDropped      prometheus.Counter
+	TranscriptionServiceQueueLength  prometheus.Gauge
+	TranscriptionServiceHighWater    prometheus.Gauge
+
+	LiveTranscriptionTotal           *prometheus.CounterVec
+	ConversationAccumulatorActive    prometheus.Gauge
+	ConversationAccumulatorTotal     prometheus.Counter
+	ConversationSegmentsTotal        prometheus.Counter
+
+	AMQPListenerPublished            prometheus.Counter
+	AMQPListenerFailed               prometheus.Counter
+	AMQPListenerDropped              prometheus.Counter
+	AMQPListenerTimeouts             prometheus.Counter
+	AMQPListenerQueueLength          prometheus.Gauge
+	AMQPListenerHighWater            prometheus.Gauge
 )
 
 // Init initializes all metrics and registers them with Prometheus
@@ -444,6 +462,106 @@ func Init(logger *logrus.Logger) {
 			[]string{"format"},
 		)
 
+		// Initialize high-concurrency transcription metrics
+		TranscriptionServicePublished = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_transcription_service_published_total",
+				Help: "Total transcription events published by the transcription service",
+			},
+		)
+
+		TranscriptionServiceDropped = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_transcription_service_dropped_total",
+				Help: "Total transcription events dropped due to backpressure",
+			},
+		)
+
+		TranscriptionServiceQueueLength = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_transcription_service_queue_length",
+				Help: "Current length of the transcription service event queue",
+			},
+		)
+
+		TranscriptionServiceHighWater = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_transcription_service_queue_high_water",
+				Help: "High water mark of the transcription service event queue",
+			},
+		)
+
+		LiveTranscriptionTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_live_transcription_total",
+				Help: "Total live transcriptions processed",
+			},
+			[]string{"provider", "type"},
+		)
+
+		ConversationAccumulatorActive = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_conversation_accumulator_active",
+				Help: "Number of active conversations being accumulated",
+			},
+		)
+
+		ConversationAccumulatorTotal = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_conversation_accumulator_total",
+				Help: "Total number of conversations processed",
+			},
+		)
+
+		ConversationSegmentsTotal = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_conversation_segments_total",
+				Help: "Total number of conversation segments accumulated",
+			},
+		)
+
+		AMQPListenerPublished = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_amqp_listener_published_total",
+				Help: "Total transcription messages published via AMQP listener",
+			},
+		)
+
+		AMQPListenerFailed = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_amqp_listener_failed_total",
+				Help: "Total AMQP listener publish failures",
+			},
+		)
+
+		AMQPListenerDropped = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_amqp_listener_dropped_total",
+				Help: "Total AMQP listener messages dropped due to backpressure",
+			},
+		)
+
+		AMQPListenerTimeouts = prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "siprec_amqp_listener_timeouts_total",
+				Help: "Total AMQP listener publish timeouts",
+			},
+		)
+
+		AMQPListenerQueueLength = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_amqp_listener_queue_length",
+				Help: "Current length of the AMQP listener publish queue",
+			},
+		)
+
+		AMQPListenerHighWater = prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "siprec_amqp_listener_queue_high_water",
+				Help: "High water mark of the AMQP listener publish queue",
+			},
+		)
+
 		// Register all metrics
 		registry.MustRegister(
 			// RTP metrics
@@ -510,6 +628,22 @@ func Init(logger *logrus.Logger) {
 			WhisperTempFileDiskUsage,
 			WhisperTimeouts,
 			WhisperOutputFormatCounter,
+
+			// High-concurrency transcription metrics
+			TranscriptionServicePublished,
+			TranscriptionServiceDropped,
+			TranscriptionServiceQueueLength,
+			TranscriptionServiceHighWater,
+			LiveTranscriptionTotal,
+			ConversationAccumulatorActive,
+			ConversationAccumulatorTotal,
+			ConversationSegmentsTotal,
+			AMQPListenerPublished,
+			AMQPListenerFailed,
+			AMQPListenerDropped,
+			AMQPListenerTimeouts,
+			AMQPListenerQueueLength,
+			AMQPListenerHighWater,
 		)
 
 		logger.Info("Prometheus metrics initialized")
@@ -867,5 +1001,82 @@ func UpdateRateLimitBucket(clientIP string, tokens float64) {
 func RecordSIPRateLimited(clientIP, method string) {
 	if metricsEnabled {
 		SIPRateLimitedTotal.WithLabelValues(clientIP, method).Inc()
+	}
+}
+
+// UpdateTranscriptionServiceMetrics updates transcription service metrics
+func UpdateTranscriptionServiceMetrics(published, dropped, highWater int64, queueLength int) {
+	if metricsEnabled {
+		TranscriptionServicePublished.Add(float64(published))
+		TranscriptionServiceDropped.Add(float64(dropped))
+		TranscriptionServiceHighWater.Set(float64(highWater))
+		TranscriptionServiceQueueLength.Set(float64(queueLength))
+	}
+}
+
+// RecordLiveTranscription records a live transcription event
+func RecordLiveTranscription(provider string, isFinal bool) {
+	if metricsEnabled {
+		transcriptionType := "partial"
+		if isFinal {
+			transcriptionType = "final"
+		}
+		LiveTranscriptionTotal.WithLabelValues(provider, transcriptionType).Inc()
+	}
+}
+
+// UpdateConversationAccumulatorMetrics updates conversation accumulator metrics
+func UpdateConversationAccumulatorMetrics(active, total, segments int64) {
+	if metricsEnabled {
+		ConversationAccumulatorActive.Set(float64(active))
+		ConversationAccumulatorTotal.Add(float64(total))
+		ConversationSegmentsTotal.Add(float64(segments))
+	}
+}
+
+// SetConversationAccumulatorActive sets the active conversations count
+func SetConversationAccumulatorActive(active int64) {
+	if metricsEnabled {
+		ConversationAccumulatorActive.Set(float64(active))
+	}
+}
+
+// UpdateAMQPListenerMetrics updates AMQP listener metrics
+func UpdateAMQPListenerMetrics(published, failed, dropped, timeouts, highWater int64, queueLength int) {
+	if metricsEnabled {
+		AMQPListenerPublished.Add(float64(published))
+		AMQPListenerFailed.Add(float64(failed))
+		AMQPListenerDropped.Add(float64(dropped))
+		AMQPListenerTimeouts.Add(float64(timeouts))
+		AMQPListenerHighWater.Set(float64(highWater))
+		AMQPListenerQueueLength.Set(float64(queueLength))
+	}
+}
+
+// RecordAMQPListenerPublish increments the AMQP listener published counter
+func RecordAMQPListenerPublish() {
+	if metricsEnabled {
+		AMQPListenerPublished.Inc()
+	}
+}
+
+// RecordAMQPListenerFailure increments the AMQP listener failure counter
+func RecordAMQPListenerFailure() {
+	if metricsEnabled {
+		AMQPListenerFailed.Inc()
+	}
+}
+
+// RecordAMQPListenerDrop increments the AMQP listener dropped counter
+func RecordAMQPListenerDrop() {
+	if metricsEnabled {
+		AMQPListenerDropped.Inc()
+	}
+}
+
+// RecordAMQPListenerTimeout increments the AMQP listener timeout counter
+func RecordAMQPListenerTimeout() {
+	if metricsEnabled {
+		AMQPListenerTimeouts.Inc()
 	}
 }

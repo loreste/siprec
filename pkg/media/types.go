@@ -56,6 +56,12 @@ type RTPForwarder struct {
 	recordingWriter     *PausableWriter // Pausable writer for recording
 	transcriptionReader *PausableReader // Pausable reader for transcription
 
+	// Mute state - controls which audio streams are silenced
+	InboundMuted  bool       // If true, caller audio (inbound) is muted/silenced
+	OutboundMuted bool       // If true, agent/TTS audio (outbound) is muted/silenced
+	MutedAt       *time.Time // When the mute was applied
+	muteMutex     sync.RWMutex
+
 	// SRTP-related fields
 	SRTPEnabled     bool   // Whether SRTP is enabled for this forwarder
 	SRTPMasterKey   []byte // SRTP master key for crypto attribute in SDP
@@ -316,6 +322,103 @@ func (f *RTPForwarder) GetPauseStatus() (recordingPaused, transcriptionPaused bo
 	f.pauseMutex.RLock()
 	defer f.pauseMutex.RUnlock()
 	return f.RecordingPaused, f.TranscriptionPaused, f.PausedAt
+}
+
+// Mute mutes the specified audio streams (inbound = caller, outbound = agent/TTS)
+// When muted, the audio stream is replaced with silence instead of being stopped
+func (f *RTPForwarder) Mute(muteInbound, muteOutbound bool) {
+	f.muteMutex.Lock()
+	defer f.muteMutex.Unlock()
+
+	wasInboundMuted := f.InboundMuted
+	wasOutboundMuted := f.OutboundMuted
+
+	if muteInbound {
+		f.InboundMuted = true
+	}
+
+	if muteOutbound {
+		f.OutboundMuted = true
+	}
+
+	// Set mute timestamp if either is now muted and wasn't before
+	if (f.InboundMuted || f.OutboundMuted) && f.MutedAt == nil {
+		now := time.Now()
+		f.MutedAt = &now
+	}
+
+	if f.Logger != nil && (f.InboundMuted != wasInboundMuted || f.OutboundMuted != wasOutboundMuted) {
+		f.Logger.WithFields(logrus.Fields{
+			"inbound_muted":  f.InboundMuted,
+			"outbound_muted": f.OutboundMuted,
+			"session_id":     f.RecordingSession.ID,
+		}).Info("RTP forwarder muted")
+	}
+}
+
+// Unmute unmutes all audio streams or specific streams based on parameters
+func (f *RTPForwarder) Unmute(unmuteInbound, unmuteOutbound bool) {
+	f.muteMutex.Lock()
+	defer f.muteMutex.Unlock()
+
+	wasInboundMuted := f.InboundMuted
+	wasOutboundMuted := f.OutboundMuted
+
+	if unmuteInbound {
+		f.InboundMuted = false
+	}
+
+	if unmuteOutbound {
+		f.OutboundMuted = false
+	}
+
+	// Clear mute timestamp if both are unmuted
+	if !f.InboundMuted && !f.OutboundMuted {
+		f.MutedAt = nil
+	}
+
+	if f.Logger != nil && (f.InboundMuted != wasInboundMuted || f.OutboundMuted != wasOutboundMuted) {
+		f.Logger.WithFields(logrus.Fields{
+			"inbound_muted":      f.InboundMuted,
+			"outbound_muted":     f.OutboundMuted,
+			"was_inbound_muted":  wasInboundMuted,
+			"was_outbound_muted": wasOutboundMuted,
+			"session_id":         f.RecordingSession.ID,
+		}).Info("RTP forwarder unmuted")
+	}
+}
+
+// UnmuteAll unmutes all audio streams
+func (f *RTPForwarder) UnmuteAll() {
+	f.Unmute(true, true)
+}
+
+// IsMuted returns whether any audio stream is muted
+func (f *RTPForwarder) IsMuted() bool {
+	f.muteMutex.RLock()
+	defer f.muteMutex.RUnlock()
+	return f.InboundMuted || f.OutboundMuted
+}
+
+// GetMuteStatus returns the current mute status
+func (f *RTPForwarder) GetMuteStatus() (inboundMuted, outboundMuted bool, mutedAt *time.Time) {
+	f.muteMutex.RLock()
+	defer f.muteMutex.RUnlock()
+	return f.InboundMuted, f.OutboundMuted, f.MutedAt
+}
+
+// IsInboundMuted returns whether inbound (caller) audio is muted
+func (f *RTPForwarder) IsInboundMuted() bool {
+	f.muteMutex.RLock()
+	defer f.muteMutex.RUnlock()
+	return f.InboundMuted
+}
+
+// IsOutboundMuted returns whether outbound (agent/TTS) audio is muted
+func (f *RTPForwarder) IsOutboundMuted() bool {
+	f.muteMutex.RLock()
+	defer f.muteMutex.RUnlock()
+	return f.OutboundMuted
 }
 
 // Cleanup performs a thorough cleanup of all resources used by the RTPForwarder

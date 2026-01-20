@@ -35,11 +35,12 @@ var (
 
 // DeepgramProviderEnhanced implements the Provider interface for Deepgram with WebSocket streaming
 type DeepgramProviderEnhanced struct {
-	logger *logrus.Logger
-	apiKey string
-	apiURL string
-	wsURL  string
-	config *DeepgramConfig
+	logger           *logrus.Logger
+	apiKey           string
+	apiURL           string
+	wsURL            string
+	config           *DeepgramConfig
+	transcriptionSvc *TranscriptionService
 
 	// Connection management
 	connections     map[string]*DeepgramConnection
@@ -97,14 +98,18 @@ type DeepgramConfig struct {
 
 // DeepgramConnection represents a WebSocket connection to Deepgram
 type DeepgramConnection struct {
-	callUUID     string
-	conn         *websocket.Conn
-	mutex        sync.RWMutex
-	lastActivity time.Time
-	active       bool
-	cancel       context.CancelFunc
-	audioChan    chan []byte
-	logger       *logrus.Entry
+	callUUID       string
+	conn           *websocket.Conn
+	mutex          sync.RWMutex
+	lastActivity   time.Time
+	active         bool
+	cancel         context.CancelFunc
+	audioChan      chan []byte
+	logger         *logrus.Entry
+	finalReceived  chan struct{} // Signals when final transcription is received
+	messagesDone   chan struct{} // Signals when message handler has completed
+	keepAliveDone  chan struct{} // Signals keepalive goroutine to stop
+	finalizeSent   bool          // Track if finalize message was sent
 }
 
 // RetryConfig holds retry configuration
@@ -210,6 +215,18 @@ func NewDeepgramProviderEnhanced(logger *logrus.Logger) *DeepgramProviderEnhance
 		retryConfig:    DefaultRetryConfig(),
 		circuitBreaker: NewCircuitBreaker(5, 30*time.Second),
 	}
+}
+
+// NewDeepgramProviderEnhancedWithService creates a new enhanced Deepgram provider with transcription service
+func NewDeepgramProviderEnhancedWithService(logger *logrus.Logger, transcriptionSvc *TranscriptionService) *DeepgramProviderEnhanced {
+	provider := NewDeepgramProviderEnhanced(logger)
+	provider.transcriptionSvc = transcriptionSvc
+	return provider
+}
+
+// SetTranscriptionService sets the transcription service for live publishing
+func (p *DeepgramProviderEnhanced) SetTranscriptionService(svc *TranscriptionService) {
+	p.transcriptionSvc = svc
 }
 
 // NewDeepgramProviderEnhancedWithConfig creates a new Deepgram provider with custom configuration
@@ -349,14 +366,25 @@ func contains(slice []string, item string) bool {
 }
 
 // StreamToText streams audio data to Deepgram using WebSocket for real-time transcription
-func (p *DeepgramProviderEnhanced) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
+func (p *DeepgramProviderEnhanced) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) (err error) {
+	// Panic recovery to prevent crashes from affecting the main server
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.WithFields(logrus.Fields{
+				"call_uuid": callUUID,
+				"panic":     r,
+			}).Error("Recovered from panic in Deepgram StreamToText")
+			err = fmt.Errorf("panic recovered in STT streaming: %v", r)
+		}
+	}()
+
 	// Check circuit breaker
 	if !p.circuitBreaker.canExecute() {
 		return fmt.Errorf("circuit breaker is open, requests are blocked")
 	}
 
 	// Try WebSocket streaming first, fallback to HTTP if needed
-	err := p.streamWithWebSocket(ctx, audioStream, callUUID)
+	err = p.streamWithWebSocket(ctx, audioStream, callUUID)
 	if err != nil {
 		p.logger.WithError(err).Warn("WebSocket streaming failed, falling back to HTTP")
 
@@ -393,8 +421,21 @@ func (p *DeepgramProviderEnhanced) streamWithWebSocket(ctx context.Context, audi
 		conn.close()
 	}()
 
-	// Start message handler
-	go conn.handleMessages(p.callback)
+	// Create a wrapper callback that publishes live to transcription service AND calls original callback
+	liveCallback := func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
+		// Publish to transcription service for live AMQP delivery
+		if p.transcriptionSvc != nil {
+			p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
+		}
+
+		// Call original callback if set
+		if p.callback != nil {
+			p.callback(callUUID, transcription, isFinal, metadata)
+		}
+	}
+
+	// Start message handler with live callback
+	go conn.handleMessages(liveCallback)
 
 	// Stream audio data
 	return conn.streamAudio(ctx, audioStream)
@@ -531,14 +572,21 @@ func (p *DeepgramProviderEnhanced) createWebSocketConnection(ctx context.Context
 
 	// Create connection wrapper
 	dgConn := &DeepgramConnection{
-		callUUID:     callUUID,
-		conn:         conn,
-		lastActivity: time.Now(),
-		active:       true,
-		cancel:       cancel,
-		audioChan:    make(chan []byte, p.config.BufferSize),
-		logger:       p.logger.WithField("call_uuid", callUUID),
+		callUUID:      callUUID,
+		conn:          conn,
+		lastActivity:  time.Now(),
+		active:        true,
+		cancel:        cancel,
+		audioChan:     make(chan []byte, p.config.BufferSize),
+		logger:        p.logger.WithField("call_uuid", callUUID),
+		finalReceived: make(chan struct{}),
+		messagesDone:  make(chan struct{}),
+		keepAliveDone: make(chan struct{}),
+		finalizeSent:  false,
 	}
+
+	// Start keepalive goroutine to prevent connection timeout
+	go dgConn.keepAlive()
 
 	p.logger.WithField("call_uuid", callUUID).Info("WebSocket connection established")
 	return dgConn, nil
@@ -700,13 +748,19 @@ func pow(x, y float64) float64 {
 
 // handleMessages handles incoming WebSocket messages
 func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, map[string]interface{})) {
-	defer c.conn.Close()
+	defer func() {
+		close(c.messagesDone)
+		c.logger.Debug("Message handler completed")
+	}()
 
 	for {
+		// Set read deadline to detect stale connections
+		c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 		_, messageBytes, err := c.conn.ReadMessage()
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				c.logger.WithError(err).Error("WebSocket read error")
+				c.logger.WithError(err).Debug("WebSocket read ended")
 			}
 			return
 		}
@@ -726,12 +780,24 @@ func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, 
 		switch response.Type {
 		case "Results":
 			c.processResults(&response, callback)
+			// Check if this is a final result after finalize was sent
+			if response.IsFinal && response.FromFinalize {
+				c.logger.Debug("Received final transcription after finalize")
+				select {
+				case <-c.finalReceived:
+					// Already closed
+				default:
+					close(c.finalReceived)
+				}
+			}
 		case "UtteranceEnd":
 			c.processUtteranceEnd(&response, callback)
 		case "SpeechStarted":
 			c.logger.Debug("Speech started detected")
 		case "Metadata":
 			c.logger.WithField("request_id", response.Metadata.RequestID).Debug("Received Deepgram metadata")
+		case "Finalize":
+			c.logger.Debug("Received finalize acknowledgment from Deepgram")
 		default:
 			c.logger.WithField("type", response.Type).Debug("Unknown response type")
 		}
@@ -858,12 +924,28 @@ func (c *DeepgramConnection) streamAudio(ctx context.Context, audioStream io.Rea
 			return err
 		case audioData, ok := <-c.audioChan:
 			if !ok {
-				// Stream ended normally - send close frame
+				// Audio stream ended - send finalize message to get remaining transcription
+				c.sendFinalizeMessage()
+
+				// Wait for final transcription results with timeout
+				c.logger.Debug("Waiting for final transcription results...")
+				waitTimeout := 5 * time.Second
+				select {
+				case <-c.finalReceived:
+					c.logger.Debug("Received final transcription")
+				case <-c.messagesDone:
+					c.logger.Debug("Message handler completed")
+				case <-time.After(waitTimeout):
+					c.logger.Debug("Timeout waiting for final transcription")
+				case <-ctx.Done():
+					c.logger.Debug("Context cancelled while waiting for final transcription")
+				}
+
+				// Send close frame
 				if err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
 					c.logger.WithError(err).Debug("Failed to send close message")
 				}
-				// Wait briefly for final responses to arrive before closing
-				time.Sleep(100 * time.Millisecond)
+
 				return nil
 			}
 
@@ -881,6 +963,62 @@ func (c *DeepgramConnection) streamAudio(ctx context.Context, audioStream io.Rea
 	}
 }
 
+// sendFinalizeMessage sends a finalize message to Deepgram to request any remaining transcription
+func (c *DeepgramConnection) sendFinalizeMessage() {
+	c.mutex.Lock()
+	if c.finalizeSent {
+		c.mutex.Unlock()
+		return
+	}
+	c.finalizeSent = true
+	c.mutex.Unlock()
+
+	// Deepgram expects a JSON message with type "Finalize" or "CloseStream"
+	finalizeMsg := map[string]string{"type": "Finalize"}
+	msgBytes, err := json.Marshal(finalizeMsg)
+	if err != nil {
+		c.logger.WithError(err).Error("Failed to marshal finalize message")
+		return
+	}
+
+	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := c.conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
+		c.logger.WithError(err).Debug("Failed to send finalize message")
+		return
+	}
+
+	c.logger.Debug("Sent finalize message to Deepgram")
+}
+
+// keepAlive sends periodic ping messages to keep the WebSocket connection alive
+func (c *DeepgramConnection) keepAlive() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.keepAliveDone:
+			return
+		case <-ticker.C:
+			c.mutex.RLock()
+			active := c.active
+			c.mutex.RUnlock()
+
+			if !active {
+				return
+			}
+
+			// Send ping message
+			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := c.conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+				c.logger.WithError(err).Debug("Failed to send keepalive ping")
+				return
+			}
+			c.logger.Debug("Sent keepalive ping")
+		}
+	}
+}
+
 // close closes the WebSocket connection with proper cleanup
 func (c *DeepgramConnection) close() {
 	c.mutex.Lock()
@@ -888,6 +1026,16 @@ func (c *DeepgramConnection) close() {
 
 	if c.active {
 		c.active = false
+
+		// Stop keepalive goroutine (check for nil)
+		if c.keepAliveDone != nil {
+			select {
+			case <-c.keepAliveDone:
+				// Already closed
+			default:
+				close(c.keepAliveDone)
+			}
+		}
 
 		// Cancel context first to stop goroutines
 		if c.cancel != nil {
@@ -909,7 +1057,9 @@ func (c *DeepgramConnection) close() {
 			}()
 		}
 
-		c.logger.Info("WebSocket connection closed gracefully")
+		if c.logger != nil {
+			c.logger.Info("WebSocket connection closed gracefully")
+		}
 	}
 }
 

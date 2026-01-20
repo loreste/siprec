@@ -2,9 +2,17 @@ package stt
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	// Worker pool size for async publishing
+	transcriptionWorkerPoolSize = 64
+	// Channel buffer size for non-blocking publishing
+	transcriptionChannelSize = 10000
 )
 
 // TranscriptionListener represents something that can listen for transcription updates
@@ -13,19 +21,120 @@ type TranscriptionListener interface {
 	OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{})
 }
 
+// transcriptionEvent represents an event to be published
+type transcriptionEvent struct {
+	callUUID      string
+	transcription string
+	isFinal       bool
+	metadata      map[string]interface{}
+}
+
 // TranscriptionService manages transcription results and notifies listeners
+// Optimized for high concurrency with worker pools and buffered channels
 type TranscriptionService struct {
 	logger    *logrus.Logger
 	listeners []TranscriptionListener
 	mutex     sync.RWMutex
+
+	// Async publishing with worker pool
+	eventChan   chan *transcriptionEvent
+	stopChan    chan struct{}
+	wg          sync.WaitGroup
+
+	// Object pool for events to reduce GC pressure
+	eventPool sync.Pool
+
+	// Metrics - atomic for lock-free updates
+	totalPublished   int64
+	totalDropped     int64
+	channelHighWater int64
 }
 
-// NewTranscriptionService creates a new transcription service
+// NewTranscriptionService creates a new transcription service optimized for high concurrency
 func NewTranscriptionService(logger *logrus.Logger) *TranscriptionService {
-	return &TranscriptionService{
+	s := &TranscriptionService{
 		logger:    logger,
-		listeners: make([]TranscriptionListener, 0),
+		listeners: make([]TranscriptionListener, 0, 16),
+		eventChan: make(chan *transcriptionEvent, transcriptionChannelSize),
+		stopChan:  make(chan struct{}),
+		eventPool: sync.Pool{
+			New: func() interface{} {
+				return &transcriptionEvent{
+					metadata: make(map[string]interface{}, 8),
+				}
+			},
+		},
 	}
+
+	// Start worker pool
+	for i := 0; i < transcriptionWorkerPoolSize; i++ {
+		s.wg.Add(1)
+		go s.worker(i)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"workers":     transcriptionWorkerPoolSize,
+		"buffer_size": transcriptionChannelSize,
+	}).Info("Transcription service initialized with worker pool")
+
+	return s
+}
+
+// worker processes transcription events
+func (s *TranscriptionService) worker(id int) {
+	defer s.wg.Done()
+
+	for {
+		select {
+		case <-s.stopChan:
+			return
+		case event := <-s.eventChan:
+			if event != nil {
+				s.processEvent(event)
+				// Return event to pool
+				event.callUUID = ""
+				event.transcription = ""
+				event.isFinal = false
+				// Clear metadata map (reuse capacity)
+				for k := range event.metadata {
+					delete(event.metadata, k)
+				}
+				s.eventPool.Put(event)
+			}
+		}
+	}
+}
+
+// processEvent handles a single transcription event
+func (s *TranscriptionService) processEvent(event *transcriptionEvent) {
+	// Panic recovery
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.WithFields(logrus.Fields{
+				"call_uuid": event.callUUID,
+				"panic":     r,
+			}).Error("Recovered from panic in transcription worker")
+		}
+	}()
+
+	s.mutex.RLock()
+	listeners := make([]TranscriptionListener, len(s.listeners))
+	copy(listeners, s.listeners)
+	s.mutex.RUnlock()
+
+	for _, listener := range listeners {
+		// Create a copy of metadata for each listener to prevent race conditions
+		var metadataCopy map[string]interface{}
+		if event.metadata != nil && len(event.metadata) > 0 {
+			metadataCopy = make(map[string]interface{}, len(event.metadata))
+			for k, v := range event.metadata {
+				metadataCopy[k] = v
+			}
+		}
+		listener.OnTranscription(event.callUUID, event.transcription, event.isFinal, metadataCopy)
+	}
+
+	atomic.AddInt64(&s.totalPublished, 1)
 }
 
 // AddListener registers a new transcription listener
@@ -54,32 +163,97 @@ func (s *TranscriptionService) RemoveListener(listener TranscriptionListener) {
 }
 
 // PublishTranscription notifies all listeners about a new transcription
+// This method is non-blocking and queues the event for async processing
 func (s *TranscriptionService) PublishTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{}) {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
 	if transcription == "" {
 		return // Don't publish empty transcriptions
 	}
 
-	s.logger.WithFields(logrus.Fields{
-		"call_uuid":      callUUID,
-		"transcription":  transcription,
-		"is_final":       isFinal,
-		"listener_count": len(s.listeners),
-	}).Debug("Publishing transcription to listeners")
+	// Get event from pool
+	event := s.eventPool.Get().(*transcriptionEvent)
+	event.callUUID = callUUID
+	event.transcription = transcription
+	event.isFinal = isFinal
 
-	for _, listener := range s.listeners {
-		// Create a copy of metadata for each listener to prevent race conditions
+	// Copy metadata into pooled event's map
+	if metadata != nil {
+		for k, v := range metadata {
+			event.metadata[k] = v
+		}
+	}
+
+	// Non-blocking send with backpressure handling
+	select {
+	case s.eventChan <- event:
+		// Track high water mark
+		currentLen := int64(len(s.eventChan))
+		for {
+			highWater := atomic.LoadInt64(&s.channelHighWater)
+			if currentLen <= highWater {
+				break
+			}
+			if atomic.CompareAndSwapInt64(&s.channelHighWater, highWater, currentLen) {
+				break
+			}
+		}
+	default:
+		// Channel full - drop oldest (backpressure)
+		atomic.AddInt64(&s.totalDropped, 1)
+		// Return event to pool since we're dropping it
+		for k := range event.metadata {
+			delete(event.metadata, k)
+		}
+		s.eventPool.Put(event)
+		s.logger.WithFields(logrus.Fields{
+			"call_uuid":     callUUID,
+			"queue_size":    len(s.eventChan),
+			"total_dropped": atomic.LoadInt64(&s.totalDropped),
+		}).Warn("Transcription event dropped due to backpressure")
+	}
+}
+
+// PublishTranscriptionSync synchronously notifies all listeners (for critical events)
+func (s *TranscriptionService) PublishTranscriptionSync(callUUID string, transcription string, isFinal bool, metadata map[string]interface{}) {
+	if transcription == "" {
+		return
+	}
+
+	s.mutex.RLock()
+	listeners := make([]TranscriptionListener, len(s.listeners))
+	copy(listeners, s.listeners)
+	s.mutex.RUnlock()
+
+	for _, listener := range listeners {
 		var metadataCopy map[string]interface{}
 		if metadata != nil {
-			metadataCopy = make(map[string]interface{})
+			metadataCopy = make(map[string]interface{}, len(metadata))
 			for k, v := range metadata {
 				metadataCopy[k] = v
 			}
 		}
 		listener.OnTranscription(callUUID, transcription, isFinal, metadataCopy)
 	}
+
+	atomic.AddInt64(&s.totalPublished, 1)
+}
+
+// GetMetrics returns service metrics
+func (s *TranscriptionService) GetMetrics() (published, dropped, highWater int64) {
+	return atomic.LoadInt64(&s.totalPublished),
+		atomic.LoadInt64(&s.totalDropped),
+		atomic.LoadInt64(&s.channelHighWater)
+}
+
+// GetQueueLength returns current queue length
+func (s *TranscriptionService) GetQueueLength() int {
+	return len(s.eventChan)
+}
+
+// Shutdown gracefully shuts down the service
+func (s *TranscriptionService) Shutdown() {
+	close(s.stopChan)
+	s.wg.Wait()
+	s.logger.Info("Transcription service shutdown complete")
 }
 
 // WebSocketHub represents a WebSocket hub that can broadcast transcriptions

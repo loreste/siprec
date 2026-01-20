@@ -796,82 +796,91 @@ func initialize() error {
 		case "google":
 			if appConfig.STT.Google.Enabled {
 				googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc, &appConfig.STT.Google)
-				// Wrap with circuit breaker for resilience
-				wrappedProvider := stt.NewCircuitBreakerWrapper(googleProvider, cbManager, logger, nil)
+				// Wrap with live transcription wrapper to ensure AMQP delivery
+				liveProvider := stt.NewLiveTranscriptionWrapper(googleProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
 				} else {
-					logger.WithField("provider", "google").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "google").Info("Registered Google STT provider with live transcription")
 				}
 			}
 		case "deepgram":
 			if appConfig.STT.Deepgram.Enabled {
 				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram, sttManager)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(deepgramProvider, cbManager, logger, nil)
+				// Wrap with live transcription wrapper to ensure AMQP delivery
+				liveProvider := stt.NewLiveTranscriptionWrapper(deepgramProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Deepgram provider")
 				} else {
-					logger.WithField("provider", "deepgram").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "deepgram").Info("Registered Deepgram provider with live transcription")
 				}
 			}
 		case "azure":
 			if appConfig.STT.Azure.Enabled {
 				azureProvider := stt.NewAzureSpeechProvider(logger, transcriptionSvc, &appConfig.STT.Azure)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(azureProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(azureProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Azure Speech provider")
 				} else {
-					logger.WithField("provider", "azure").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "azure").Info("Registered Azure STT provider with live transcription")
 				}
 			}
 		case "amazon":
 			if appConfig.STT.Amazon.Enabled {
 				amazonProvider := stt.NewAmazonTranscribeProvider(logger, transcriptionSvc, &appConfig.STT.Amazon)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(amazonProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(amazonProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Amazon Transcribe provider")
 				} else {
-					logger.WithField("provider", "amazon").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "amazon").Info("Registered Amazon STT provider with live transcription")
 				}
 			}
 		case "openai":
 			if appConfig.STT.OpenAI.Enabled {
 				openaiProvider := stt.NewOpenAIProvider(logger, transcriptionSvc, &appConfig.STT.OpenAI)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(openaiProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(openaiProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register OpenAI provider")
 				} else {
-					logger.WithField("provider", "openai").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "openai").Info("Registered OpenAI STT provider with live transcription")
 				}
 			}
 		case "whisper":
 			if appConfig.STT.Whisper.Enabled {
 				whisperProvider := stt.NewWhisperProvider(logger, transcriptionSvc, &appConfig.STT.Whisper)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(whisperProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(whisperProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Whisper provider")
 				} else {
-					logger.WithField("provider", "whisper").Info("Registered Whisper STT provider")
+					logger.WithField("provider", "whisper").Info("Registered Whisper STT provider with live transcription")
 				}
 			}
 		case "speechmatics":
 			if appConfig.STT.Speechmatics.Enabled {
 				speechmaticsProvider := stt.NewSpeechmaticsProvider(logger, transcriptionSvc, &appConfig.STT.Speechmatics)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(speechmaticsProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(speechmaticsProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Speechmatics provider")
 				} else {
-					logger.WithField("provider", "speechmatics").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "speechmatics").Info("Registered Speechmatics STT provider with live transcription")
 				}
 			}
 		case "elevenlabs":
 			if appConfig.STT.ElevenLabs.Enabled {
 				elevenProvider := stt.NewElevenLabsProvider(logger, transcriptionSvc, &appConfig.STT.ElevenLabs)
-				wrappedProvider := stt.NewCircuitBreakerWrapper(elevenProvider, cbManager, logger, nil)
+				liveProvider := stt.NewLiveTranscriptionWrapper(elevenProvider, transcriptionSvc, logger)
+				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register ElevenLabs provider")
 				} else {
-					logger.WithField("provider", "elevenlabs").Info("Registered STT provider with circuit breaker protection")
+					logger.WithField("provider", "elevenlabs").Info("Registered ElevenLabs STT provider with live transcription")
 				}
 			}
 		default:

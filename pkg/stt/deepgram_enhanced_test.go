@@ -377,47 +377,27 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 		}
 		defer conn.Close()
 
-		// Send mock interim result
-		interimResponse := DeepgramWebSocketResponse{
-			Type:     "Results",
-			IsFinal:  false,
-			Duration: 1.0,
-			Start:    0.0,
-			Channel: struct {
-				Alternatives []struct {
-					Transcript string  `json:"transcript"`
-					Confidence float64 `json:"confidence"`
-					Words      []struct {
-						Word       string  `json:"word"`
-						Start      float64 `json:"start"`
-						End        float64 `json:"end"`
-						Confidence float64 `json:"confidence"`
-						Speaker    int     `json:"speaker,omitempty"`
-					} `json:"words"`
-				} `json:"alternatives"`
-			}{
-				Alternatives: []struct {
-					Transcript string  `json:"transcript"`
-					Confidence float64 `json:"confidence"`
-					Words      []struct {
-						Word       string  `json:"word"`
-						Start      float64 `json:"start"`
-						End        float64 `json:"end"`
-						Confidence float64 `json:"confidence"`
-						Speaker    int     `json:"speaker,omitempty"`
-					} `json:"words"`
-				}{{
-					Transcript: "Hello",
-					Confidence: 0.85,
-				}},
+		// Build channel data as JSON for interim result
+		interimChannel := map[string]interface{}{
+			"alternatives": []map[string]interface{}{
+				{
+					"transcript": "Hello",
+					"confidence": 0.85,
+				},
 			},
-			Metadata: struct {
-				RequestID string `json:"request_id"`
-				ModelName string `json:"model_name"`
-				ModelUUID string `json:"model_uuid"`
-			}{
-				RequestID: "ws-test-123",
-				ModelName: "nova-2",
+		}
+		interimChannelBytes, _ := json.Marshal(interimChannel)
+
+		// Send mock interim result
+		interimResponse := map[string]interface{}{
+			"type":      "Results",
+			"is_final":  false,
+			"duration":  1.0,
+			"start":     0.0,
+			"channel":   json.RawMessage(interimChannelBytes),
+			"metadata": map[string]interface{}{
+				"request_id": "ws-test-123",
+				"model_name": "nova-2",
 			},
 		}
 
@@ -427,12 +407,30 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 			return
 		}
 
+		// Build channel data for final result
+		finalChannel := map[string]interface{}{
+			"alternatives": []map[string]interface{}{
+				{
+					"transcript": "Hello, how are you today?",
+					"confidence": 0.95,
+				},
+			},
+		}
+		finalChannelBytes, _ := json.Marshal(finalChannel)
+
 		// Send final result with minimal delay
-		finalResponse := interimResponse
-		finalResponse.IsFinal = true
-		finalResponse.SpeechFinal = true
-		finalResponse.Channel.Alternatives[0].Transcript = "Hello, how are you today?"
-		finalResponse.Channel.Alternatives[0].Confidence = 0.95
+		finalResponse := map[string]interface{}{
+			"type":         "Results",
+			"is_final":     true,
+			"speech_final": true,
+			"duration":     1.0,
+			"start":        0.0,
+			"channel":      json.RawMessage(finalChannelBytes),
+			"metadata": map[string]interface{}{
+				"request_id": "ws-test-123",
+				"model_name": "nova-2",
+			},
+		}
 
 		time.Sleep(10 * time.Millisecond)
 		if err := conn.WriteJSON(finalResponse); err != nil {
@@ -441,16 +439,12 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 		}
 
 		// Send utterance end with minimal delay
-		utteranceEnd := DeepgramWebSocketResponse{
-			Type:     "UtteranceEnd",
-			Duration: 2.5,
-			Start:    0.0,
-			Metadata: struct {
-				RequestID string `json:"request_id"`
-				ModelName string `json:"model_name"`
-				ModelUUID string `json:"model_uuid"`
-			}{
-				RequestID: "ws-test-123",
+		utteranceEnd := map[string]interface{}{
+			"type":     "UtteranceEnd",
+			"duration": 2.5,
+			"start":    0.0,
+			"metadata": map[string]interface{}{
+				"request_id": "ws-test-123",
 			},
 		}
 
@@ -889,29 +883,32 @@ func TestDeepgramProviderEnhanced_QueryParamsBuilding(t *testing.T) {
 	// Verify basic parameters
 	assert.Equal(t, "custom-model-123", query.Get("model"))
 	assert.Equal(t, "es", query.Get("language"))
-	assert.Equal(t, "2.0", query.Get("version"))
-	assert.Equal(t, "enhanced", query.Get("tier"))
+	// Note: version and tier are NOT valid for streaming API, so they should be empty
+	assert.Equal(t, "", query.Get("version"), "version is not valid for streaming API")
+	assert.Equal(t, "", query.Get("tier"), "tier is not valid for streaming API")
 
 	// Verify audio parameters
 	assert.Equal(t, "flac", query.Get("encoding"))
 	assert.Equal(t, "22050", query.Get("sample_rate"))
 	assert.Equal(t, "2", query.Get("channels"))
 
-	// Verify feature parameters
-	assert.Equal(t, "false", query.Get("punctuate"))
+	// Verify feature parameters (only set when true for boolean params)
+	assert.Equal(t, "", query.Get("punctuate"), "punctuate=false should not be sent")
 	assert.Equal(t, "true", query.Get("diarize"))
 	assert.Equal(t, "true", query.Get("smart_format"))
 	assert.Equal(t, "true", query.Get("profanity_filter"))
-	assert.Equal(t, "false", query.Get("utterances"))
+	assert.Equal(t, "", query.Get("utterances"), "utterances=false should not be sent")
 	assert.Equal(t, "true", query.Get("interim_results"))
 
 	// Verify advanced features
-	assert.Equal(t, "false", query.Get("vad_events"))
+	// Note: vad_events is only set when VAD is true, VAD=false means no param
+	assert.Equal(t, "", query.Get("vad_events"), "vad_events not set when VAD=false")
 	assert.Equal(t, "true", query.Get("endpointing"))
-	assert.Equal(t, "true", query.Get("include_metadata"))
-	assert.Equal(t, "false", query.Get("timestamps"))
-	assert.Equal(t, "true", query.Get("paragraphs"))
-	assert.Equal(t, "false", query.Get("sentences"))
+	// Note: include_metadata, timestamps, paragraphs, sentences are NOT valid for streaming API
+	assert.Equal(t, "", query.Get("include_metadata"), "include_metadata is not valid for streaming API")
+	assert.Equal(t, "", query.Get("timestamps"), "timestamps is not valid for streaming API")
+	assert.Equal(t, "", query.Get("paragraphs"), "paragraphs is not valid for streaming API")
+	assert.Equal(t, "", query.Get("sentences"), "sentences is not valid for streaming API")
 
 	// Verify custom parameters
 	assert.Equal(t, "pci,ssn", query.Get("redact"))
@@ -931,8 +928,8 @@ func TestDeepgramProviderEnhanced_ContentTypeMapping(t *testing.T) {
 		{"mp3", "audio/mp3"},
 		{"flac", "audio/flac"},
 		{"opus", "audio/ogg; codecs=opus"},
-		{"linear16", "audio/wav"}, // Default fallback
-		{"unknown", "audio/wav"},  // Default fallback
+		{"linear16", "audio/l16;rate=16000;channels=1"}, // Linear16 with sample rate info
+		{"unknown", "audio/l16;rate=16000;channels=1"},  // Default fallback to linear16
 	}
 
 	for _, tt := range tests {
