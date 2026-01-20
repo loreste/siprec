@@ -421,16 +421,13 @@ func (p *DeepgramProviderEnhanced) streamWithWebSocket(ctx context.Context, audi
 		conn.close()
 	}()
 
-	// Create a wrapper callback that publishes live to transcription service AND calls original callback
+	// Create a callback that prefers the wrapper callback (handles AMQP delivery)
+	// Only fall back to direct transcriptionSvc publish if no callback is set
 	liveCallback := func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
-		// Publish to transcription service for live AMQP delivery
-		if p.transcriptionSvc != nil {
-			p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
-		}
-
-		// Call original callback if set
 		if p.callback != nil {
 			p.callback(callUUID, transcription, isFinal, metadata)
+		} else if p.transcriptionSvc != nil {
+			p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
 		}
 	}
 
@@ -716,9 +713,11 @@ func (p *DeepgramProviderEnhanced) processHTTPResponse(resp *DeepgramResponse, c
 		"words":      len(alternative.Words),
 	}).Info("Transcription received from Deepgram HTTP")
 
-	// Call callback if available
+	// Publish transcription - prefer callback (wrapper handles AMQP delivery)
 	if p.callback != nil {
 		p.callback(callUUID, transcript, true, metadata)
+	} else if p.transcriptionSvc != nil {
+		p.transcriptionSvc.PublishTranscription(callUUID, transcript, true, metadata)
 	}
 
 	return nil
