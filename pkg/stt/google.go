@@ -332,13 +332,10 @@ func (p *GoogleProvider) receiveResults(session *GoogleStreamSession, errChan ch
 							metadata["words"] = words
 						}
 
-						// Call callback if available
+						// Publish transcription - prefer callback (wrapper handles AMQP delivery)
 						if p.callback != nil {
 							p.callback(session.callUUID, transcription, true, metadata)
-						}
-
-						// Publish to transcription service
-						if p.transcriptionSvc != nil {
+						} else if p.transcriptionSvc != nil {
 							p.transcriptionSvc.PublishTranscription(session.callUUID, transcription, true, metadata)
 						}
 
@@ -372,13 +369,10 @@ func (p *GoogleProvider) receiveResults(session *GoogleStreamSession, errChan ch
 							"language_code": result.LanguageCode,
 						}
 
-						// Call callback for interim result
+						// Publish interim transcription - prefer callback (wrapper handles AMQP delivery)
 						if p.callback != nil {
 							p.callback(session.callUUID, transcription, false, metadata)
-						}
-
-						// Publish interim results
-						if p.transcriptionSvc != nil {
+						} else if p.transcriptionSvc != nil {
 							p.transcriptionSvc.PublishTranscription(session.callUUID, transcription, false, metadata)
 						}
 					}
