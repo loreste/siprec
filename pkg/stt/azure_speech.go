@@ -843,12 +843,10 @@ func (p *AzureSpeechProvider) processStreamingResponseWithFinal(response *AzureS
 	callback := p.callback
 	p.callbackMutex.RUnlock()
 
+	// Publish transcription - prefer callback (wrapper handles AMQP delivery)
 	if callback != nil {
 		callback(callUUID, transcription, isFinal, metadata)
-	}
-
-	// Send to transcription service
-	if p.transcriptionSvc != nil {
+	} else if p.transcriptionSvc != nil {
 		p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
 	}
 

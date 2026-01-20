@@ -470,17 +470,15 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 				"words":      len(alternative.Words),
 			}).Info("Transcription received from Deepgram")
 
-			// Call callback if available
+			// Publish transcription - prefer callback if available (wrapper handles AMQP delivery)
+			// Only fall back to direct transcriptionSvc publish if no callback is set
 			if p.callback != nil {
 				p.callback(callUUID, transcript, true, metadata)
-			}
-
-			// Publish to transcription service for real-time streaming
-			if p.transcriptionSvc != nil {
-				p.logger.WithField("call_uuid", callUUID).Info("Publishing transcription to transcription service")
+			} else if p.transcriptionSvc != nil {
+				p.logger.WithField("call_uuid", callUUID).Debug("Publishing transcription directly to service (no callback)")
 				p.transcriptionSvc.PublishTranscription(callUUID, transcript, true, metadata)
 			} else {
-				p.logger.WithField("call_uuid", callUUID).Warn("Transcription service is nil, cannot publish transcription")
+				p.logger.WithField("call_uuid", callUUID).Warn("No callback or transcription service configured")
 			}
 		}
 	}
