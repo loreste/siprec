@@ -86,8 +86,8 @@ Content-Disposition: recording-session
     ]]>
   </send>
 
-  <!-- Hold call for 5 minutes to simulate recording -->
-  <pause milliseconds="300000"/>
+  <!-- Hold call for 10 seconds for quick load testing -->
+  <pause milliseconds="10000"/>
 
   <send retrans="500">
     <![CDATA[

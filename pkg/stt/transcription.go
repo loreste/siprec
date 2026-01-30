@@ -21,6 +21,12 @@ type TranscriptionListener interface {
 	OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{})
 }
 
+// SessionMetadataSetter is an optional interface for listeners that can receive session metadata
+// (e.g., Oracle UCID, Conversation ID, vendor headers) to attach to conversations
+type SessionMetadataSetter interface {
+	SetSessionMetadata(callUUID string, metadata map[string]string)
+}
+
 // transcriptionEvent represents an event to be published
 type transcriptionEvent struct {
 	callUUID      string
@@ -44,6 +50,11 @@ type TranscriptionService struct {
 	// Object pool for events to reduce GC pressure
 	eventPool sync.Pool
 
+	// Session metadata storage - injected into each transcription event
+	// Keys: Oracle UCID, Conversation ID, vendor type, etc.
+	sessionMetadata      map[string]map[string]string
+	sessionMetadataMutex sync.RWMutex
+
 	// Metrics - atomic for lock-free updates
 	totalPublished   int64
 	totalDropped     int64
@@ -53,10 +64,11 @@ type TranscriptionService struct {
 // NewTranscriptionService creates a new transcription service optimized for high concurrency
 func NewTranscriptionService(logger *logrus.Logger) *TranscriptionService {
 	s := &TranscriptionService{
-		logger:    logger,
-		listeners: make([]TranscriptionListener, 0, 16),
-		eventChan: make(chan *transcriptionEvent, transcriptionChannelSize),
-		stopChan:  make(chan struct{}),
+		logger:          logger,
+		listeners:       make([]TranscriptionListener, 0, 16),
+		eventChan:       make(chan *transcriptionEvent, transcriptionChannelSize),
+		stopChan:        make(chan struct{}),
+		sessionMetadata: make(map[string]map[string]string),
 		eventPool: sync.Pool{
 			New: func() interface{} {
 				return &transcriptionEvent{
@@ -117,6 +129,9 @@ func (s *TranscriptionService) processEvent(event *transcriptionEvent) {
 		}
 	}()
 
+	// Get session metadata to inject (Oracle UCID, Conversation ID, vendor info, etc.)
+	sessionMeta := s.getSessionMetadata(event.callUUID)
+
 	s.mutex.RLock()
 	listeners := make([]TranscriptionListener, len(s.listeners))
 	copy(listeners, s.listeners)
@@ -125,8 +140,14 @@ func (s *TranscriptionService) processEvent(event *transcriptionEvent) {
 	for _, listener := range listeners {
 		// Create a copy of metadata for each listener to prevent race conditions
 		var metadataCopy map[string]interface{}
-		if event.metadata != nil && len(event.metadata) > 0 {
-			metadataCopy = make(map[string]interface{}, len(event.metadata))
+		metaSize := len(event.metadata) + len(sessionMeta)
+		if metaSize > 0 {
+			metadataCopy = make(map[string]interface{}, metaSize)
+			// First, add session metadata (Oracle UCID, Conversation ID, etc.)
+			for k, v := range sessionMeta {
+				metadataCopy[k] = v
+			}
+			// Then, add event-specific metadata (may override session metadata)
 			for k, v := range event.metadata {
 				metadataCopy[k] = v
 			}
@@ -160,6 +181,55 @@ func (s *TranscriptionService) RemoveListener(listener TranscriptionListener) {
 			return
 		}
 	}
+}
+
+// SetSessionMetadata propagates session metadata to all listeners that support it
+// and stores it locally for injection into transcription events.
+// This allows session-level metadata (Oracle UCID, Conversation ID, etc.) to be
+// attached to both conversation records and individual transcription events.
+func (s *TranscriptionService) SetSessionMetadata(callUUID string, metadata map[string]string) {
+	if callUUID == "" || metadata == nil || len(metadata) == 0 {
+		return
+	}
+
+	// Store locally for injection into transcription events
+	s.sessionMetadataMutex.Lock()
+	s.sessionMetadata[callUUID] = metadata
+	s.sessionMetadataMutex.Unlock()
+
+	// Propagate to listeners that support it (e.g., ConversationAccumulator)
+	s.mutex.RLock()
+	listeners := make([]TranscriptionListener, len(s.listeners))
+	copy(listeners, s.listeners)
+	s.mutex.RUnlock()
+
+	for _, listener := range listeners {
+		if setter, ok := listener.(SessionMetadataSetter); ok {
+			setter.SetSessionMetadata(callUUID, metadata)
+		}
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"call_uuid":      callUUID,
+		"metadata_count": len(metadata),
+	}).Debug("Session metadata stored and propagated to listeners")
+}
+
+// ClearSessionMetadata removes stored session metadata for a call (call this on call end)
+func (s *TranscriptionService) ClearSessionMetadata(callUUID string) {
+	if callUUID == "" {
+		return
+	}
+	s.sessionMetadataMutex.Lock()
+	delete(s.sessionMetadata, callUUID)
+	s.sessionMetadataMutex.Unlock()
+}
+
+// getSessionMetadata retrieves stored session metadata for a call
+func (s *TranscriptionService) getSessionMetadata(callUUID string) map[string]string {
+	s.sessionMetadataMutex.RLock()
+	defer s.sessionMetadataMutex.RUnlock()
+	return s.sessionMetadata[callUUID]
 }
 
 // PublishTranscription notifies all listeners about a new transcription

@@ -159,6 +159,15 @@ func (ltm *LiveTranscriptionManager) GetConversationAccumulator() *ConversationA
 	return ltm.conversationAccum
 }
 
+// SetSessionMetadata sets session metadata for a call's conversation
+// This allows SIP handlers to attach session-level metadata (Oracle UCID,
+// Conversation ID, vendor headers, etc.) that will be included in AMQP events
+func (ltm *LiveTranscriptionManager) SetSessionMetadata(callUUID string, metadata map[string]string) {
+	if ltm.conversationAccum != nil {
+		ltm.conversationAccum.SetSessionMetadata(callUUID, metadata)
+	}
+}
+
 // GetMetrics returns current metrics (lock-free)
 func (ltm *LiveTranscriptionManager) GetMetrics() (total, live, final int64) {
 	return atomic.LoadInt64(&ltm.totalTranscriptions),
