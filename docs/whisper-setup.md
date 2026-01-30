@@ -1,6 +1,6 @@
 # Whisper Integration Guide
 
-This walk-through explains how to install and operate [openai/whisper](https://github.com/openai/whisper) alongside the SIPREC server. Whisper can run on the same host or a remote GPU machine—SIPREC simply shells out to whatever executable you point it at.
+This walk-through explains how to install and operate [openai/whisper](https://github.com/openai/whisper) alongside IZI SIPREC. Whisper can run on the same host or a remote GPU machine—IZI SIPREC simply shells out to whatever executable you point it at.
 
 ---
 
@@ -10,10 +10,10 @@ This walk-through explains how to install and operate [openai/whisper](https://g
 | --- | --- | --- |
 | **Local CPU install** | Small deployments, POCs, dev laptops | Simplest; limited throughput |
 | **Local GPU install** | Single box with NVIDIA GPU | Fastest per-call latency |
-| **Remote GPU server** | Dedicated Whisper farm | SIPREC invokes Whisper via SSH/HTTP wrapper |
-| **Containerized** | Kubernetes / Docker shops | Ship Whisper image separately from SIPREC |
+| **Remote GPU server** | Dedicated Whisper farm | IZI SIPREC invokes Whisper via SSH/HTTP wrapper |
+| **Containerized** | Kubernetes / Docker shops | Ship Whisper image separately from IZI SIPREC |
 
-Whichever option you pick, the interface is the same: SIPREC runs `WHISPER_BINARY_PATH` with standard CLI arguments and reads the transcription file it produces.
+Whichever option you pick, the interface is the same: IZI SIPREC runs `WHISPER_BINARY_PATH` with standard CLI arguments and reads the transcription file it produces.
 
 ---
 

@@ -1,6 +1,6 @@
 # Kubernetes Deployment Guide
 
-This directory contains Kubernetes manifests for deploying the SIPREC server.
+This directory contains Kubernetes manifests for deploying IZI SIPREC.
 
 ## Directory Structure
 

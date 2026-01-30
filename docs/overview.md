@@ -1,6 +1,6 @@
 # Overview
 
-The SIPREC server provides a compact implementation of RFC 7865/7866 recording flows. The service embeds its own SIP transaction layer so that SIPREC metadata, SDP negotiation, and call lifecycle are all handled inside a single Go binary.
+IZI SIPREC provides a compact implementation of RFC 7865/7866 recording flows. The service embeds its own SIP transaction layer so that SIPREC metadata, SDP negotiation, and call lifecycle are all handled inside a single Go binary.
 
 ## Core Components
 
