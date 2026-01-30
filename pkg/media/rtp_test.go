@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"os"
@@ -92,7 +93,7 @@ func TestRTPTimeoutBehavior(t *testing.T) {
 	// Start monitoring in background
 	monitorStopped := make(chan struct{})
 	go func() {
-		MonitorRTPTimeout(forwarder, "test-call-timeout")
+		MonitorRTPTimeout(context.Background(), forwarder, "test-call-timeout")
 		close(monitorStopped)
 	}()
 
@@ -134,7 +135,7 @@ func TestRTPTimeoutWarning(t *testing.T) {
 	}
 
 	// Start monitoring
-	go MonitorRTPTimeout(forwarder, "test-call-warning")
+	go MonitorRTPTimeout(context.Background(), forwarder, "test-call-warning")
 
 	// Wait for warning to be issued (50% of 4s = 2s)
 	time.Sleep(2500 * time.Millisecond)
