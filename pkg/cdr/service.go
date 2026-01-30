@@ -151,6 +151,64 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 	if updates.CiscoSessionID != nil {
 		cdr.CiscoSessionID = updates.CiscoSessionID
 	}
+	// Genesys-specific fields
+	if updates.GenesysInteractionID != nil {
+		cdr.GenesysInteractionID = updates.GenesysInteractionID
+	}
+	if updates.GenesysConversationID != nil {
+		cdr.GenesysConversationID = updates.GenesysConversationID
+	}
+	if updates.GenesysQueueName != nil {
+		cdr.GenesysQueueName = updates.GenesysQueueName
+	}
+	if updates.GenesysAgentID != nil {
+		cdr.GenesysAgentID = updates.GenesysAgentID
+	}
+	if updates.GenesysCampaignID != nil {
+		cdr.GenesysCampaignID = updates.GenesysCampaignID
+	}
+	// Asterisk-specific fields
+	if updates.AsteriskUniqueID != nil {
+		cdr.AsteriskUniqueID = updates.AsteriskUniqueID
+	}
+	if updates.AsteriskLinkedID != nil {
+		cdr.AsteriskLinkedID = updates.AsteriskLinkedID
+	}
+	if updates.AsteriskChannelID != nil {
+		cdr.AsteriskChannelID = updates.AsteriskChannelID
+	}
+	if updates.AsteriskAccountCode != nil {
+		cdr.AsteriskAccountCode = updates.AsteriskAccountCode
+	}
+	if updates.AsteriskContext != nil {
+		cdr.AsteriskContext = updates.AsteriskContext
+	}
+	// FreeSWITCH-specific fields
+	if updates.FreeSWITCHUUID != nil {
+		cdr.FreeSWITCHUUID = updates.FreeSWITCHUUID
+	}
+	if updates.FreeSWITCHCoreUUID != nil {
+		cdr.FreeSWITCHCoreUUID = updates.FreeSWITCHCoreUUID
+	}
+	if updates.FreeSWITCHChannelName != nil {
+		cdr.FreeSWITCHChannelName = updates.FreeSWITCHChannelName
+	}
+	if updates.FreeSWITCHProfileName != nil {
+		cdr.FreeSWITCHProfileName = updates.FreeSWITCHProfileName
+	}
+	if updates.FreeSWITCHAccountCode != nil {
+		cdr.FreeSWITCHAccountCode = updates.FreeSWITCHAccountCode
+	}
+	// OpenSIPS-specific fields
+	if updates.OpenSIPSDialogID != nil {
+		cdr.OpenSIPSDialogID = updates.OpenSIPSDialogID
+	}
+	if updates.OpenSIPSTransactionID != nil {
+		cdr.OpenSIPSTransactionID = updates.OpenSIPSTransactionID
+	}
+	if updates.OpenSIPSCallID != nil {
+		cdr.OpenSIPSCallID = updates.OpenSIPSCallID
+	}
 
 	cdr.UpdatedAt = time.Now()
 
@@ -511,11 +569,33 @@ type CDRUpdate struct {
 	TranscriptionID  *string
 	BillingCode      *string
 	CostCenter       *string
-	VendorType       *string // avaya, cisco, oracle, generic
+	VendorType       *string // avaya, cisco, oracle, genesys, asterisk, freeswitch, opensips, generic
 	UCID             *string // Universal Call ID
 	OracleUCID       *string // Oracle SBC specific UCID
 	ConversationID   *string // Oracle Conversation ID
 	CiscoSessionID   *string // Cisco Session-ID
+	// Genesys-specific fields
+	GenesysInteractionID  *string // Genesys Interaction ID
+	GenesysConversationID *string // Genesys Conversation ID
+	GenesysQueueName      *string // Genesys Queue Name
+	GenesysAgentID        *string // Genesys Agent ID
+	GenesysCampaignID     *string // Genesys Campaign ID
+	// Asterisk-specific fields
+	AsteriskUniqueID    *string // Asterisk Unique ID
+	AsteriskLinkedID    *string // Asterisk Linked ID
+	AsteriskChannelID   *string // Asterisk Channel Name
+	AsteriskAccountCode *string // Asterisk Account Code
+	AsteriskContext     *string // Asterisk Context
+	// FreeSWITCH-specific fields
+	FreeSWITCHUUID        *string // FreeSWITCH Call UUID
+	FreeSWITCHCoreUUID    *string // FreeSWITCH Core UUID
+	FreeSWITCHChannelName *string // FreeSWITCH Channel Name
+	FreeSWITCHProfileName *string // FreeSWITCH Sofia Profile
+	FreeSWITCHAccountCode *string // FreeSWITCH Account Code
+	// OpenSIPS-specific fields
+	OpenSIPSDialogID      *string // OpenSIPS Dialog ID
+	OpenSIPSTransactionID *string // OpenSIPS Transaction ID
+	OpenSIPSCallID        *string // OpenSIPS Call-ID
 }
 
 type CDRFilters struct {

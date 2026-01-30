@@ -77,4 +77,12 @@ type AnalyticsSnapshot struct {
 	UpdatedAt      time.Time
 	Audio          AudioMetrics
 	Events         []AcousticEvent
+
+	// Vendor-specific metadata for Elasticsearch indexing and filtering
+	VendorType           string `json:"vendor_type,omitempty"`            // oracle, cisco, avaya, generic
+	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
+	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
+	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
+	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
+	UCID                 string `json:"ucid,omitempty"`                   // Generic Universal Call ID
 }

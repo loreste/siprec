@@ -40,6 +40,17 @@ type SessionData struct {
 	RecordingPath string                 `json:"recording_path"`
 	Metadata      map[string]interface{} `json:"metadata"`
 	NodeID        string                 `json:"node_id"`
+
+	// Vendor-specific metadata for failover preservation
+	VendorType           string `json:"vendor_type,omitempty"`            // oracle, cisco, avaya, generic
+	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
+	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
+	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
+	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
+	UCID                 string `json:"ucid,omitempty"`                   // Generic Universal Call ID
+
+	// Extended metadata map for additional vendor-specific fields
+	ExtendedMetadata map[string]string `json:"extended_metadata,omitempty"`
 }
 
 // NewRedisSessionStore creates a new Redis session store
@@ -164,6 +175,35 @@ func (r *RedisSessionStore) Update(sessionID string, updates map[string]interfac
 		case "node_id":
 			if nodeID, ok := value.(string); ok {
 				data.NodeID = nodeID
+			}
+		// Vendor-specific fields
+		case "vendor_type":
+			if vendorType, ok := value.(string); ok {
+				data.VendorType = vendorType
+			}
+		case "oracle_ucid":
+			if ucid, ok := value.(string); ok {
+				data.OracleUCID = ucid
+			}
+		case "oracle_conversation_id":
+			if convID, ok := value.(string); ok {
+				data.OracleConversationID = convID
+			}
+		case "cisco_session_id":
+			if sessionID, ok := value.(string); ok {
+				data.CiscoSessionID = sessionID
+			}
+		case "avaya_ucid":
+			if ucid, ok := value.(string); ok {
+				data.AvayaUCID = ucid
+			}
+		case "ucid":
+			if ucid, ok := value.(string); ok {
+				data.UCID = ucid
+			}
+		case "extended_metadata":
+			if extMeta, ok := value.(map[string]string); ok {
+				data.ExtendedMetadata = extMeta
 			}
 		default:
 			// Store in metadata
