@@ -1,6 +1,6 @@
-# SIPREC Server Linux Deployment Guide
+# IZI SIPREC Linux Deployment Guide
 
-This guide provides multiple methods to deploy the SIPREC server on Google Cloud Platform (GCP) Linux instances.
+This guide provides multiple methods to deploy IZI SIPREC on Google Cloud Platform (GCP) Linux instances.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ This guide provides multiple methods to deploy the SIPREC server on Google Cloud
 
 ### Method 1: Quick Deployment Script
 
-The fastest way to deploy SIPREC server on GCP:
+The fastest way to deploy IZI SIPREC on GCP:
 
 ```bash
 # Make script executable
@@ -26,7 +26,7 @@ chmod +x deploy-quick.sh
 This script will:
 - Create firewall rules
 - Launch a VM instance with Ubuntu 22.04 LTS
-- Automatically install and configure SIPREC server
+- Automatically install and configure IZI SIPREC
 - Display connection information
 
 ### Method 2: Full Deployment Script

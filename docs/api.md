@@ -1,6 +1,6 @@
 # API Reference
 
-This document describes every HTTP and WebSocket interface exposed by the SIPREC server. Unless otherwise noted, the base URL is `http://<host>:<http_port>` (default `:8080`).
+This document describes every HTTP and WebSocket interface exposed by IZI SIPREC. Unless otherwise noted, the base URL is `http://<host>:<http_port>` (default `:8080`).
 
 ## Authentication
 

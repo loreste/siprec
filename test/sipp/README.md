@@ -1,6 +1,6 @@
 # SIPp Test Scenarios
 
-This directory contains SIPp scenarios for testing the SIPREC server.
+This directory contains SIPp scenarios for testing IZI SIPREC.
 
 ## Available Scenarios
 

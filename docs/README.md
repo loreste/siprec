@@ -1,6 +1,6 @@
 # Documentation
 
-This directory contains the current, supported feature set for the SIPREC server.
+This directory contains the current, supported feature set for IZI SIPREC.
 
 ## Contents
 
