@@ -29,6 +29,7 @@ import (
 	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/media"
+	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/security"
 	"siprec-server/pkg/security/audit"
 	"siprec-server/pkg/siprec"
@@ -111,9 +112,9 @@ type SIPMessage struct {
 
 	// Vendor-specific fields for enterprise compatibility
 	UserAgent       string
-	VendorType      string // "avaya", "cisco", "generic"
+	VendorType      string // "avaya", "cisco", "oracle", "genesys", "asterisk", "freeswitch", "opensips", "generic"
 	VendorHeaders   map[string]string
-	UCIDHeaders     []string // Avaya Universal Call ID variations
+	UCIDHeaders     []string // Universal Call ID variations (all vendors)
 	SessionIDHeader string   // Cisco Session-ID header
 
 	// UUI (User-to-User Information) per RFC 7433
@@ -123,8 +124,35 @@ type SIPMessage struct {
 	XHeaders map[string]string
 
 	// Oracle SBC specific fields
-	OracleUCID         string // Oracle Universal Call ID
+	OracleUCID           string // Oracle Universal Call ID
 	OracleConversationID string // Oracle Conversation ID for call correlation
+
+	// Genesys specific fields
+	GenesysInteractionID  string // Primary Genesys interaction identifier
+	GenesysConversationID string // Genesys conversation ID for call correlation
+	GenesysSessionID      string // Genesys session ID
+	GenesysQueueName      string // Contact center queue name
+	GenesysAgentID        string // Agent identifier
+	GenesysCampaignID     string // Outbound campaign ID
+
+	// Asterisk specific fields
+	AsteriskUniqueID   string // Asterisk unique channel identifier
+	AsteriskLinkedID   string // Asterisk linked channel ID (for bridged calls)
+	AsteriskChannelID  string // Asterisk channel name
+	AsteriskAccountCode string // Asterisk CDR account code
+	AsteriskContext    string // Asterisk dialplan context
+
+	// FreeSWITCH specific fields
+	FreeSWITCHUUID         string // FreeSWITCH call UUID
+	FreeSWITCHCoreUUID     string // FreeSWITCH core UUID
+	FreeSWITCHChannelName  string // FreeSWITCH channel name
+	FreeSWITCHProfileName  string // FreeSWITCH sofia profile
+	FreeSWITCHAccountCode  string // FreeSWITCH account code
+
+	// OpenSIPS specific fields
+	OpenSIPSCallID        string // OpenSIPS Call-ID correlation
+	OpenSIPSDialogID      string // OpenSIPS dialog identifier
+	OpenSIPSTransactionID string // OpenSIPS transaction ID
 }
 
 // CallState tracks the state of SIP calls
@@ -825,6 +853,14 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 	if len(message.UCIDHeaders) > 0 {
 		logFields["ucid"] = strings.Join(message.UCIDHeaders, ";")
 	}
+	// Add Genesys Interaction ID if present
+	if message.GenesysInteractionID != "" {
+		logFields["genesys_interaction_id"] = message.GenesysInteractionID
+	}
+	// Add Genesys Conversation ID if present
+	if message.GenesysConversationID != "" {
+		logFields["genesys_conversation_id"] = message.GenesysConversationID
+	}
 
 	logger := s.logger.WithFields(logFields)
 	logger.Info("Received INVITE request")
@@ -1155,6 +1191,39 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			"recording_state":   recordingSession.RecordingState,
 		}).Info("Successfully created recording session from SIPREC metadata")
 
+		// Track vendor-specific metrics
+		vendorType := message.VendorType
+		if vendorType == "" {
+			vendorType = "generic"
+		}
+		if metrics.VendorSessionsActive != nil {
+			metrics.VendorSessionsActive.WithLabelValues(vendorType).Inc()
+		}
+		if metrics.VendorSessionsTotal != nil {
+			metrics.VendorSessionsTotal.WithLabelValues(vendorType).Inc()
+		}
+		// Track metadata extractions
+		if metrics.VendorMetadataExtractions != nil {
+			if message.OracleUCID != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "oracle_ucid").Inc()
+			}
+			if message.OracleConversationID != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "oracle_conversation_id").Inc()
+			}
+			if len(message.UCIDHeaders) > 0 {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "ucid").Inc()
+			}
+			if message.SessionIDHeader != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "cisco_session_id").Inc()
+			}
+			if message.GenesysInteractionID != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "genesys_interaction_id").Inc()
+			}
+			if message.GenesysConversationID != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "genesys_conversation_id").Inc()
+			}
+		}
+
 		if svc := s.handler.CDRService(); svc != nil {
 			transport := ""
 			if message.Connection != nil {
@@ -1197,6 +1266,82 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				if len(message.UCIDHeaders) > 0 {
 					ucid := strings.Join(message.UCIDHeaders, ";")
 					update.UCID = &ucid
+					hasUpdates = true
+				}
+				// Genesys-specific CDR fields
+				if message.GenesysInteractionID != "" {
+					update.GenesysInteractionID = &message.GenesysInteractionID
+					hasUpdates = true
+				}
+				if message.GenesysConversationID != "" {
+					update.GenesysConversationID = &message.GenesysConversationID
+					hasUpdates = true
+				}
+				if message.GenesysQueueName != "" {
+					update.GenesysQueueName = &message.GenesysQueueName
+					hasUpdates = true
+				}
+				if message.GenesysAgentID != "" {
+					update.GenesysAgentID = &message.GenesysAgentID
+					hasUpdates = true
+				}
+				if message.GenesysCampaignID != "" {
+					update.GenesysCampaignID = &message.GenesysCampaignID
+					hasUpdates = true
+				}
+				// Asterisk-specific CDR fields
+				if message.AsteriskUniqueID != "" {
+					update.AsteriskUniqueID = &message.AsteriskUniqueID
+					hasUpdates = true
+				}
+				if message.AsteriskLinkedID != "" {
+					update.AsteriskLinkedID = &message.AsteriskLinkedID
+					hasUpdates = true
+				}
+				if message.AsteriskChannelID != "" {
+					update.AsteriskChannelID = &message.AsteriskChannelID
+					hasUpdates = true
+				}
+				if message.AsteriskAccountCode != "" {
+					update.AsteriskAccountCode = &message.AsteriskAccountCode
+					hasUpdates = true
+				}
+				if message.AsteriskContext != "" {
+					update.AsteriskContext = &message.AsteriskContext
+					hasUpdates = true
+				}
+				// FreeSWITCH-specific CDR fields
+				if message.FreeSWITCHUUID != "" {
+					update.FreeSWITCHUUID = &message.FreeSWITCHUUID
+					hasUpdates = true
+				}
+				if message.FreeSWITCHCoreUUID != "" {
+					update.FreeSWITCHCoreUUID = &message.FreeSWITCHCoreUUID
+					hasUpdates = true
+				}
+				if message.FreeSWITCHChannelName != "" {
+					update.FreeSWITCHChannelName = &message.FreeSWITCHChannelName
+					hasUpdates = true
+				}
+				if message.FreeSWITCHProfileName != "" {
+					update.FreeSWITCHProfileName = &message.FreeSWITCHProfileName
+					hasUpdates = true
+				}
+				if message.FreeSWITCHAccountCode != "" {
+					update.FreeSWITCHAccountCode = &message.FreeSWITCHAccountCode
+					hasUpdates = true
+				}
+				// OpenSIPS-specific CDR fields
+				if message.OpenSIPSDialogID != "" {
+					update.OpenSIPSDialogID = &message.OpenSIPSDialogID
+					hasUpdates = true
+				}
+				if message.OpenSIPSTransactionID != "" {
+					update.OpenSIPSTransactionID = &message.OpenSIPSTransactionID
+					hasUpdates = true
+				}
+				if message.OpenSIPSCallID != "" {
+					update.OpenSIPSCallID = &message.OpenSIPSCallID
 					hasUpdates = true
 				}
 				if hasUpdates {
@@ -2993,6 +3138,15 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 			callState.RecordingSession.ExtendedMetadata = make(map[string]string)
 		}
 		callState.RecordingSession.ExtendedMetadata["termination_reason"] = reason
+
+		// Decrement vendor-specific session counter
+		vendorType := "generic"
+		if v, ok := callState.RecordingSession.ExtendedMetadata["sip_vendor_type"]; ok && v != "" {
+			vendorType = v
+		}
+		if metrics.VendorSessionsActive != nil {
+			metrics.VendorSessionsActive.WithLabelValues(vendorType).Dec()
+		}
 	}
 
 	recordingPaths := make([]string, 0, len(callState.RTPForwarders))
@@ -4061,6 +4215,14 @@ func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
 		s.extractCiscoHeaders(message)
 	case "oracle":
 		s.extractOracleHeaders(message)
+	case "genesys":
+		s.extractGenesysHeaders(message)
+	case "asterisk":
+		s.extractAsteriskHeaders(message)
+	case "freeswitch":
+		s.extractFreeSWITCHHeaders(message)
+	case "opensips":
+		s.extractOpenSIPSHeaders(message)
 	default:
 		s.extractGenericHeaders(message)
 	}
@@ -4096,6 +4258,17 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		return "oracle"
 	}
 
+	// Detect Genesys systems (Cloud, PureConnect, Engage, GVP)
+	if strings.Contains(userAgent, "genesys") ||
+		strings.Contains(userAgent, "pureconnect") ||
+		strings.Contains(userAgent, "purecloud") ||
+		strings.Contains(userAgent, "pureengage") ||
+		strings.Contains(userAgent, "gvp") ||
+		strings.Contains(userAgent, "interaction") ||
+		strings.Contains(userAgent, "inin") {
+		return "genesys"
+	}
+
 	// Check for vendor-specific headers as fallback
 	if s.getHeaderValue(message, "x-avaya-conf-id") != "" ||
 		s.getHeaderValue(message, "x-avaya-ucid") != "" ||
@@ -4118,13 +4291,74 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		return "oracle"
 	}
 
+	// Genesys header detection fallback
+	if s.getHeaderValue(message, "x-genesys-interaction-id") != "" ||
+		s.getHeaderValue(message, "x-genesys-conversation-id") != "" ||
+		s.getHeaderValue(message, "x-genesys-session-id") != "" ||
+		s.getHeaderValue(message, "x-interaction-id") != "" ||
+		s.getHeaderValue(message, "x-inin-interaction-id") != "" ||
+		s.getHeaderValue(message, "x-inin-ic-userid") != "" {
+		return "genesys"
+	}
+
+	// Detect Asterisk PBX
+	if strings.Contains(userAgent, "asterisk") ||
+		strings.Contains(userAgent, "ast_") ||
+		strings.Contains(userAgent, "chan_sip") ||
+		strings.Contains(userAgent, "chan_pjsip") ||
+		strings.Contains(userAgent, "pjsip/asterisk") ||
+		strings.Contains(userAgent, "fpbx") {
+		return "asterisk"
+	}
+
+	// Detect FreeSWITCH
+	if strings.Contains(userAgent, "freeswitch") ||
+		strings.Contains(userAgent, "freeswich") ||
+		strings.Contains(userAgent, "sofia-sip") ||
+		strings.Contains(userAgent, "mod_sofia") {
+		return "freeswitch"
+	}
+
+	// Detect OpenSIPS
+	if strings.Contains(userAgent, "opensips") ||
+		strings.Contains(userAgent, "openser") ||
+		strings.Contains(userAgent, "kamailio") { // Kamailio is a fork, often similar behavior
+		return "opensips"
+	}
+
+	// Asterisk header detection fallback
+	if s.getHeaderValue(message, "x-asterisk-hangupcause") != "" ||
+		s.getHeaderValue(message, "x-asterisk-hangupcausecode") != "" ||
+		s.getHeaderValue(message, "x-asterisk-unique-id") != "" ||
+		s.getHeaderValue(message, "x-asterisk-linkedid") != "" {
+		return "asterisk"
+	}
+
+	// FreeSWITCH header detection fallback
+	if s.getHeaderValue(message, "x-fs-unique-id") != "" ||
+		s.getHeaderValue(message, "x-fs-uuid") != "" ||
+		s.getHeaderValue(message, "x-freeswitch-uuid") != "" ||
+		s.getHeaderValue(message, "x-freeswitch-core-uuid") != "" ||
+		s.getHeaderValue(message, "x-fs-hostname") != "" {
+		return "freeswitch"
+	}
+
+	// OpenSIPS header detection fallback
+	if s.getHeaderValue(message, "x-opensips-dialog-id") != "" ||
+		s.getHeaderValue(message, "x-opensips-transaction-id") != "" ||
+		s.getHeaderValue(message, "x-opensips-did") != "" {
+		return "opensips"
+	}
+
 	return "generic"
 }
 
 // extractAvayaHeaders extracts Avaya-specific SIP headers
+// Supports Avaya Aura, Communication Manager, Session Manager, AES
 func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 	// Avaya-specific headers to extract
 	avayaHeaders := []string{
+		// Primary Avaya identifiers
 		"x-avaya-conf-id",
 		"x-avaya-station-id",
 		"x-avaya-ucid",
@@ -4132,9 +4366,43 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 		"x-avaya-user-id",
 		"x-avaya-agent-id",
 		"x-avaya-skill-group",
+		// Communication Manager (CM) headers
+		"x-avaya-cm-call-id",
+		"x-avaya-cm-originator",
+		"x-avaya-cm-destination",
+		"x-avaya-cm-location",
+		// Session Manager (SM) headers
+		"x-avaya-sm-session-id",
+		"x-avaya-sm-entity",
+		"x-avaya-sm-domain",
+		// Contact center headers
+		"x-avaya-vdn",
+		"x-avaya-workgroup",
+		"x-avaya-interaction-id",
+		"x-avaya-call-priority",
+		"x-avaya-queue-name",
+		"x-avaya-queue-time",
+		"x-avaya-hold-time",
+		"x-avaya-talk-time",
+		// ACD/Elite headers
+		"x-avaya-acd-number",
+		"x-avaya-split",
+		"x-avaya-skill",
+		"x-avaya-vector",
+		// B2BUA and call flow
+		"x-avaya-b2bua-call-id",
+		"x-avaya-originating-trunk",
+		"x-avaya-terminating-trunk",
+		"x-avaya-translated-number",
+		"x-avaya-original-called",
+		"x-avaya-redirecting-number",
+		// Standard SIP headers used by Avaya
 		"p-asserted-identity",
 		"diversion",
 		"remote-party-id",
+		"p-called-party-id",
+		"p-calling-party-id",
+		"history-info",
 	}
 
 	for _, header := range avayaHeaders {
@@ -4144,7 +4412,13 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 	}
 
 	// Handle Universal Call ID (UCID) variations
-	ucidHeaders := []string{"x-avaya-ucid", "call-id", "x-ucid", "x-avaya-conf-id"}
+	ucidHeaders := []string{
+		"x-avaya-ucid",
+		"x-ucid",
+		"x-avaya-conf-id",
+		"x-avaya-cm-call-id",
+		"x-avaya-interaction-id",
+	}
 	for _, header := range ucidHeaders {
 		if value := s.getHeaderValue(message, header); value != "" {
 			message.UCIDHeaders = append(message.UCIDHeaders, value)
@@ -4153,18 +4427,63 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 }
 
 // extractCiscoHeaders extracts Cisco-specific SIP headers
+// Supports CUCM (Unified Communications Manager), CUBE, Webex Calling, SRST
 func (s *CustomSIPServer) extractCiscoHeaders(message *SIPMessage) {
 	// Cisco-specific headers to extract
 	ciscoHeaders := []string{
+		// Primary identifiers
 		"session-id",
 		"cisco-guid",
 		"x-cisco-call-id",
+		"x-cisco-gcid",
+		// CUCM cluster/node info
+		"x-cisco-cluster-id",
+		"x-cisco-node-id",
+		"x-cisco-cluster-fqdn",
+		// Device and location
+		"x-cisco-device-name",
+		"x-cisco-device-type",
+		"x-cisco-device-mac",
+		"x-cisco-device-id",
+		"x-cisco-location",
+		"x-cisco-location-id",
+		"x-cisco-region",
+		"x-cisco-region-tag",
+		"x-cisco-site-id",
+		// Trunk and routing
 		"x-cisco-trunk-license",
-		"x-cisco-media-profile",
+		"x-cisco-trunk-id",
 		"x-cisco-dial-peer",
+		"x-cisco-route-pattern",
+		"x-cisco-route-list",
+		"x-cisco-translation-pattern",
+		// Media and codec
+		"x-cisco-media-profile",
+		"x-cisco-codec",
+		"x-cisco-media-region",
+		// SRST (Survivable Remote Site Telephony)
+		"x-cisco-srst-mode",
+		"x-cisco-srst-id",
+		// Webex/Cloud calling
+		"x-cisco-webex-tracking-id",
+		"x-cisco-spark-tracking-id",
+		"x-cisco-tenant-id",
+		"x-cisco-org-id",
+		// Contact center (UCCX/UCCE)
+		"x-cisco-queue-id",
+		"x-cisco-skill-group",
+		"x-cisco-agent-id",
+		"x-cisco-agent-extension",
+		// Call recording/compliance
+		"x-cisco-recording-mode",
+		"x-cisco-recording-server",
+		// Standard SIP headers used by Cisco
 		"remote-party-id",
 		"p-called-party-id",
 		"p-calling-party-id",
+		"p-asserted-identity",
+		"diversion",
+		"history-info",
 	}
 
 	for _, header := range ciscoHeaders {
@@ -4173,17 +4492,25 @@ func (s *CustomSIPServer) extractCiscoHeaders(message *SIPMessage) {
 		}
 	}
 
-	// Handle Cisco Session-ID header specifically
+	// Handle Cisco Session-ID header specifically (primary correlation ID)
 	if sessionID := s.getHeaderValue(message, "session-id"); sessionID != "" {
 		message.SessionIDHeader = sessionID
+		message.UCIDHeaders = append(message.UCIDHeaders, sessionID)
+	}
+
+	// Also check for GUID as correlation ID
+	if guid := s.getHeaderValue(message, "cisco-guid"); guid != "" {
+		message.UCIDHeaders = append(message.UCIDHeaders, guid)
 	}
 }
 
 // extractOracleHeaders extracts Oracle SBC-specific SIP headers
+// Supports Oracle Communications SBC (OCSBC), Enterprise SBC (ESBC), WebRTC Session Controller
 func (s *CustomSIPServer) extractOracleHeaders(message *SIPMessage) {
 	// Oracle SBC-specific headers to extract
 	// OCSBC = Oracle Communications Session Border Controller
 	oracleHeaders := []string{
+		// Primary identifiers
 		"x-ocsbc-ucid",
 		"x-ocsbc-conversation-id",
 		"x-oracle-ucid",
@@ -4192,13 +4519,46 @@ func (s *CustomSIPServer) extractOracleHeaders(message *SIPMessage) {
 		"p-ocsbc-conversation-id",
 		"x-ocsbc-session-id",
 		"x-ocsbc-call-id",
-		"p-asserted-identity",
+		// Realm/routing info
+		"x-ocsbc-egress-realm",
+		"x-ocsbc-ingress-realm",
+		"x-ocsbc-egress-network-interface",
+		"x-ocsbc-ingress-network-interface",
+		// SBC instance and HA
+		"x-ocsbc-sbc-instance-id",
+		"x-ocsbc-geo-redundancy-id",
+		"x-ocsbc-primary-sbc",
+		"x-ocsbc-secondary-sbc",
+		// Media handling
+		"x-ocsbc-media-ip",
+		"x-ocsbc-media-encryption",
+		"x-ocsbc-signaling-encryption",
+		"x-ocsbc-srtp-profile",
+		// IMS/VoLTE headers
 		"p-charging-vector",
+		"p-charging-function-addresses",
+		"p-access-network-info",
+		"p-visited-network-id",
+		"p-served-user",
+		// Standard SIP identity headers
+		"p-asserted-identity",
+		"p-preferred-identity",
 		"remote-party-id",
 		"p-called-party-id",
 		"p-calling-party-id",
-		"x-ocsbc-egress-realm",
-		"x-ocsbc-ingress-realm",
+		"diversion",
+		"history-info",
+		// Oracle-specific routing
+		"x-ocsbc-route",
+		"x-ocsbc-local-policy",
+		"x-ocsbc-session-agent",
+		"x-ocsbc-translation-id",
+		// Recording/compliance
+		"x-ocsbc-recording-mode",
+		"x-ocsbc-recording-session",
+		// Billing
+		"x-ocsbc-billing-id",
+		"x-ocsbc-account-code",
 	}
 
 	for _, header := range oracleHeaders {
@@ -4246,12 +4606,16 @@ func (s *CustomSIPServer) extractOracleHeaders(message *SIPMessage) {
 		}
 	}
 
-	// Extract ICID from P-Charging-Vector if present (IMS Charging ID)
-	// Format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz
+	// Extract fields from P-Charging-Vector if present (IMS Charging ID)
+	// Format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz;term-ioi=aaa
 	if pChargingVector := s.getHeaderValue(message, "p-charging-vector"); pChargingVector != "" {
-		if icid := extractICIDFromChargingVector(pChargingVector); icid != "" {
+		pcvFields := parsePChargingVector(pChargingVector)
+		for key, value := range pcvFields {
+			message.VendorHeaders["pcv_"+key] = value
+		}
+		// Use ICID as fallback UCID if not already set
+		if icid, ok := pcvFields["icid-value"]; ok && icid != "" {
 			message.VendorHeaders["icid-value"] = icid
-			// Use ICID as fallback UCID if not already set
 			if message.OracleUCID == "" {
 				message.OracleUCID = icid
 				message.UCIDHeaders = append(message.UCIDHeaders, icid)
@@ -4260,17 +4624,585 @@ func (s *CustomSIPServer) extractOracleHeaders(message *SIPMessage) {
 	}
 }
 
-// extractICIDFromChargingVector parses the icid-value from P-Charging-Vector header
-func extractICIDFromChargingVector(pcv string) string {
-	// P-Charging-Vector format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz
+// parsePChargingVector parses all fields from P-Charging-Vector header
+// Returns a map of field name to value
+// Format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz;term-ioi=aaa
+func parsePChargingVector(pcv string) map[string]string {
+	result := make(map[string]string)
 	parts := strings.Split(pcv, ";")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if strings.HasPrefix(strings.ToLower(part), "icid-value=") {
-			return strings.TrimPrefix(part[11:], "\"")
+		if idx := strings.Index(part, "="); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(part[:idx]))
+			value := strings.TrimSpace(part[idx+1:])
+			// Remove surrounding quotes if present
+			value = strings.Trim(value, "\"")
+			result[key] = value
 		}
 	}
+	return result
+}
+
+// extractICIDFromChargingVector parses the icid-value from P-Charging-Vector header (legacy helper)
+func extractICIDFromChargingVector(pcv string) string {
+	fields := parsePChargingVector(pcv)
+	if icid, ok := fields["icid-value"]; ok {
+		return icid
+	}
 	return ""
+}
+
+// extractGenesysHeaders extracts Genesys-specific SIP headers
+// Supports Genesys Cloud, PureConnect, PureEngage, and GVP platforms
+func (s *CustomSIPServer) extractGenesysHeaders(message *SIPMessage) {
+	// Genesys-specific headers to extract
+	genesysHeaders := []string{
+		// Primary identifiers
+		"x-genesys-interaction-id",
+		"x-genesys-conversation-id",
+		"x-genesys-session-id",
+		"x-genesys-call-uuid",
+		"x-interaction-id",
+		// ININ (Interactive Intelligence) legacy headers
+		"x-inin-interaction-id",
+		"x-inin-ic-userid",
+		"x-inin-ic-target",
+		"x-inin-ic-workgroup",
+		"x-inin-ic-station",
+		// Contact center metadata
+		"x-genesys-queue",
+		"x-genesys-queue-name",
+		"x-genesys-agent-id",
+		"x-genesys-agent-name",
+		"x-genesys-tenant-id",
+		"x-genesys-org-id",
+		// Campaign and routing
+		"x-genesys-campaign-id",
+		"x-genesys-campaign-name",
+		"x-genesys-contact-id",
+		"x-genesys-contact-list-id",
+		"x-genesys-skill-group",
+		"x-genesys-routing-target",
+		// Call metadata
+		"x-genesys-call-type",
+		"x-genesys-call-direction",
+		"x-genesys-ani",
+		"x-genesys-dnis",
+		"x-genesys-customer-id",
+		// GVP (Genesys Voice Platform) headers
+		"x-gvp-session-id",
+		"x-gvp-tenant-id",
+		"x-gvp-application",
+		// Billing and business data
+		"x-genesys-billing-code",
+		"x-genesys-cost-center",
+		"x-genesys-business-unit",
+		"x-genesys-account-code",
+		// Standard SIP headers also used by Genesys
+		"p-asserted-identity",
+		"remote-party-id",
+		"p-called-party-id",
+		"p-calling-party-id",
+		"diversion",
+	}
+
+	for _, header := range genesysHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract primary Genesys Interaction ID (main correlation identifier)
+	interactionHeaders := []string{
+		"x-genesys-interaction-id",
+		"x-interaction-id",
+		"x-inin-interaction-id",
+		"x-genesys-call-uuid",
+	}
+	for _, header := range interactionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.GenesysInteractionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":        message.CallID,
+				"interaction_id": value,
+				"header":         header,
+			}).Debug("Extracted Genesys Interaction ID")
+			break
+		}
+	}
+
+	// Extract Genesys Conversation ID
+	conversationHeaders := []string{
+		"x-genesys-conversation-id",
+		"x-conversation-id",
+	}
+	for _, header := range conversationHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.GenesysConversationID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":         message.CallID,
+				"conversation_id": value,
+				"header":          header,
+			}).Debug("Extracted Genesys Conversation ID")
+			break
+		}
+	}
+
+	// Extract Genesys Session ID
+	sessionHeaders := []string{
+		"x-genesys-session-id",
+		"x-gvp-session-id",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.GenesysSessionID = value
+			break
+		}
+	}
+
+	// Extract Queue Name
+	queueHeaders := []string{
+		"x-genesys-queue-name",
+		"x-genesys-queue",
+		"x-inin-ic-workgroup",
+	}
+	for _, header := range queueHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.GenesysQueueName = value
+			break
+		}
+	}
+
+	// Extract Agent ID
+	agentHeaders := []string{
+		"x-genesys-agent-id",
+		"x-inin-ic-userid",
+	}
+	for _, header := range agentHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.GenesysAgentID = value
+			break
+		}
+	}
+
+	// Extract Campaign ID (for outbound)
+	if campaignID := s.getHeaderValue(message, "x-genesys-campaign-id"); campaignID != "" {
+		message.GenesysCampaignID = campaignID
+	}
+}
+
+// extractAsteriskHeaders extracts Asterisk-specific SIP headers
+// Supports Asterisk PBX, FreePBX, and chan_sip/chan_pjsip
+func (s *CustomSIPServer) extractAsteriskHeaders(message *SIPMessage) {
+	// Asterisk-specific headers to extract
+	asteriskHeaders := []string{
+		// Primary Asterisk identifiers
+		"x-asterisk-unique-id",
+		"x-asterisk-uniqueid",
+		"x-asterisk-linkedid",
+		"x-asterisk-linked-id",
+		"x-asterisk-channel",
+		"x-asterisk-channel-name",
+		// Call context and routing
+		"x-asterisk-context",
+		"x-asterisk-extension",
+		"x-asterisk-priority",
+		"x-asterisk-application",
+		// Account and billing
+		"x-asterisk-accountcode",
+		"x-asterisk-account-code",
+		"x-asterisk-cdr-accountcode",
+		// Hangup and disposition
+		"x-asterisk-hangupcause",
+		"x-asterisk-hangupcausecode",
+		"x-asterisk-hangup-cause",
+		"x-asterisk-disposition",
+		// Queue and agent
+		"x-asterisk-queue",
+		"x-asterisk-queuename",
+		"x-asterisk-agent",
+		"x-asterisk-agentname",
+		"x-asterisk-member",
+		// Caller information
+		"x-asterisk-callerid",
+		"x-asterisk-callerid-num",
+		"x-asterisk-callerid-name",
+		"x-asterisk-callingpres",
+		"x-asterisk-callingani2",
+		// DNID and original number
+		"x-asterisk-dnid",
+		"x-asterisk-rdnis",
+		"x-asterisk-exten",
+		// Bridge and transfer info
+		"x-asterisk-bridge-id",
+		"x-asterisk-bridgeid",
+		"x-asterisk-transfer-context",
+		"x-asterisk-transfer-exten",
+		// AMI/ARI correlation
+		"x-asterisk-event-id",
+		"x-asterisk-ami-action-id",
+		"x-ari-session-id",
+		// chan_pjsip specific
+		"x-pjsip-endpoint",
+		"x-pjsip-transport",
+		"x-pjsip-contact",
+		// FreePBX specific
+		"x-fpbx-did",
+		"x-fpbx-extension",
+		"x-fpbx-ringgroup",
+		"x-fpbx-ivr",
+		"x-fpbx-queue",
+		"x-fpbx-callid",
+	}
+
+	for _, header := range asteriskHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract Asterisk Unique ID (primary correlation identifier)
+	uniqueIDHeaders := []string{
+		"x-asterisk-unique-id",
+		"x-asterisk-uniqueid",
+	}
+	for _, header := range uniqueIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AsteriskUniqueID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   message.CallID,
+				"unique_id": value,
+				"header":    header,
+			}).Debug("Extracted Asterisk Unique ID")
+			break
+		}
+	}
+
+	// Extract Asterisk Linked ID (for bridged/transferred calls)
+	linkedIDHeaders := []string{
+		"x-asterisk-linkedid",
+		"x-asterisk-linked-id",
+	}
+	for _, header := range linkedIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AsteriskLinkedID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   message.CallID,
+				"linked_id": value,
+			}).Debug("Extracted Asterisk Linked ID")
+			break
+		}
+	}
+
+	// Extract Channel Name
+	channelHeaders := []string{
+		"x-asterisk-channel",
+		"x-asterisk-channel-name",
+	}
+	for _, header := range channelHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AsteriskChannelID = value
+			break
+		}
+	}
+
+	// Extract Account Code
+	accountHeaders := []string{
+		"x-asterisk-accountcode",
+		"x-asterisk-account-code",
+		"x-asterisk-cdr-accountcode",
+	}
+	for _, header := range accountHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AsteriskAccountCode = value
+			break
+		}
+	}
+
+	// Extract Context
+	if context := s.getHeaderValue(message, "x-asterisk-context"); context != "" {
+		message.AsteriskContext = context
+	}
+}
+
+// extractFreeSWITCHHeaders extracts FreeSWITCH-specific SIP headers
+// Supports FreeSWITCH, mod_sofia, and related systems
+func (s *CustomSIPServer) extractFreeSWITCHHeaders(message *SIPMessage) {
+	// FreeSWITCH-specific headers to extract
+	freeswwitchHeaders := []string{
+		// Primary FreeSWITCH identifiers
+		"x-fs-uuid",
+		"x-fs-unique-id",
+		"x-freeswitch-uuid",
+		"x-fs-call-uuid",
+		"x-fs-core-uuid",
+		"x-freeswitch-core-uuid",
+		// Channel information
+		"x-fs-channel-name",
+		"x-freeswitch-channel-name",
+		"x-fs-channel-uuid",
+		// Profile and context
+		"x-fs-profile-name",
+		"x-freeswitch-profile-name",
+		"x-fs-sofia-profile",
+		"x-fs-context",
+		"x-freeswitch-context",
+		"x-fs-dialplan",
+		// Caller/callee information
+		"x-fs-caller-id-number",
+		"x-fs-caller-id-name",
+		"x-fs-destination-number",
+		"x-fs-called-party-number",
+		"x-fs-calling-party-number",
+		// Network information
+		"x-fs-network-ip",
+		"x-fs-network-port",
+		"x-fs-hostname",
+		"x-freeswitch-hostname",
+		// Account and billing
+		"x-fs-accountcode",
+		"x-fs-account-code",
+		"x-freeswitch-accountcode",
+		"x-fs-billing-code",
+		// Hangup and disposition
+		"x-fs-hangup-cause",
+		"x-freeswitch-hangup-cause",
+		"x-fs-hangup-cause-q850",
+		"x-fs-disposition",
+		// Bridge and transfer
+		"x-fs-bridge-uuid",
+		"x-fs-other-leg-uuid",
+		"x-fs-other-leg-channel-uuid",
+		"x-fs-transfer-source",
+		"x-fs-transfer-destination",
+		// Recording info
+		"x-fs-record-file-path",
+		"x-fs-record-uuid",
+		"x-fs-recording-uuid",
+		// Call center / callcenter
+		"x-fs-cc-queue",
+		"x-fs-cc-agent",
+		"x-fs-cc-member-uuid",
+		"x-fs-cc-action",
+		// Originate info
+		"x-fs-originate-uuid",
+		"x-fs-originated-from-uuid",
+		// Custom variables
+		"x-fs-sip-auth-username",
+		"x-fs-sip-from-user",
+		"x-fs-sip-to-user",
+		// mod_sofia specific
+		"x-sofia-sip-url",
+		"x-sofia-profile",
+		// Direction and state
+		"x-fs-call-direction",
+		"x-fs-call-state",
+		"x-fs-session-state",
+	}
+
+	for _, header := range freeswwitchHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract FreeSWITCH UUID (primary correlation identifier)
+	uuidHeaders := []string{
+		"x-fs-uuid",
+		"x-fs-unique-id",
+		"x-freeswitch-uuid",
+		"x-fs-call-uuid",
+	}
+	for _, header := range uuidHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.FreeSWITCHUUID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id": message.CallID,
+				"fs_uuid": value,
+				"header":  header,
+			}).Debug("Extracted FreeSWITCH UUID")
+			break
+		}
+	}
+
+	// Extract FreeSWITCH Core UUID
+	coreUUIDHeaders := []string{
+		"x-fs-core-uuid",
+		"x-freeswitch-core-uuid",
+	}
+	for _, header := range coreUUIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.FreeSWITCHCoreUUID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   message.CallID,
+				"core_uuid": value,
+			}).Debug("Extracted FreeSWITCH Core UUID")
+			break
+		}
+	}
+
+	// Extract Channel Name
+	channelHeaders := []string{
+		"x-fs-channel-name",
+		"x-freeswitch-channel-name",
+	}
+	for _, header := range channelHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.FreeSWITCHChannelName = value
+			break
+		}
+	}
+
+	// Extract Profile Name
+	profileHeaders := []string{
+		"x-fs-profile-name",
+		"x-freeswitch-profile-name",
+		"x-fs-sofia-profile",
+	}
+	for _, header := range profileHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.FreeSWITCHProfileName = value
+			break
+		}
+	}
+
+	// Extract Account Code
+	accountHeaders := []string{
+		"x-fs-accountcode",
+		"x-fs-account-code",
+		"x-freeswitch-accountcode",
+	}
+	for _, header := range accountHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.FreeSWITCHAccountCode = value
+			break
+		}
+	}
+}
+
+// extractOpenSIPSHeaders extracts OpenSIPS-specific SIP headers
+// Supports OpenSIPS, Kamailio, and similar SIP proxies
+func (s *CustomSIPServer) extractOpenSIPSHeaders(message *SIPMessage) {
+	// OpenSIPS-specific headers to extract
+	opensipsHeaders := []string{
+		// Primary OpenSIPS identifiers
+		"x-opensips-dialog-id",
+		"x-opensips-did",
+		"x-opensips-transaction-id",
+		"x-opensips-tid",
+		"x-opensips-call-id",
+		// Load balancer info
+		"x-opensips-lb-dst",
+		"x-opensips-lb-group",
+		"x-opensips-lb-resource",
+		// Dispatcher info
+		"x-opensips-dispatcher-dst",
+		"x-opensips-dispatcher-setid",
+		"x-opensips-dispatcher-group",
+		// Routing information
+		"x-opensips-route",
+		"x-opensips-request-uri",
+		"x-opensips-next-hop",
+		"x-opensips-domain",
+		// User agent info
+		"x-opensips-registered-aor",
+		"x-opensips-contact",
+		"x-opensips-socket",
+		// Dialog info
+		"x-opensips-dlg-callid",
+		"x-opensips-dlg-from-tag",
+		"x-opensips-dlg-to-tag",
+		"x-opensips-dlg-state",
+		"x-opensips-dlg-hash",
+		// Accounting
+		"x-opensips-acc-timestamp",
+		"x-opensips-acc-method",
+		"x-opensips-acc-duration",
+		// Topology hiding
+		"x-opensips-th-callid",
+		"x-opensips-th-from-tag",
+		// Media proxy / RTPproxy / RTPengine
+		"x-opensips-rtpproxy-id",
+		"x-opensips-rtpengine-id",
+		"x-opensips-media-relay",
+		// Fraud detection
+		"x-opensips-fraud-profile",
+		"x-opensips-fraud-score",
+		// Kamailio specific (often compatible)
+		"x-kamailio-dialog-id",
+		"x-kamailio-transaction-id",
+		"x-kamailio-route",
+		"x-kamailio-server",
+		// Custom OpenSIPS AVPs often passed as headers
+		"x-opensips-custom-avp1",
+		"x-opensips-custom-avp2",
+		"x-opensips-account",
+		"x-opensips-src-ip",
+		"x-opensips-src-port",
+		// Branch info
+		"x-opensips-branch",
+		"x-opensips-branch-id",
+		// Cluster info
+		"x-opensips-cluster-id",
+		"x-opensips-node-id",
+	}
+
+	for _, header := range opensipsHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract OpenSIPS Dialog ID (primary correlation identifier)
+	dialogHeaders := []string{
+		"x-opensips-dialog-id",
+		"x-opensips-did",
+		"x-kamailio-dialog-id",
+	}
+	for _, header := range dialogHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.OpenSIPSDialogID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   message.CallID,
+				"dialog_id": value,
+				"header":    header,
+			}).Debug("Extracted OpenSIPS Dialog ID")
+			break
+		}
+	}
+
+	// Extract Transaction ID
+	transactionHeaders := []string{
+		"x-opensips-transaction-id",
+		"x-opensips-tid",
+		"x-kamailio-transaction-id",
+	}
+	for _, header := range transactionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.OpenSIPSTransactionID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":        message.CallID,
+				"transaction_id": value,
+			}).Debug("Extracted OpenSIPS Transaction ID")
+			break
+		}
+	}
+
+	// Extract OpenSIPS Call-ID correlation (may differ from SIP Call-ID after topology hiding)
+	callIDHeaders := []string{
+		"x-opensips-call-id",
+		"x-opensips-th-callid",
+	}
+	for _, header := range callIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.OpenSIPSCallID = value
+			break
+		}
+	}
 }
 
 // extractGenericHeaders extracts common headers for non-vendor-specific systems
@@ -4463,6 +5395,118 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 			"session_id":      session.ID,
 			"conversation_id": message.OracleConversationID,
 		}).Debug("Stored Oracle Conversation ID in recording session metadata")
+	}
+
+	// Store Genesys-specific metadata if present
+	if message.GenesysInteractionID != "" {
+		session.ExtendedMetadata["sip_genesys_interaction_id"] = message.GenesysInteractionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":     session.ID,
+			"interaction_id": message.GenesysInteractionID,
+		}).Debug("Stored Genesys Interaction ID in recording session metadata")
+	}
+
+	if message.GenesysConversationID != "" {
+		session.ExtendedMetadata["sip_genesys_conversation_id"] = message.GenesysConversationID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":      session.ID,
+			"conversation_id": message.GenesysConversationID,
+		}).Debug("Stored Genesys Conversation ID in recording session metadata")
+	}
+
+	if message.GenesysSessionID != "" {
+		session.ExtendedMetadata["sip_genesys_session_id"] = message.GenesysSessionID
+	}
+
+	if message.GenesysQueueName != "" {
+		session.ExtendedMetadata["sip_genesys_queue_name"] = message.GenesysQueueName
+	}
+
+	if message.GenesysAgentID != "" {
+		session.ExtendedMetadata["sip_genesys_agent_id"] = message.GenesysAgentID
+	}
+
+	if message.GenesysCampaignID != "" {
+		session.ExtendedMetadata["sip_genesys_campaign_id"] = message.GenesysCampaignID
+	}
+
+	// Store Asterisk-specific metadata if present
+	if message.AsteriskUniqueID != "" {
+		session.ExtendedMetadata["sip_asterisk_unique_id"] = message.AsteriskUniqueID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"unique_id":  message.AsteriskUniqueID,
+		}).Debug("Stored Asterisk Unique ID in recording session metadata")
+	}
+
+	if message.AsteriskLinkedID != "" {
+		session.ExtendedMetadata["sip_asterisk_linked_id"] = message.AsteriskLinkedID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"linked_id":  message.AsteriskLinkedID,
+		}).Debug("Stored Asterisk Linked ID in recording session metadata")
+	}
+
+	if message.AsteriskChannelID != "" {
+		session.ExtendedMetadata["sip_asterisk_channel_id"] = message.AsteriskChannelID
+	}
+
+	if message.AsteriskAccountCode != "" {
+		session.ExtendedMetadata["sip_asterisk_account_code"] = message.AsteriskAccountCode
+	}
+
+	if message.AsteriskContext != "" {
+		session.ExtendedMetadata["sip_asterisk_context"] = message.AsteriskContext
+	}
+
+	// Store FreeSWITCH-specific metadata if present
+	if message.FreeSWITCHUUID != "" {
+		session.ExtendedMetadata["sip_freeswitch_uuid"] = message.FreeSWITCHUUID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"fs_uuid":    message.FreeSWITCHUUID,
+		}).Debug("Stored FreeSWITCH UUID in recording session metadata")
+	}
+
+	if message.FreeSWITCHCoreUUID != "" {
+		session.ExtendedMetadata["sip_freeswitch_core_uuid"] = message.FreeSWITCHCoreUUID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"core_uuid":  message.FreeSWITCHCoreUUID,
+		}).Debug("Stored FreeSWITCH Core UUID in recording session metadata")
+	}
+
+	if message.FreeSWITCHChannelName != "" {
+		session.ExtendedMetadata["sip_freeswitch_channel_name"] = message.FreeSWITCHChannelName
+	}
+
+	if message.FreeSWITCHProfileName != "" {
+		session.ExtendedMetadata["sip_freeswitch_profile_name"] = message.FreeSWITCHProfileName
+	}
+
+	if message.FreeSWITCHAccountCode != "" {
+		session.ExtendedMetadata["sip_freeswitch_account_code"] = message.FreeSWITCHAccountCode
+	}
+
+	// Store OpenSIPS-specific metadata if present
+	if message.OpenSIPSDialogID != "" {
+		session.ExtendedMetadata["sip_opensips_dialog_id"] = message.OpenSIPSDialogID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"dialog_id":  message.OpenSIPSDialogID,
+		}).Debug("Stored OpenSIPS Dialog ID in recording session metadata")
+	}
+
+	if message.OpenSIPSTransactionID != "" {
+		session.ExtendedMetadata["sip_opensips_transaction_id"] = message.OpenSIPSTransactionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":     session.ID,
+			"transaction_id": message.OpenSIPSTransactionID,
+		}).Debug("Stored OpenSIPS Transaction ID in recording session metadata")
+	}
+
+	if message.OpenSIPSCallID != "" {
+		session.ExtendedMetadata["sip_opensips_call_id"] = message.OpenSIPSCallID
 	}
 }
 

@@ -43,8 +43,17 @@ type ConversationRecord struct {
 	SegmentCount int                    `json:"segment_count"`
 	Providers    []string               `json:"providers,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	lastActivity time.Time              // Internal tracking, not exported
-	mutex        sync.Mutex             // Per-record mutex for fine-grained locking
+
+	// Vendor-specific metadata for explicit access (also present in Metadata map)
+	VendorType           string `json:"vendor_type,omitempty"`            // oracle, cisco, avaya, generic
+	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
+	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
+	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
+	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
+	UCID                 string `json:"ucid,omitempty"`                   // Generic Universal Call ID
+
+	lastActivity time.Time  // Internal tracking, not exported
+	mutex        sync.Mutex // Per-record mutex for fine-grained locking
 }
 
 // ConversationEndCallback is called when a conversation ends
@@ -440,6 +449,28 @@ func (ca *ConversationAccumulator) SetSessionMetadata(callUUID string, metadata 
 	for key, value := range metadata {
 		record.Metadata[key] = value
 	}
+
+	// Also set explicit vendor fields for easier access
+	if v, ok := metadata["sip_vendor_type"]; ok && v != "" {
+		record.VendorType = v
+	}
+	if v, ok := metadata["sip_oracle_ucid"]; ok && v != "" {
+		record.OracleUCID = v
+	}
+	if v, ok := metadata["sip_oracle_conversation_id"]; ok && v != "" {
+		record.OracleConversationID = v
+	}
+	if v, ok := metadata["sip_cisco_session_id"]; ok && v != "" {
+		record.CiscoSessionID = v
+	}
+	if v, ok := metadata["sip_ucid"]; ok && v != "" {
+		record.UCID = v
+	}
+	// Check for Avaya UCID
+	if record.VendorType == "avaya" && record.UCID != "" && record.AvayaUCID == "" {
+		record.AvayaUCID = record.UCID
+	}
+
 	record.lastActivity = time.Now()
 	record.mutex.Unlock()
 

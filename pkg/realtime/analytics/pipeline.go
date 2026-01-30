@@ -28,6 +28,14 @@ type State struct {
 	Audio               AudioMetrics
 	AcousticEvents      []AcousticEvent
 
+	// Vendor-specific metadata for Elasticsearch indexing
+	VendorType           string
+	OracleUCID           string
+	OracleConversationID string
+	CiscoSessionID       string
+	AvayaUCID            string
+	UCID                 string
+
 	LastUpdated time.Time
 }
 
@@ -53,16 +61,22 @@ func (s *State) Clone() AnalyticsSnapshot {
 	copy(eventsCopy, s.AcousticEvents)
 
 	return AnalyticsSnapshot{
-		CallID:         s.CallID,
-		SentimentTrend: trendCopy,
-		Keywords:       keywords,
-		Topics:         topics,
-		Compliance:     violationsCopy,
-		Metrics:        s.Metrics,
-		QualityScore:   s.QualityScore,
-		UpdatedAt:      s.LastUpdated,
-		Audio:          s.Audio,
-		Events:         eventsCopy,
+		CallID:               s.CallID,
+		SentimentTrend:       trendCopy,
+		Keywords:             keywords,
+		Topics:               topics,
+		Compliance:           violationsCopy,
+		Metrics:              s.Metrics,
+		QualityScore:         s.QualityScore,
+		UpdatedAt:            s.LastUpdated,
+		Audio:                s.Audio,
+		Events:               eventsCopy,
+		VendorType:           s.VendorType,
+		OracleUCID:           s.OracleUCID,
+		OracleConversationID: s.OracleConversationID,
+		CiscoSessionID:       s.CiscoSessionID,
+		AvayaUCID:            s.AvayaUCID,
+		UCID:                 s.UCID,
 	}
 }
 
@@ -152,6 +166,29 @@ func (p *Pipeline) Process(ctx context.Context, event *TranscriptEvent) (*Analyt
 			ComplianceSatisfied: make(map[string]bool),
 			AcousticEvents:      make([]AcousticEvent, 0, 16),
 			LastUpdated:         time.Now(),
+		}
+	}
+
+	// Extract vendor metadata from event metadata (injected by TranscriptionService)
+	if event.Metadata != nil {
+		if v, ok := event.Metadata["sip_vendor_type"].(string); ok && state.VendorType == "" {
+			state.VendorType = v
+		}
+		if v, ok := event.Metadata["sip_oracle_ucid"].(string); ok && state.OracleUCID == "" {
+			state.OracleUCID = v
+		}
+		if v, ok := event.Metadata["sip_oracle_conversation_id"].(string); ok && state.OracleConversationID == "" {
+			state.OracleConversationID = v
+		}
+		if v, ok := event.Metadata["sip_cisco_session_id"].(string); ok && state.CiscoSessionID == "" {
+			state.CiscoSessionID = v
+		}
+		if v, ok := event.Metadata["sip_ucid"].(string); ok && state.UCID == "" {
+			state.UCID = v
+		}
+		// Check for Avaya UCID
+		if state.VendorType == "avaya" && state.UCID != "" && state.AvayaUCID == "" {
+			state.AvayaUCID = state.UCID
 		}
 	}
 
