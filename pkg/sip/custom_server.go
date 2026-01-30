@@ -175,6 +175,10 @@ type CallState struct {
 	AllocatedPortPair *media.PortPair    // Port pair reserved for non-SIPREC calls
 	TraceScope        *tracing.CallScope // Per-call tracing scope
 	OriginalInvite    *SIPMessage        // Stored original INVITE for cancellations
+
+	// Context cancellation for graceful goroutine cleanup
+	rtpCtx    context.Context    // Context for all RTP forwarding goroutines
+	cancelCtx context.CancelFunc // Cancel function to stop all RTP forwarding goroutines
 }
 
 type headerEntry struct {
@@ -1020,7 +1024,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		attribute.String("sip.transport", transport),
 		attribute.Bool("siprec.initial_invite", true),
 	)
-	callCtx := callScope.Context()
+	// Create cancellable context for RTP forwarding goroutines
+	callCtx, cancelFunc := context.WithCancel(callScope.Context())
 
 	// Create or update call state
 	callState := &CallState{
@@ -1036,6 +1041,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		OriginalInvite:   message,
 		RTPForwarders:    make([]*media.RTPForwarder, 0),
 		StreamForwarders: make(map[string]*media.RTPForwarder),
+		rtpCtx:           callCtx,     // Store context for RTP goroutines
+		cancelCtx:        cancelFunc,  // Store cancel function for cleanup
 	}
 	mediaIP := s.resolveMediaIPAddress(message)
 
@@ -2075,7 +2082,12 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 				streamID = fmt.Sprintf("leg%d", idx)
 			}
 			callState.StreamForwarders[streamID] = forwarders[idx]
-			media.StartRTPForwarding(reinviteCtx, forwarders[idx], fmt.Sprintf("%s_%s", message.CallID, streamID), mediaConfig, sttProvider)
+			// Use the call's RTP context so all forwarders share the same cancellation
+			forwarderCtx := callState.rtpCtx
+			if forwarderCtx == nil {
+				forwarderCtx = reinviteCtx // Fallback if rtpCtx not set
+			}
+			media.StartRTPForwarding(forwarderCtx, forwarders[idx], fmt.Sprintf("%s_%s", message.CallID, streamID), mediaConfig, sttProvider)
 		}
 
 		callState.RTPForwarders = forwarders
@@ -3111,6 +3123,12 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		return
 	}
 
+	// Cancel RTP forwarding context to stop all goroutines
+	if callState.cancelCtx != nil {
+		callState.cancelCtx()
+		callState.cancelCtx = nil
+	}
+
 	notifyCtx := context.Background()
 	if callState.TraceScope != nil {
 		notifyCtx = callState.TraceScope.Context()
@@ -3149,8 +3167,16 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		}
 	}
 
+	s.logger.WithFields(logrus.Fields{
+		"call_id":            callID,
+		"rtp_forwarders":     len(callState.RTPForwarders),
+		"stream_forwarders":  len(callState.StreamForwarders),
+		"single_forwarder":   callState.RTPForwarder != nil,
+	}).Debug("Starting forwarder cleanup in finalizeCall")
+
 	recordingPaths := make([]string, 0, len(callState.RTPForwarders))
 	if len(callState.RTPForwarders) > 0 {
+		s.logger.WithField("call_id", callID).Debug("Cleaning up RTPForwarders array")
 		for _, forwarder := range callState.RTPForwarders {
 			if forwarder == nil {
 				continue
@@ -3163,6 +3189,7 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		}
 		callState.RTPForwarders = nil
 	} else if callState.RTPForwarder != nil {
+		s.logger.WithField("call_id", callID).Debug("Cleaning up single RTPForwarder")
 		callState.RTPForwarder.Stop()
 		callState.RTPForwarder.Cleanup()
 		if callState.RTPForwarder.RecordingPath != "" {
@@ -3172,6 +3199,33 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 
 	callState.RTPForwarder = nil
 
+	// Clean up StreamForwarders (used for multi-stream SIPREC calls)
+	if len(callState.StreamForwarders) > 0 {
+		for streamID, forwarder := range callState.StreamForwarders {
+			if forwarder == nil {
+				continue
+			}
+			forwarder.Stop()
+			forwarder.Cleanup()
+			if forwarder.RecordingPath != "" {
+				// Check if not already in recordingPaths before adding
+				found := false
+				for _, path := range recordingPaths {
+					if path == forwarder.RecordingPath {
+						found = true
+						break
+					}
+				}
+				if !found {
+					recordingPaths = append(recordingPaths, forwarder.RecordingPath)
+				}
+			}
+			s.logger.WithFields(logrus.Fields{
+				"call_id":   callID,
+				"stream_id": streamID,
+			}).Debug("Cleaned up stream forwarder")
+		}
+	}
 	callState.StreamForwarders = nil
 
 	callState.PendingAckCSeq = 0
