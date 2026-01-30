@@ -102,6 +102,9 @@ type recordingSnapshot struct {
 	Participants     []siprec.Participant `json:"participants,omitempty"`
 	MediaStreamTypes []string             `json:"media_types,omitempty"`
 	Direction        string               `json:"direction,omitempty"`
+
+	// Vendor-specific metadata for failover preservation
+	ExtendedMetadata map[string]string `json:"extended_metadata,omitempty"`
 }
 
 type dialogSnapshot struct {
@@ -142,6 +145,7 @@ func newCallSnapshot(data *CallData) callSnapshot {
 			Participants:     cloneParticipants(data.RecordingSession.Participants),
 			MediaStreamTypes: append([]string(nil), data.RecordingSession.MediaStreamTypes...),
 			Direction:        data.RecordingSession.Direction,
+			ExtendedMetadata: cloneStringMap(data.RecordingSession.ExtendedMetadata),
 		}
 	}
 
@@ -180,16 +184,42 @@ func (s callSnapshot) toSessionData(sessionID, nodeID string) *sessions.SessionD
 		"call_snapshot": s,
 	}
 
-	return &sessions.SessionData{
-		SessionID:     sessionID,
-		CallID:        s.Dialog.CallID,
-		Status:        status,
-		StartTime:     startTime,
-		LastUpdate:    s.LastActivity,
-		RecordingPath: "",
-		Metadata:      metadata,
-		NodeID:        nodeID,
+	sd := &sessions.SessionData{
+		SessionID:        sessionID,
+		CallID:           s.Dialog.CallID,
+		Status:           status,
+		StartTime:        startTime,
+		LastUpdate:       s.LastActivity,
+		RecordingPath:    "",
+		Metadata:         metadata,
+		NodeID:           nodeID,
+		ExtendedMetadata: cloneStringMap(s.Recording.ExtendedMetadata),
 	}
+
+	// Extract vendor-specific fields from ExtendedMetadata for easier access
+	if s.Recording.ExtendedMetadata != nil {
+		if v, ok := s.Recording.ExtendedMetadata["sip_vendor_type"]; ok {
+			sd.VendorType = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_oracle_ucid"]; ok {
+			sd.OracleUCID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_oracle_conversation_id"]; ok {
+			sd.OracleConversationID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_cisco_session_id"]; ok {
+			sd.CiscoSessionID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_ucid"]; ok {
+			sd.UCID = v
+		}
+		// Check for Avaya UCID in the generic UCID field when vendor is Avaya
+		if sd.VendorType == "avaya" && sd.UCID != "" {
+			sd.AvayaUCID = sd.UCID
+		}
+	}
+
+	return sd
 }
 
 func callDataFromSessionData(data *sessions.SessionData) (*CallData, error) {
@@ -238,6 +268,7 @@ func (s callSnapshot) toRecordingSession() *siprec.RecordingSession {
 		Direction:        s.Recording.Direction,
 		UpdatedAt:        s.LastActivity,
 		IsValid:          true,
+		ExtendedMetadata: cloneStringMap(s.Recording.ExtendedMetadata),
 	}
 
 	return session
@@ -264,5 +295,16 @@ func cloneParticipants(participants []siprec.Participant) []siprec.Participant {
 
 	cloned := make([]siprec.Participant, len(participants))
 	copy(cloned, participants)
+	return cloned
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(m))
+	for k, v := range m {
+		cloned[k] = v
+	}
 	return cloned
 }

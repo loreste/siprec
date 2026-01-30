@@ -85,13 +85,35 @@ type CDR struct {
 	ErrorMessage     *string    `db:"error_message" json:"error_message,omitempty"`
 	BillingCode      *string    `db:"billing_code" json:"billing_code,omitempty"`
 	CostCenter       *string    `db:"cost_center" json:"cost_center,omitempty"`
-	VendorType       *string    `db:"vendor_type" json:"vendor_type,omitempty"`         // avaya, cisco, oracle, generic
+	VendorType       *string    `db:"vendor_type" json:"vendor_type,omitempty"`         // avaya, cisco, oracle, genesys, asterisk, freeswitch, opensips, generic
 	UCID             *string    `db:"ucid" json:"ucid,omitempty"`                       // Universal Call ID (Avaya/Oracle)
 	OracleUCID       *string    `db:"oracle_ucid" json:"oracle_ucid,omitempty"`         // Oracle SBC UCID
 	ConversationID   *string    `db:"conversation_id" json:"conversation_id,omitempty"` // Oracle Conversation ID
 	CiscoSessionID   *string    `db:"cisco_session_id" json:"cisco_session_id,omitempty"`
-	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
+	// Genesys-specific fields
+	GenesysInteractionID  *string `db:"genesys_interaction_id" json:"genesys_interaction_id,omitempty"`
+	GenesysConversationID *string `db:"genesys_conversation_id" json:"genesys_conversation_id,omitempty"`
+	GenesysQueueName      *string `db:"genesys_queue_name" json:"genesys_queue_name,omitempty"`
+	GenesysAgentID        *string `db:"genesys_agent_id" json:"genesys_agent_id,omitempty"`
+	GenesysCampaignID     *string `db:"genesys_campaign_id" json:"genesys_campaign_id,omitempty"`
+	// Asterisk-specific fields
+	AsteriskUniqueID    *string `db:"asterisk_unique_id" json:"asterisk_unique_id,omitempty"`
+	AsteriskLinkedID    *string `db:"asterisk_linked_id" json:"asterisk_linked_id,omitempty"`
+	AsteriskChannelID   *string `db:"asterisk_channel_id" json:"asterisk_channel_id,omitempty"`
+	AsteriskAccountCode *string `db:"asterisk_account_code" json:"asterisk_account_code,omitempty"`
+	AsteriskContext     *string `db:"asterisk_context" json:"asterisk_context,omitempty"`
+	// FreeSWITCH-specific fields
+	FreeSWITCHUUID        *string `db:"freeswitch_uuid" json:"freeswitch_uuid,omitempty"`
+	FreeSWITCHCoreUUID    *string `db:"freeswitch_core_uuid" json:"freeswitch_core_uuid,omitempty"`
+	FreeSWITCHChannelName *string `db:"freeswitch_channel_name" json:"freeswitch_channel_name,omitempty"`
+	FreeSWITCHProfileName *string `db:"freeswitch_profile_name" json:"freeswitch_profile_name,omitempty"`
+	FreeSWITCHAccountCode *string `db:"freeswitch_account_code" json:"freeswitch_account_code,omitempty"`
+	// OpenSIPS-specific fields
+	OpenSIPSDialogID      *string `db:"opensips_dialog_id" json:"opensips_dialog_id,omitempty"`
+	OpenSIPSTransactionID *string `db:"opensips_transaction_id" json:"opensips_transaction_id,omitempty"`
+	OpenSIPSCallID        *string `db:"opensips_call_id" json:"opensips_call_id,omitempty"`
+	CreatedAt             time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }
 
 // Event represents system events for auditing

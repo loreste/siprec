@@ -801,13 +801,38 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 
 		// Add recording session info if available
 		if callData.RecordingSession != nil {
-			sessionInfo["recording"] = map[string]interface{}{
+			recordingInfo := map[string]interface{}{
 				"session_id":   callData.RecordingSession.ID,
 				"state":        callData.RecordingSession.RecordingState,
 				"start_time":   callData.RecordingSession.StartTime,
 				"participants": len(callData.RecordingSession.Participants),
 				"media_types":  callData.RecordingSession.MediaStreamTypes,
 			}
+
+			// Add vendor-specific metadata if available
+			if callData.RecordingSession.ExtendedMetadata != nil {
+				extMeta := callData.RecordingSession.ExtendedMetadata
+				if v, ok := extMeta["sip_vendor_type"]; ok && v != "" {
+					recordingInfo["vendor_type"] = v
+				}
+				if v, ok := extMeta["sip_oracle_ucid"]; ok && v != "" {
+					recordingInfo["oracle_ucid"] = v
+				}
+				if v, ok := extMeta["sip_oracle_conversation_id"]; ok && v != "" {
+					recordingInfo["oracle_conversation_id"] = v
+				}
+				if v, ok := extMeta["sip_cisco_session_id"]; ok && v != "" {
+					recordingInfo["cisco_session_id"] = v
+				}
+				if v, ok := extMeta["sip_ucid"]; ok && v != "" {
+					recordingInfo["ucid"] = v
+				}
+				if v, ok := extMeta["sip_uui"]; ok && v != "" {
+					recordingInfo["uui"] = v
+				}
+			}
+
+			sessionInfo["recording"] = recordingInfo
 		}
 
 		// Add dialog info if available
@@ -829,12 +854,45 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 		storedData, err := h.SessionStore.Load(id)
 		if err == nil && storedData != nil {
 			// Return stored session info
-			return map[string]interface{}{
+			storedInfo := map[string]interface{}{
 				"id":            id,
 				"state":         "stored",
 				"last_activity": storedData.LastActivity,
 				"remote_addr":   storedData.RemoteAddress,
-			}, nil
+			}
+
+			// Add recording info with vendor metadata if available
+			if storedData.RecordingSession != nil {
+				recordingInfo := map[string]interface{}{
+					"session_id": storedData.RecordingSession.ID,
+					"state":      storedData.RecordingSession.RecordingState,
+					"start_time": storedData.RecordingSession.StartTime,
+				}
+
+				// Add vendor-specific metadata
+				if storedData.RecordingSession.ExtendedMetadata != nil {
+					extMeta := storedData.RecordingSession.ExtendedMetadata
+					if v, ok := extMeta["sip_vendor_type"]; ok && v != "" {
+						recordingInfo["vendor_type"] = v
+					}
+					if v, ok := extMeta["sip_oracle_ucid"]; ok && v != "" {
+						recordingInfo["oracle_ucid"] = v
+					}
+					if v, ok := extMeta["sip_oracle_conversation_id"]; ok && v != "" {
+						recordingInfo["oracle_conversation_id"] = v
+					}
+					if v, ok := extMeta["sip_cisco_session_id"]; ok && v != "" {
+						recordingInfo["cisco_session_id"] = v
+					}
+					if v, ok := extMeta["sip_ucid"]; ok && v != "" {
+						recordingInfo["ucid"] = v
+					}
+				}
+
+				storedInfo["recording"] = recordingInfo
+			}
+
+			return storedInfo, nil
 		}
 	}
 

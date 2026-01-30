@@ -98,6 +98,12 @@ var (
 	AMQPListenerTimeouts             prometheus.Counter
 	AMQPListenerQueueLength          prometheus.Gauge
 	AMQPListenerHighWater            prometheus.Gauge
+
+	// Vendor-specific session metrics
+	VendorSessionsActive        *prometheus.GaugeVec
+	VendorSessionsTotal         *prometheus.CounterVec
+	VendorMetadataExtractions   *prometheus.CounterVec
+	VendorHeaderParseErrors     *prometheus.CounterVec
 )
 
 // Init initializes all metrics and registers them with Prometheus
@@ -562,6 +568,39 @@ func Init(logger *logrus.Logger) {
 			},
 		)
 
+		// Initialize vendor-specific metrics
+		VendorSessionsActive = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "siprec_vendor_sessions_active",
+				Help: "Number of active sessions by vendor type",
+			},
+			[]string{"vendor_type"},
+		)
+
+		VendorSessionsTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_vendor_sessions_total",
+				Help: "Total number of sessions by vendor type",
+			},
+			[]string{"vendor_type"},
+		)
+
+		VendorMetadataExtractions = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_vendor_metadata_extractions_total",
+				Help: "Total number of successful vendor metadata extractions",
+			},
+			[]string{"vendor_type", "field"},
+		)
+
+		VendorHeaderParseErrors = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "siprec_vendor_header_parse_errors_total",
+				Help: "Total number of vendor header parsing errors",
+			},
+			[]string{"vendor_type", "header"},
+		)
+
 		// Register all metrics
 		registry.MustRegister(
 			// RTP metrics
@@ -644,6 +683,12 @@ func Init(logger *logrus.Logger) {
 			AMQPListenerTimeouts,
 			AMQPListenerQueueLength,
 			AMQPListenerHighWater,
+
+			// Vendor-specific metrics
+			VendorSessionsActive,
+			VendorSessionsTotal,
+			VendorMetadataExtractions,
+			VendorHeaderParseErrors,
 		)
 
 		logger.Info("Prometheus metrics initialized")
