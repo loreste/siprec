@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -708,6 +709,9 @@ func initialize() error {
 		sttManager.SetLanguageRouting(appConfig.STT.LanguageRouting)
 	}
 
+	// Register STT provider manager with service registry
+	registry.SetSTTProviderManager(sttManager)
+
 	// Create transcription service before STT providers
 	transcriptionSvc = stt.NewTranscriptionService(logger)
 	if sttManager != nil {
@@ -789,6 +793,11 @@ func initialize() error {
 		"vendors": appConfig.STT.SupportedVendors,
 		"default": appConfig.STT.DefaultVendor,
 	}).Info("Initializing STT providers")
+
+	// Validate STT provider credentials before registration
+	if err := validateSTTCredentials(&appConfig.STT, logger); err != nil {
+		logger.WithError(err).Warn("STT provider credential validation warnings")
+	}
 
 	// Register providers based on configuration with circuit breaker protection
 	for _, vendor := range appConfig.STT.SupportedVendors {
@@ -1022,6 +1031,18 @@ func initialize() error {
 
 	if analyticsDispatcher != nil {
 		sipHandler.SetAnalyticsDispatcher(analyticsDispatcher)
+	}
+
+	// Wire up session metadata callback to propagate Oracle UCID, Conversation ID, etc.
+	// from recording sessions to conversation tracking for AMQP publishing
+	if transcriptionSvc != nil {
+		sipHandler.SessionMetadataCallback = func(callUUID string, metadata map[string]string) {
+			transcriptionSvc.SetSessionMetadata(callUUID, metadata)
+		}
+		sipHandler.ClearSessionMetadataCallback = func(callUUID string) {
+			transcriptionSvc.ClearSessionMetadata(callUUID)
+		}
+		logger.Info("Session metadata callbacks configured for transcription service")
 	}
 
 	// Configure SIP rate limiting if enabled
@@ -1352,6 +1373,14 @@ func startSIPServer(wg *sync.WaitGroup) {
 					logger.WithError(err).Error("Failed to load TLS certificate and key, skipping TLS listener")
 					startTLS = false
 				}
+
+				// Validate certificate expiration and properties
+				if startTLS {
+					if err := validateTLSCertificate(cert, logger); err != nil {
+						logger.WithError(err).Error("TLS certificate validation failed, skipping TLS listener")
+						startTLS = false
+					}
+				}
 			}
 		}
 		if startTLS {
@@ -1503,6 +1532,129 @@ func convertToMessagingTLS(cfg config.AMQPTLSConfig) messaging.AMQPTLSConfig {
 		CAFile:     cfg.CAFile,
 		SkipVerify: cfg.SkipVerify,
 	}
+}
+
+// validateTLSCertificate validates that the TLS certificate is valid and not expired
+func validateTLSCertificate(cert tls.Certificate, logger *logrus.Logger) error {
+	// Parse the certificate to get expiration info
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Check if certificate is expired
+	now := time.Now()
+	if now.Before(x509Cert.NotBefore) {
+		return fmt.Errorf("certificate is not yet valid (valid from %v)", x509Cert.NotBefore)
+	}
+	if now.After(x509Cert.NotAfter) {
+		return fmt.Errorf("certificate has expired (expired on %v)", x509Cert.NotAfter)
+	}
+
+	// Warn if certificate expires soon (within 30 days)
+	daysUntilExpiry := x509Cert.NotAfter.Sub(now).Hours() / 24
+	if daysUntilExpiry < 30 {
+		logger.WithFields(logrus.Fields{
+			"expires_on":        x509Cert.NotAfter,
+			"days_until_expiry": int(daysUntilExpiry),
+		}).Warn("TLS certificate expires soon")
+	}
+
+	logger.WithFields(logrus.Fields{
+		"subject":    x509Cert.Subject.CommonName,
+		"issuer":     x509Cert.Issuer.CommonName,
+		"not_before": x509Cert.NotBefore,
+		"not_after":  x509Cert.NotAfter,
+	}).Info("TLS certificate validated successfully")
+
+	return nil
+}
+
+// validateSTTCredentials validates that required credentials are set for enabled STT providers
+func validateSTTCredentials(sttConfig *config.STTConfig, logger *logrus.Logger) error {
+	var warnings []string
+
+	// Validate Google STT credentials
+	if sttConfig.Google.Enabled {
+		if sttConfig.Google.CredentialsFile == "" && sttConfig.Google.APIKey == "" {
+			warnings = append(warnings, "Google STT is enabled but no credentials file or API key is configured (set GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_STT_API_KEY)")
+		} else {
+			// Check if credentials file exists (if specified)
+			if sttConfig.Google.CredentialsFile != "" {
+				if _, err := os.Stat(sttConfig.Google.CredentialsFile); os.IsNotExist(err) {
+					warnings = append(warnings, fmt.Sprintf("Google STT credentials file does not exist: %s", sttConfig.Google.CredentialsFile))
+				}
+			}
+		}
+	}
+
+	// Validate Deepgram credentials
+	if sttConfig.Deepgram.Enabled {
+		if sttConfig.Deepgram.APIKey == "" {
+			warnings = append(warnings, "Deepgram STT is enabled but API key is not configured (set DEEPGRAM_API_KEY)")
+		}
+	}
+
+	// Validate Azure Speech credentials
+	if sttConfig.Azure.Enabled {
+		if sttConfig.Azure.APIKey == "" && sttConfig.Azure.SubscriptionKey == "" {
+			warnings = append(warnings, "Azure STT is enabled but no API key or subscription key is configured (set AZURE_STT_API_KEY or AZURE_SPEECH_KEY)")
+		}
+		if sttConfig.Azure.Region == "" {
+			warnings = append(warnings, "Azure STT is enabled but region is not configured (set AZURE_STT_REGION)")
+		}
+	}
+
+	// Validate Amazon Transcribe credentials
+	if sttConfig.Amazon.Enabled {
+		// AWS credentials are typically loaded from environment or IAM roles
+		// We can't easily validate them here, but we can warn if no explicit credentials are set
+		if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+			logger.Info("Amazon Transcribe is enabled; ensure AWS credentials are available via environment variables, IAM role, or AWS profile")
+		}
+	}
+
+	// Validate OpenAI credentials
+	if sttConfig.OpenAI.Enabled {
+		if sttConfig.OpenAI.APIKey == "" {
+			warnings = append(warnings, "OpenAI STT is enabled but API key is not configured (set OPENAI_API_KEY)")
+		}
+	}
+
+	// Validate Speechmatics credentials
+	if sttConfig.Speechmatics.Enabled {
+		if sttConfig.Speechmatics.APIKey == "" {
+			warnings = append(warnings, "Speechmatics STT is enabled but API key is not configured (set SPEECHMATICS_API_KEY)")
+		}
+	}
+
+	// Validate ElevenLabs credentials
+	if sttConfig.ElevenLabs.Enabled {
+		if sttConfig.ElevenLabs.APIKey == "" {
+			warnings = append(warnings, "ElevenLabs STT is enabled but API key is not configured (set ELEVENLABS_API_KEY)")
+		}
+	}
+
+	// Validate Whisper configuration
+	if sttConfig.Whisper.Enabled {
+		// Whisper can run locally or remotely
+		if sttConfig.Whisper.Mode == "remote" || sttConfig.Whisper.Mode == "ssh" {
+			if sttConfig.Whisper.Host == "" {
+				warnings = append(warnings, "Whisper STT is enabled in remote/ssh mode but host is not configured (set WHISPER_HOST)")
+			}
+		}
+	}
+
+	// Log all warnings
+	if len(warnings) > 0 {
+		for _, warning := range warnings {
+			logger.Warn(warning)
+		}
+		return fmt.Errorf("found %d STT credential configuration warnings", len(warnings))
+	}
+
+	logger.Info("STT provider credentials validated successfully")
+	return nil
 }
 
 func boolWithDefault(flag *bool, fallback bool) bool {
