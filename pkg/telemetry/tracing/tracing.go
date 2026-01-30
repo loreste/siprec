@@ -28,11 +28,12 @@ type metadataKey struct{}
 
 // CallMetadata carries enriched data tied to a single recording session/call.
 type CallMetadata struct {
-	mu        sync.RWMutex
-	CallID    string
-	Tenant    string
-	Users     []string
-	SessionID string
+	mu             sync.RWMutex
+	CallID         string
+	Tenant         string
+	Users          []string
+	SessionID      string
+	VendorMetadata map[string]string // Oracle UCID, Conversation ID, vendor type, etc.
 }
 
 // SetTenant stores the tenant identifier for the call.
@@ -82,6 +83,35 @@ func (m *CallMetadata) SessionIDOrEmpty() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.SessionID
+}
+
+// SetVendorMetadata stores vendor-specific metadata (Oracle UCID, Conversation ID, etc.)
+func (m *CallMetadata) SetVendorMetadata(meta map[string]string) {
+	if meta == nil || len(meta) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.VendorMetadata == nil {
+		m.VendorMetadata = make(map[string]string, len(meta))
+	}
+	for k, v := range meta {
+		m.VendorMetadata[k] = v
+	}
+}
+
+// VendorMetadataOrEmpty returns a copy of vendor metadata for the call.
+func (m *CallMetadata) VendorMetadataOrEmpty() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.VendorMetadata == nil {
+		return nil
+	}
+	cp := make(map[string]string, len(m.VendorMetadata))
+	for k, v := range m.VendorMetadata {
+		cp[k] = v
+	}
+	return cp
 }
 
 // CallScope tracks the lifecycle of a per-call span hierarchy.

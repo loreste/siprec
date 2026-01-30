@@ -85,6 +85,11 @@ type CDR struct {
 	ErrorMessage     *string    `db:"error_message" json:"error_message,omitempty"`
 	BillingCode      *string    `db:"billing_code" json:"billing_code,omitempty"`
 	CostCenter       *string    `db:"cost_center" json:"cost_center,omitempty"`
+	VendorType       *string    `db:"vendor_type" json:"vendor_type,omitempty"`         // avaya, cisco, oracle, generic
+	UCID             *string    `db:"ucid" json:"ucid,omitempty"`                       // Universal Call ID (Avaya/Oracle)
+	OracleUCID       *string    `db:"oracle_ucid" json:"oracle_ucid,omitempty"`         // Oracle SBC UCID
+	ConversationID   *string    `db:"conversation_id" json:"conversation_id,omitempty"` // Oracle Conversation ID
+	CiscoSessionID   *string    `db:"cisco_session_id" json:"cisco_session_id,omitempty"`
 	CreatedAt        time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at" json:"updated_at"`
 }

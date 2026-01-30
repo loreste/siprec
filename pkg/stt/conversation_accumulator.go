@@ -397,6 +397,58 @@ func (ca *ConversationAccumulator) GetMetrics() (active, total, segments int64) 
 		atomic.LoadInt64(&ca.totalSegments)
 }
 
+// SetSessionMetadata sets session metadata for a conversation
+// This allows external callers (like SIP handler) to attach session-level
+// metadata (Oracle UCID, Conversation ID, vendor headers, etc.) to conversations
+func (ca *ConversationAccumulator) SetSessionMetadata(callUUID string, metadata map[string]string) {
+	if callUUID == "" || metadata == nil || len(metadata) == 0 {
+		return
+	}
+
+	shard := ca.getShard(callUUID)
+
+	// First try with read lock
+	shard.mutex.RLock()
+	record, exists := shard.conversations[callUUID]
+	shard.mutex.RUnlock()
+
+	if !exists {
+		// Create the conversation record if it doesn't exist yet
+		shard.mutex.Lock()
+		record, exists = shard.conversations[callUUID]
+		if !exists {
+			record = &ConversationRecord{
+				CallUUID:     callUUID,
+				StartTime:    time.Now(),
+				Segments:     make([]ConversationSegment, 0, initialSegmentCapacity),
+				Metadata:     make(map[string]interface{}, len(metadata)+8),
+				Providers:    make([]string, 0, 4),
+				lastActivity: time.Now(),
+			}
+			shard.conversations[callUUID] = record
+			atomic.AddInt64(&ca.activeConversations, 1)
+			atomic.AddInt64(&ca.totalConversations, 1)
+		}
+		shard.mutex.Unlock()
+	}
+
+	// Set the metadata
+	record.mutex.Lock()
+	if record.Metadata == nil {
+		record.Metadata = make(map[string]interface{}, len(metadata)+8)
+	}
+	for key, value := range metadata {
+		record.Metadata[key] = value
+	}
+	record.lastActivity = time.Now()
+	record.mutex.Unlock()
+
+	ca.logger.WithFields(logrus.Fields{
+		"call_uuid":      callUUID,
+		"metadata_count": len(metadata),
+	}).Debug("Session metadata set for conversation")
+}
+
 // countWords counts words in a string efficiently
 func countWords(text string) int {
 	if text == "" {
