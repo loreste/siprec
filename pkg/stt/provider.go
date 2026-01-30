@@ -200,6 +200,18 @@ func (m *ProviderManager) GetDefaultProvider() (Provider, bool) {
 	return m.GetProvider(m.defaultProvider)
 }
 
+// GetAllProviders returns a list of all registered provider names
+func (m *ProviderManager) GetAllProviders() []string {
+	m.routingMutex.RLock()
+	defer m.routingMutex.RUnlock()
+
+	names := make([]string, 0, len(m.providers))
+	for name := range m.providers {
+		names = append(names, name)
+	}
+	return names
+}
+
 // StreamToProvider is a generic function to stream audio to the desired provider
 func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName string, audioStream io.Reader, callUUID string) error {
 	resolvedProvider := m.resolveProvider(callUUID, providerName)

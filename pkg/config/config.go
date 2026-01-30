@@ -812,6 +812,7 @@ type EncryptionConfig struct {
 	MasterKeyPath       string        `json:"master_key_path" env:"MASTER_KEY_PATH" default:"./keys"`
 	KeyRotationInterval time.Duration `json:"key_rotation_interval" env:"KEY_ROTATION_INTERVAL" default:"24h"`
 	KeyBackupEnabled    bool          `json:"key_backup_enabled" env:"KEY_BACKUP_ENABLED" default:"true"`
+	BackupPassword      string        `json:"backup_password" env:"ENCRYPTION_BACKUP_PASSWORD"`
 
 	// Security parameters
 	KeySize          int `json:"key_size" env:"ENCRYPTION_KEY_SIZE" default:"32"`
