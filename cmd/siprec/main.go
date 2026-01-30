@@ -25,6 +25,7 @@ import (
 	"siprec-server/pkg/circuitbreaker"
 	"siprec-server/pkg/compliance"
 	"siprec-server/pkg/config"
+	"siprec-server/pkg/core"
 	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/database"
 	"siprec-server/pkg/elasticsearch"
@@ -85,6 +86,7 @@ var (
 	perfMonitor         *performance.PerformanceMonitor
 	authenticator       *auth.SimpleAuthenticator
 	alertManager        *alerting.AlertManager
+	registry            *core.ServiceRegistry
 )
 
 type analyticsAudioListener struct {
@@ -367,6 +369,9 @@ func initialize() error {
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
+
+	// Initialize service registry
+	registry = core.GetServiceRegistry()
 
 	// Convert to legacy config for backward compatibility
 	legacyConfig = appConfig.ToLegacyConfig(logger)
@@ -1597,11 +1602,11 @@ func validateSTTCredentials(sttConfig *config.STTConfig, logger *logrus.Logger) 
 
 	// Validate Azure Speech credentials
 	if sttConfig.Azure.Enabled {
-		if sttConfig.Azure.APIKey == "" && sttConfig.Azure.SubscriptionKey == "" {
-			warnings = append(warnings, "Azure STT is enabled but no API key or subscription key is configured (set AZURE_STT_API_KEY or AZURE_SPEECH_KEY)")
+		if sttConfig.Azure.SubscriptionKey == "" {
+			warnings = append(warnings, "Azure STT is enabled but subscription key is not configured (set AZURE_SPEECH_KEY)")
 		}
 		if sttConfig.Azure.Region == "" {
-			warnings = append(warnings, "Azure STT is enabled but region is not configured (set AZURE_STT_REGION)")
+			warnings = append(warnings, "Azure STT is enabled but region is not configured (set AZURE_SPEECH_REGION)")
 		}
 	}
 
@@ -1637,11 +1642,9 @@ func validateSTTCredentials(sttConfig *config.STTConfig, logger *logrus.Logger) 
 
 	// Validate Whisper configuration
 	if sttConfig.Whisper.Enabled {
-		// Whisper can run locally or remotely
-		if sttConfig.Whisper.Mode == "remote" || sttConfig.Whisper.Mode == "ssh" {
-			if sttConfig.Whisper.Host == "" {
-				warnings = append(warnings, "Whisper STT is enabled in remote/ssh mode but host is not configured (set WHISPER_HOST)")
-			}
+		// Whisper runs locally with the CLI binary
+		if sttConfig.Whisper.BinaryPath == "" {
+			warnings = append(warnings, "Whisper STT is enabled but binary path is not configured (set WHISPER_BINARY_PATH)")
 		}
 	}
 
