@@ -1,10 +1,29 @@
 # Changelog
 
-All notable changes to the SIPREC server project will be documented in this file.
+All notable changes to IZI SIPREC will be documented in this file.
 
-## [Unreleased]
+## [1.0.0] - 2026-01-30
+
+### Major Release - IZI SIPREC
+
+This is the first stable release of IZI SIPREC, marking production readiness after extensive testing and validation.
 
 ### Added
+- **Full OPUS and G.722 Codec Support**: Complete implementation of OPUS (RFC 6716) and G.722 (ITU-T G.722) decoders for recording calls using these codecs
+  - OPUS decoder supporting SILK, CELT, and Hybrid modes
+  - G.722 Sub-band ADPCM decoder with QMF synthesis filter
+  - Fixes issue where calls using OPUS codec failed to record
+
+- **Multi-Vendor Compatibility**: Validated with all major SBC vendors
+  - Cisco CUBE
+  - Avaya Session Manager
+  - Oracle SBC
+  - Genesys Cloud
+
+- **Production Load Testing**: Validated at scale
+  - 500 concurrent multi-vendor calls with 100% success rate
+  - Zero errors across Cisco, Avaya, Oracle, and Genesys scenarios
+
 - **Load Testing Validation**: Comprehensive load testing with documented results
   - Validated up to 20,000 concurrent calls with 100% success rate
   - 6,000 concurrent 5-minute calls over TCP with zero failures
