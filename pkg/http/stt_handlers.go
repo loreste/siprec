@@ -218,10 +218,13 @@ func (h *STTHandlers) ListJobsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if status != "" {
-		// Get jobs by status (this would require adding to the async processor)
-		// For now, return an error
-		http.Error(w, "Filtering by status not yet implemented", http.StatusNotImplemented)
-		return
+		// Get jobs by status
+		jobs, err = h.processor.GetJobsByStatus(stt.STTJobStatus(status))
+		if err != nil {
+			h.logger.WithError(err).WithField("status", status).Error("Failed to get jobs by status")
+			http.Error(w, "Failed to retrieve jobs", http.StatusInternalServerError)
+			return
+		}
 	} else {
 		// Return error - we need some filter criteria
 		http.Error(w, "Please provide call_uuid or status parameter", http.StatusBadRequest)
