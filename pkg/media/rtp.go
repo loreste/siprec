@@ -66,6 +66,7 @@ func (c *audioMetricsCollector) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			c.logger.WithField("call_id", c.callID).Info("Audio metrics collector exiting via ctx.Done()")
 			return
 		case event := <-c.dtmfCh:
 			c.listener.OnAcousticEvent(c.callID, event)
@@ -191,12 +192,17 @@ func (w *encryptedRecordingWriter) Write(p []byte) (int, error) {
 
 func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID string, config *Config, sttProvider func(context.Context, string, io.Reader, string) error) {
 	go func() {
-		rtpCtx, rtpSpan := tracing.StartSpan(ctx, "rtp.forward", trace.WithAttributes(
+		_, rtpSpan := tracing.StartSpan(ctx, "rtp.forward", trace.WithAttributes(
 			attribute.String("call.id", callUUID),
 			attribute.Int("rtp.local_port", forwarder.LocalPort),
 		))
 		defer rtpSpan.End()
-		ctx = rtpCtx
+		// Use original ctx for cancellation - don't overwrite with tracing context!
+
+		// Log when goroutine exits (before cleanup)
+		defer func() {
+			forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exited (defer)")
+		}()
 
 		defer func() {
 			if r := recover(); r != nil {
@@ -475,7 +481,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			forwarder.transcriptionReader = nil
 		}
 
-		go MonitorRTPTimeout(forwarder, callUUID)
+		go MonitorRTPTimeout(ctx, forwarder, callUUID)
 		go startRTCPSender(ctx, forwarder)
 		if rtcpConn != nil {
 			go readIncomingRTCP(forwarder, rtcpConn)
@@ -621,24 +627,39 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 		}
 
+		forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine entered main loop")
+
+		// Use a polling approach with VERY short sleep between checks
+		// This avoids the broken ReadFromUDP deadline issue
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-forwarder.StopChan:
+				forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exiting via StopChan")
 				return
 			case <-ctx.Done():
+				forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exiting via ctx.Done()")
 				return
-			default:
+			case <-ticker.C:
+				// Try non-blocking read with immediate deadline
 				buffer, returnBuffer := GetPacketBuffer(1500)
-				udpConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				udpConn.SetReadDeadline(time.Now()) // Immediate deadline = non-blocking
 				n, addr, err := udpConn.ReadFromUDP(buffer)
+
 				if err != nil {
 					returnBuffer(buffer)
-					if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to read RTP packet")
-						if metrics.IsMetricsEnabled() {
-							metrics.RecordRTPDroppedPackets(callUUID, "read_error", 1)
-						}
+					// Timeout is expected for non-blocking read, just continue
+					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+						continue
 					}
+					// Non-timeout error might mean connection closed
+					if strings.Contains(err.Error(), "use of closed") || strings.Contains(err.Error(), "closed network") {
+						forwarder.Logger.WithField("call_uuid", callUUID).Info("Connection closed, exiting")
+						return
+					}
+					// Other error, continue to check stop conditions
 					continue
 				}
 
@@ -649,6 +670,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 				arrival := time.Now()
 
+				// Process the packet (keeping existing logic)
 				if forwarder.UseRTCPMux && isRTCPPacket(buffer[:n]) {
 					handleRTCPPacket(forwarder, buffer[:n], addr)
 					returnBuffer(buffer)
@@ -659,7 +681,11 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					metrics.RecordRTPPacket(callUUID, n)
 				}
 
+				var processBuffer []byte
+				var processReturnBuffer func(interface{})
+
 				if config.EnableSRTP && srtpSession != nil {
+					// SRTP processing
 					forwarder.SRTPEnabled = true
 					decryptedRTP, returnDecryptedBuffer := GetPacketBuffer(n + 64)
 					var finishProcessingTimer func()
@@ -680,7 +706,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						forwarder.Logger.WithError(err).WithFields(logrus.Fields{
 							"call_uuid": callUUID,
 							"ssrc":      ssrc,
-						}).Debug("Failed to open SRTP read stream, trying default SSRC")
+						}).Debug("Failed to open SRTP read stream")
 						if finishProcessingTimer != nil {
 							finishProcessingTimer()
 						}
@@ -707,14 +733,19 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						metrics.RecordSRTPPacketsProcessed(callUUID, "rx", 1)
 					}
 
-					decodeAndProcess(decryptedRTP[:decryptedLen], arrival, addr)
-					returnDecryptedBuffer(decryptedRTP)
-					returnBuffer(buffer)
-					continue
+					processBuffer = decryptedRTP[:decryptedLen]
+					processReturnBuffer = func(interface{}) {
+						returnBuffer(buffer)
+						returnDecryptedBuffer(decryptedRTP)
+					}
+				} else {
+					// Plain RTP
+					processBuffer = buffer[:n]
+					processReturnBuffer = returnBuffer
 				}
 
-				decodeAndProcess(buffer[:n], arrival, addr)
-				returnBuffer(buffer)
+				decodeAndProcess(processBuffer, arrival, addr)
+				processReturnBuffer(nil)
 			}
 		}
 	}()
@@ -749,15 +780,21 @@ func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
 }
 
 // MonitorRTPTimeout monitors for RTP inactivity and cleans up forwarder
-func MonitorRTPTimeout(forwarder *RTPForwarder, callUUID string) {
+func MonitorRTPTimeout(ctx context.Context, forwarder *RTPForwarder, callUUID string) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	defer forwarder.Logger.WithField("call_uuid", callUUID).Info("RTP timeout monitor exited")
 
 	var timeoutWarningIssued bool
 
 	for {
 		select {
 		case <-forwarder.StopChan:
+			forwarder.Logger.WithField("call_uuid", callUUID).Info("RTP timeout monitor exiting via StopChan")
+			return
+		case <-ctx.Done():
+			forwarder.Logger.WithField("call_uuid", callUUID).Info("RTP timeout monitor exiting via ctx.Done()")
 			return
 		case <-ticker.C:
 			// Check how long since last RTP packet
@@ -819,10 +856,13 @@ forLoop:
 	for {
 		select {
 		case <-forwarder.StopChan:
+			forwarder.Logger.Info("RTCP sender exiting via StopChan")
 			break forLoop
 		case <-forwarder.rtcpStopChan:
+			forwarder.Logger.Info("RTCP sender exiting via rtcpStopChan")
 			break forLoop
 		case <-ctx.Done():
+			forwarder.Logger.Info("RTCP sender exiting via ctx.Done()")
 			break forLoop
 		case <-ticker.C:
 			forwarder.sendReceiverReport()
@@ -835,22 +875,43 @@ func readIncomingRTCP(forwarder *RTPForwarder, conn *net.UDPConn) {
 		return
 	}
 
+	defer forwarder.Logger.Info("RTCP reader goroutine exited")
+
+	// Use polling approach with non-blocking reads to avoid ReadFromUDP blocking issue
+	ticker := time.NewTicker(50 * time.Millisecond) // Check every 50ms
+	defer ticker.Stop()
+
 	buffer := make([]byte, 1500)
+
 	for {
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, addr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				select {
-				case <-forwarder.StopChan:
-					return
-				default:
+		select {
+		case <-forwarder.StopChan:
+			forwarder.Logger.Info("RTCP reader exiting via StopChan")
+			return
+		case <-ticker.C:
+			// Non-blocking read with immediate deadline
+			conn.SetReadDeadline(time.Now())
+			n, addr, err := conn.ReadFromUDP(buffer)
+
+			if err != nil {
+				// Timeout is expected for non-blocking reads
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
 				}
+				// Non-timeout error (connection closed, etc.)
+				if strings.Contains(err.Error(), "use of closed") || strings.Contains(err.Error(), "closed network") {
+					forwarder.Logger.Info("RTCP connection closed, exiting reader")
+					return
+				}
+				// Other error, log and continue
+				forwarder.Logger.WithError(err).Debug("RTCP read error")
 				continue
 			}
-			return
+
+			if n > 0 {
+				handleRTCPPacket(forwarder, buffer[:n], addr)
+			}
 		}
-		handleRTCPPacket(forwarder, buffer[:n], addr)
 	}
 }
 
