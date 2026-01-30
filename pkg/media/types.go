@@ -239,7 +239,24 @@ func (f *RTPForwarder) SetCodecInfo(payloadType byte, codecName string, sampleRa
 // Stop safely stops the RTP forwarder by closing the stop channel
 func (f *RTPForwarder) Stop() {
 	f.stopOnce.Do(func() {
+		f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() called - closing StopChan and connections")
 		close(f.StopChan)
+
+		// Also close connections immediately to unblock any pending reads
+		// This ensures goroutines exit quickly instead of waiting for timeouts
+		f.CleanupMutex.Lock()
+		if f.Conn != nil {
+			f.Logger.WithField("call_uuid", f.CallUUID).Info("Closing UDP connection in Stop()")
+			err := f.Conn.Close()
+			if err != nil {
+				f.Logger.WithError(err).Warn("Error closing UDP connection")
+			}
+		}
+		if f.RTCPConn != nil {
+			f.RTCPConn.Close()
+		}
+		f.CleanupMutex.Unlock()
+		f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() completed")
 	})
 }
 
