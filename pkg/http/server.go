@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -214,6 +215,12 @@ func (s *Server) Start() {
 				return
 			}
 
+			// Validate TLS certificate before starting server
+			if err := s.validateTLSCertificate(s.config.TLSCertFile, s.config.TLSKeyFile); err != nil {
+				s.logger.WithError(err).Error("TLS certificate validation failed; refusing to start HTTP server")
+				return
+			}
+
 			// Enforce modern TLS settings
 			s.httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 
@@ -248,6 +255,48 @@ func (s *Server) Start() {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down HTTP server...")
 	return s.httpServer.Shutdown(ctx)
+}
+
+// validateTLSCertificate validates that the TLS certificate and key are valid
+func (s *Server) validateTLSCertificate(certFile, keyFile string) error {
+	// Load the certificate and key
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to load certificate/key: %w", err)
+	}
+
+	// Parse the certificate to get expiration info
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Check if certificate is expired
+	now := time.Now()
+	if now.Before(x509Cert.NotBefore) {
+		return fmt.Errorf("certificate is not yet valid (valid from %v)", x509Cert.NotBefore)
+	}
+	if now.After(x509Cert.NotAfter) {
+		return fmt.Errorf("certificate has expired (expired on %v)", x509Cert.NotAfter)
+	}
+
+	// Warn if certificate expires soon (within 30 days)
+	daysUntilExpiry := x509Cert.NotAfter.Sub(now).Hours() / 24
+	if daysUntilExpiry < 30 {
+		s.logger.WithFields(logrus.Fields{
+			"expires_on":       x509Cert.NotAfter,
+			"days_until_expiry": int(daysUntilExpiry),
+		}).Warn("TLS certificate expires soon")
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"subject":     x509Cert.Subject.CommonName,
+		"issuer":      x509Cert.Issuer.CommonName,
+		"not_before":  x509Cert.NotBefore,
+		"not_after":   x509Cert.NotAfter,
+	}).Info("TLS certificate validated successfully")
+
+	return nil
 }
 
 // Removed simple healthHandler - using comprehensive HealthHandler from health.go instead

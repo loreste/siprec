@@ -19,6 +19,7 @@ type EncryptionConfig struct {
 	MasterKeyPath       string        `json:"master_key_path" mapstructure:"master_key_path"`
 	KeyRotationInterval time.Duration `json:"key_rotation_interval" mapstructure:"key_rotation_interval"`
 	KeyBackupEnabled    bool          `json:"key_backup_enabled" mapstructure:"key_backup_enabled"`
+	BackupPassword      string        `json:"backup_password" mapstructure:"backup_password"`
 
 	// Security parameters
 	KeySize          int `json:"key_size" mapstructure:"key_size"`                   // 256 for AES-256

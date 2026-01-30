@@ -325,9 +325,29 @@ func getDatabaseHealth() interface{ Health() error } {
 
 // getSTTProviderHealth returns health status for all STT providers
 func getSTTProviderHealth() STTProviderStatus {
-	// For now, we don't have a global STT provider manager getter
-	// This would be implemented when STT integration is added to health checks
-	return nil
+	registry := core.GetServiceRegistry()
+	providerManager := registry.GetSTTProviderManager()
+
+	if providerManager == nil {
+		return nil
+	}
+
+	status := make(STTProviderStatus)
+
+	// Get all registered providers
+	providers := providerManager.GetAllProviders()
+
+	for _, providerName := range providers {
+		// Since we don't have explicit health checks on providers,
+		// we assume they're healthy if they're registered
+		// (Registration only succeeds if Initialize() succeeds)
+		status[providerName] = ComponentHealth{
+			Healthy: true,
+			Error:   "",
+		}
+	}
+
+	return status
 }
 
 // getEncryptionHealth returns encryption service health status

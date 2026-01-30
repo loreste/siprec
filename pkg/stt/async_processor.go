@@ -254,6 +254,11 @@ func (p *AsyncSTTProcessor) GetJobsByCallUUID(callUUID string) ([]*STTJob, error
 	return p.queue.GetJobsByCallUUID(callUUID)
 }
 
+// GetJobsByStatus retrieves all jobs with a specific status
+func (p *AsyncSTTProcessor) GetJobsByStatus(status STTJobStatus) ([]*STTJob, error) {
+	return p.queue.GetJobsByStatus(status)
+}
+
 // GetQueueStats returns current queue statistics
 func (p *AsyncSTTProcessor) GetQueueStats() (*QueueStats, error) {
 	return p.queue.GetQueueStats()

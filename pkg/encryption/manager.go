@@ -765,7 +765,11 @@ func cloneEncryptionInfo(info *EncryptionInfo, sanitize bool) *EncryptionInfo {
 
 func (m *Manager) encryptBackup(data []byte) ([]byte, error) {
 	// Use PBKDF2 to derive a key from master password for backup encryption
-	password := "backup-key" // This should come from secure configuration
+	password := m.config.BackupPassword
+	if password == "" {
+		return nil, fmt.Errorf("backup password not configured: set ENCRYPTION_BACKUP_PASSWORD environment variable")
+	}
+
 	salt := make([]byte, m.config.SaltSize)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("failed to generate salt: %w", err)

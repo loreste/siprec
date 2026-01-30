@@ -121,6 +121,10 @@ type SIPMessage struct {
 
 	// X-Headers - all custom headers starting with "X-"
 	XHeaders map[string]string
+
+	// Oracle SBC specific fields
+	OracleUCID         string // Oracle Universal Call ID
+	OracleConversationID string // Oracle Conversation ID for call correlation
 }
 
 // CallState tracks the state of SIP calls
@@ -785,6 +789,9 @@ func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 
 // handleInviteMessage handles INVITE requests
 func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
+	// Extract vendor-specific headers early for use throughout the call
+	s.extractVendorInformation(message)
+
 	// Generate correlation ID for request tracking
 	// Try to extract from SIP header first, otherwise generate new
 	correlationID := correlation.FromString(s.getHeaderValue(message, correlation.SIPHeader))
@@ -792,11 +799,34 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 		correlationID = correlation.New()
 	}
 
-	logger := s.logger.WithFields(logrus.Fields{
+	// Build logger fields including vendor-specific identifiers
+	logFields := logrus.Fields{
 		"method":         "INVITE",
 		"correlation_id": correlationID.String(),
 		"call_id":        message.CallID,
-	})
+	}
+	// Add vendor type if detected
+	if message.VendorType != "" && message.VendorType != "generic" {
+		logFields["vendor_type"] = message.VendorType
+	}
+	// Add Oracle UCID if present
+	if message.OracleUCID != "" {
+		logFields["oracle_ucid"] = message.OracleUCID
+	}
+	// Add Oracle Conversation ID if present
+	if message.OracleConversationID != "" {
+		logFields["oracle_conversation_id"] = message.OracleConversationID
+	}
+	// Add Cisco Session-ID if present
+	if message.SessionIDHeader != "" {
+		logFields["cisco_session_id"] = message.SessionIDHeader
+	}
+	// Add Avaya UCID if present
+	if len(message.UCIDHeaders) > 0 {
+		logFields["ucid"] = strings.Join(message.UCIDHeaders, ";")
+	}
+
+	logger := s.logger.WithFields(logFields)
 	logger.Info("Received INVITE request")
 
 	// Create context with correlation ID for downstream operations
@@ -1091,12 +1121,21 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		// Store UUI and X-headers in recording session metadata
 		s.storeUUIAndXHeadersInSession(recordingSession, message)
 
+		// Propagate session metadata to conversation tracking for AMQP publishing
+		if s.handler != nil && s.handler.SessionMetadataCallback != nil && recordingSession.ExtendedMetadata != nil {
+			s.handler.SessionMetadataCallback(recordingSession.ID, recordingSession.ExtendedMetadata)
+		}
+
 		if callScope.Metadata() != nil {
 			callScope.Metadata().SetSessionID(recordingSession.ID)
 			if tenant := audit.TenantFromSession(recordingSession); tenant != "" {
 				callScope.Metadata().SetTenant(tenant)
 			}
 			callScope.Metadata().SetUsers(audit.UsersFromSession(recordingSession))
+			// Store vendor metadata (Oracle UCID, Conversation ID, etc.) for audit logging
+			if recordingSession.ExtendedMetadata != nil {
+				callScope.Metadata().SetVendorMetadata(recordingSession.ExtendedMetadata)
+			}
 		}
 		callAttributes := []attribute.KeyValue{
 			attribute.String("recording.session_id", recordingSession.ID),
@@ -1136,6 +1175,28 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				}
 				if sc := len(recordingSession.MediaStreamTypes); sc > 0 {
 					update.StreamCount = &sc
+					hasUpdates = true
+				}
+				// Add vendor-specific identifiers to CDR
+				if message.VendorType != "" && message.VendorType != "generic" {
+					update.VendorType = &message.VendorType
+					hasUpdates = true
+				}
+				if message.OracleUCID != "" {
+					update.OracleUCID = &message.OracleUCID
+					hasUpdates = true
+				}
+				if message.OracleConversationID != "" {
+					update.ConversationID = &message.OracleConversationID
+					hasUpdates = true
+				}
+				if message.SessionIDHeader != "" {
+					update.CiscoSessionID = &message.SessionIDHeader
+					hasUpdates = true
+				}
+				if len(message.UCIDHeaders) > 0 {
+					ucid := strings.Join(message.UCIDHeaders, ";")
+					update.UCID = &ucid
 					hasUpdates = true
 				}
 				if hasUpdates {
@@ -1708,6 +1769,10 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			}
 			callScope.Metadata().SetSessionID(callState.RecordingSession.ID)
 			callScope.Metadata().SetUsers(audit.UsersFromSession(callState.RecordingSession))
+			// Store vendor metadata (Oracle UCID, Conversation ID, etc.) for audit logging
+			if callState.RecordingSession.ExtendedMetadata != nil {
+				callScope.Metadata().SetVendorMetadata(callState.RecordingSession.ExtendedMetadata)
+			}
 		}
 	}
 
@@ -2677,12 +2742,79 @@ func (s *CustomSIPServer) handleReferMessage(message *SIPMessage) {
 
 // sendReferNotify sends a NOTIFY for REFER progress
 func (s *CustomSIPServer) sendReferNotify(originalRefer *SIPMessage, callState *CallState, sipfrag string) {
-	// Note: Sending NOTIFY requires creating a new request, which is complex
-	// For now, we'll just log that we would send it
-	s.logger.WithFields(logrus.Fields{
-		"call_id":  originalRefer.CallID,
-		"sipfrag":  sipfrag,
-	}).Debug("Would send REFER NOTIFY (not implemented)")
+	logger := s.logger.WithFields(logrus.Fields{
+		"call_id": originalRefer.CallID,
+		"sipfrag": sipfrag,
+	})
+
+	// Construct NOTIFY body with SIP fragment
+	notifyBody := fmt.Sprintf("SIP/2.0 %s\r\n", sipfrag)
+
+	// Get the CSeq from the original REFER
+	referCSeq, _ := parseCSeq(originalRefer.CSeq)
+
+	// Build NOTIFY request headers
+	notifyHeaders := map[string]string{
+		"Event":              "refer",
+		"Subscription-State": "terminated;reason=noresource",
+		"Content-Type":       "message/sipfrag;version=2.0",
+	}
+
+	// Try to send NOTIFY using sipgo's client transaction
+	if s.ua != nil {
+		// Get From, To, and Contact from original REFER
+		from := s.getHeaderValue(originalRefer, "To")   // Our To becomes From
+		to := s.getHeaderValue(originalRefer, "From")     // Their From becomes To
+		contact := s.buildContactHeader(originalRefer)
+
+		// Build the NOTIFY request URI from the Contact header in the REFER
+		requestURI := originalRefer.Connection.remoteAddr.String()
+
+		// Create request using sipgo
+		notifyReq := sipparser.NewRequest(
+			"NOTIFY",
+			sipparser.Uri{
+				Scheme: "sip",
+				User:   "",
+				Host:   originalRefer.Connection.remoteAddr.String(),
+			},
+		)
+
+		// Add required headers
+		notifyReq.AppendHeader(sipparser.NewHeader("From", from))
+		notifyReq.AppendHeader(sipparser.NewHeader("To", to))
+		notifyReq.AppendHeader(sipparser.NewHeader("Call-ID", originalRefer.CallID))
+		notifyReq.AppendHeader(sipparser.NewHeader("CSeq", fmt.Sprintf("%d NOTIFY", referCSeq+1)))
+		notifyReq.AppendHeader(sipparser.NewHeader("Contact", contact))
+		notifyReq.AppendHeader(sipparser.NewHeader("Event", notifyHeaders["Event"]))
+		notifyReq.AppendHeader(sipparser.NewHeader("Subscription-State", notifyHeaders["Subscription-State"]))
+		notifyReq.AppendHeader(sipparser.NewHeader("Content-Type", notifyHeaders["Content-Type"]))
+		notifyReq.AppendHeader(sipparser.NewHeader("Content-Length", fmt.Sprintf("%d", len(notifyBody))))
+		notifyReq.SetBody([]byte(notifyBody))
+
+		// Send the NOTIFY request
+		tx, err := s.ua.TransactionLayer().Request(context.Background(), notifyReq)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to send REFER NOTIFY request")
+			return
+		}
+
+		// Wait for response in a goroutine to avoid blocking
+		go func() {
+			select {
+			case res := <-tx.Responses():
+				if res != nil {
+					logger.WithField("status", res.StatusCode).Debug("Received response to REFER NOTIFY")
+				}
+			case <-time.After(5 * time.Second):
+				logger.Debug("Timeout waiting for REFER NOTIFY response")
+			}
+		}()
+
+		logger.Info("Sent REFER NOTIFY successfully")
+	} else {
+		logger.Warn("Cannot send REFER NOTIFY: user agent not initialized")
+	}
 }
 
 // handleNotifyMessage handles NOTIFY requests for event notifications
@@ -2914,6 +3046,10 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 
 	if s.handler != nil {
 		s.handler.ClearSTTRouting(callID)
+		// Clear session metadata from transcription service to prevent memory leaks
+		if s.handler.ClearSessionMetadataCallback != nil && callState.RecordingSession != nil {
+			s.handler.ClearSessionMetadataCallback(callState.RecordingSession.ID)
+		}
 	}
 
 	if svc := s.handler.CDRService(); svc != nil && callState.RecordingSession != nil {
@@ -3926,6 +4062,8 @@ func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
 		s.extractAvayaHeaders(message)
 	case "cisco":
 		s.extractCiscoHeaders(message)
+	case "oracle":
+		s.extractOracleHeaders(message)
 	default:
 		s.extractGenericHeaders(message)
 	}
@@ -3953,6 +4091,14 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		return "cisco"
 	}
 
+	// Detect Oracle SBC systems
+	if strings.Contains(userAgent, "oracle") ||
+		strings.Contains(userAgent, "acme packet") ||
+		strings.Contains(userAgent, "ocsbc") ||
+		strings.Contains(userAgent, "esbc") {
+		return "oracle"
+	}
+
 	// Check for vendor-specific headers as fallback
 	if s.getHeaderValue(message, "x-avaya-conf-id") != "" ||
 		s.getHeaderValue(message, "x-avaya-ucid") != "" ||
@@ -3964,6 +4110,15 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		s.getHeaderValue(message, "cisco-guid") != "" ||
 		s.getHeaderValue(message, "x-cisco-call-id") != "" {
 		return "cisco"
+	}
+
+	// Oracle SBC header detection fallback
+	if s.getHeaderValue(message, "x-ocsbc-ucid") != "" ||
+		s.getHeaderValue(message, "x-ocsbc-conversation-id") != "" ||
+		s.getHeaderValue(message, "x-oracle-ucid") != "" ||
+		s.getHeaderValue(message, "x-oracle-conversation-id") != "" ||
+		s.getHeaderValue(message, "p-ocsbc-ucid") != "" {
+		return "oracle"
 	}
 
 	return "generic"
@@ -4025,6 +4180,100 @@ func (s *CustomSIPServer) extractCiscoHeaders(message *SIPMessage) {
 	if sessionID := s.getHeaderValue(message, "session-id"); sessionID != "" {
 		message.SessionIDHeader = sessionID
 	}
+}
+
+// extractOracleHeaders extracts Oracle SBC-specific SIP headers
+func (s *CustomSIPServer) extractOracleHeaders(message *SIPMessage) {
+	// Oracle SBC-specific headers to extract
+	// OCSBC = Oracle Communications Session Border Controller
+	oracleHeaders := []string{
+		"x-ocsbc-ucid",
+		"x-ocsbc-conversation-id",
+		"x-oracle-ucid",
+		"x-oracle-conversation-id",
+		"p-ocsbc-ucid",
+		"p-ocsbc-conversation-id",
+		"x-ocsbc-session-id",
+		"x-ocsbc-call-id",
+		"p-asserted-identity",
+		"p-charging-vector",
+		"remote-party-id",
+		"p-called-party-id",
+		"p-calling-party-id",
+		"x-ocsbc-egress-realm",
+		"x-ocsbc-ingress-realm",
+	}
+
+	for _, header := range oracleHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Handle Oracle UCID - check multiple header variations
+	ucidHeaders := []string{
+		"x-ocsbc-ucid",
+		"x-oracle-ucid",
+		"p-ocsbc-ucid",
+		"x-ucid",
+	}
+	for _, header := range ucidHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.OracleUCID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id": message.CallID,
+				"ucid":    value,
+				"header":  header,
+			}).Debug("Extracted Oracle UCID")
+			break
+		}
+	}
+
+	// Handle Oracle Conversation ID - for call correlation
+	conversationHeaders := []string{
+		"x-ocsbc-conversation-id",
+		"x-oracle-conversation-id",
+		"p-ocsbc-conversation-id",
+		"x-conversation-id",
+	}
+	for _, header := range conversationHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.OracleConversationID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":         message.CallID,
+				"conversation_id": value,
+				"header":          header,
+			}).Debug("Extracted Oracle Conversation ID")
+			break
+		}
+	}
+
+	// Extract ICID from P-Charging-Vector if present (IMS Charging ID)
+	// Format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz
+	if pChargingVector := s.getHeaderValue(message, "p-charging-vector"); pChargingVector != "" {
+		if icid := extractICIDFromChargingVector(pChargingVector); icid != "" {
+			message.VendorHeaders["icid-value"] = icid
+			// Use ICID as fallback UCID if not already set
+			if message.OracleUCID == "" {
+				message.OracleUCID = icid
+				message.UCIDHeaders = append(message.UCIDHeaders, icid)
+			}
+		}
+	}
+}
+
+// extractICIDFromChargingVector parses the icid-value from P-Charging-Vector header
+func extractICIDFromChargingVector(pcv string) string {
+	// P-Charging-Vector format: icid-value=xxx;icid-generated-at=yyy;orig-ioi=zzz
+	parts := strings.Split(pcv, ";")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(part), "icid-value=") {
+			return strings.TrimPrefix(part[11:], "\"")
+		}
+	}
+	return ""
 }
 
 // extractGenericHeaders extracts common headers for non-vendor-specific systems
@@ -4199,6 +4448,24 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 	// Store Cisco Session-ID if present
 	if message.SessionIDHeader != "" {
 		session.ExtendedMetadata["sip_cisco_session_id"] = message.SessionIDHeader
+	}
+
+	// Store Oracle SBC UCID if present
+	if message.OracleUCID != "" {
+		session.ExtendedMetadata["sip_oracle_ucid"] = message.OracleUCID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":  session.ID,
+			"oracle_ucid": message.OracleUCID,
+		}).Debug("Stored Oracle UCID in recording session metadata")
+	}
+
+	// Store Oracle SBC Conversation ID if present
+	if message.OracleConversationID != "" {
+		session.ExtendedMetadata["sip_oracle_conversation_id"] = message.OracleConversationID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":      session.ID,
+			"conversation_id": message.OracleConversationID,
+		}).Debug("Stored Oracle Conversation ID in recording session metadata")
 	}
 }
 
