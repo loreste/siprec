@@ -2767,16 +2767,13 @@ func (s *CustomSIPServer) sendReferNotify(originalRefer *SIPMessage, callState *
 		to := s.getHeaderValue(originalRefer, "From")     // Their From becomes To
 		contact := s.buildContactHeader(originalRefer)
 
-		// Build the NOTIFY request URI from the Contact header in the REFER
-		requestURI := originalRefer.Connection.remoteAddr.String()
-
 		// Create request using sipgo
 		notifyReq := sipparser.NewRequest(
 			"NOTIFY",
 			sipparser.Uri{
 				Scheme: "sip",
 				User:   "",
-				Host:   originalRefer.Connection.remoteAddr.String(),
+				Host:   originalRefer.Connection.remoteAddr,
 			},
 		)
 
