@@ -136,6 +136,21 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 	if updates.CostCenter != nil {
 		cdr.CostCenter = updates.CostCenter
 	}
+	if updates.VendorType != nil {
+		cdr.VendorType = updates.VendorType
+	}
+	if updates.UCID != nil {
+		cdr.UCID = updates.UCID
+	}
+	if updates.OracleUCID != nil {
+		cdr.OracleUCID = updates.OracleUCID
+	}
+	if updates.ConversationID != nil {
+		cdr.ConversationID = updates.ConversationID
+	}
+	if updates.CiscoSessionID != nil {
+		cdr.CiscoSessionID = updates.CiscoSessionID
+	}
 
 	cdr.UpdatedAt = time.Now()
 
@@ -174,10 +189,14 @@ func (c *CDRService) EndSession(sessionID string, status string, errorMessage *s
 		}
 	}
 
-	// Store in database
-	if err := c.repo.CreateCDR(cdr); err != nil {
-		c.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to store CDR")
-		return fmt.Errorf("failed to store CDR: %w", err)
+	// Store in database (if configured)
+	if c.repo != nil {
+		if err := c.repo.CreateCDR(cdr); err != nil {
+			c.logger.WithError(err).WithField("session_id", sessionID).Error("Failed to store CDR")
+			return fmt.Errorf("failed to store CDR: %w", err)
+		}
+	} else {
+		c.logger.WithField("session_id", sessionID).Debug("Database not configured, CDR not persisted")
 	}
 
 	// Remove from active CDRs
@@ -492,6 +511,11 @@ type CDRUpdate struct {
 	TranscriptionID  *string
 	BillingCode      *string
 	CostCenter       *string
+	VendorType       *string // avaya, cisco, oracle, generic
+	UCID             *string // Universal Call ID
+	OracleUCID       *string // Oracle SBC specific UCID
+	ConversationID   *string // Oracle Conversation ID
+	CiscoSessionID   *string // Cisco Session-ID
 }
 
 type CDRFilters struct {

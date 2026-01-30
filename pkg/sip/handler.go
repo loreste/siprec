@@ -126,6 +126,15 @@ type Handler struct {
 	// Speech-to-text callback function
 	STTCallback func(context.Context, string, io.Reader, string) error
 
+	// SessionMetadataCallback is called when a recording session is created
+	// It allows session metadata (Oracle UCID, Conversation ID, etc.) to be
+	// propagated to conversation tracking for AMQP publishing
+	SessionMetadataCallback func(callUUID string, metadata map[string]string)
+
+	// ClearSessionMetadataCallback is called when a call ends to clean up
+	// session metadata stored in the transcription service
+	ClearSessionMetadataCallback func(callUUID string)
+
 	// For session redundancy
 	SessionStore SessionStore
 

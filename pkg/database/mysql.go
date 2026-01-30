@@ -240,6 +240,11 @@ CREATE TABLE IF NOT EXISTS cdr (
     error_message TEXT NULL,
     billing_code VARCHAR(100) NULL,
     cost_center VARCHAR(100) NULL,
+    vendor_type VARCHAR(50) NULL,
+    ucid VARCHAR(255) NULL,
+    oracle_ucid VARCHAR(255) NULL,
+    conversation_id VARCHAR(255) NULL,
+    cisco_session_id VARCHAR(255) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
@@ -252,6 +257,10 @@ CREATE TABLE IF NOT EXISTS cdr (
     INDEX idx_status (status),
     INDEX idx_billing_code (billing_code),
     INDEX idx_cost_center (cost_center),
+    INDEX idx_vendor_type (vendor_type),
+    INDEX idx_ucid (ucid),
+    INDEX idx_oracle_ucid (oracle_ucid),
+    INDEX idx_conversation_id (conversation_id),
     FULLTEXT(error_message)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `

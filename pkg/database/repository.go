@@ -556,8 +556,9 @@ func (r *Repository) CreateCDR(cdr *CDR) error {
 			duration, recording_path, recording_size, transcription_id, quality,
 			transport, source_ip, codec, sample_rate, participant_count,
 			stream_count, status, error_message, billing_code, cost_center,
+			vendor_type, ucid, oracle_ucid, conversation_id, cisco_session_id,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.db.ExecContext(ctx, query,
@@ -566,7 +567,8 @@ func (r *Repository) CreateCDR(cdr *CDR) error {
 		cdr.RecordingSize, cdr.TranscriptionID, cdr.Quality, cdr.Transport,
 		cdr.SourceIP, cdr.Codec, cdr.SampleRate, cdr.ParticipantCount,
 		cdr.StreamCount, cdr.Status, cdr.ErrorMessage, cdr.BillingCode,
-		cdr.CostCenter, cdr.CreatedAt, cdr.UpdatedAt,
+		cdr.CostCenter, cdr.VendorType, cdr.UCID, cdr.OracleUCID,
+		cdr.ConversationID, cdr.CiscoSessionID, cdr.CreatedAt, cdr.UpdatedAt,
 	)
 
 	if err != nil {
