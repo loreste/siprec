@@ -1,6 +1,8 @@
 # Binaries
 /siprec-server
 /siprec-server-linux*
+/siprec-linux
+/siprec-linux-amd64
 /main
 /env-test
 /test_audio
@@ -79,6 +81,16 @@ server.pid
 # Test results and coverage
 test-results/
 coverage/
+
+# SIPp test artifacts and configs
+test/sipp/*.xml
+test/sipp/*.csv
+test/sipp/*.pcap
+test/sipp/*.ulaw
+test/sipp/
+test/test_siprec.sh
+test_certs/
+load_test_stats.csv
 
 # Temporary files
 *.tmp
