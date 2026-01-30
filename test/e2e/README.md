@@ -1,6 +1,6 @@
-# SIPREC Server E2E Tests
+# IZI SIPREC E2E Tests
 
-This directory contains End-to-End (E2E) tests for the SIPREC server, verifying the integration of SIP signaling, RTP media processing, Recording storage, and STT (Speech-to-Text) providers.
+This directory contains End-to-End (E2E) tests for IZI SIPREC, verifying the integration of SIP signaling, RTP media processing, Recording storage, and STT (Speech-to-Text) providers.
 
 ## Running the Tests
 

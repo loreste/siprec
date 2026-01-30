@@ -1,8 +1,8 @@
-# Production Requirements for SIPREC Backup & Recovery
+# Production Requirements for IZI SIPREC Backup & Recovery
 
 ## Overview
 
-The SIPREC backup and recovery system is now **functionally complete** with comprehensive thread safety, memory efficiency, and CPU optimization. However, for full cloud provider integration, additional SDK dependencies are required.
+The IZI SIPREC backup and recovery system is now **functionally complete** with comprehensive thread safety, memory efficiency, and CPU optimization. However, for full cloud provider integration, additional SDK dependencies are required.
 
 ## Current Implementation Status
 

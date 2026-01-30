@@ -1,12 +1,12 @@
-# SIPREC Server
+# IZI SIPREC
 
 > Enterprise-grade SIP recording service with advanced speech-to-text, real-time analytics, PII redaction, and multi-cloud storage.
 
 ## Overview
 
-This project implements a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
+IZI SIPREC is a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 0.0.34
+**Version:** 1.0.0
 
 ## Core Features
 
@@ -27,7 +27,7 @@ This project implements a production-ready SIPREC-compliant recording endpoint w
 - **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
 - **Circuit Breaker Protection** – Automatic failover and health monitoring for all STT providers
 - **Language-Based Routing** – Intelligent provider selection based on detected language
-- **Local & Remote Whisper CLI** – Optional on-prem transcription via the open-source [openai/whisper](https://github.com/openai/whisper) binary (run it locally or point SIPREC at a remote SSH/HTTP wrapper; see [Whisper Setup Guide](docs/whisper-setup.md))
+- **Local & Remote Whisper CLI** – Optional on-prem transcription via the open-source [openai/whisper](https://github.com/openai/whisper) binary (run it locally or point IZI SIPREC at a remote SSH/HTTP wrapper; see [Whisper Setup Guide](docs/whisper-setup.md))
 - **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP publishers (see [real-time transcription docs](docs/realtime-transcription.md) for message formats)
 - **Async Processing** – Queue-based transcription with configurable workers and retries
 

@@ -1,6 +1,6 @@
 # Real-time Transcription with AMQP
 
-The SIPREC server can stream live transcription results to an AMQP message queue (e.g., RabbitMQ) in real time as calls are being recorded.
+IZI SIPREC can stream live transcription results to an AMQP message queue (e.g., RabbitMQ) in real time as calls are being recorded.
 
 ## How It Works
 
