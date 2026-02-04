@@ -332,6 +332,16 @@ func (p *DeepgramProviderEnhanced) SetCallback(callback func(callUUID, transcrip
 	p.callback = callback
 }
 
+// SetAPIKey sets the Deepgram API key
+func (p *DeepgramProviderEnhanced) SetAPIKey(apiKey string) {
+	p.apiKey = apiKey
+}
+
+// SetConfig sets the Deepgram configuration
+func (p *DeepgramProviderEnhanced) SetConfig(config *DeepgramConfig) {
+	p.config = config
+}
+
 // validateConfig validates the Deepgram configuration
 func (p *DeepgramProviderEnhanced) validateConfig() error {
 	if p.config.SampleRate <= 0 {

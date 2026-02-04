@@ -453,6 +453,9 @@ type DeepgramSTTConfig struct {
 
 	// Maximum number of language alternatives to return
 	MaxLanguageAlternatives int `json:"max_language_alternatives" env:"DEEPGRAM_MAX_LANG_ALTERNATIVES" default:"3"`
+
+	// Use WebSocket streaming for real-time transcription (recommended)
+	UseWebSocket bool `json:"use_websocket" env:"DEEPGRAM_USE_WEBSOCKET" default:"true"`
 }
 
 // ElevenLabsSTTConfig holds ElevenLabs Speech-to-Text configuration
