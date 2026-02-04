@@ -51,9 +51,10 @@ type OpenSourceModelConfig struct {
 	ModelPath   string              `json:"model_path"`   // Local path or HuggingFace model ID
 
 	// Inference backend
-	Backend     InferenceBackend    `json:"backend"`
-	BaseURL     string              `json:"base_url"`     // API endpoint
-	WebSocketURL string             `json:"websocket_url"` // WebSocket endpoint for streaming
+	Backend            InferenceBackend `json:"backend"`
+	BaseURL            string           `json:"base_url"`            // API base URL
+	TranscribeEndpoint string           `json:"transcribe_endpoint"` // Endpoint path for transcription (e.g., /stt/transcribe)
+	WebSocketURL       string           `json:"websocket_url"`       // WebSocket endpoint for streaming
 
 	// Authentication (optional for some backends)
 	APIKey      string              `json:"api_key"`
@@ -325,7 +326,15 @@ func (p *OpenSourceModelProvider) buildGenericRequest(ctx context.Context, audio
 		return nil, err
 	}
 
-	url := strings.TrimSuffix(p.config.BaseURL, "/") + "/transcribe"
+	// Use configurable endpoint, default to /stt/transcribe if not set
+	endpoint := p.config.TranscribeEndpoint
+	if endpoint == "" {
+		endpoint = "/stt/transcribe"
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+	url := strings.TrimSuffix(p.config.BaseURL, "/") + endpoint
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
 	if err != nil {
 		return nil, err

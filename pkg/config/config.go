@@ -681,6 +681,9 @@ type OpenSourceSTTConfig struct {
 	// Base URL for HTTP-based backends
 	BaseURL string `json:"base_url" env:"OPENSOURCE_BASE_URL" default:"http://localhost:8000"`
 
+	// Transcribe endpoint path (appended to BaseURL)
+	TranscribeEndpoint string `json:"transcribe_endpoint" env:"OPENSOURCE_TRANSCRIBE_ENDPOINT" default:"/stt/transcribe"`
+
 	// WebSocket URL for streaming backends
 	WebSocketURL string `json:"websocket_url" env:"OPENSOURCE_WEBSOCKET_URL"`
 
@@ -3142,6 +3145,7 @@ func loadOpenSourceSTTConfig(logger *logrus.Logger, config *OpenSourceSTTConfig)
 	config.ModelPath = getEnv("OPENSOURCE_MODEL_PATH", "")
 	config.Backend = getEnv("OPENSOURCE_BACKEND", "http")
 	config.BaseURL = getEnv("OPENSOURCE_BASE_URL", "http://localhost:8000")
+	config.TranscribeEndpoint = getEnv("OPENSOURCE_TRANSCRIBE_ENDPOINT", "/stt/transcribe")
 	config.WebSocketURL = getEnv("OPENSOURCE_WEBSOCKET_URL", "")
 	config.APIKey = getEnv("OPENSOURCE_API_KEY", "")
 	config.AuthHeader = getEnv("OPENSOURCE_AUTH_HEADER", "")
