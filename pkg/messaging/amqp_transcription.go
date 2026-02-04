@@ -21,6 +21,12 @@ const (
 	amqpPublishChannelSize = 5000
 	// Publish timeout
 	amqpPublishTimeout = 500 * time.Millisecond
+	// Retry configuration
+	amqpMaxRetries       = 3
+	amqpBaseRetryDelay   = 100 * time.Millisecond
+	amqpMaxRetryDelay    = 2 * time.Second
+	// Health check interval
+	amqpHealthCheckInterval = 30 * time.Second
 )
 
 // transcriptionMessage represents a transcription to publish
@@ -48,20 +54,28 @@ type AMQPTranscriptionListener struct {
 	messagePool sync.Pool
 
 	// Metrics - atomic for lock-free updates
-	totalPublished   int64
-	totalFailed      int64
-	totalDropped     int64
-	totalTimeouts    int64
-	channelHighWater int64
+	totalPublished    int64
+	totalFailed       int64
+	totalDropped      int64
+	totalTimeouts     int64
+	totalRetries      int64
+	channelHighWater  int64
+	lastConnectedTime int64 // Unix timestamp of last successful connection
+	lastErrorTime     int64 // Unix timestamp of last error
+	consecutiveErrors int64 // Count of consecutive connection errors
+
+	// Health check
+	healthCheckStop chan struct{}
 }
 
 // NewAMQPTranscriptionListener creates a new AMQP transcription listener optimized for high concurrency
 func NewAMQPTranscriptionListener(logger logrus.FieldLogger, client AMQPClientInterface) *AMQPTranscriptionListener {
 	l := &AMQPTranscriptionListener{
-		logger:      logger,
-		client:      client,
-		publishChan: make(chan *transcriptionMessage, amqpPublishChannelSize),
-		stopChan:    make(chan struct{}),
+		logger:          logger,
+		client:          client,
+		publishChan:     make(chan *transcriptionMessage, amqpPublishChannelSize),
+		stopChan:        make(chan struct{}),
+		healthCheckStop: make(chan struct{}),
 		messagePool: sync.Pool{
 			New: func() interface{} {
 				return &transcriptionMessage{
@@ -77,9 +91,13 @@ func NewAMQPTranscriptionListener(logger logrus.FieldLogger, client AMQPClientIn
 		go l.publishWorker(i)
 	}
 
+	// Start health check goroutine
+	go l.healthCheckLoop()
+
 	logger.WithFields(logrus.Fields{
 		"workers":     amqpWorkerPoolSize,
 		"buffer_size": amqpPublishChannelSize,
+		"max_retries": amqpMaxRetries,
 	}).Info("AMQP transcription listener initialized with worker pool")
 
 	return l
@@ -109,7 +127,7 @@ func (l *AMQPTranscriptionListener) publishWorker(id int) {
 	}
 }
 
-// processMessage handles a single message publish
+// processMessage handles a single message publish with retry logic
 func (l *AMQPTranscriptionListener) processMessage(msg *transcriptionMessage) {
 	// Panic recovery
 	defer func() {
@@ -121,9 +139,32 @@ func (l *AMQPTranscriptionListener) processMessage(msg *transcriptionMessage) {
 		}
 	}()
 
-	// Check connection status
-	if l.client == nil || !l.client.IsConnected() {
+	// Check connection status with detailed logging
+	if l.client == nil {
 		atomic.AddInt64(&l.totalFailed, 1)
+		atomic.AddInt64(&l.consecutiveErrors, 1)
+		atomic.StoreInt64(&l.lastErrorTime, time.Now().Unix())
+		l.logger.WithFields(logrus.Fields{
+			"call_uuid":          msg.callUUID,
+			"consecutive_errors": atomic.LoadInt64(&l.consecutiveErrors),
+		}).Error("AMQP client is nil - transcription cannot be published")
+		return
+	}
+
+	if !l.client.IsConnected() {
+		// Attempt retry with backoff for disconnected state
+		if l.retryWithBackoff(msg) {
+			return // Success after retry
+		}
+		atomic.AddInt64(&l.totalFailed, 1)
+		atomic.AddInt64(&l.consecutiveErrors, 1)
+		atomic.StoreInt64(&l.lastErrorTime, time.Now().Unix())
+		l.logger.WithFields(logrus.Fields{
+			"call_uuid":          msg.callUUID,
+			"is_final":           msg.isFinal,
+			"consecutive_errors": atomic.LoadInt64(&l.consecutiveErrors),
+			"message_age_ms":     time.Since(msg.timestamp).Milliseconds(),
+		}).Error("AMQP client disconnected - transcription will be lost after retries exhausted")
 		return
 	}
 
@@ -134,41 +175,174 @@ func (l *AMQPTranscriptionListener) processMessage(msg *transcriptionMessage) {
 	), trace.WithSpanKind(trace.SpanKindProducer))
 	defer publishSpan.End()
 
-	// Use a timeout context for publishing
-	ctx, cancel := context.WithTimeout(context.Background(), amqpPublishTimeout)
-	defer cancel()
-
-	// Publish with timeout
-	publishDone := make(chan error, 1)
-	go func() {
-		publishDone <- l.client.PublishTranscription(msg.transcription, msg.callUUID, msg.metadata)
-	}()
-
-	start := time.Now()
-	select {
-	case err := <-publishDone:
-		publishSpan.SetAttributes(attribute.Int64("amqp.publish.duration_ms", time.Since(start).Milliseconds()))
-		if err != nil {
-			atomic.AddInt64(&l.totalFailed, 1)
+	// Attempt publish with retries
+	var lastErr error
+	for attempt := 0; attempt <= amqpMaxRetries; attempt++ {
+		if attempt > 0 {
+			atomic.AddInt64(&l.totalRetries, 1)
+			delay := l.calculateBackoff(attempt)
 			l.logger.WithFields(logrus.Fields{
 				"call_uuid": msg.callUUID,
-				"error":     err.Error(),
-			}).Warn("Failed to publish transcription to AMQP")
-			publishSpan.RecordError(err)
-			publishSpan.SetStatus(codes.Error, err.Error())
-		} else {
+				"attempt":   attempt,
+				"delay_ms":  delay.Milliseconds(),
+			}).Debug("Retrying AMQP publish after delay")
+			time.Sleep(delay)
+		}
+
+		// Use a timeout context for publishing
+		ctx, cancel := context.WithTimeout(context.Background(), amqpPublishTimeout)
+
+		// Publish with timeout
+		publishDone := make(chan error, 1)
+		go func() {
+			publishDone <- l.client.PublishTranscription(msg.transcription, msg.callUUID, msg.metadata)
+		}()
+
+		start := time.Now()
+		select {
+		case err := <-publishDone:
+			cancel()
+			publishSpan.SetAttributes(attribute.Int64("amqp.publish.duration_ms", time.Since(start).Milliseconds()))
+			if err != nil {
+				lastErr = err
+				if attempt < amqpMaxRetries {
+					continue // Try again
+				}
+				atomic.AddInt64(&l.totalFailed, 1)
+				atomic.AddInt64(&l.consecutiveErrors, 1)
+				atomic.StoreInt64(&l.lastErrorTime, time.Now().Unix())
+				l.logger.WithFields(logrus.Fields{
+					"call_uuid":    msg.callUUID,
+					"error":        err.Error(),
+					"attempts":     attempt + 1,
+					"is_final":     msg.isFinal,
+					"message_age":  time.Since(msg.timestamp).String(),
+				}).Error("Failed to publish transcription to AMQP after all retries")
+				publishSpan.RecordError(err)
+				publishSpan.SetStatus(codes.Error, err.Error())
+				return
+			}
+			// Success
 			atomic.AddInt64(&l.totalPublished, 1)
+			atomic.StoreInt64(&l.consecutiveErrors, 0) // Reset consecutive errors
+			atomic.StoreInt64(&l.lastConnectedTime, time.Now().Unix())
 			l.logger.WithFields(logrus.Fields{
 				"call_uuid": msg.callUUID,
 				"is_final":  msg.isFinal,
+				"attempts":  attempt + 1,
 			}).Debug("Transcription published to AMQP queue")
 			publishSpan.SetStatus(codes.Ok, "published")
+			return
+
+		case <-ctx.Done():
+			cancel()
+			lastErr = context.DeadlineExceeded
+			if attempt < amqpMaxRetries {
+				continue // Try again
+			}
+			atomic.AddInt64(&l.totalTimeouts, 1)
+			atomic.AddInt64(&l.consecutiveErrors, 1)
+			atomic.StoreInt64(&l.lastErrorTime, time.Now().Unix())
+			l.logger.WithFields(logrus.Fields{
+				"call_uuid": msg.callUUID,
+				"attempts":  attempt + 1,
+			}).Error("AMQP publish timed out after all retries")
+			publishSpan.RecordError(lastErr)
+			publishSpan.SetStatus(codes.Error, "publish timeout")
+			return
 		}
-	case <-ctx.Done():
-		atomic.AddInt64(&l.totalTimeouts, 1)
-		l.logger.WithField("call_uuid", msg.callUUID).Warn("AMQP publish timed out")
-		publishSpan.RecordError(context.DeadlineExceeded)
-		publishSpan.SetStatus(codes.Error, "publish timeout")
+	}
+}
+
+// retryWithBackoff attempts to wait for connection to restore
+func (l *AMQPTranscriptionListener) retryWithBackoff(msg *transcriptionMessage) bool {
+	for attempt := 1; attempt <= amqpMaxRetries; attempt++ {
+		delay := l.calculateBackoff(attempt)
+		l.logger.WithFields(logrus.Fields{
+			"call_uuid": msg.callUUID,
+			"attempt":   attempt,
+			"delay_ms":  delay.Milliseconds(),
+		}).Debug("Waiting for AMQP connection to restore")
+
+		select {
+		case <-l.stopChan:
+			return false
+		case <-time.After(delay):
+			if l.client != nil && l.client.IsConnected() {
+				atomic.AddInt64(&l.totalRetries, 1)
+				l.logger.WithFields(logrus.Fields{
+					"call_uuid": msg.callUUID,
+					"attempt":   attempt,
+				}).Info("AMQP connection restored, proceeding with publish")
+				return false // Connection restored, proceed with normal publish
+			}
+		}
+	}
+	return false // Retries exhausted, connection still down
+}
+
+// calculateBackoff returns delay for the given attempt using exponential backoff
+func (l *AMQPTranscriptionListener) calculateBackoff(attempt int) time.Duration {
+	delay := amqpBaseRetryDelay * time.Duration(1<<uint(attempt-1))
+	if delay > amqpMaxRetryDelay {
+		delay = amqpMaxRetryDelay
+	}
+	return delay
+}
+
+// healthCheckLoop periodically logs health status
+func (l *AMQPTranscriptionListener) healthCheckLoop() {
+	ticker := time.NewTicker(amqpHealthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-l.healthCheckStop:
+			return
+		case <-ticker.C:
+			l.logHealthStatus()
+		}
+	}
+}
+
+// logHealthStatus logs the current health of the AMQP listener
+func (l *AMQPTranscriptionListener) logHealthStatus() {
+	published := atomic.LoadInt64(&l.totalPublished)
+	failed := atomic.LoadInt64(&l.totalFailed)
+	dropped := atomic.LoadInt64(&l.totalDropped)
+	timeouts := atomic.LoadInt64(&l.totalTimeouts)
+	retries := atomic.LoadInt64(&l.totalRetries)
+	consecutiveErrors := atomic.LoadInt64(&l.consecutiveErrors)
+	queueLen := len(l.publishChan)
+
+	connected := false
+	if l.client != nil {
+		connected = l.client.IsConnected()
+	}
+
+	logLevel := logrus.InfoLevel
+	if consecutiveErrors > 10 || !connected {
+		logLevel = logrus.ErrorLevel
+	} else if consecutiveErrors > 0 || dropped > 0 {
+		logLevel = logrus.WarnLevel
+	}
+
+	l.logger.WithFields(logrus.Fields{
+		"published":          published,
+		"failed":             failed,
+		"dropped":            dropped,
+		"timeouts":           timeouts,
+		"retries":            retries,
+		"consecutive_errors": consecutiveErrors,
+		"queue_length":       queueLen,
+		"connected":          connected,
+	}).Log(logLevel, "AMQP transcription listener health status")
+
+	// Alert if connection has been down for extended period
+	if !connected && consecutiveErrors > 50 {
+		l.logger.WithFields(logrus.Fields{
+			"consecutive_errors": consecutiveErrors,
+		}).Error("AMQP connection has been down for an extended period - transcriptions are being lost")
 	}
 }
 
@@ -239,6 +413,35 @@ func (l *AMQPTranscriptionListener) GetMetrics() (published, failed, dropped, ti
 		atomic.LoadInt64(&l.channelHighWater)
 }
 
+// GetExtendedMetrics returns detailed listener metrics
+func (l *AMQPTranscriptionListener) GetExtendedMetrics() map[string]int64 {
+	return map[string]int64{
+		"published":          atomic.LoadInt64(&l.totalPublished),
+		"failed":             atomic.LoadInt64(&l.totalFailed),
+		"dropped":            atomic.LoadInt64(&l.totalDropped),
+		"timeouts":           atomic.LoadInt64(&l.totalTimeouts),
+		"retries":            atomic.LoadInt64(&l.totalRetries),
+		"consecutive_errors": atomic.LoadInt64(&l.consecutiveErrors),
+		"high_water":         atomic.LoadInt64(&l.channelHighWater),
+		"queue_length":       int64(len(l.publishChan)),
+	}
+}
+
+// IsHealthy returns true if the AMQP listener is healthy
+func (l *AMQPTranscriptionListener) IsHealthy() bool {
+	if l.client == nil {
+		return false
+	}
+	if !l.client.IsConnected() {
+		return false
+	}
+	// Consider unhealthy if many consecutive errors
+	if atomic.LoadInt64(&l.consecutiveErrors) > 10 {
+		return false
+	}
+	return true
+}
+
 // GetQueueLength returns current queue length
 func (l *AMQPTranscriptionListener) GetQueueLength() int {
 	return len(l.publishChan)
@@ -246,9 +449,22 @@ func (l *AMQPTranscriptionListener) GetQueueLength() int {
 
 // Shutdown gracefully shuts down the listener
 func (l *AMQPTranscriptionListener) Shutdown() {
+	// Stop health check first
+	close(l.healthCheckStop)
+
+	// Stop workers
 	close(l.stopChan)
 	l.wg.Wait()
-	l.logger.Info("AMQP transcription listener shutdown complete")
+
+	// Log final metrics
+	metrics := l.GetExtendedMetrics()
+	l.logger.WithFields(logrus.Fields{
+		"published": metrics["published"],
+		"failed":    metrics["failed"],
+		"dropped":   metrics["dropped"],
+		"timeouts":  metrics["timeouts"],
+		"retries":   metrics["retries"],
+	}).Info("AMQP transcription listener shutdown complete")
 }
 
 // FilteredTranscriptionListener wraps a listener and filters on final/partial events.

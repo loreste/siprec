@@ -643,9 +643,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exiting via ctx.Done()")
 				return
 			case <-ticker.C:
-				// Try non-blocking read with immediate deadline
+				// Try read with short deadline to catch any buffered packets
 				buffer, returnBuffer := GetPacketBuffer(1500)
-				udpConn.SetReadDeadline(time.Now()) // Immediate deadline = non-blocking
+				udpConn.SetReadDeadline(time.Now().Add(5 * time.Millisecond)) // Short deadline for non-blocking-ish read
 				n, addr, err := udpConn.ReadFromUDP(buffer)
 
 				if err != nil {

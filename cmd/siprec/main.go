@@ -785,6 +785,11 @@ func initialize() error {
 			logger.Info("PII transcription filter initialized")
 			piiFilter.AddListener(analyticsListener)
 		}
+		// Configure CDR service with PII detector if enabled
+		if appConfig.PII.ApplyToCDR && cdrService != nil {
+			cdrService.SetPIIDetector(piiDetector, true)
+			logger.Info("PII redaction enabled for CDR fields (CallerID, CalleeID)")
+		}
 	} else {
 		logger.Info("PII detection disabled")
 	}

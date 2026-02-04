@@ -68,46 +68,60 @@ func TestE2E_RecordingStorage(t *testing.T) {
 	// Wait for listener to bind (simple sleep for this test pattern)
 	time.Sleep(100 * time.Millisecond)
 
-	// 4. Send RTP packets
-	go func() {
-		conn, err := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", rtpPort))
+	// 4. Send RTP packets synchronously for more reliable test
+	conn, err := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", rtpPort))
+	require.NoError(t, err, "Failed to dial UDP")
+	defer conn.Close()
+
+	// Create a simple RTP packet (12-byte header + data)
+	// Version 2, PCMU (payload type 0)
+	// RTP header: V=2, P=0, X=0, CC=0, M=0, PT=0
+	// Bytes 0-1: V(2)|P|X|CC | M|PT
+	// Bytes 2-3: Sequence number
+	// Bytes 4-7: Timestamp
+	// Bytes 8-11: SSRC (must match forwarder.RemoteSSRC = 12345 = 0x00003039)
+	packet := make([]byte, 172) // 12-byte header + 160-byte payload
+	packet[0] = 0x80            // V=2, P=0, X=0, CC=0
+	packet[1] = 0x00            // M=0, PT=0 (PCMU)
+	// SSRC = 12345 = 0x00003039 (bytes 8-11, big-endian)
+	packet[8] = 0x00
+	packet[9] = 0x00
+	packet[10] = 0x30
+	packet[11] = 0x39
+	// Fill payload with PCMU silence (0x7F)
+	for i := 12; i < 172; i++ {
+		packet[i] = 0x7F
+	}
+
+	// Send packets with timing
+	timestamp := uint32(0)
+	for i := 0; i < 100; i++ { // Send 100 packets (2 seconds worth)
+		// Update sequence number (bytes 2-3, big-endian)
+		packet[2] = byte(i >> 8)
+		packet[3] = byte(i & 0xFF)
+		// Update timestamp (bytes 4-7, big-endian)
+		packet[4] = byte(timestamp >> 24)
+		packet[5] = byte(timestamp >> 16)
+		packet[6] = byte(timestamp >> 8)
+		packet[7] = byte(timestamp & 0xFF)
+		timestamp += 160 // 160 samples per 20ms at 8kHz
+
+		n, err := conn.Write(packet)
 		if err != nil {
-			t.Logf("Failed to dial valid UDP: %v", err)
-			return
+			t.Logf("Failed to write packet %d: %v", i, err)
+			break
 		}
-		defer conn.Close()
-
-		// Create a simple RTP packet (12-byte header + data)
-		// Version 2, PCMU
-		header := []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-		payload := make([]byte, 160) // 20ms of silence
-		for i := 0; i < len(payload); i++ {
-			payload[i] = 0x7F // Silence in PCMU
+		if i == 0 {
+			t.Logf("First RTP packet sent: %d bytes to port %d", n, rtpPort)
 		}
-		packet := append(header, payload...)
+		time.Sleep(20 * time.Millisecond)
+	}
 
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-
-		for i := 0; i < 50; i++ { // Send for 1 second
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// Ensure simple sequence number increment
-				header[3] = byte(i)
-				conn.Write(packet)
-			}
-		}
-	}()
-
-	// 5. Wait for recording
-	time.Sleep(2 * time.Second)
-
-	// Stop forwarder to flush files
+	// 5. Stop forwarder to flush files
+	t.Logf("Stopping forwarder after sending packets")
 	close(forwarder.StopChan)
-	// Give it a moment to close
-	time.Sleep(100 * time.Millisecond)
+	// Give it a moment to close and write the WAV file
+	time.Sleep(500 * time.Millisecond)
 
 	// 6. Verify file existence and content
 	// The file name format is usually sanitizedUUID.wav
