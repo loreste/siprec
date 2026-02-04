@@ -861,14 +861,44 @@ func initialize() error {
 			}
 		case "deepgram":
 			if appConfig.STT.Deepgram.Enabled {
-				deepgramProvider := stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram, sttManager)
+				var deepgramProvider stt.Provider
+				if appConfig.STT.Deepgram.UseWebSocket {
+					// Use enhanced WebSocket provider for real-time streaming
+					enhancedProvider := stt.NewDeepgramProviderEnhancedWithService(logger, transcriptionSvc)
+					// Configure from app config
+					enhancedProvider.SetAPIKey(appConfig.STT.Deepgram.APIKey)
+					enhancedProvider.SetConfig(&stt.DeepgramConfig{
+						Model:           appConfig.STT.Deepgram.Model,
+						Language:        appConfig.STT.Deepgram.Language,
+						Tier:            appConfig.STT.Deepgram.Tier,
+						Encoding:        appConfig.STT.Deepgram.Encoding,
+						SampleRate:      appConfig.STT.Deepgram.SampleRate,
+						Channels:        appConfig.STT.Deepgram.Channels,
+						Punctuate:       appConfig.STT.Deepgram.Punctuate,
+						Diarize:         appConfig.STT.Deepgram.Diarize,
+						SmartFormat:     appConfig.STT.Deepgram.SmartFormat,
+						ProfanityFilter: appConfig.STT.Deepgram.ProfanityFilter,
+						Utterances:      true,
+						InterimResults:  true,
+						Endpointing:     true,
+					})
+					deepgramProvider = enhancedProvider
+					logger.Info("Using Deepgram enhanced WebSocket provider")
+				} else {
+					// Use standard HTTP provider
+					deepgramProvider = stt.NewDeepgramProvider(logger, transcriptionSvc, &appConfig.STT.Deepgram, sttManager)
+					logger.Info("Using Deepgram standard HTTP provider")
+				}
 				// Wrap with live transcription wrapper to ensure AMQP delivery
 				liveProvider := stt.NewLiveTranscriptionWrapper(deepgramProvider, transcriptionSvc, logger)
 				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Deepgram provider")
 				} else {
-					logger.WithField("provider", "deepgram").Info("Registered Deepgram provider with live transcription")
+					logger.WithFields(logrus.Fields{
+						"provider":     "deepgram",
+						"use_websocket": appConfig.STT.Deepgram.UseWebSocket,
+					}).Info("Registered Deepgram provider with live transcription")
 				}
 			}
 		case "azure":
