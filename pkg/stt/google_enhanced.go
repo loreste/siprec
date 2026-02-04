@@ -270,6 +270,28 @@ func (p *GoogleProviderEnhanced) SetCallback(callback func(callUUID, transcripti
 	p.callback = callback
 }
 
+// SetConfig sets the Google configuration
+func (p *GoogleProviderEnhanced) SetConfig(config *GoogleConfig) {
+	p.config = config
+}
+
+// SetCredentialsFile sets the credentials file path
+func (p *GoogleProviderEnhanced) SetCredentialsFile(credentialsFile string) {
+	if p.config == nil {
+		p.config = DefaultGoogleConfig()
+	}
+	p.config.CredentialsFile = credentialsFile
+	p.clientOptions = append(p.clientOptions, option.WithCredentialsFile(credentialsFile))
+}
+
+// SetProjectID sets the Google Cloud project ID
+func (p *GoogleProviderEnhanced) SetProjectID(projectID string) {
+	if p.config == nil {
+		p.config = DefaultGoogleConfig()
+	}
+	p.config.ProjectID = projectID
+}
+
 // StreamToText streams audio data to Google Speech-to-Text using enhanced streaming
 func (p *GoogleProviderEnhanced) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
 	// Check circuit breaker

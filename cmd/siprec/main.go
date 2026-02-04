@@ -849,14 +849,45 @@ func initialize() error {
 		switch vendor {
 		case "google":
 			if appConfig.STT.Google.Enabled {
-				googleProvider := stt.NewGoogleProvider(logger, transcriptionSvc, &appConfig.STT.Google)
+				var googleProvider stt.Provider
+				if appConfig.STT.Google.UseStreaming {
+					// Use enhanced gRPC streaming provider for real-time transcription
+					enhancedProvider := stt.NewGoogleProviderEnhanced(logger)
+					enhancedProvider.SetConfig(&stt.GoogleConfig{
+						CredentialsFile:            appConfig.STT.Google.CredentialsFile,
+						ProjectID:                  appConfig.STT.Google.ProjectID,
+						LanguageCode:               appConfig.STT.Google.Language,
+						Model:                      appConfig.STT.Google.Model,
+						SampleRateHertz:            int32(appConfig.STT.Google.SampleRate),
+						EnableAutomaticPunctuation: appConfig.STT.Google.EnableAutomaticPunctuation,
+						EnableWordTimeOffsets:      appConfig.STT.Google.EnableWordTimeOffsets,
+						EnableSpeakerDiarization:   appConfig.STT.Google.EnableDiarization,
+						DiarizationSpeakerCount:    int32(appConfig.STT.Google.DiarizationSpeakerCount),
+						EnableProfanityFilter:      appConfig.STT.Google.ProfanityFilter,
+						MaxAlternatives:            int32(appConfig.STT.Google.MaxAlternatives),
+						UseEnhanced:                appConfig.STT.Google.EnhancedModels,
+						InterimResults:             true,
+					})
+					if appConfig.STT.Google.CredentialsFile != "" {
+						enhancedProvider.SetCredentialsFile(appConfig.STT.Google.CredentialsFile)
+					}
+					googleProvider = enhancedProvider
+					logger.Info("Using Google enhanced gRPC streaming provider")
+				} else {
+					// Use standard HTTP provider
+					googleProvider = stt.NewGoogleProvider(logger, transcriptionSvc, &appConfig.STT.Google)
+					logger.Info("Using Google standard HTTP provider")
+				}
 				// Wrap with live transcription wrapper to ensure AMQP delivery
 				liveProvider := stt.NewLiveTranscriptionWrapper(googleProvider, transcriptionSvc, logger)
 				wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
 				if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 					logger.WithError(err).Warn("Failed to register Google Speech-to-Text provider")
 				} else {
-					logger.WithField("provider", "google").Info("Registered Google STT provider with live transcription")
+					logger.WithFields(logrus.Fields{
+						"provider":      "google",
+						"use_streaming": appConfig.STT.Google.UseStreaming,
+					}).Info("Registered Google STT provider with live transcription")
 				}
 			}
 		case "deepgram":
