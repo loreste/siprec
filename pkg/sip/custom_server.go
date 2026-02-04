@@ -135,6 +135,14 @@ type SIPMessage struct {
 	GenesysAgentID        string // Agent identifier
 	GenesysCampaignID     string // Outbound campaign ID
 
+	// NICE specific fields
+	NICEInteractionID string // NICE interaction identifier
+	NICESessionID     string // NICE session ID
+	NICERecordingID   string // NICE recording ID
+	NICECallID        string // NICE call ID
+	NICEContactID     string // NICE CXone/inContact contact ID
+	NICEAgentID       string // NICE agent identifier
+
 	// Asterisk specific fields
 	AsteriskUniqueID   string // Asterisk unique channel identifier
 	AsteriskLinkedID   string // Asterisk linked channel ID (for bridged calls)
@@ -153,6 +161,14 @@ type SIPMessage struct {
 	OpenSIPSCallID        string // OpenSIPS Call-ID correlation
 	OpenSIPSDialogID      string // OpenSIPS dialog identifier
 	OpenSIPSTransactionID string // OpenSIPS transaction ID
+
+	// Avaya specific fields
+	AvayaUCID       string // Avaya Universal Call ID
+	AvayaConfID     string // Avaya Conference ID
+	AvayaStationID  string // Avaya station identifier
+	AvayaAgentID    string // Avaya agent identifier
+	AvayaVDN        string // Avaya Vector Directory Number
+	AvayaSkillGroup string // Avaya skill/hunt group
 }
 
 // CallState tracks the state of SIP calls
@@ -1349,6 +1365,56 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				}
 				if message.OpenSIPSCallID != "" {
 					update.OpenSIPSCallID = &message.OpenSIPSCallID
+					hasUpdates = true
+				}
+				// NICE-specific CDR fields
+				if message.NICEInteractionID != "" {
+					update.NICEInteractionID = &message.NICEInteractionID
+					hasUpdates = true
+				}
+				if message.NICESessionID != "" {
+					update.NICESessionID = &message.NICESessionID
+					hasUpdates = true
+				}
+				if message.NICERecordingID != "" {
+					update.NICERecordingID = &message.NICERecordingID
+					hasUpdates = true
+				}
+				if message.NICEContactID != "" {
+					update.NICEContactID = &message.NICEContactID
+					hasUpdates = true
+				}
+				if message.NICEAgentID != "" {
+					update.NICEAgentID = &message.NICEAgentID
+					hasUpdates = true
+				}
+				if message.NICECallID != "" {
+					update.NICECallID = &message.NICECallID
+					hasUpdates = true
+				}
+				// Avaya-specific CDR fields
+				if message.AvayaUCID != "" {
+					update.AvayaUCID = &message.AvayaUCID
+					hasUpdates = true
+				}
+				if message.AvayaConfID != "" {
+					update.AvayaConfID = &message.AvayaConfID
+					hasUpdates = true
+				}
+				if message.AvayaStationID != "" {
+					update.AvayaStationID = &message.AvayaStationID
+					hasUpdates = true
+				}
+				if message.AvayaAgentID != "" {
+					update.AvayaAgentID = &message.AvayaAgentID
+					hasUpdates = true
+				}
+				if message.AvayaVDN != "" {
+					update.AvayaVDN = &message.AvayaVDN
+					hasUpdates = true
+				}
+				if message.AvayaSkillGroup != "" {
+					update.AvayaSkillGroup = &message.AvayaSkillGroup
 					hasUpdates = true
 				}
 				if hasUpdates {
@@ -3945,6 +4011,9 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 		}
 	}
 
+	// Process XML extensions from metadata (captures vendor-specific elements like NICE, Cisco, etc.)
+	processXMLExtensions(session, metadata, logger)
+
 	logger.WithFields(logrus.Fields{
 		"session_id":        session.ID,
 		"participant_count": len(session.Participants),
@@ -3956,6 +4025,189 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 	}).Info("Created recording session from SIPREC metadata")
 
 	return session, nil
+}
+
+// processXMLExtensions extracts vendor-specific XML extensions from SIPREC metadata
+// and stores them in session.ExtendedMetadata. This captures extensions from NICE,
+// Cisco, Oracle, Avaya and other vendors that embed custom data in the SIPREC XML.
+func processXMLExtensions(session *siprec.RecordingSession, metadata *siprec.RSMetadata, logger *logrus.Entry) {
+	if session == nil || metadata == nil {
+		return
+	}
+
+	if session.ExtendedMetadata == nil {
+		session.ExtendedMetadata = make(map[string]string)
+	}
+
+	extensionCount := 0
+
+	// Process session element extensions (RSSession)
+	for i, sess := range metadata.Sessions {
+		for _, ext := range sess.Extensions {
+			key := formatExtensionKey(fmt.Sprintf("session_%d", i), ext.XMLName)
+			if key != "" && ext.InnerXML != "" {
+				session.ExtendedMetadata[key] = strings.TrimSpace(ext.InnerXML)
+				extensionCount++
+
+				// Check for NICE-specific extensions
+				extractNICEExtensionData(session, ext, logger)
+			}
+		}
+	}
+
+	// Process recording session extensions (RSRecordingSession)
+	for i, recSess := range metadata.RecordingSessions {
+		for _, ext := range recSess.Extensions {
+			key := formatExtensionKey(fmt.Sprintf("recsession_%d", i), ext.XMLName)
+			if key != "" && ext.InnerXML != "" {
+				session.ExtendedMetadata[key] = strings.TrimSpace(ext.InnerXML)
+				extensionCount++
+
+				// Check for NICE-specific extensions
+				extractNICEExtensionData(session, ext, logger)
+			}
+		}
+	}
+
+	// Process participant extensions (RSParticipant)
+	for i, participant := range metadata.Participants {
+		for _, ext := range participant.Extensions {
+			key := formatExtensionKey(fmt.Sprintf("participant_%d", i), ext.XMLName)
+			if key != "" && ext.InnerXML != "" {
+				session.ExtendedMetadata[key] = strings.TrimSpace(ext.InnerXML)
+				extensionCount++
+
+				// Check for NICE-specific extensions
+				extractNICEExtensionData(session, ext, logger)
+			}
+		}
+	}
+
+	// Process stream extensions
+	for i, stream := range metadata.Streams {
+		for _, ext := range stream.Extensions {
+			key := formatExtensionKey(fmt.Sprintf("stream_%d", i), ext.XMLName)
+			if key != "" && ext.InnerXML != "" {
+				session.ExtendedMetadata[key] = strings.TrimSpace(ext.InnerXML)
+				extensionCount++
+
+				// Check for NICE-specific extensions
+				extractNICEExtensionData(session, ext, logger)
+			}
+		}
+	}
+
+	// Process group extensions
+	for i, group := range metadata.Group {
+		for _, ext := range group.Extensions {
+			key := formatExtensionKey(fmt.Sprintf("group_%d", i), ext.XMLName)
+			if key != "" && ext.InnerXML != "" {
+				session.ExtendedMetadata[key] = strings.TrimSpace(ext.InnerXML)
+				extensionCount++
+
+				// Check for NICE-specific extensions
+				extractNICEExtensionData(session, ext, logger)
+			}
+		}
+	}
+
+	if extensionCount > 0 {
+		logger.WithFields(logrus.Fields{
+			"session_id":      session.ID,
+			"extension_count": extensionCount,
+		}).Debug("Processed XML extensions from SIPREC metadata")
+	}
+}
+
+// formatExtensionKey creates a normalized key name for an XML extension
+func formatExtensionKey(prefix string, xmlName xml.Name) string {
+	localName := strings.TrimSpace(xmlName.Local)
+	if localName == "" {
+		return ""
+	}
+
+	// Normalize namespace to a shorter prefix
+	nsPrefix := ""
+	if xmlName.Space != "" {
+		// Extract short name from namespace URI
+		ns := strings.ToLower(xmlName.Space)
+		switch {
+		case strings.Contains(ns, "nice"):
+			nsPrefix = "nice_"
+		case strings.Contains(ns, "cisco"):
+			nsPrefix = "cisco_"
+		case strings.Contains(ns, "oracle"):
+			nsPrefix = "oracle_"
+		case strings.Contains(ns, "avaya"):
+			nsPrefix = "avaya_"
+		case strings.Contains(ns, "genesys"):
+			nsPrefix = "genesys_"
+		default:
+			// Use last part of namespace as prefix
+			parts := strings.Split(ns, "/")
+			if len(parts) > 0 {
+				lastPart := parts[len(parts)-1]
+				if len(lastPart) > 0 && len(lastPart) <= 20 {
+					nsPrefix = strings.ToLower(lastPart) + "_"
+				}
+			}
+		}
+	}
+
+	return fmt.Sprintf("ext_%s_%s%s", prefix, nsPrefix, strings.ToLower(localName))
+}
+
+// extractNICEExtensionData extracts NICE-specific data from XML extensions
+func extractNICEExtensionData(session *siprec.RecordingSession, ext siprec.XMLExtension, logger *logrus.Entry) {
+	localName := strings.ToLower(ext.XMLName.Local)
+	ns := strings.ToLower(ext.XMLName.Space)
+
+	// Check if this is a NICE extension
+	isNICE := strings.Contains(ns, "nice") ||
+		strings.HasPrefix(localName, "nice") ||
+		strings.HasPrefix(localName, "ntr") ||
+		strings.HasPrefix(localName, "incontact") ||
+		strings.HasPrefix(localName, "cxone")
+
+	if !isNICE {
+		return
+	}
+
+	innerContent := strings.TrimSpace(ext.InnerXML)
+	if innerContent == "" {
+		return
+	}
+
+	// Store recognized NICE fields directly
+	switch {
+	case strings.Contains(localName, "interaction") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_interaction_id"] = innerContent
+		logger.WithField("nice_interaction_id", innerContent).Debug("Extracted NICE interaction ID from XML extension")
+
+	case strings.Contains(localName, "session") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_session_id"] = innerContent
+		logger.WithField("nice_session_id", innerContent).Debug("Extracted NICE session ID from XML extension")
+
+	case strings.Contains(localName, "recording") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_recording_id"] = innerContent
+		logger.WithField("nice_recording_id", innerContent).Debug("Extracted NICE recording ID from XML extension")
+
+	case strings.Contains(localName, "contact") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_contact_id"] = innerContent
+		logger.WithField("nice_contact_id", innerContent).Debug("Extracted NICE contact ID from XML extension")
+
+	case strings.Contains(localName, "agent") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_agent_id"] = innerContent
+		logger.WithField("nice_agent_id", innerContent).Debug("Extracted NICE agent ID from XML extension")
+
+	case strings.Contains(localName, "call") && strings.Contains(localName, "id"):
+		session.ExtendedMetadata["nice_call_id"] = innerContent
+		logger.WithField("nice_call_id", innerContent).Debug("Extracted NICE call ID from XML extension")
+
+	case strings.Contains(localName, "ucid"):
+		session.ExtendedMetadata["nice_ucid"] = innerContent
+		logger.WithField("nice_ucid", innerContent).Debug("Extracted NICE UCID from XML extension")
+	}
 }
 
 // generateSiprecResponse creates a proper SIPREC multipart response with SDP and rs-metadata
@@ -4271,6 +4523,8 @@ func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
 		s.extractOracleHeaders(message)
 	case "genesys":
 		s.extractGenesysHeaders(message)
+	case "nice":
+		s.extractNICEHeaders(message)
 	case "asterisk":
 		s.extractAsteriskHeaders(message)
 	case "freeswitch":
@@ -4323,6 +4577,17 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		return "genesys"
 	}
 
+	// Detect NICE systems (NICE Engage, NICE inContact, NICE CXone, NTR)
+	if strings.Contains(userAgent, "nice") ||
+		strings.Contains(userAgent, "ntr") ||
+		strings.Contains(userAgent, "incontact") ||
+		strings.Contains(userAgent, "cxone") ||
+		strings.Contains(userAgent, "engage recording") ||
+		strings.Contains(userAgent, "nexidia") ||
+		strings.Contains(userAgent, "actimize") {
+		return "nice"
+	}
+
 	// Check for vendor-specific headers as fallback
 	if s.getHeaderValue(message, "x-avaya-conf-id") != "" ||
 		s.getHeaderValue(message, "x-avaya-ucid") != "" ||
@@ -4353,6 +4618,17 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		s.getHeaderValue(message, "x-inin-interaction-id") != "" ||
 		s.getHeaderValue(message, "x-inin-ic-userid") != "" {
 		return "genesys"
+	}
+
+	// NICE header detection fallback
+	if s.getHeaderValue(message, "x-nice-interaction-id") != "" ||
+		s.getHeaderValue(message, "x-nice-session-id") != "" ||
+		s.getHeaderValue(message, "x-nice-call-id") != "" ||
+		s.getHeaderValue(message, "x-nice-recording-id") != "" ||
+		s.getHeaderValue(message, "x-ntr-session-id") != "" ||
+		s.getHeaderValue(message, "x-incontact-contact-id") != "" ||
+		s.getHeaderValue(message, "x-cxone-contact-id") != "" {
+		return "nice"
 	}
 
 	// Detect Asterisk PBX
@@ -4477,6 +4753,35 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 		if value := s.getHeaderValue(message, header); value != "" {
 			message.UCIDHeaders = append(message.UCIDHeaders, value)
 		}
+	}
+
+	// Populate dedicated Avaya fields for structured access
+	if value := s.getHeaderValue(message, "x-avaya-ucid"); value != "" {
+		message.AvayaUCID = value
+	} else if value := s.getHeaderValue(message, "x-ucid"); value != "" {
+		message.AvayaUCID = value
+	}
+
+	if value := s.getHeaderValue(message, "x-avaya-conf-id"); value != "" {
+		message.AvayaConfID = value
+	}
+
+	if value := s.getHeaderValue(message, "x-avaya-station-id"); value != "" {
+		message.AvayaStationID = value
+	}
+
+	if value := s.getHeaderValue(message, "x-avaya-agent-id"); value != "" {
+		message.AvayaAgentID = value
+	}
+
+	if value := s.getHeaderValue(message, "x-avaya-vdn"); value != "" {
+		message.AvayaVDN = value
+	}
+
+	if value := s.getHeaderValue(message, "x-avaya-skill-group"); value != "" {
+		message.AvayaSkillGroup = value
+	} else if value := s.getHeaderValue(message, "x-avaya-skill"); value != "" {
+		message.AvayaSkillGroup = value
 	}
 }
 
@@ -4697,15 +5002,6 @@ func parsePChargingVector(pcv string) map[string]string {
 	return result
 }
 
-// extractICIDFromChargingVector parses the icid-value from P-Charging-Vector header (legacy helper)
-func extractICIDFromChargingVector(pcv string) string {
-	fields := parsePChargingVector(pcv)
-	if icid, ok := fields["icid-value"]; ok {
-		return icid
-	}
-	return ""
-}
-
 // extractGenesysHeaders extracts Genesys-specific SIP headers
 // Supports Genesys Cloud, PureConnect, PureEngage, and GVP platforms
 func (s *CustomSIPServer) extractGenesysHeaders(message *SIPMessage) {
@@ -4843,6 +5139,130 @@ func (s *CustomSIPServer) extractGenesysHeaders(message *SIPMessage) {
 	// Extract Campaign ID (for outbound)
 	if campaignID := s.getHeaderValue(message, "x-genesys-campaign-id"); campaignID != "" {
 		message.GenesysCampaignID = campaignID
+	}
+}
+
+// extractNICEHeaders extracts NICE-specific SIP headers
+// Supports NICE Engage, NICE inContact, NICE CXone, and NTR systems
+func (s *CustomSIPServer) extractNICEHeaders(message *SIPMessage) {
+	// NICE-specific headers to extract
+	niceHeaders := []string{
+		"x-nice-interaction-id",
+		"x-nice-session-id",
+		"x-nice-recording-id",
+		"x-nice-call-id",
+		"x-ntr-session-id",
+		"x-ntr-call-id",
+		"x-incontact-contact-id",
+		"x-incontact-master-contact-id",
+		"x-cxone-contact-id",
+		"x-cxone-master-contact-id",
+		"x-nice-agent-id",
+		"x-nice-agent-station",
+		"x-engage-call-id",
+		"x-engage-recording-id",
+	}
+
+	for _, header := range niceHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			if message.VendorHeaders == nil {
+				message.VendorHeaders = make(map[string]string)
+			}
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract primary NICE Interaction ID
+	interactionHeaders := []string{
+		"x-nice-interaction-id",
+		"x-incontact-contact-id",
+		"x-cxone-contact-id",
+		"x-engage-call-id",
+	}
+	for _, header := range interactionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICEInteractionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":        message.CallID,
+				"interaction_id": value,
+				"header":         header,
+			}).Debug("Extracted NICE Interaction ID")
+			break
+		}
+	}
+
+	// Extract NICE Session ID
+	sessionHeaders := []string{
+		"x-nice-session-id",
+		"x-ntr-session-id",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICESessionID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"session_id": value,
+				"header":     header,
+			}).Debug("Extracted NICE Session ID")
+			break
+		}
+	}
+
+	// Extract NICE Recording ID
+	recordingHeaders := []string{
+		"x-nice-recording-id",
+		"x-engage-recording-id",
+	}
+	for _, header := range recordingHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICERecordingID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":      message.CallID,
+				"recording_id": value,
+				"header":       header,
+			}).Debug("Extracted NICE Recording ID")
+			break
+		}
+	}
+
+	// Extract NICE Call ID
+	callIDHeaders := []string{
+		"x-nice-call-id",
+		"x-ntr-call-id",
+	}
+	for _, header := range callIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICECallID = value
+			break
+		}
+	}
+
+	// Extract Contact ID (CXone/inContact)
+	contactHeaders := []string{
+		"x-incontact-contact-id",
+		"x-cxone-contact-id",
+		"x-incontact-master-contact-id",
+		"x-cxone-master-contact-id",
+	}
+	for _, header := range contactHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICEContactID = value
+			break
+		}
+	}
+
+	// Extract Agent ID
+	agentHeaders := []string{
+		"x-nice-agent-id",
+		"x-incontact-agent-id",
+		"x-cxone-agent-id",
+	}
+	for _, header := range agentHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.NICEAgentID = value
+			break
+		}
 	}
 }
 
@@ -5484,6 +5904,43 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 		session.ExtendedMetadata["sip_genesys_campaign_id"] = message.GenesysCampaignID
 	}
 
+	// Store NICE-specific metadata if present
+	if message.NICEInteractionID != "" {
+		session.ExtendedMetadata["sip_nice_interaction_id"] = message.NICEInteractionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":     session.ID,
+			"interaction_id": message.NICEInteractionID,
+		}).Debug("Stored NICE Interaction ID in recording session metadata")
+	}
+
+	if message.NICESessionID != "" {
+		session.ExtendedMetadata["sip_nice_session_id"] = message.NICESessionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":      session.ID,
+			"nice_session_id": message.NICESessionID,
+		}).Debug("Stored NICE Session ID in recording session metadata")
+	}
+
+	if message.NICERecordingID != "" {
+		session.ExtendedMetadata["sip_nice_recording_id"] = message.NICERecordingID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":   session.ID,
+			"recording_id": message.NICERecordingID,
+		}).Debug("Stored NICE Recording ID in recording session metadata")
+	}
+
+	if message.NICECallID != "" {
+		session.ExtendedMetadata["sip_nice_call_id"] = message.NICECallID
+	}
+
+	if message.NICEContactID != "" {
+		session.ExtendedMetadata["sip_nice_contact_id"] = message.NICEContactID
+	}
+
+	if message.NICEAgentID != "" {
+		session.ExtendedMetadata["sip_nice_agent_id"] = message.NICEAgentID
+	}
+
 	// Store Asterisk-specific metadata if present
 	if message.AsteriskUniqueID != "" {
 		session.ExtendedMetadata["sip_asterisk_unique_id"] = message.AsteriskUniqueID
@@ -5561,6 +6018,35 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 
 	if message.OpenSIPSCallID != "" {
 		session.ExtendedMetadata["sip_opensips_call_id"] = message.OpenSIPSCallID
+	}
+
+	// Store Avaya-specific metadata if present
+	if message.AvayaUCID != "" {
+		session.ExtendedMetadata["sip_avaya_ucid"] = message.AvayaUCID
+		s.logger.WithFields(logrus.Fields{
+			"session_id": session.ID,
+			"avaya_ucid": message.AvayaUCID,
+		}).Debug("Stored Avaya UCID in recording session metadata")
+	}
+
+	if message.AvayaConfID != "" {
+		session.ExtendedMetadata["sip_avaya_conf_id"] = message.AvayaConfID
+	}
+
+	if message.AvayaStationID != "" {
+		session.ExtendedMetadata["sip_avaya_station_id"] = message.AvayaStationID
+	}
+
+	if message.AvayaAgentID != "" {
+		session.ExtendedMetadata["sip_avaya_agent_id"] = message.AvayaAgentID
+	}
+
+	if message.AvayaVDN != "" {
+		session.ExtendedMetadata["sip_avaya_vdn"] = message.AvayaVDN
+	}
+
+	if message.AvayaSkillGroup != "" {
+		session.ExtendedMetadata["sip_avaya_skill_group"] = message.AvayaSkillGroup
 	}
 }
 

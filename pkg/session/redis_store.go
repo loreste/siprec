@@ -42,12 +42,22 @@ type SessionData struct {
 	NodeID        string                 `json:"node_id"`
 
 	// Vendor-specific metadata for failover preservation
-	VendorType           string `json:"vendor_type,omitempty"`            // oracle, cisco, avaya, generic
+	VendorType           string `json:"vendor_type,omitempty"`            // oracle, cisco, avaya, nice, generic
 	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
 	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
 	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
-	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
-	UCID                 string `json:"ucid,omitempty"`                   // Generic Universal Call ID
+	// Avaya-specific fields
+	AvayaUCID       string `json:"avaya_ucid,omitempty"`        // Avaya Universal Call ID
+	AvayaConfID     string `json:"avaya_conf_id,omitempty"`     // Avaya Conference ID
+	AvayaStationID  string `json:"avaya_station_id,omitempty"`  // Avaya Station ID
+	AvayaAgentID    string `json:"avaya_agent_id,omitempty"`    // Avaya Agent ID
+	AvayaVDN        string `json:"avaya_vdn,omitempty"`         // Avaya Vector Directory Number
+	AvayaSkillGroup string `json:"avaya_skill_group,omitempty"` // Avaya Skill Group
+	// NICE-specific fields
+	NICEInteractionID string `json:"nice_interaction_id,omitempty"` // NICE Interaction ID
+	NICESessionID     string `json:"nice_session_id,omitempty"`     // NICE Session ID
+	NICERecordingID   string `json:"nice_recording_id,omitempty"`   // NICE Recording ID
+	UCID              string `json:"ucid,omitempty"`                // Generic Universal Call ID
 
 	// Extended metadata map for additional vendor-specific fields
 	ExtendedMetadata map[string]string `json:"extended_metadata,omitempty"`
@@ -196,6 +206,18 @@ func (r *RedisSessionStore) Update(sessionID string, updates map[string]interfac
 		case "avaya_ucid":
 			if ucid, ok := value.(string); ok {
 				data.AvayaUCID = ucid
+			}
+		case "nice_interaction_id":
+			if interactionID, ok := value.(string); ok {
+				data.NICEInteractionID = interactionID
+			}
+		case "nice_session_id":
+			if sessionID, ok := value.(string); ok {
+				data.NICESessionID = sessionID
+			}
+		case "nice_recording_id":
+			if recordingID, ok := value.(string); ok {
+				data.NICERecordingID = recordingID
 			}
 		case "ucid":
 			if ucid, ok := value.(string); ok {

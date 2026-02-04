@@ -112,7 +112,21 @@ type CDR struct {
 	OpenSIPSDialogID      *string `db:"opensips_dialog_id" json:"opensips_dialog_id,omitempty"`
 	OpenSIPSTransactionID *string `db:"opensips_transaction_id" json:"opensips_transaction_id,omitempty"`
 	OpenSIPSCallID        *string `db:"opensips_call_id" json:"opensips_call_id,omitempty"`
-	CreatedAt             time.Time  `db:"created_at" json:"created_at"`
+	// NICE-specific fields
+	NICEInteractionID *string `db:"nice_interaction_id" json:"nice_interaction_id,omitempty"`
+	NICESessionID     *string `db:"nice_session_id" json:"nice_session_id,omitempty"`
+	NICERecordingID   *string `db:"nice_recording_id" json:"nice_recording_id,omitempty"`
+	NICEContactID     *string `db:"nice_contact_id" json:"nice_contact_id,omitempty"`
+	NICEAgentID       *string `db:"nice_agent_id" json:"nice_agent_id,omitempty"`
+	NICECallID        *string `db:"nice_call_id" json:"nice_call_id,omitempty"`
+	// Avaya-specific fields
+	AvayaUCID       *string `db:"avaya_ucid" json:"avaya_ucid,omitempty"`
+	AvayaConfID     *string `db:"avaya_conf_id" json:"avaya_conf_id,omitempty"`
+	AvayaStationID  *string `db:"avaya_station_id" json:"avaya_station_id,omitempty"`
+	AvayaAgentID    *string `db:"avaya_agent_id" json:"avaya_agent_id,omitempty"`
+	AvayaVDN        *string `db:"avaya_vdn" json:"avaya_vdn,omitempty"`
+	AvayaSkillGroup *string `db:"avaya_skill_group" json:"avaya_skill_group,omitempty"`
+	CreatedAt       time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }
 

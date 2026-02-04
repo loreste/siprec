@@ -213,9 +213,37 @@ func (s callSnapshot) toSessionData(sessionID, nodeID string) *sessions.SessionD
 		if v, ok := s.Recording.ExtendedMetadata["sip_ucid"]; ok {
 			sd.UCID = v
 		}
-		// Check for Avaya UCID in the generic UCID field when vendor is Avaya
-		if sd.VendorType == "avaya" && sd.UCID != "" {
+		// Avaya-specific fields
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_ucid"]; ok {
+			sd.AvayaUCID = v
+		} else if sd.VendorType == "avaya" && sd.UCID != "" {
+			// Fallback: Check for Avaya UCID in the generic UCID field when vendor is Avaya
 			sd.AvayaUCID = sd.UCID
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_conf_id"]; ok {
+			sd.AvayaConfID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_station_id"]; ok {
+			sd.AvayaStationID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_agent_id"]; ok {
+			sd.AvayaAgentID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_vdn"]; ok {
+			sd.AvayaVDN = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_skill_group"]; ok {
+			sd.AvayaSkillGroup = v
+		}
+		// NICE-specific fields
+		if v, ok := s.Recording.ExtendedMetadata["sip_nice_interaction_id"]; ok {
+			sd.NICEInteractionID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_nice_session_id"]; ok {
+			sd.NICESessionID = v
+		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_nice_recording_id"]; ok {
+			sd.NICERecordingID = v
 		}
 	}
 
