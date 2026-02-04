@@ -998,6 +998,55 @@ func initialize() error {
 					logger.WithField("provider", "elevenlabs").Info("Registered ElevenLabs STT provider with live transcription")
 				}
 			}
+		case "opensource":
+			if appConfig.STT.OpenSource.Enabled {
+				// Map config model type to stt.OpenSourceModelType
+				modelType := stt.OpenSourceModelType(appConfig.STT.OpenSource.ModelType)
+				backend := stt.InferenceBackend(appConfig.STT.OpenSource.Backend)
+
+				openSourceConfig := &stt.OpenSourceModelConfig{
+					ModelType:       modelType,
+					ModelName:       appConfig.STT.OpenSource.ModelName,
+					ModelPath:       appConfig.STT.OpenSource.ModelPath,
+					Backend:         backend,
+					BaseURL:         appConfig.STT.OpenSource.BaseURL,
+					WebSocketURL:    appConfig.STT.OpenSource.WebSocketURL,
+					APIKey:          appConfig.STT.OpenSource.APIKey,
+					AuthHeader:      appConfig.STT.OpenSource.AuthHeader,
+					SampleRate:      appConfig.STT.OpenSource.SampleRate,
+					Encoding:        appConfig.STT.OpenSource.Encoding,
+					Channels:        appConfig.STT.OpenSource.Channels,
+					Language:        appConfig.STT.OpenSource.Language,
+					UseGPU:          appConfig.STT.OpenSource.UseGPU,
+					DeviceID:        appConfig.STT.OpenSource.DeviceID,
+					Timeout:         appConfig.STT.OpenSource.Timeout,
+					MaxRetries:      appConfig.STT.OpenSource.MaxRetries,
+					BatchSize:       appConfig.STT.OpenSource.BatchSize,
+					EnableStreaming: appConfig.STT.OpenSource.EnableStreaming,
+					ChunkDuration:   appConfig.STT.OpenSource.ChunkDuration,
+					ExecutablePath:  appConfig.STT.OpenSource.ExecutablePath,
+					ExtraArgs:       appConfig.STT.OpenSource.ExtraArgs,
+					Options:         appConfig.STT.OpenSource.Options,
+				}
+
+				openSourceProvider := stt.NewOpenSourceModelProvider(logger, transcriptionSvc, openSourceConfig)
+				if err := openSourceProvider.Initialize(); err != nil {
+					logger.WithError(err).Warn("Failed to initialize open-source STT provider")
+				} else {
+					liveProvider := stt.NewLiveTranscriptionWrapper(openSourceProvider, transcriptionSvc, logger)
+					wrappedProvider := stt.NewCircuitBreakerWrapper(liveProvider, cbManager, logger, nil)
+					if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
+						logger.WithError(err).Warn("Failed to register open-source STT provider")
+					} else {
+						logger.WithFields(logrus.Fields{
+							"provider":   "opensource",
+							"model_type": appConfig.STT.OpenSource.ModelType,
+							"model_name": appConfig.STT.OpenSource.ModelName,
+							"backend":    appConfig.STT.OpenSource.Backend,
+						}).Info("Registered open-source STT provider with live transcription")
+					}
+				}
+			}
 		default:
 			logger.WithField("vendor", vendor).Warn("Unknown STT vendor in configuration")
 		}
@@ -1753,6 +1802,29 @@ func validateSTTCredentials(sttConfig *config.STTConfig, logger *logrus.Logger) 
 		if sttConfig.Whisper.BinaryPath == "" {
 			warnings = append(warnings, "Whisper STT is enabled but binary path is not configured (set WHISPER_BINARY_PATH)")
 		}
+	}
+
+	// Validate open-source STT configuration
+	if sttConfig.OpenSource.Enabled {
+		switch sttConfig.OpenSource.Backend {
+		case "http", "triton", "vllm", "tgi", "ollama":
+			if sttConfig.OpenSource.BaseURL == "" {
+				warnings = append(warnings, "Open-source STT is enabled with HTTP-based backend but base URL is not configured (set OPENSOURCE_BASE_URL)")
+			}
+		case "websocket":
+			if sttConfig.OpenSource.WebSocketURL == "" {
+				warnings = append(warnings, "Open-source STT is enabled with WebSocket backend but WebSocket URL is not configured (set OPENSOURCE_WEBSOCKET_URL)")
+			}
+		case "cli":
+			if sttConfig.OpenSource.ExecutablePath == "" && sttConfig.OpenSource.ModelPath == "" {
+				warnings = append(warnings, "Open-source STT is enabled with CLI backend but no executable path or model path is configured (set OPENSOURCE_EXECUTABLE_PATH or OPENSOURCE_MODEL_PATH)")
+			}
+		}
+		logger.WithFields(logrus.Fields{
+			"model_type": sttConfig.OpenSource.ModelType,
+			"model_name": sttConfig.OpenSource.ModelName,
+			"backend":    sttConfig.OpenSource.Backend,
+		}).Info("Open-source STT model configured")
 	}
 
 	// Log all warnings
