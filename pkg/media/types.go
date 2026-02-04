@@ -505,6 +505,42 @@ func (f *RTPForwarder) Cleanup() {
 		f.RecordingFile = nil
 	}
 
+	// Apply PII audio redaction if markers exist
+	if f.PIIAudioMarker != nil && f.RecordingPath != "" {
+		intervals := f.PIIAudioMarker.GetRedactionIntervals()
+		if len(intervals) > 0 {
+			processor := NewPIIAudioProcessor(f.Logger, &PIIAudioProcessorConfig{
+				RedactionType:  RedactionSilence,
+				SampleRate:     8000, // Standard telephony sample rate
+				BytesPerSample: 2,    // 16-bit PCM
+			})
+
+			// Save redaction metadata before processing
+			metadata := f.PIIAudioMarker.GenerateRedactionMetadata(f.RecordingPath)
+			if err := processor.SaveRedactionMetadata(f.RecordingPath, metadata); err != nil {
+				f.Logger.WithError(err).Warn("Failed to save PII redaction metadata")
+			}
+
+			// Apply audio redaction
+			if err := processor.ProcessRecordingInPlace(f.RecordingPath, intervals); err != nil {
+				f.Logger.WithError(err).WithFields(logrus.Fields{
+					"path":      f.RecordingPath,
+					"intervals": len(intervals),
+				}).Warn("Failed to apply PII audio redaction")
+			} else {
+				report := processor.GenerateRedactionReport(intervals)
+				f.Logger.WithFields(logrus.Fields{
+					"path":           f.RecordingPath,
+					"intervals":      report.TotalIntervals,
+					"total_duration": report.TotalDuration,
+					"types":          report.TypeCounts,
+				}).Info("PII audio redaction applied to recording")
+			}
+		} else {
+			f.Logger.WithField("path", f.RecordingPath).Debug("No PII markers found, skipping audio redaction")
+		}
+	}
+
 	// Convert recording to target format if encoder is configured and format is not WAV
 	if f.AudioEncoder != nil && f.RecordingPath != "" && f.TargetFormat != "" && f.TargetFormat != "wav" {
 		outputPath := strings.TrimSuffix(f.RecordingPath, ".wav") + "." + f.TargetFormat

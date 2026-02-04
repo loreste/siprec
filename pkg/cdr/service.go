@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"siprec-server/pkg/database"
+	"siprec-server/pkg/pii"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -24,6 +25,8 @@ type CDRService struct {
 	exportFormat string
 	autoExport   bool
 	batchSize    int
+	piiDetector  *pii.PIIDetector
+	piiRedactCDR bool
 }
 
 // CDRConfig holds CDR service configuration
@@ -33,6 +36,8 @@ type CDRConfig struct {
 	AutoExport     bool
 	BatchSize      int
 	ExportInterval time.Duration
+	PIIDetector    *pii.PIIDetector // Optional PII detector for redacting CDR fields
+	PIIRedactCDR   bool             // Enable PII redaction for CallerID/CalleeID
 }
 
 // NewCDRService creates a new CDR service
@@ -45,6 +50,8 @@ func NewCDRService(repo *database.Repository, config CDRConfig, logger *logrus.L
 		exportFormat: config.ExportFormat,
 		autoExport:   config.AutoExport,
 		batchSize:    config.BatchSize,
+		piiDetector:  config.PIIDetector,
+		piiRedactCDR: config.PIIRedactCDR,
 	}
 
 	// Start auto-export if enabled
@@ -53,13 +60,42 @@ func NewCDRService(repo *database.Repository, config CDRConfig, logger *logrus.L
 	}
 
 	logger.WithFields(logrus.Fields{
-		"export_path":   config.ExportPath,
-		"export_format": config.ExportFormat,
-		"auto_export":   config.AutoExport,
-		"batch_size":    config.BatchSize,
+		"export_path":    config.ExportPath,
+		"export_format":  config.ExportFormat,
+		"auto_export":    config.AutoExport,
+		"batch_size":     config.BatchSize,
+		"pii_redact_cdr": config.PIIRedactCDR,
 	}).Info("CDR service initialized")
 
 	return service
+}
+
+// redactPII applies PII redaction to a string if PII redaction is enabled
+func (c *CDRService) redactPII(text string) string {
+	if !c.piiRedactCDR || c.piiDetector == nil || text == "" {
+		return text
+	}
+
+	result := c.piiDetector.DetectAndRedact(text)
+	if result.HasPII {
+		c.logger.WithFields(logrus.Fields{
+			"original_length": len(text),
+			"redacted_length": len(result.RedactedText),
+			"pii_matches":     len(result.Matches),
+		}).Debug("PII redacted from CDR field")
+	}
+	return result.RedactedText
+}
+
+// SetPIIDetector sets the PII detector for CDR field redaction
+func (c *CDRService) SetPIIDetector(detector *pii.PIIDetector, enabled bool) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.piiDetector = detector
+	c.piiRedactCDR = enabled
+	if enabled && detector != nil {
+		c.logger.Info("PII redaction enabled for CDR fields")
+	}
 }
 
 // StartSession initiates a new CDR for a session
@@ -102,12 +138,14 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 		return fmt.Errorf("CDR not found for session: %s", sessionID)
 	}
 
-	// Apply updates
+	// Apply updates with PII redaction for caller/callee IDs
 	if updates.CallerID != nil {
-		cdr.CallerID = updates.CallerID
+		redacted := c.redactPII(*updates.CallerID)
+		cdr.CallerID = &redacted
 	}
 	if updates.CalleeID != nil {
-		cdr.CalleeID = updates.CalleeID
+		redacted := c.redactPII(*updates.CalleeID)
+		cdr.CalleeID = &redacted
 	}
 	if updates.RecordingPath != nil {
 		cdr.RecordingPath = *updates.RecordingPath

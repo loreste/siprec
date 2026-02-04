@@ -954,6 +954,9 @@ type PIIConfig struct {
 	// Whether to apply PII detection to audio recordings
 	ApplyToRecordings bool `json:"apply_to_recordings" env:"PII_APPLY_TO_RECORDINGS" default:"false"`
 
+	// Whether to apply PII detection to CDR fields (CallerID, CalleeID)
+	ApplyToCDR bool `json:"apply_to_cdr" env:"PII_APPLY_TO_CDR" default:"false"`
+
 	// Log level for PII detection events (debug, info, warn, error)
 	LogLevel string `json:"log_level" env:"PII_LOG_LEVEL" default:"info"`
 }
@@ -3040,6 +3043,7 @@ func loadPIIConfig(logger *logrus.Logger, config *PIIConfig) error {
 	// Load application flags
 	config.ApplyToTranscriptions = getEnvBool("PII_APPLY_TO_TRANSCRIPTIONS", true)
 	config.ApplyToRecordings = getEnvBool("PII_APPLY_TO_RECORDINGS", false)
+	config.ApplyToCDR = getEnvBool("PII_APPLY_TO_CDR", false)
 
 	// Load log level
 	config.LogLevel = getEnv("PII_LOG_LEVEL", "info")
@@ -3056,6 +3060,7 @@ func loadPIIConfig(logger *logrus.Logger, config *PIIConfig) error {
 			"preserve_format":         config.PreserveFormat,
 			"apply_to_transcriptions": config.ApplyToTranscriptions,
 			"apply_to_recordings":     config.ApplyToRecordings,
+			"apply_to_cdr":            config.ApplyToCDR,
 			"log_level":               config.LogLevel,
 		}).Info("PII detection enabled")
 	} else {
