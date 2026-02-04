@@ -157,6 +157,9 @@ type Handler struct {
 	sttManager          *stt.ProviderManager
 	clusterManager      *cluster.Manager
 
+	// Cluster orchestrator for distributed features
+	clusterOrchestrator *cluster.ClusterOrchestrator
+
 	// SIP Authentication
 	sipAuthenticator   *auth.SIPAuthenticator
 	ipAccessController *auth.IPAccessController
@@ -467,6 +470,17 @@ func (h *Handler) SetSIPRateLimiter(limiter SIPRateLimiter) {
 	h.Logger.Info("SIP rate limiter configured")
 }
 
+// SetClusterOrchestrator sets the cluster orchestrator for distributed features
+func (h *Handler) SetClusterOrchestrator(orchestrator *cluster.ClusterOrchestrator) {
+	h.clusterOrchestrator = orchestrator
+	h.Logger.Info("Cluster orchestrator configured for distributed rate limiting and tracing")
+}
+
+// GetClusterOrchestrator returns the cluster orchestrator
+func (h *Handler) GetClusterOrchestrator() *cluster.ClusterOrchestrator {
+	return h.clusterOrchestrator
+}
+
 // IsSIPRateLimitEnabled returns whether SIP rate limiting is enabled
 func (h *Handler) IsSIPRateLimitEnabled() bool {
 	return h.sipRateLimiter != nil
@@ -475,6 +489,23 @@ func (h *Handler) IsSIPRateLimitEnabled() bool {
 // CheckSIPRateLimit checks if a SIP request should be allowed based on rate limits
 // Returns true if allowed, false if rate limited
 func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
+	// Check distributed rate limits first (cluster-wide)
+	if h.clusterOrchestrator != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		if !h.clusterOrchestrator.AllowCall(ctx, clientIP) {
+			h.Logger.WithFields(logrus.Fields{
+				"client_ip": clientIP,
+				"method":    method,
+				"limit_type": "distributed",
+			}).Warn("SIP request rejected by distributed rate limiter")
+			metrics.RecordSIPRateLimited(clientIP, method)
+			return false
+		}
+	}
+
+	// Then check local rate limits
 	if h.sipRateLimiter == nil {
 		return true
 	}
@@ -484,6 +515,7 @@ func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
 		h.Logger.WithFields(logrus.Fields{
 			"client_ip": clientIP,
 			"method":    method,
+			"limit_type": "local",
 		}).Warn("SIP request rate limited")
 		metrics.RecordSIPRateLimited(clientIP, method)
 	}
