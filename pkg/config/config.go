@@ -371,6 +371,15 @@ type GoogleSTTConfig struct {
 
 	// Profanity filter
 	ProfanityFilter bool `json:"profanity_filter" env:"GOOGLE_STT_PROFANITY_FILTER" default:"false"`
+
+	// Use streaming gRPC for real-time transcription (recommended)
+	UseStreaming bool `json:"use_streaming" env:"GOOGLE_STT_USE_STREAMING" default:"true"`
+
+	// Enable speaker diarization
+	EnableDiarization bool `json:"enable_diarization" env:"GOOGLE_STT_DIARIZATION" default:"false"`
+
+	// Number of speakers for diarization
+	DiarizationSpeakerCount int `json:"diarization_speaker_count" env:"GOOGLE_STT_DIARIZATION_SPEAKERS" default:"2"`
 }
 
 // DeepgramSTTConfig holds Deepgram Speech-to-Text configuration
