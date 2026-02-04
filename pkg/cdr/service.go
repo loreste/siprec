@@ -209,6 +209,44 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 	if updates.OpenSIPSCallID != nil {
 		cdr.OpenSIPSCallID = updates.OpenSIPSCallID
 	}
+	// NICE-specific fields
+	if updates.NICEInteractionID != nil {
+		cdr.NICEInteractionID = updates.NICEInteractionID
+	}
+	if updates.NICESessionID != nil {
+		cdr.NICESessionID = updates.NICESessionID
+	}
+	if updates.NICERecordingID != nil {
+		cdr.NICERecordingID = updates.NICERecordingID
+	}
+	if updates.NICEContactID != nil {
+		cdr.NICEContactID = updates.NICEContactID
+	}
+	if updates.NICEAgentID != nil {
+		cdr.NICEAgentID = updates.NICEAgentID
+	}
+	if updates.NICECallID != nil {
+		cdr.NICECallID = updates.NICECallID
+	}
+	// Avaya-specific fields
+	if updates.AvayaUCID != nil {
+		cdr.AvayaUCID = updates.AvayaUCID
+	}
+	if updates.AvayaConfID != nil {
+		cdr.AvayaConfID = updates.AvayaConfID
+	}
+	if updates.AvayaStationID != nil {
+		cdr.AvayaStationID = updates.AvayaStationID
+	}
+	if updates.AvayaAgentID != nil {
+		cdr.AvayaAgentID = updates.AvayaAgentID
+	}
+	if updates.AvayaVDN != nil {
+		cdr.AvayaVDN = updates.AvayaVDN
+	}
+	if updates.AvayaSkillGroup != nil {
+		cdr.AvayaSkillGroup = updates.AvayaSkillGroup
+	}
 
 	cdr.UpdatedAt = time.Now()
 
@@ -596,6 +634,20 @@ type CDRUpdate struct {
 	OpenSIPSDialogID      *string // OpenSIPS Dialog ID
 	OpenSIPSTransactionID *string // OpenSIPS Transaction ID
 	OpenSIPSCallID        *string // OpenSIPS Call-ID
+	// NICE-specific fields
+	NICEInteractionID *string // NICE Interaction ID
+	NICESessionID     *string // NICE Session ID
+	NICERecordingID   *string // NICE Recording ID
+	NICEContactID     *string // NICE Contact ID (CXone/inContact)
+	NICEAgentID       *string // NICE Agent ID
+	NICECallID        *string // NICE Call ID
+	// Avaya-specific fields
+	AvayaUCID       *string // Avaya Universal Call ID
+	AvayaConfID     *string // Avaya Conference ID
+	AvayaStationID  *string // Avaya Station ID
+	AvayaAgentID    *string // Avaya Agent ID
+	AvayaVDN        *string // Avaya Vector Directory Number
+	AvayaSkillGroup *string // Avaya Skill Group
 }
 
 type CDRFilters struct {

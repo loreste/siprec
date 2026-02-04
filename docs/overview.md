@@ -10,6 +10,7 @@ IZI SIPREC provides a compact implementation of RFC 7865/7866 recording flows.
 - **Pause / resume service** – Runtime controls for toggling recording/transcription state without dropping the SIP dialog.
 - **High Availability** – Built-in session redundancy and failover handling (configurable via Redis).
 - **Optional STT streaming** – A provider manager routes captured audio to providers like Google, Deepgram, or Whisper. Supports **PII Redaction** and **Language Switching**.
+- **Multi-vendor support** – Automatic detection and metadata extraction for Oracle, Cisco, Avaya, NICE, Genesys, FreeSWITCH, Asterisk, and OpenSIPS. See [Vendor Integration](vendor-integration.md) for details.
 
 ## Data Flow Summary
 

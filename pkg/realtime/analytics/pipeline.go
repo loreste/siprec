@@ -34,6 +34,9 @@ type State struct {
 	OracleConversationID string
 	CiscoSessionID       string
 	AvayaUCID            string
+	NICEInteractionID    string
+	NICESessionID        string
+	NICERecordingID      string
 	UCID                 string
 
 	LastUpdated time.Time
@@ -76,6 +79,9 @@ func (s *State) Clone() AnalyticsSnapshot {
 		OracleConversationID: s.OracleConversationID,
 		CiscoSessionID:       s.CiscoSessionID,
 		AvayaUCID:            s.AvayaUCID,
+		NICEInteractionID:    s.NICEInteractionID,
+		NICESessionID:        s.NICESessionID,
+		NICERecordingID:      s.NICERecordingID,
 		UCID:                 s.UCID,
 	}
 }
@@ -189,6 +195,16 @@ func (p *Pipeline) Process(ctx context.Context, event *TranscriptEvent) (*Analyt
 		// Check for Avaya UCID
 		if state.VendorType == "avaya" && state.UCID != "" && state.AvayaUCID == "" {
 			state.AvayaUCID = state.UCID
+		}
+		// NICE-specific metadata
+		if v, ok := event.Metadata["sip_nice_interaction_id"].(string); ok && state.NICEInteractionID == "" {
+			state.NICEInteractionID = v
+		}
+		if v, ok := event.Metadata["sip_nice_session_id"].(string); ok && state.NICESessionID == "" {
+			state.NICESessionID = v
+		}
+		if v, ok := event.Metadata["sip_nice_recording_id"].(string); ok && state.NICERecordingID == "" {
+			state.NICERecordingID = v
 		}
 	}
 

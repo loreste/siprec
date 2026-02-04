@@ -15,6 +15,7 @@ IZI SIPREC is a production-ready SIPREC-compliant recording endpoint with compre
 - **Custom SIP Stack** – UDP, TCP, and TLS transports with automatic NAT traversal
 - **Large Payload Support** – 4096-byte MTU for handling extensive metadata
 - **Session Management** – In-memory or Redis-backed session persistence with automatic failover
+- **Multi-Vendor Support** – Automatic detection and metadata extraction for Oracle, Cisco, Avaya, NICE, Genesys, FreeSWITCH, Asterisk, and OpenSIPS SBCs
 
 ### Audio & Media Processing
 - **Multi-Codec Support** – PCMU, PCMA, G.722, Opus, EVS with automatic transcoding
@@ -345,6 +346,7 @@ siprec/
 - [Configuration Guide](docs/configuration.md)
 - [Speech-to-Text Integration](docs/stt.md)
 - [Real-Time Transcription](docs/realtime-transcription.md)
+- [Vendor Integration Guide](docs/vendor-integration.md) – Oracle, Cisco, Avaya, NICE, Genesys, and more
 - [API Reference](docs/api.md)
 - [Session Management](docs/sessions.md)
 - [End-to-End Feature Guide](docs/end-to-end.md)
