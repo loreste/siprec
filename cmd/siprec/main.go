@@ -23,6 +23,7 @@ import (
 	"siprec-server/pkg/backup"
 	"siprec-server/pkg/cdr"
 	"siprec-server/pkg/circuitbreaker"
+	"siprec-server/pkg/cluster"
 	"siprec-server/pkg/compliance"
 	"siprec-server/pkg/config"
 	"siprec-server/pkg/core"
@@ -87,6 +88,9 @@ var (
 	authenticator       *auth.SimpleAuthenticator
 	alertManager        *alerting.AlertManager
 	registry            *core.ServiceRegistry
+
+	// Cluster orchestrator for distributed features
+	clusterOrchestrator *cluster.ClusterOrchestrator
 )
 
 type analyticsAudioListener struct {
@@ -346,6 +350,13 @@ func main() {
 			logger.Info("Alert manager stopped")
 		}
 
+		// Stop cluster orchestrator
+		if clusterOrchestrator != nil {
+			logger.Debug("Stopping cluster orchestrator...")
+			clusterOrchestrator.Stop()
+			logger.Info("Cluster orchestrator stopped")
+		}
+
 		shutdownTraceCtx, shutdownTraceCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := tracingShutdown(shutdownTraceCtx); err != nil {
 			logger.WithError(err).Warn("Failed to flush tracing spans during shutdown")
@@ -390,6 +401,30 @@ func initialize() error {
 	if appConfig.HTTP.EnableMetrics {
 		metrics.InitEnhancedMetrics(logger)
 		logger.Info("Enhanced metrics initialized")
+	}
+
+	// Initialize cluster orchestrator if clustering is enabled
+	if appConfig.Cluster.Enabled {
+		var err error
+		clusterOrchestrator, err = cluster.NewClusterOrchestrator(&appConfig.Cluster, logger)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create cluster orchestrator, continuing without clustering")
+		} else if clusterOrchestrator != nil {
+			if err := clusterOrchestrator.Start(rootCtx); err != nil {
+				logger.WithError(err).Warn("Failed to start cluster orchestrator, continuing without clustering")
+				clusterOrchestrator = nil
+			} else {
+				logger.WithFields(logrus.Fields{
+					"node_id":              appConfig.Cluster.NodeID,
+					"redis_mode":           appConfig.Cluster.Redis.Mode,
+					"rtp_state_replication": appConfig.Cluster.RTPStateReplication,
+					"distributed_rate_limiting": appConfig.Cluster.DistributedRateLimiting,
+					"distributed_tracing":  appConfig.Cluster.DistributedTracing,
+					"stream_migration":     appConfig.Cluster.StreamMigration,
+					"split_brain_detection": appConfig.Cluster.SplitBrainDetection.Enabled,
+				}).Info("Cluster orchestrator initialized")
+			}
+		}
 	}
 
 	// Initialize circuit breaker manager for STT provider resilience
@@ -1033,6 +1068,12 @@ func initialize() error {
 	sipHandler, err = sip.NewHandler(logger, sipConfig, sttManager)
 	if err != nil {
 		return fmt.Errorf("failed to create SIP handler: %w", err)
+	}
+
+	// Set cluster orchestrator for distributed features
+	if clusterOrchestrator != nil {
+		sipHandler.SetClusterOrchestrator(clusterOrchestrator)
+		logger.Info("Cluster orchestrator configured for SIP handler")
 	}
 
 	if cdrService != nil {
