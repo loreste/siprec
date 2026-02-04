@@ -329,6 +329,7 @@ type STTConfig struct {
 	Whisper      WhisperSTTConfig      `json:"whisper"`
 	ElevenLabs   ElevenLabsSTTConfig   `json:"elevenlabs"`
 	Speechmatics SpeechmaticsSTTConfig `json:"speechmatics"`
+	OpenSource   OpenSourceSTTConfig   `json:"opensource"`
 
 	// Language-specific routing (language code -> provider name)
 	LanguageRouting map[string]string `json:"language_routing"`
@@ -658,6 +659,62 @@ type WhisperSTTConfig struct {
 
 	// Maximum concurrent Whisper calls (0 = unlimited, -1 = auto based on CPU cores)
 	MaxConcurrentCalls int `json:"max_concurrent_calls" env:"WHISPER_MAX_CONCURRENT" default:"-1"`
+}
+
+// OpenSourceSTTConfig holds configuration for open-source STT models
+type OpenSourceSTTConfig struct {
+	// Whether open-source STT is enabled
+	Enabled bool `json:"enabled" env:"OPENSOURCE_STT_ENABLED" default:"false"`
+
+	// Model type: granite-speech, canary-qwen, parakeet-tdt, whisper-turbo, kyutai-moshi, custom
+	ModelType string `json:"model_type" env:"OPENSOURCE_MODEL_TYPE" default:"whisper-turbo"`
+
+	// Model name/identifier (HuggingFace model ID or local path)
+	ModelName string `json:"model_name" env:"OPENSOURCE_MODEL_NAME" default:"openai/whisper-large-v3-turbo"`
+
+	// Local model path (for downloaded models)
+	ModelPath string `json:"model_path" env:"OPENSOURCE_MODEL_PATH"`
+
+	// Inference backend: http, websocket, cli, triton, vllm, tgi, ollama
+	Backend string `json:"backend" env:"OPENSOURCE_BACKEND" default:"http"`
+
+	// Base URL for HTTP-based backends
+	BaseURL string `json:"base_url" env:"OPENSOURCE_BASE_URL" default:"http://localhost:8000"`
+
+	// WebSocket URL for streaming backends
+	WebSocketURL string `json:"websocket_url" env:"OPENSOURCE_WEBSOCKET_URL"`
+
+	// API key (optional, for secured endpoints)
+	APIKey string `json:"api_key" env:"OPENSOURCE_API_KEY"`
+
+	// Custom authentication header name
+	AuthHeader string `json:"auth_header" env:"OPENSOURCE_AUTH_HEADER"`
+
+	// Audio configuration
+	SampleRate int    `json:"sample_rate" env:"OPENSOURCE_SAMPLE_RATE" default:"16000"`
+	Encoding   string `json:"encoding" env:"OPENSOURCE_ENCODING" default:"wav"`
+	Channels   int    `json:"channels" env:"OPENSOURCE_CHANNELS" default:"1"`
+	Language   string `json:"language" env:"OPENSOURCE_LANGUAGE" default:"en"`
+
+	// GPU configuration
+	UseGPU   bool `json:"use_gpu" env:"OPENSOURCE_USE_GPU" default:"false"`
+	DeviceID int  `json:"device_id" env:"OPENSOURCE_DEVICE_ID" default:"0"`
+
+	// Performance settings
+	Timeout    time.Duration `json:"timeout" env:"OPENSOURCE_TIMEOUT" default:"60s"`
+	MaxRetries int           `json:"max_retries" env:"OPENSOURCE_MAX_RETRIES" default:"3"`
+	BatchSize  int           `json:"batch_size" env:"OPENSOURCE_BATCH_SIZE" default:"1"`
+
+	// Streaming configuration
+	EnableStreaming bool          `json:"enable_streaming" env:"OPENSOURCE_ENABLE_STREAMING" default:"false"`
+	ChunkDuration   time.Duration `json:"chunk_duration" env:"OPENSOURCE_CHUNK_DURATION" default:"5s"`
+
+	// CLI-specific settings (for local model execution)
+	ExecutablePath string   `json:"executable_path" env:"OPENSOURCE_EXECUTABLE_PATH"`
+	ExtraArgs      []string `json:"extra_args"`
+
+	// Model-specific options (passed to the inference backend)
+	Options map[string]interface{} `json:"options"`
 }
 
 // ResourceConfig holds resource limitation configurations
@@ -1717,6 +1774,10 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 
 	if err := loadSpeechmaticsSTTConfig(logger, &config.Speechmatics); err != nil {
 		return fmt.Errorf("failed to load Speechmatics STT config: %w", err)
+	}
+
+	if err := loadOpenSourceSTTConfig(logger, &config.OpenSource); err != nil {
+		return fmt.Errorf("failed to load open-source STT config: %w", err)
 	}
 
 	// Load language routing mapping (e.g., "en-US:google,es-ES:deepgram")
@@ -3068,6 +3129,65 @@ func loadSpeechmaticsSTTConfig(logger *logrus.Logger, config *SpeechmaticsSTTCon
 
 	if config.Enabled && config.APIKey == "" {
 		logger.Warn("Speechmatics STT enabled but SPEECHMATICS_API_KEY is not set")
+	}
+
+	return nil
+}
+
+// loadOpenSourceSTTConfig loads open-source STT model configuration
+func loadOpenSourceSTTConfig(logger *logrus.Logger, config *OpenSourceSTTConfig) error {
+	config.Enabled = getEnvBool("OPENSOURCE_STT_ENABLED", false)
+	config.ModelType = getEnv("OPENSOURCE_MODEL_TYPE", "whisper-turbo")
+	config.ModelName = getEnv("OPENSOURCE_MODEL_NAME", "openai/whisper-large-v3-turbo")
+	config.ModelPath = getEnv("OPENSOURCE_MODEL_PATH", "")
+	config.Backend = getEnv("OPENSOURCE_BACKEND", "http")
+	config.BaseURL = getEnv("OPENSOURCE_BASE_URL", "http://localhost:8000")
+	config.WebSocketURL = getEnv("OPENSOURCE_WEBSOCKET_URL", "")
+	config.APIKey = getEnv("OPENSOURCE_API_KEY", "")
+	config.AuthHeader = getEnv("OPENSOURCE_AUTH_HEADER", "")
+	config.SampleRate = getEnvInt("OPENSOURCE_SAMPLE_RATE", 16000)
+	config.Encoding = getEnv("OPENSOURCE_ENCODING", "wav")
+	config.Channels = getEnvInt("OPENSOURCE_CHANNELS", 1)
+	config.Language = getEnv("OPENSOURCE_LANGUAGE", "en")
+	config.UseGPU = getEnvBool("OPENSOURCE_USE_GPU", false)
+	config.DeviceID = getEnvInt("OPENSOURCE_DEVICE_ID", 0)
+	config.MaxRetries = getEnvInt("OPENSOURCE_MAX_RETRIES", 3)
+	config.BatchSize = getEnvInt("OPENSOURCE_BATCH_SIZE", 1)
+	config.EnableStreaming = getEnvBool("OPENSOURCE_ENABLE_STREAMING", false)
+	config.ExecutablePath = getEnv("OPENSOURCE_EXECUTABLE_PATH", "")
+
+	// Parse timeout
+	timeoutStr := getEnv("OPENSOURCE_TIMEOUT", "60s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		logger.Warn("Invalid OPENSOURCE_TIMEOUT value, using default: 60s")
+		timeout = 60 * time.Second
+	}
+	config.Timeout = timeout
+
+	// Parse chunk duration
+	chunkStr := getEnv("OPENSOURCE_CHUNK_DURATION", "5s")
+	chunkDuration, err := time.ParseDuration(chunkStr)
+	if err != nil {
+		logger.Warn("Invalid OPENSOURCE_CHUNK_DURATION value, using default: 5s")
+		chunkDuration = 5 * time.Second
+	}
+	config.ChunkDuration = chunkDuration
+
+	// Parse extra args
+	extraArgsStr := getEnv("OPENSOURCE_EXTRA_ARGS", "")
+	if extraArgsStr != "" {
+		config.ExtraArgs = strings.Split(extraArgsStr, " ")
+	}
+
+	if config.Enabled {
+		logger.WithFields(logrus.Fields{
+			"model_type": config.ModelType,
+			"model_name": config.ModelName,
+			"backend":    config.Backend,
+			"base_url":   config.BaseURL,
+			"use_gpu":    config.UseGPU,
+		}).Info("Open-source STT model enabled")
 	}
 
 	return nil
