@@ -55,6 +55,78 @@ type ClusterConfig struct {
 	LeaderElectionEnabled bool          `json:"leader_election_enabled" env:"CLUSTER_LEADER_ELECTION_ENABLED" default:"true"`
 	LeaderLockTTL         time.Duration `json:"leader_lock_ttl" env:"CLUSTER_LEADER_LOCK_TTL" default:"10s"`
 	LeaderRetryInterval   time.Duration `json:"leader_retry_interval" env:"CLUSTER_LEADER_RETRY_INTERVAL" default:"3s"`
+
+	// Redis configuration
+	Redis RedisClusterConfig `json:"redis"`
+
+	// RTP State Replication
+	RTPStateReplication bool `json:"rtp_state_replication" env:"CLUSTER_RTP_STATE_REPLICATION" default:"true"`
+
+	// Distributed Rate Limiting
+	DistributedRateLimiting bool `json:"distributed_rate_limiting" env:"CLUSTER_DISTRIBUTED_RATE_LIMITING" default:"true"`
+
+	// Distributed Tracing
+	DistributedTracing bool `json:"distributed_tracing" env:"CLUSTER_DISTRIBUTED_TRACING" default:"true"`
+
+	// Stream Migration
+	StreamMigration bool `json:"stream_migration" env:"CLUSTER_STREAM_MIGRATION" default:"true"`
+
+	// Split-brain detection
+	SplitBrainDetection SplitBrainConfig `json:"split_brain_detection"`
+}
+
+// RedisClusterConfig holds Redis cluster/sentinel configuration
+type RedisClusterConfig struct {
+	// Mode: standalone, sentinel, cluster
+	Mode string `json:"mode" env:"REDIS_MODE" default:"standalone"`
+
+	// Standalone configuration
+	Address  string `json:"address" env:"REDIS_ADDRESS" default:"localhost:6379"`
+	Password string `json:"password" env:"REDIS_PASSWORD"`
+	Database int    `json:"database" env:"REDIS_DATABASE" default:"0"`
+
+	// Sentinel configuration
+	SentinelAddresses  []string `json:"sentinel_addresses" env:"REDIS_SENTINEL_ADDRESSES"`
+	SentinelMasterName string   `json:"sentinel_master_name" env:"REDIS_SENTINEL_MASTER" default:"mymaster"`
+	SentinelPassword   string   `json:"sentinel_password" env:"REDIS_SENTINEL_PASSWORD"`
+
+	// Cluster configuration
+	ClusterAddresses []string `json:"cluster_addresses" env:"REDIS_CLUSTER_ADDRESSES"`
+
+	// Connection pool
+	PoolSize     int           `json:"pool_size" env:"REDIS_POOL_SIZE" default:"20"`
+	MinIdleConns int           `json:"min_idle_conns" env:"REDIS_MIN_IDLE_CONNS" default:"5"`
+	DialTimeout  time.Duration `json:"dial_timeout" env:"REDIS_DIAL_TIMEOUT" default:"5s"`
+	ReadTimeout  time.Duration `json:"read_timeout" env:"REDIS_READ_TIMEOUT" default:"3s"`
+	WriteTimeout time.Duration `json:"write_timeout" env:"REDIS_WRITE_TIMEOUT" default:"3s"`
+	PoolTimeout  time.Duration `json:"pool_timeout" env:"REDIS_POOL_TIMEOUT" default:"4s"`
+
+	// Retry configuration
+	MaxRetries      int           `json:"max_retries" env:"REDIS_MAX_RETRIES" default:"3"`
+	MinRetryBackoff time.Duration `json:"min_retry_backoff" env:"REDIS_MIN_RETRY_BACKOFF" default:"8ms"`
+	MaxRetryBackoff time.Duration `json:"max_retry_backoff" env:"REDIS_MAX_RETRY_BACKOFF" default:"512ms"`
+
+	// TLS configuration
+	TLSEnabled            bool   `json:"tls_enabled" env:"REDIS_TLS_ENABLED" default:"false"`
+	TLSCertFile           string `json:"tls_cert_file" env:"REDIS_TLS_CERT_FILE"`
+	TLSKeyFile            string `json:"tls_key_file" env:"REDIS_TLS_KEY_FILE"`
+	TLSCAFile             string `json:"tls_ca_file" env:"REDIS_TLS_CA_FILE"`
+	TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify" env:"REDIS_TLS_INSECURE_SKIP_VERIFY" default:"false"`
+
+	// Routing
+	RouteByLatency bool `json:"route_by_latency" env:"REDIS_ROUTE_BY_LATENCY" default:"true"`
+	RouteRandomly  bool `json:"route_randomly" env:"REDIS_ROUTE_RANDOMLY" default:"false"`
+}
+
+// SplitBrainConfig holds split-brain detection configuration
+type SplitBrainConfig struct {
+	Enabled         bool          `json:"enabled" env:"CLUSTER_SPLIT_BRAIN_ENABLED" default:"true"`
+	MinQuorum       int           `json:"min_quorum" env:"CLUSTER_MIN_QUORUM" default:"2"`
+	CheckInterval   time.Duration `json:"check_interval" env:"CLUSTER_SPLIT_BRAIN_CHECK_INTERVAL" default:"5s"`
+	NodeTimeout     time.Duration `json:"node_timeout" env:"CLUSTER_NODE_TIMEOUT" default:"3s"`
+	GracePeriod     time.Duration `json:"grace_period" env:"CLUSTER_SPLIT_BRAIN_GRACE_PERIOD" default:"15s"`
+	PartitionAction string        `json:"partition_action" env:"CLUSTER_PARTITION_ACTION" default:"readonly"` // readonly, shutdown, continue
+	EnableFencing   bool          `json:"enable_fencing" env:"CLUSTER_ENABLE_FENCING" default:"true"`
 }
 
 // DatabaseConfig controls database persistence
