@@ -1005,12 +1005,13 @@ func initialize() error {
 				backend := stt.InferenceBackend(appConfig.STT.OpenSource.Backend)
 
 				openSourceConfig := &stt.OpenSourceModelConfig{
-					ModelType:       modelType,
-					ModelName:       appConfig.STT.OpenSource.ModelName,
-					ModelPath:       appConfig.STT.OpenSource.ModelPath,
-					Backend:         backend,
-					BaseURL:         appConfig.STT.OpenSource.BaseURL,
-					WebSocketURL:    appConfig.STT.OpenSource.WebSocketURL,
+					ModelType:          modelType,
+					ModelName:          appConfig.STT.OpenSource.ModelName,
+					ModelPath:          appConfig.STT.OpenSource.ModelPath,
+					Backend:            backend,
+					BaseURL:            appConfig.STT.OpenSource.BaseURL,
+					TranscribeEndpoint: appConfig.STT.OpenSource.TranscribeEndpoint,
+					WebSocketURL:       appConfig.STT.OpenSource.WebSocketURL,
 					APIKey:          appConfig.STT.OpenSource.APIKey,
 					AuthHeader:      appConfig.STT.OpenSource.AuthHeader,
 					SampleRate:      appConfig.STT.OpenSource.SampleRate,
