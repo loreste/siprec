@@ -56,6 +56,10 @@ type OpenSourceModelConfig struct {
 	TranscribeEndpoint string           `json:"transcribe_endpoint"` // Endpoint path for transcription (e.g., /stt/transcribe)
 	WebSocketURL       string           `json:"websocket_url"`       // WebSocket endpoint for streaming
 
+	// Multilingual support - auto-language detection and switching
+	UseMultilingual          bool   `json:"use_multilingual"`
+	MultilingualWebSocketURL string `json:"multilingual_websocket_url"` // e.g., ws://host:port/ws/multilingual
+
 	// Authentication (optional for some backends)
 	APIKey      string              `json:"api_key"`
 	AuthHeader  string              `json:"auth_header"`  // Custom auth header name
@@ -85,6 +89,14 @@ type OpenSourceModelConfig struct {
 	ChunkDuration   time.Duration `json:"chunk_duration"`
 }
 
+// LanguageState tracks language detection state for a call
+type LanguageState struct {
+	CurrentLanguage  string   `json:"current_language"`
+	PreviousLanguage string   `json:"previous_language"`
+	LanguagesUsed    []string `json:"languages_used"`
+	SwitchCount      int      `json:"switch_count"`
+}
+
 // OpenSourceModelProvider implements the Provider interface for open-source STT models
 type OpenSourceModelProvider struct {
 	logger           *logrus.Logger
@@ -95,6 +107,10 @@ type OpenSourceModelProvider struct {
 	// WebSocket connections for streaming
 	connections     map[string]*websocket.Conn
 	connectionsMu   sync.RWMutex
+
+	// Language state tracking per call (for multilingual mode)
+	languageStates  map[string]*LanguageState
+	languageStatesMu sync.RWMutex
 
 	// Callback for results
 	callback        func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
@@ -132,7 +148,8 @@ func NewOpenSourceModelProvider(logger *logrus.Logger, transcriptionSvc *Transcr
 		httpClient: &http.Client{
 			Timeout: config.Timeout,
 		},
-		connections: make(map[string]*websocket.Conn),
+		connections:    make(map[string]*websocket.Conn),
+		languageStates: make(map[string]*LanguageState),
 	}
 }
 
@@ -495,15 +512,47 @@ func (p *OpenSourceModelProvider) parseHTTPResponse(resp *http.Response, callUUI
 
 // transcribeWebSocket handles WebSocket-based streaming transcription
 func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	_ = p.logger.WithField("call_uuid", callUUID) // Suppress unused warning
+	logger := p.logger.WithField("call_uuid", callUUID)
+
+	// Determine which WebSocket URL to use
+	wsURL := p.config.WebSocketURL
+	useMultilingual := p.config.UseMultilingual && p.config.MultilingualWebSocketURL != ""
+	if useMultilingual {
+		wsURL = p.config.MultilingualWebSocketURL
+		logger.WithField("multilingual_url", wsURL).Info("Using multilingual WebSocket endpoint for auto-language detection")
+	}
+
+	// Initialize language state for this call if using multilingual mode
+	if useMultilingual {
+		p.languageStatesMu.Lock()
+		p.languageStates[callUUID] = &LanguageState{
+			LanguagesUsed: make([]string, 0),
+		}
+		p.languageStatesMu.Unlock()
+	}
 
 	// Connect to WebSocket
 	headers := http.Header{}
+
+	// Add API key - either as header or query parameter
 	if p.config.APIKey != "" {
-		headers.Set("Authorization", "Bearer "+p.config.APIKey)
+		if p.config.AuthHeader != "" {
+			// Use custom header (e.g., X-API-Key)
+			headers.Set(p.config.AuthHeader, p.config.APIKey)
+		} else {
+			// Default to Authorization: Bearer
+			headers.Set("Authorization", "Bearer "+p.config.APIKey)
+		}
+
+		// Also append as query parameter for WebSocket connections that require it
+		if strings.Contains(wsURL, "?") {
+			wsURL = wsURL + "&api_key=" + p.config.APIKey
+		} else {
+			wsURL = wsURL + "?api_key=" + p.config.APIKey
+		}
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, p.config.WebSocketURL, headers)
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		return fmt.Errorf("failed to connect to WebSocket: %w", err)
 	}
@@ -517,6 +566,14 @@ func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audio
 		p.connectionsMu.Lock()
 		delete(p.connections, callUUID)
 		p.connectionsMu.Unlock()
+
+		// Clean up language state if using multilingual mode
+		if useMultilingual {
+			p.languageStatesMu.Lock()
+			delete(p.languageStates, callUUID)
+			p.languageStatesMu.Unlock()
+		}
+
 		conn.Close()
 	}()
 
@@ -528,13 +585,22 @@ func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audio
 		"sample_rate": p.config.SampleRate,
 		"encoding":    p.config.Encoding,
 	}
+
+	// Add multilingual-specific config if enabled
+	if useMultilingual {
+		configMsg["multilingual"] = true
+		configMsg["detect_language"] = true
+		// Don't force a specific language - let Whisper auto-detect
+		delete(configMsg, "language")
+	}
+
 	if err := conn.WriteJSON(configMsg); err != nil {
 		return fmt.Errorf("failed to send config: %w", err)
 	}
 
 	// Start response handler
 	errChan := make(chan error, 1)
-	go p.handleWebSocketResponses(ctx, conn, callUUID, errChan)
+	go p.handleWebSocketResponses(ctx, conn, callUUID, useMultilingual, errChan)
 
 	// Stream audio data
 	buffer := make([]byte, 4096)
@@ -571,7 +637,9 @@ func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audio
 }
 
 // handleWebSocketResponses handles incoming WebSocket messages
-func (p *OpenSourceModelProvider) handleWebSocketResponses(ctx context.Context, conn *websocket.Conn, callUUID string, errChan chan error) {
+func (p *OpenSourceModelProvider) handleWebSocketResponses(ctx context.Context, conn *websocket.Conn, callUUID string, useMultilingual bool, errChan chan error) {
+	logger := p.logger.WithField("call_uuid", callUUID)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -607,23 +675,102 @@ func (p *OpenSourceModelProvider) handleWebSocketResponses(ctx context.Context, 
 			}
 
 			if transcription != "" {
+				// Build metadata
+				metadata := map[string]interface{}{
+					"model_type": string(p.config.ModelType),
+				}
+
+				// Extract language metadata from multilingual responses
+				if useMultilingual {
+					p.extractLanguageMetadata(callUUID, response, metadata, logger)
+				}
+
+				// Trigger callback
 				p.callbackMu.RLock()
 				callback := p.callback
 				p.callbackMu.RUnlock()
 
 				if callback != nil {
-					metadata := map[string]interface{}{
-						"model_type": string(p.config.ModelType),
-					}
 					callback(callUUID, transcription, isFinal, metadata)
 				}
 
+				// Publish to transcription service with language metadata
 				if p.transcriptionSvc != nil {
-					p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, nil)
+					p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
 				}
 			}
 		}
 	}
+}
+
+// extractLanguageMetadata extracts and tracks language information from multilingual responses
+func (p *OpenSourceModelProvider) extractLanguageMetadata(callUUID string, response map[string]interface{}, metadata map[string]interface{}, logger *logrus.Entry) {
+	// Extract language fields from the multilingual endpoint response
+	if lang, ok := response["language"].(string); ok && lang != "" {
+		metadata["language"] = lang
+	}
+	if langName, ok := response["language_name"].(string); ok && langName != "" {
+		metadata["language_name"] = langName
+	}
+	if switched, ok := response["language_switched"].(bool); ok {
+		metadata["language_switched"] = switched
+	}
+	if prevLang, ok := response["previous_language"].(string); ok && prevLang != "" {
+		metadata["previous_language"] = prevLang
+	}
+	if recommendedVoice, ok := response["recommended_voice"].(string); ok && recommendedVoice != "" {
+		metadata["recommended_voice"] = recommendedVoice
+	}
+
+	// Extract languages used array
+	if langsUsed, ok := response["languages_used"].([]interface{}); ok {
+		langs := make([]string, 0, len(langsUsed))
+		for _, l := range langsUsed {
+			if langStr, ok := l.(string); ok {
+				langs = append(langs, langStr)
+			}
+		}
+		if len(langs) > 0 {
+			metadata["languages_used"] = langs
+		}
+	}
+
+	// Update internal language state tracking
+	p.languageStatesMu.Lock()
+	state, exists := p.languageStates[callUUID]
+	if exists && state != nil {
+		if lang, ok := metadata["language"].(string); ok && lang != "" {
+			if state.CurrentLanguage != "" && state.CurrentLanguage != lang {
+				state.PreviousLanguage = state.CurrentLanguage
+				state.SwitchCount++
+
+				// Log language switch event
+				logger.WithFields(logrus.Fields{
+					"previous_language": state.PreviousLanguage,
+					"new_language":      lang,
+					"switch_count":      state.SwitchCount,
+				}).Info("Language switch detected in conversation")
+			}
+			state.CurrentLanguage = lang
+
+			// Track unique languages used
+			found := false
+			for _, l := range state.LanguagesUsed {
+				if l == lang {
+					found = true
+					break
+				}
+			}
+			if !found {
+				state.LanguagesUsed = append(state.LanguagesUsed, lang)
+			}
+		}
+
+		// Add cumulative stats to metadata
+		metadata["total_language_switches"] = state.SwitchCount
+		metadata["all_languages_used"] = state.LanguagesUsed
+	}
+	p.languageStatesMu.Unlock()
 }
 
 // transcribeCLI handles CLI-based transcription (local models)

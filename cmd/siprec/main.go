@@ -1005,29 +1005,31 @@ func initialize() error {
 				backend := stt.InferenceBackend(appConfig.STT.OpenSource.Backend)
 
 				openSourceConfig := &stt.OpenSourceModelConfig{
-					ModelType:          modelType,
-					ModelName:          appConfig.STT.OpenSource.ModelName,
-					ModelPath:          appConfig.STT.OpenSource.ModelPath,
-					Backend:            backend,
-					BaseURL:            appConfig.STT.OpenSource.BaseURL,
-					TranscribeEndpoint: appConfig.STT.OpenSource.TranscribeEndpoint,
-					WebSocketURL:       appConfig.STT.OpenSource.WebSocketURL,
-					APIKey:          appConfig.STT.OpenSource.APIKey,
-					AuthHeader:      appConfig.STT.OpenSource.AuthHeader,
-					SampleRate:      appConfig.STT.OpenSource.SampleRate,
-					Encoding:        appConfig.STT.OpenSource.Encoding,
-					Channels:        appConfig.STT.OpenSource.Channels,
-					Language:        appConfig.STT.OpenSource.Language,
-					UseGPU:          appConfig.STT.OpenSource.UseGPU,
-					DeviceID:        appConfig.STT.OpenSource.DeviceID,
-					Timeout:         appConfig.STT.OpenSource.Timeout,
-					MaxRetries:      appConfig.STT.OpenSource.MaxRetries,
-					BatchSize:       appConfig.STT.OpenSource.BatchSize,
-					EnableStreaming: appConfig.STT.OpenSource.EnableStreaming,
-					ChunkDuration:   appConfig.STT.OpenSource.ChunkDuration,
-					ExecutablePath:  appConfig.STT.OpenSource.ExecutablePath,
-					ExtraArgs:       appConfig.STT.OpenSource.ExtraArgs,
-					Options:         appConfig.STT.OpenSource.Options,
+					ModelType:                modelType,
+					ModelName:                appConfig.STT.OpenSource.ModelName,
+					ModelPath:                appConfig.STT.OpenSource.ModelPath,
+					Backend:                  backend,
+					BaseURL:                  appConfig.STT.OpenSource.BaseURL,
+					TranscribeEndpoint:       appConfig.STT.OpenSource.TranscribeEndpoint,
+					WebSocketURL:             appConfig.STT.OpenSource.WebSocketURL,
+					UseMultilingual:          appConfig.STT.OpenSource.UseMultilingual,
+					MultilingualWebSocketURL: appConfig.STT.OpenSource.MultilingualWebSocketURL,
+					APIKey:                   appConfig.STT.OpenSource.APIKey,
+					AuthHeader:               appConfig.STT.OpenSource.AuthHeader,
+					SampleRate:               appConfig.STT.OpenSource.SampleRate,
+					Encoding:                 appConfig.STT.OpenSource.Encoding,
+					Channels:                 appConfig.STT.OpenSource.Channels,
+					Language:                 appConfig.STT.OpenSource.Language,
+					UseGPU:                   appConfig.STT.OpenSource.UseGPU,
+					DeviceID:                 appConfig.STT.OpenSource.DeviceID,
+					Timeout:                  appConfig.STT.OpenSource.Timeout,
+					MaxRetries:               appConfig.STT.OpenSource.MaxRetries,
+					BatchSize:                appConfig.STT.OpenSource.BatchSize,
+					EnableStreaming:          appConfig.STT.OpenSource.EnableStreaming,
+					ChunkDuration:            appConfig.STT.OpenSource.ChunkDuration,
+					ExecutablePath:           appConfig.STT.OpenSource.ExecutablePath,
+					ExtraArgs:                appConfig.STT.OpenSource.ExtraArgs,
+					Options:                  appConfig.STT.OpenSource.Options,
 				}
 
 				openSourceProvider := stt.NewOpenSourceModelProvider(logger, transcriptionSvc, openSourceConfig)
@@ -1039,12 +1041,17 @@ func initialize() error {
 					if err := sttManager.RegisterProvider(wrappedProvider); err != nil {
 						logger.WithError(err).Warn("Failed to register open-source STT provider")
 					} else {
-						logger.WithFields(logrus.Fields{
+						logFields := logrus.Fields{
 							"provider":   "opensource",
 							"model_type": appConfig.STT.OpenSource.ModelType,
 							"model_name": appConfig.STT.OpenSource.ModelName,
 							"backend":    appConfig.STT.OpenSource.Backend,
-						}).Info("Registered open-source STT provider with live transcription")
+						}
+						if appConfig.STT.OpenSource.UseMultilingual {
+							logFields["multilingual"] = true
+							logFields["multilingual_url"] = appConfig.STT.OpenSource.MultilingualWebSocketURL
+						}
+						logger.WithFields(logFields).Info("Registered open-source STT provider with live transcription")
 					}
 				}
 			}

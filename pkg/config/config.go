@@ -687,6 +687,10 @@ type OpenSourceSTTConfig struct {
 	// WebSocket URL for streaming backends
 	WebSocketURL string `json:"websocket_url" env:"OPENSOURCE_WEBSOCKET_URL"`
 
+	// Multilingual support - auto-detects language switches mid-conversation
+	UseMultilingual         bool   `json:"use_multilingual" env:"OPENSOURCE_USE_MULTILINGUAL" default:"false"`
+	MultilingualWebSocketURL string `json:"multilingual_websocket_url" env:"OPENSOURCE_MULTILINGUAL_WEBSOCKET_URL"`
+
 	// API key (optional, for secured endpoints)
 	APIKey string `json:"api_key" env:"OPENSOURCE_API_KEY"`
 
@@ -3147,6 +3151,8 @@ func loadOpenSourceSTTConfig(logger *logrus.Logger, config *OpenSourceSTTConfig)
 	config.BaseURL = getEnv("OPENSOURCE_BASE_URL", "http://localhost:8000")
 	config.TranscribeEndpoint = getEnv("OPENSOURCE_TRANSCRIBE_ENDPOINT", "/stt/transcribe")
 	config.WebSocketURL = getEnv("OPENSOURCE_WEBSOCKET_URL", "")
+	config.UseMultilingual = getEnvBool("OPENSOURCE_USE_MULTILINGUAL", false)
+	config.MultilingualWebSocketURL = getEnv("OPENSOURCE_MULTILINGUAL_WEBSOCKET_URL", "")
 	config.APIKey = getEnv("OPENSOURCE_API_KEY", "")
 	config.AuthHeader = getEnv("OPENSOURCE_AUTH_HEADER", "")
 	config.SampleRate = getEnvInt("OPENSOURCE_SAMPLE_RATE", 16000)
