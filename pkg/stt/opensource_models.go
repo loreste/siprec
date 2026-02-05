@@ -155,7 +155,7 @@ func NewOpenSourceModelProvider(logger *logrus.Logger, transcriptionSvc *Transcr
 
 // Name returns the provider name
 func (p *OpenSourceModelProvider) Name() string {
-	return string(p.config.ModelType)
+	return "opensource"
 }
 
 // Initialize initializes the provider
