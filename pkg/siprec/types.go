@@ -422,6 +422,64 @@ func (m *RSMetadata) Normalize() {
 	}
 }
 
+// ResolveStreamParticipant finds the participant associated with a stream label.
+// Resolution order:
+// 1. ParticipantStreamAssoc — explicit associations with send/receive
+// 2. Stream.ParticipantRef — direct participant references on stream elements
+// 3. RSParticipant.Send — participant's send stream list
+func (m *RSMetadata) ResolveStreamParticipant(streamLabel string) *RSParticipant {
+	if m == nil || streamLabel == "" {
+		return nil
+	}
+
+	// 1. Check ParticipantStreamAssoc for explicit mapping
+	for _, assoc := range m.ParticipantStreamAssoc {
+		streamRef := assoc.Stream
+		if streamRef == "" {
+			streamRef = assoc.StreamID
+		}
+		if streamRef == streamLabel {
+			participantRef := assoc.Participant
+			if participantRef == "" {
+				participantRef = assoc.ParticipantID
+			}
+			if participantRef != "" {
+				for i := range m.Participants {
+					if m.Participants[i].ID == participantRef {
+						return &m.Participants[i]
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Check Stream.ParticipantRef for direct references
+	for _, stream := range m.Streams {
+		label := stream.Label
+		if label == "" {
+			label = stream.StreamID
+		}
+		if label == streamLabel && len(stream.ParticipantRef) > 0 {
+			for i := range m.Participants {
+				if m.Participants[i].ID == stream.ParticipantRef[0] {
+					return &m.Participants[i]
+				}
+			}
+		}
+	}
+
+	// 3. Check RSParticipant.Send for stream references
+	for i := range m.Participants {
+		for _, sendRef := range m.Participants[i].Send {
+			if sendRef == streamLabel {
+				return &m.Participants[i]
+			}
+		}
+	}
+
+	return nil
+}
+
 // UnmarshalXML customizes decoding to ensure normalization post-unmarshal.
 func (m *RSMetadata) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type alias RSMetadata

@@ -103,6 +103,10 @@ func sanitizeMetadata(metadata map[string]interface{}) map[string]interface{} {
 		"speaker_count":     {},
 		"session_id":        {},
 		"sessionid":         {},
+		"stream_label":      {},
+		"participant_name":  {},
+		"participant_role":  {},
+		"participant_aor":   {},
 	}
 
 	clean := make(map[string]interface{}, len(metadata))
