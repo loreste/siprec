@@ -1116,13 +1116,15 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	}
 
 	var recordingSession *siprec.RecordingSession
+	var parsedMetadata *siprec.RSMetadata
 	if rsMetadata != nil {
 		logger.WithField("metadata_size", len(rsMetadata)).Info("Extracted SIPREC metadata")
 
 		metadataCtx, metadataSpan := tracing.StartSpan(callCtx, "siprec.metadata.parse", trace.WithAttributes(
 			attribute.Int("siprec.metadata.bytes", len(rsMetadata)),
 		))
-		parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message.ContentType)
+		var err error
+		parsedMetadata, err = s.parseSiprecMetadata(rsMetadata, message.ContentType)
 		if err != nil {
 			metadataSpan.RecordError(err)
 			metadataSpan.End()
@@ -1686,6 +1688,12 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 			streamCallID := fmt.Sprintf("%s_%s", message.CallID, streamID)
 			media.StartRTPForwarding(callCtx, forwarder, streamCallID, mediaConfig, sttProvider)
+
+			// Inject per-stream metadata so AMQP consumers can identify participants
+			if s.handler != nil && s.handler.SessionMetadataCallback != nil {
+				streamMeta := buildStreamMetadata(streamID, parsedMetadata, recordingSession)
+				s.handler.SessionMetadataCallback(streamCallID, streamMeta)
+			}
 		}
 
 		if receivedSDP != nil {
@@ -1863,6 +1871,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	))
 	defer reinviteSpan.End()
 	metadataRefreshed := false
+	var reinviteParsedMetadata *siprec.RSMetadata
 
 	// Extract new metadata from re-INVITE
 	sdpData, rsMetadata := s.extractSiprecContent(message.Body, message.ContentType)
@@ -1980,6 +1989,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		}
 
 		metadataRefreshed = true
+		reinviteParsedMetadata = parsedMetadata
 
 		if callScope.Metadata() != nil && callState.RecordingSession != nil {
 			if tenant := audit.TenantFromSession(callState.RecordingSession); tenant != "" {
@@ -2153,7 +2163,14 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			if forwarderCtx == nil {
 				forwarderCtx = reinviteCtx // Fallback if rtpCtx not set
 			}
-			media.StartRTPForwarding(forwarderCtx, forwarders[idx], fmt.Sprintf("%s_%s", message.CallID, streamID), mediaConfig, sttProvider)
+			streamCallID := fmt.Sprintf("%s_%s", message.CallID, streamID)
+			media.StartRTPForwarding(forwarderCtx, forwarders[idx], streamCallID, mediaConfig, sttProvider)
+
+			// Inject per-stream metadata so AMQP consumers can identify participants
+			if s.handler != nil && s.handler.SessionMetadataCallback != nil {
+				streamMeta := buildStreamMetadata(streamID, reinviteParsedMetadata, callState.RecordingSession)
+				s.handler.SessionMetadataCallback(streamCallID, streamMeta)
+			}
 		}
 
 		callState.RTPForwarders = forwarders
@@ -3267,6 +3284,13 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 
 	// Clean up StreamForwarders (used for multi-stream SIPREC calls)
 	if len(callState.StreamForwarders) > 0 {
+		// Clear per-stream metadata entries before releasing forwarders
+		if s.handler != nil && s.handler.ClearSessionMetadataCallback != nil {
+			for streamID := range callState.StreamForwarders {
+				streamCallID := fmt.Sprintf("%s_%s", callID, streamID)
+				s.handler.ClearSessionMetadataCallback(streamCallID)
+			}
+		}
 		for streamID, forwarder := range callState.StreamForwarders {
 			if forwarder == nil {
 				continue
@@ -3815,6 +3839,48 @@ func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType str
 	}
 
 	return &metadata, nil
+}
+
+// buildStreamMetadata constructs per-stream metadata for AMQP publishing.
+// It resolves the participant associated with a stream label from the SIPREC
+// rs-metadata and returns a metadata map suitable for SessionMetadataCallback.
+func buildStreamMetadata(streamLabel string, rsMeta *siprec.RSMetadata, session *siprec.RecordingSession) map[string]string {
+	meta := map[string]string{
+		"stream_label": streamLabel,
+	}
+
+	if rsMeta == nil {
+		return meta
+	}
+
+	participant := rsMeta.ResolveStreamParticipant(streamLabel)
+	if participant == nil {
+		return meta
+	}
+
+	name := participant.DisplayName
+	if name == "" {
+		name = participant.Name
+	}
+	if name != "" {
+		meta["participant_name"] = name
+	}
+
+	if participant.Role != "" {
+		meta["participant_role"] = participant.Role
+	}
+
+	if len(participant.Aor) > 0 {
+		aor := participant.Aor[0].Value
+		if aor == "" {
+			aor = participant.Aor[0].URI
+		}
+		if aor != "" {
+			meta["participant_aor"] = aor
+		}
+	}
+
+	return meta
 }
 
 // createRecordingSession creates a RecordingSession from parsed SIPREC metadata

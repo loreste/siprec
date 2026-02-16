@@ -18,11 +18,14 @@ import (
 
 // AMQPMessage represents a message sent via AMQP
 type AMQPMessage struct {
-	CallUUID      string                 `json:"call_uuid"`
-	Transcription string                 `json:"transcription"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
-	DeadLetter    bool                   `json:"dead_letter,omitempty"`
+	CallUUID        string                 `json:"call_uuid"`
+	Transcription   string                 `json:"transcription"`
+	Timestamp       time.Time              `json:"timestamp"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	DeadLetter      bool                   `json:"dead_letter,omitempty"`
+	StreamLabel     string                 `json:"stream_label,omitempty"`
+	ParticipantName string                 `json:"participant_name,omitempty"`
+	ParticipantRole string                 `json:"participant_role,omitempty"`
 }
 
 // AMQPConfig holds AMQP client configuration
@@ -372,13 +375,21 @@ func (c *AMQPClient) PublishTranscription(transcription, callUUID string, metada
 		return fmt.Errorf("not connected to AMQP server")
 	}
 
+	// Extract stream label fields from metadata into top-level fields
+	streamLabel, _ := metadata["stream_label"].(string)
+	participantName, _ := metadata["participant_name"].(string)
+	participantRole, _ := metadata["participant_role"].(string)
+
 	// Create AMQP message
 	message := AMQPMessage{
-		CallUUID:      callUUID,
-		Transcription: transcription,
-		Timestamp:     time.Now(),
-		Metadata:      metadata,
-		DeadLetter:    false,
+		CallUUID:        callUUID,
+		Transcription:   transcription,
+		Timestamp:       time.Now(),
+		Metadata:        metadata,
+		DeadLetter:      false,
+		StreamLabel:     streamLabel,
+		ParticipantName: participantName,
+		ParticipantRole: participantRole,
 	}
 
 	// Marshal to JSON

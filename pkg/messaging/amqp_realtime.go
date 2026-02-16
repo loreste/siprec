@@ -106,6 +106,11 @@ type RealtimeAMQPMessage struct {
 	SpeakerLabel string `json:"speaker_label,omitempty"`
 	SpeakerCount int    `json:"speaker_count,omitempty"`
 
+	// SIPREC stream identification
+	StreamLabel     string `json:"stream_label,omitempty"`
+	ParticipantName string `json:"participant_name,omitempty"`
+	ParticipantRole string `json:"participant_role,omitempty"`
+
 	// Sentiment data
 	Sentiment *realtime.Sentiment `json:"sentiment,omitempty"`
 
@@ -274,6 +279,16 @@ func (p *AMQPRealtimePublisher) convertToAMQPMessage(event realtime.Transcriptio
 	if event.Data.Metadata != nil {
 		for key, value := range event.Data.Metadata {
 			message.Metadata[key] = value
+		}
+		// Extract SIPREC stream labels from metadata into top-level fields
+		if sl, ok := event.Data.Metadata["stream_label"].(string); ok {
+			message.StreamLabel = sl
+		}
+		if pn, ok := event.Data.Metadata["participant_name"].(string); ok {
+			message.ParticipantName = pn
+		}
+		if pr, ok := event.Data.Metadata["participant_role"].(string); ok {
+			message.ParticipantRole = pr
 		}
 	}
 
