@@ -91,6 +91,11 @@ var (
 
 	// Cluster orchestrator for distributed features
 	clusterOrchestrator *cluster.ClusterOrchestrator
+
+	// Mutex to protect global variables during initialization/shutdown
+	globalsMutex sync.RWMutex
+	// Flag to indicate initialization is complete
+	initComplete bool
 )
 
 type analyticsAudioListener struct {
@@ -244,10 +249,35 @@ func main() {
 		// Cancel the root context to signal shutdown to all goroutines
 		rootCancel()
 
+		// Wait for initialization to complete before accessing globals
+		globalsMutex.RLock()
+		initialized := initComplete
+		globalsMutex.RUnlock()
+
+		if !initialized {
+			logger.Warn("Shutdown requested before initialization completed")
+			os.Exit(1)
+		}
+
+		// Take snapshots of global pointers under lock to avoid races
+		globalsMutex.RLock()
+		httpServerLocal := httpServer
+		sipHandlerLocal := sipHandler
+		amqpEndpointsLocal := make([]amqpTranscriptionEndpoint, len(amqpEndpoints))
+		copy(amqpEndpointsLocal, amqpEndpoints)
+		wsHubLocal := wsHub
+		sttManagerLocal := sttManager
+		keyRotationServiceLocal := keyRotationService
+		dbConnLocal := dbConn
+		perfMonitorLocal := perfMonitor
+		alertManagerLocal := alertManager
+		clusterOrchestratorLocal := clusterOrchestrator
+		globalsMutex.RUnlock()
+
 		// Shutdown HTTP server first
-		if httpServer != nil {
+		if httpServerLocal != nil {
 			logger.Debug("Shutting down HTTP server...")
-			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			if err := httpServerLocal.Shutdown(shutdownCtx); err != nil {
 				logger.WithError(err).Error("Error shutting down HTTP server")
 			} else {
 				logger.Info("HTTP server shut down successfully")
@@ -255,12 +285,12 @@ func main() {
 		}
 
 		// Shutdown SIP server next (with its own dedicated timeout)
-		if sipHandler != nil {
+		if sipHandlerLocal != nil {
 			logger.Debug("Shutting down SIP server...")
 			sipShutdownCtx, sipShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer sipShutdownCancel()
 
-			if err := sipHandler.Shutdown(sipShutdownCtx); err != nil {
+			if err := sipHandlerLocal.Shutdown(sipShutdownCtx); err != nil {
 				logger.WithError(err).Error("Error shutting down SIP server")
 			} else {
 				logger.Info("SIP server shut down successfully")
@@ -268,8 +298,8 @@ func main() {
 		}
 
 		// Disconnect from AMQP endpoints
-		if len(amqpEndpoints) > 0 {
-			for _, endpoint := range amqpEndpoints {
+		if len(amqpEndpointsLocal) > 0 {
+			for _, endpoint := range amqpEndpointsLocal {
 				if endpoint.client == nil {
 					continue
 				}
@@ -289,7 +319,7 @@ func main() {
 		}
 
 		// Shut down WebSocket hub if active
-		if wsHub != nil {
+		if wsHubLocal != nil {
 			logger.Debug("Shutting down WebSocket hub...")
 			// The hub will be shut down through context cancellation
 			// Wait a moment for connections to close gracefully
@@ -298,30 +328,30 @@ func main() {
 		}
 
 		// Shut down STT providers
-		if sttManager != nil {
+		if sttManagerLocal != nil {
 			logger.Debug("Shutting down STT providers...")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := sttManager.Shutdown(shutdownCtx); err != nil {
+			sttShutdownCtx, sttCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := sttManagerLocal.Shutdown(sttShutdownCtx); err != nil {
 				logger.WithError(err).Error("Error shutting down STT providers")
 			} else {
 				logger.Info("STT providers shut down")
 			}
+			sttCancel()
 		}
 
 		// Stop encryption services
-		if keyRotationService != nil {
+		if keyRotationServiceLocal != nil {
 			logger.Debug("Stopping key rotation service...")
-			if err := keyRotationService.Stop(); err != nil {
+			if err := keyRotationServiceLocal.Stop(); err != nil {
 				logger.WithError(err).Error("Error stopping key rotation service")
 			} else {
 				logger.Info("Key rotation service stopped")
 			}
 		}
 
-		if dbConn != nil {
+		if dbConnLocal != nil {
 			logger.Debug("Closing database connection...")
-			if err := dbConn.Close(); err != nil {
+			if err := dbConnLocal.Close(); err != nil {
 				logger.WithError(err).Error("Error closing database connection")
 			} else {
 				logger.Info("Database connection closed")
@@ -337,23 +367,23 @@ func main() {
 		}
 
 		// Stop performance monitor
-		if perfMonitor != nil {
+		if perfMonitorLocal != nil {
 			logger.Debug("Stopping performance monitor...")
-			perfMonitor.Stop()
+			perfMonitorLocal.Stop()
 			logger.Info("Performance monitor stopped")
 		}
 
 		// Stop alert manager
-		if alertManager != nil {
+		if alertManagerLocal != nil {
 			logger.Debug("Stopping alert manager...")
-			alertManager.Stop()
+			alertManagerLocal.Stop()
 			logger.Info("Alert manager stopped")
 		}
 
 		// Stop cluster orchestrator
-		if clusterOrchestrator != nil {
+		if clusterOrchestratorLocal != nil {
 			logger.Debug("Stopping cluster orchestrator...")
-			clusterOrchestrator.Stop()
+			clusterOrchestratorLocal.Stop()
 			logger.Info("Cluster orchestrator stopped")
 		}
 
@@ -1438,6 +1468,11 @@ func initialize() error {
 
 	// Log configuration on startup
 	logStartupConfig()
+
+	// Mark initialization as complete (protects signal handler from accessing uninitialized globals)
+	globalsMutex.Lock()
+	initComplete = true
+	globalsMutex.Unlock()
 
 	return nil
 }

@@ -192,9 +192,14 @@ func (s *TranscriptionService) SetSessionMetadata(callUUID string, metadata map[
 		return
 	}
 
-	// Store locally for injection into transcription events
+	// Store a copy locally to prevent race conditions with caller
+	metaCopy := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		metaCopy[k] = v
+	}
+
 	s.sessionMetadataMutex.Lock()
-	s.sessionMetadata[callUUID] = metadata
+	s.sessionMetadata[callUUID] = metaCopy
 	s.sessionMetadataMutex.Unlock()
 
 	// Propagate to listeners that support it (e.g., ConversationAccumulator)
@@ -226,10 +231,22 @@ func (s *TranscriptionService) ClearSessionMetadata(callUUID string) {
 }
 
 // getSessionMetadata retrieves stored session metadata for a call
+// Returns a copy of the metadata to prevent race conditions
 func (s *TranscriptionService) getSessionMetadata(callUUID string) map[string]string {
 	s.sessionMetadataMutex.RLock()
 	defer s.sessionMetadataMutex.RUnlock()
-	return s.sessionMetadata[callUUID]
+
+	original := s.sessionMetadata[callUUID]
+	if original == nil {
+		return nil
+	}
+
+	// Return a copy to prevent concurrent modification
+	metaCopy := make(map[string]string, len(original))
+	for k, v := range original {
+		metaCopy[k] = v
+	}
+	return metaCopy
 }
 
 // PublishTranscription notifies all listeners about a new transcription
