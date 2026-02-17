@@ -56,11 +56,12 @@ type EnhancedStreamingProvider interface {
 type ProviderManager struct {
 	logger          *logrus.Logger
 	providers       map[string]Provider
+	providersMutex  sync.RWMutex // protects providers map
 	defaultProvider string
 	fallbackOrder   []string
 	languageRouting map[string]string
 	callRouting     map[string]string
-	routingMutex    sync.RWMutex
+	routingMutex    sync.RWMutex // protects languageRouting and callRouting
 }
 
 // NewProviderManager creates a new provider manager
@@ -95,8 +96,11 @@ func (m *ProviderManager) RegisterProvider(provider Provider) error {
 		return err
 	}
 
-	// Add to available providers
+	// Add to available providers (protected by mutex)
+	m.providersMutex.Lock()
 	m.providers[provider.Name()] = provider
+	m.providersMutex.Unlock()
+
 	m.logger.WithField("provider", provider.Name()).Info("Registered speech-to-text provider")
 
 	return nil
@@ -191,7 +195,9 @@ func (m *ProviderManager) resolveProvider(callUUID, requested string) string {
 
 // GetProvider returns a provider by name
 func (m *ProviderManager) GetProvider(name string) (Provider, bool) {
+	m.providersMutex.RLock()
 	provider, exists := m.providers[name]
+	m.providersMutex.RUnlock()
 	return provider, exists
 }
 
@@ -202,8 +208,8 @@ func (m *ProviderManager) GetDefaultProvider() (Provider, bool) {
 
 // GetAllProviders returns a list of all registered provider names
 func (m *ProviderManager) GetAllProviders() []string {
-	m.routingMutex.RLock()
-	defer m.routingMutex.RUnlock()
+	m.providersMutex.RLock()
+	defer m.providersMutex.RUnlock()
 
 	names := make([]string, 0, len(m.providers))
 	for name := range m.providers {
@@ -368,13 +374,21 @@ func (m *ProviderManager) buildAttemptOrder(requested string) []string {
 	seen := make(map[string]bool)
 	order := make([]string, 0, len(m.fallbackOrder)+2)
 
+	// Take a snapshot of registered providers under lock
+	m.providersMutex.RLock()
+	registeredProviders := make(map[string]bool, len(m.providers))
+	for name := range m.providers {
+		registeredProviders[name] = true
+	}
+	m.providersMutex.RUnlock()
+
 	add := func(v string, requireRegistered bool) {
 		candidate := strings.TrimSpace(v)
 		if candidate == "" {
 			return
 		}
 		if requireRegistered {
-			if _, ok := m.providers[candidate]; !ok {
+			if !registeredProviders[candidate] {
 				return
 			}
 		}
@@ -398,16 +412,25 @@ func (m *ProviderManager) buildAttemptOrder(requested string) []string {
 func (m *ProviderManager) Shutdown(ctx context.Context) error {
 	m.logger.Info("Starting shutdown of all STT providers...")
 
-	shutdownErrors := []error{}
-
+	// Take a snapshot of providers under lock to avoid holding lock during shutdown
+	m.providersMutex.RLock()
+	providersCopy := make(map[string]Provider, len(m.providers))
 	for name, provider := range m.providers {
+		providersCopy[name] = provider
+	}
+	m.providersMutex.RUnlock()
+
+	shutdownErrors := []error{}
+	var cancels []context.CancelFunc
+
+	for name, provider := range providersCopy {
 		// Check if provider implements EnhancedStreamingProvider with Shutdown method
 		if enhancedProvider, ok := provider.(EnhancedStreamingProvider); ok {
 			m.logger.WithField("provider", name).Debug("Shutting down enhanced provider")
 
 			// Create a timeout context for each provider shutdown
 			providerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
+			cancels = append(cancels, cancel)
 
 			if err := enhancedProvider.Shutdown(providerCtx); err != nil {
 				m.logger.WithError(err).WithField("provider", name).Error("Failed to shutdown provider")
@@ -416,6 +439,11 @@ func (m *ProviderManager) Shutdown(ctx context.Context) error {
 				m.logger.WithField("provider", name).Info("Provider shut down successfully")
 			}
 		}
+	}
+
+	// Clean up all cancel functions
+	for _, cancel := range cancels {
+		cancel()
 	}
 
 	if len(shutdownErrors) > 0 {
