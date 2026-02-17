@@ -59,6 +59,7 @@ type ProviderManager struct {
 	providersMutex  sync.RWMutex // protects providers map
 	defaultProvider string
 	fallbackOrder   []string
+	enableFallback  bool // when false, only the requested provider is used (no fallback)
 	languageRouting map[string]string
 	callRouting     map[string]string
 	routingMutex    sync.RWMutex // protects languageRouting and callRouting
@@ -80,9 +81,17 @@ func NewProviderManager(logger *logrus.Logger, defaultProvider string, fallbackO
 		providers:       make(map[string]Provider),
 		defaultProvider: defaultProvider,
 		fallbackOrder:   orderCopy,
+		enableFallback:  true, // enabled by default for backward compatibility
 		languageRouting: make(map[string]string),
 		callRouting:     make(map[string]string),
 	}
+}
+
+// SetEnableFallback enables or disables automatic fallback to other providers on failure.
+// When disabled, only the requested provider (or default) is used with no fallback attempts.
+func (m *ProviderManager) SetEnableFallback(enable bool) {
+	m.enableFallback = enable
+	m.logger.WithField("enable_fallback", enable).Info("STT provider fallback setting updated")
 }
 
 // RegisterProvider registers a speech-to-text provider
@@ -399,10 +408,19 @@ func (m *ProviderManager) buildAttemptOrder(requested string) []string {
 	}
 
 	add(requested, false)
-	add(m.defaultProvider, true)
 
-	for _, vendor := range m.fallbackOrder {
-		add(vendor, true)
+	// Only add fallback providers if fallback is enabled
+	if m.enableFallback {
+		add(m.defaultProvider, true)
+
+		for _, vendor := range m.fallbackOrder {
+			add(vendor, true)
+		}
+	} else {
+		// When fallback is disabled, only use default if no specific provider was requested
+		if requested == "" {
+			add(m.defaultProvider, true)
+		}
 	}
 
 	return order
