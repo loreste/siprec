@@ -4107,6 +4107,28 @@ func processXMLExtensions(session *siprec.RecordingSession, metadata *siprec.RSM
 
 	extensionCount := 0
 
+	// Extract Oracle session-level extensions (UCID, callerOrig)
+	if oracleSessionExt := metadata.GetOracleSessionExtensions(); oracleSessionExt != nil {
+		if oracleSessionExt.UCID != "" {
+			session.ExtendedMetadata["sip_oracle_ucid"] = oracleSessionExt.UCID
+			logger.WithField("oracle_ucid", oracleSessionExt.UCID).Debug("Extracted Oracle UCID from XML metadata")
+		}
+		if oracleSessionExt.CallerOrig {
+			session.ExtendedMetadata["oracle_caller_orig"] = "true"
+		}
+	}
+
+	// Extract Oracle participant-level extensions (callingParty)
+	if oracleParticipantExts := metadata.GetOracleParticipantExtensions(); oracleParticipantExts != nil {
+		for partID, ext := range oracleParticipantExts {
+			if ext.CallingParty {
+				session.ExtendedMetadata["oracle_calling_party_id"] = partID
+				logger.WithField("calling_party_id", partID).Debug("Identified Oracle calling party from XML metadata")
+				break
+			}
+		}
+	}
+
 	// Process session element extensions (RSSession)
 	for i, sess := range metadata.Sessions {
 		for _, ext := range sess.Extensions {
@@ -4117,6 +4139,9 @@ func processXMLExtensions(session *siprec.RecordingSession, metadata *siprec.RSM
 
 				// Check for NICE-specific extensions
 				extractNICEExtensionData(session, ext, logger)
+
+				// Check for Oracle-specific extensions
+				extractOracleExtensionData(session, ext, logger)
 			}
 		}
 	}
@@ -4131,6 +4156,9 @@ func processXMLExtensions(session *siprec.RecordingSession, metadata *siprec.RSM
 
 				// Check for NICE-specific extensions
 				extractNICEExtensionData(session, ext, logger)
+
+				// Check for Oracle-specific extensions
+				extractOracleExtensionData(session, ext, logger)
 			}
 		}
 	}
@@ -4145,6 +4173,9 @@ func processXMLExtensions(session *siprec.RecordingSession, metadata *siprec.RSM
 
 				// Check for NICE-specific extensions
 				extractNICEExtensionData(session, ext, logger)
+
+				// Check for Oracle-specific extensions
+				extractOracleExtensionData(session, ext, logger)
 			}
 		}
 	}
@@ -4273,6 +4304,59 @@ func extractNICEExtensionData(session *siprec.RecordingSession, ext siprec.XMLEx
 	case strings.Contains(localName, "ucid"):
 		session.ExtendedMetadata["nice_ucid"] = innerContent
 		logger.WithField("nice_ucid", innerContent).Debug("Extracted NICE UCID from XML extension")
+	}
+}
+
+// extractOracleExtensionData extracts Oracle SBC specific data from XML extensions.
+// Oracle uses namespace http://acmepacket.com/siprec/extensiondata with elements like:
+// - <apkt:ucid>00FA080018803B69810C6D;encoding=hex</apkt:ucid>
+// - <apkt:callerOrig>true</apkt:callerOrig>
+// - <apkt:callingParty>true</apkt:callingParty>
+func extractOracleExtensionData(session *siprec.RecordingSession, ext siprec.XMLExtension, logger *logrus.Entry) {
+	localName := strings.ToLower(ext.XMLName.Local)
+	ns := strings.ToLower(ext.XMLName.Space)
+
+	// Check if this is an Oracle/ACME Packet extension
+	isOracle := strings.Contains(ns, "acmepacket") ||
+		strings.Contains(ns, "oracle") ||
+		strings.HasPrefix(localName, "apkt") ||
+		strings.Contains(ext.InnerXML, "acmepacket.com/siprec/extensiondata")
+
+	if !isOracle {
+		return
+	}
+
+	innerContent := strings.TrimSpace(ext.InnerXML)
+	if innerContent == "" {
+		return
+	}
+
+	// Extract Oracle UCID from extensiondata
+	if strings.Contains(innerContent, "ucid") {
+		// Parse out the ucid value from inner XML like: <apkt:ucid>00FA080018803B69810C6D;encoding=hex</apkt:ucid>
+		ucid := siprec.ExtractOracleExtensions([]siprec.XMLExtension{ext})
+		if ucid != nil && ucid.UCID != "" {
+			session.ExtendedMetadata["sip_oracle_ucid"] = ucid.UCID
+			logger.WithField("oracle_ucid", ucid.UCID).Debug("Extracted Oracle UCID from XML extension")
+		}
+	}
+
+	// Extract callerOrig
+	if strings.Contains(innerContent, "callerOrig") {
+		if strings.Contains(innerContent, ">true<") || strings.Contains(innerContent, ">True<") {
+			session.ExtendedMetadata["oracle_caller_orig"] = "true"
+			logger.Debug("Extracted Oracle callerOrig=true from XML extension")
+		} else {
+			session.ExtendedMetadata["oracle_caller_orig"] = "false"
+		}
+	}
+
+	// Extract callingParty (participant-level)
+	if strings.Contains(innerContent, "callingParty") {
+		if strings.Contains(innerContent, ">true<") || strings.Contains(innerContent, ">True<") {
+			session.ExtendedMetadata["oracle_calling_party"] = "true"
+			logger.Debug("Extracted Oracle callingParty=true from XML extension")
+		}
 	}
 }
 
