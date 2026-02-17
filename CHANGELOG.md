@@ -2,6 +2,39 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.0.1] - 2026-02-17
+
+### Added
+- **Oracle SBC SIPREC XML Extension Support**: Complete parsing of Oracle/ACME Packet proprietary XML extensions
+  - Extract UCID (Universal Call ID) from `<apkt:ucid>` element in SIPREC metadata body
+  - Extract caller origination flag from `<apkt:callerOrig>` element
+  - Extract calling party identification from `<apkt:callingParty>` participant extensions
+  - Support for Oracle's ACME Packet XML namespace (`http://acmepacket.com/siprec/extensiondata`)
+  - New `OracleExtensionData` struct for structured access to Oracle-specific metadata
+  - New helper functions: `ExtractOracleExtensions()`, `GetOracleSessionExtensions()`, `GetOracleParticipantExtensions()`, `IdentifyCallingParticipant()`
+  - UCID extraction priority: XML body extensions take precedence over SIP headers
+
+- **SIPREC Stream Labels**: Added stream label information to AMQP transcription messages
+  - Stream labels now included in transcription metadata for caller/agent identification
+  - Enhanced `ResolveStreamParticipant()` with multiple fallback strategies
+
+### Fixed
+- **Race Condition Fixes**: Comprehensive thread-safety improvements across the codebase
+  - Fixed provider map race condition in `pkg/stt/provider.go` with dedicated mutex
+  - Fixed session metadata race in `pkg/stt/transcription.go` by returning/storing copies instead of references
+  - Fixed global state race in `cmd/siprec/main.go` with initialization flag and snapshot pattern in signal handler
+  - All fixes validated with `go test -race`
+
+### Enhanced
+- **Vendor Documentation**: Updated `docs/vendor-integration.md` with comprehensive Oracle SBC XML extension documentation
+  - Added XML Extension Data table documenting `apkt:ucid`, `apkt:callerOrig`, `apkt:callingParty`
+  - Added example Oracle SIPREC XML metadata
+  - Added UCID Extraction Priority section explaining data source precedence
+
+### Technical
+- Added comprehensive unit tests for Oracle extension extraction in `pkg/siprec/types_test.go`
+- Tests cover: UCID extraction, calling party identification, session/participant extensions, priority ordering
+
 ## [1.0.0] - 2026-01-30
 
 ### Major Release - IZI SIPREC

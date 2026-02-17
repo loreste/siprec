@@ -56,7 +56,7 @@ The server automatically detects the vendor from:
 
 ## Oracle SBC Integration
 
-Oracle Session Border Controllers include Universal Call ID (UCID) for call correlation across systems.
+Oracle Session Border Controllers include Universal Call ID (UCID) for call correlation across systems. IZI SIPREC supports both SIP header extraction and XML metadata parsing for Oracle-specific fields.
 
 ### Detected Headers
 
@@ -64,10 +64,58 @@ Oracle Session Border Controllers include Universal Call ID (UCID) for call corr
 | --- | --- | --- |
 | `X-Oracle-UCID` | Universal Call ID | `oracle_ucid` |
 | `X-OCSBC-UCID` | Alternative UCID | `oracle_ucid` |
+| `P-OCSBC-UCID` | P-header UCID variant | `oracle_ucid` |
 | `X-Oracle-Conversation-ID` | Conversation correlation | `conversation_id` |
 | `X-OCSBC-Conversation-ID` | Alternative conversation ID | `conversation_id` |
 | `Session-ID` | RFC 7989 session identifier | - |
-| `P-Charging-Vector` | IMS charging correlation | - |
+| `P-Charging-Vector` | IMS charging correlation (ICID) | - |
+
+### XML Extension Data (SIPREC Metadata Body)
+
+Oracle SBCs embed vendor-specific metadata in the SIPREC XML body using the ACME Packet namespace. IZI SIPREC automatically extracts these fields:
+
+| XML Element | Namespace | Purpose | Metadata Key |
+| --- | --- | --- | --- |
+| `<apkt:ucid>` | `http://acmepacket.com/siprec/extensiondata` | Universal Call ID (hex encoded) | `sip_oracle_ucid` |
+| `<apkt:callerOrig>` | `http://acmepacket.com/siprec/extensiondata` | Whether call is caller-originated | `oracle_caller_orig` |
+| `<apkt:callingParty>` | `http://acmepacket.com/siprec/extensiondata` | Identifies calling party participant | `oracle_calling_party_id` |
+
+#### Example Oracle SIPREC XML Metadata
+
+```xml
+<recording xmlns='urn:ietf:params:xml:ns:recording'>
+  <datamode>complete</datamode>
+  <session id="KaN/G7StRcxaeBcmQo4f5w==">
+    <associate-time>2026-02-13T11:39:08</associate-time>
+    <extensiondata xmlns:apkt="http://acmepacket.com/siprec/extensiondata">
+      <apkt:ucid>00FA080018803B69810C6D;encoding=hex</apkt:ucid>
+      <apkt:callerOrig>true</apkt:callerOrig>
+    </extensiondata>
+  </session>
+  <participant id="Xe/H7yetSK5+rgO5w1ZqMg==" session="KaN/G7StRcxaeBcmQo4f5w==">
+    <nameID aor="sip:4078729209@10.40.0.15">
+      <name>"WIRELESS CALLER"</name>
+    </nameID>
+    <send>MQk402CcRc1fZeyhuGCFFg==</send>
+    <extensiondata xmlns:apkt="http://acmepacket.com/siprec/extensiondata">
+      <apkt:callingParty>true</apkt:callingParty>
+    </extensiondata>
+  </participant>
+  <participant id="OPqY7Pz+S1RdYbmtYJuQpg==" session="KaN/G7StRcxaeBcmQo4f5w==">
+    <nameID aor="sip:4079395277@10.40.8.2">
+      <name>4079395277</name>
+    </nameID>
+    <send>zfbJ3As/TeNcB0931nNCeA==</send>
+    <extensiondata xmlns:apkt="http://acmepacket.com/siprec/extensiondata">
+      <apkt:callingParty>false</apkt:callingParty>
+    </extensiondata>
+  </participant>
+  <stream id="MQk402CcRc1fZeyhuGCFFg==" session="KaN/G7StRcxaeBcmQo4f5w==">
+    <label>771757897</label>
+    <mode>separate</mode>
+  </stream>
+</recording>
+```
 
 ### User-Agent Patterns
 
@@ -77,14 +125,27 @@ Oracle Session Border Controllers include Universal Call ID (UCID) for call corr
 - `OESBC*`
 - `Oesbc*`
 - `Ocom*`
+- `ACME Packet*`
 
 ### Stored Metadata
 
-| Metadata Key | Source |
-| --- | --- |
-| `sip_oracle_ucid` | X-Oracle-UCID or X-OCSBC-UCID |
-| `sip_oracle_conversation_id` | X-Oracle-Conversation-ID |
-| `sip_vendor_type` | "oracle" |
+| Metadata Key | Source | Description |
+| --- | --- | --- |
+| `sip_oracle_ucid` | X-Oracle-UCID header OR `<apkt:ucid>` XML element | Universal Call ID for correlation |
+| `sip_oracle_conversation_id` | X-Oracle-Conversation-ID header | Conversation tracking |
+| `oracle_caller_orig` | `<apkt:callerOrig>` XML element | "true" if caller-originated |
+| `oracle_calling_party_id` | `<apkt:callingParty>` XML element | Participant ID of calling party |
+| `sip_vendor_type` | Auto-detected | "oracle" |
+
+### UCID Extraction Priority
+
+The server extracts Oracle UCID from multiple sources in this priority order:
+
+1. **XML Metadata** - `<apkt:ucid>` element in session extensiondata (most reliable)
+2. **SIP Headers** - `X-Oracle-UCID`, `X-OCSBC-UCID`, `P-OCSBC-UCID`
+3. **P-Charging-Vector** - ICID field as fallback
+
+The UCID value is automatically cleaned (`;encoding=hex` suffix removed) before storage.
 
 ### Example Configuration
 
@@ -94,6 +155,13 @@ Oracle SBCs typically require no special configuration. Ensure SIPREC is enabled
 session-router
   session-agent
     siprec-route-priority 1
+```
+
+For SBC 9.x and later:
+```
+media-manager
+  realm-config
+    siprec-enabled enabled
 ```
 
 ---
