@@ -775,6 +775,7 @@ func initialize() error {
 
 	// Initialize speech-to-text providers
 	sttManager = stt.NewProviderManager(logger, appConfig.STT.DefaultVendor, appConfig.STT.SupportedVendors)
+	sttManager.SetEnableFallback(appConfig.STT.EnableFallback)
 	if len(appConfig.STT.LanguageRouting) > 0 {
 		sttManager.SetLanguageRouting(appConfig.STT.LanguageRouting)
 	}

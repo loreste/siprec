@@ -258,3 +258,63 @@ func TestStreamToProviderFallbackNonSeekable(t *testing.T) {
 	primary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-nonseek")
 	secondary.AssertNotCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-nonseek")
 }
+
+func TestStreamToProviderFallbackDisabled(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	manager := NewProviderManager(logger, "primary", []string{"primary", "secondary"})
+	manager.SetEnableFallback(false) // Disable fallback
+
+	primary := new(MockSttProvider)
+	primary.On("Initialize").Return(nil)
+	primary.On("Name").Return("primary")
+	primaryErr := errors.New("primary failure")
+	primary.On("StreamToText", mock.Anything, mock.Anything, "call-no-fallback").Return(primaryErr)
+
+	secondary := new(MockSttProvider)
+	secondary.On("Initialize").Return(nil)
+	secondary.On("Name").Return("secondary")
+	secondary.On("StreamToText", mock.Anything, mock.Anything, "call-no-fallback").Return(nil)
+
+	manager.RegisterProvider(primary)
+	manager.RegisterProvider(secondary)
+
+	ctx := context.Background()
+	seekable := bytes.NewReader([]byte("test audio data"))
+
+	err := manager.StreamToProvider(ctx, "primary", seekable, "call-no-fallback")
+
+	// Should fail without trying secondary since fallback is disabled
+	assert.ErrorIs(t, err, primaryErr)
+	primary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-no-fallback")
+	secondary.AssertNotCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-no-fallback")
+}
+
+func TestStreamToProviderFallbackDisabledUsesDefault(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	manager := NewProviderManager(logger, "primary", []string{"primary", "secondary"})
+	manager.SetEnableFallback(false) // Disable fallback
+
+	primary := new(MockSttProvider)
+	primary.On("Initialize").Return(nil)
+	primary.On("Name").Return("primary")
+	primary.On("StreamToText", mock.Anything, mock.Anything, "call-default").Return(nil)
+
+	secondary := new(MockSttProvider)
+	secondary.On("Initialize").Return(nil)
+	secondary.On("Name").Return("secondary")
+
+	manager.RegisterProvider(primary)
+	manager.RegisterProvider(secondary)
+
+	ctx := context.Background()
+	seekable := bytes.NewReader([]byte("test audio data"))
+
+	// Request empty provider - should use default (primary) only
+	err := manager.StreamToProvider(ctx, "", seekable, "call-default")
+
+	assert.NoError(t, err)
+	primary.AssertCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-default")
+	secondary.AssertNotCalled(t, "StreamToText", mock.Anything, mock.Anything, "call-default")
+}

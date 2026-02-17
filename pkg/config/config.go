@@ -320,6 +320,10 @@ type STTConfig struct {
 	// Default STT vendor
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
 
+	// Enable automatic fallback to other providers on failure
+	// When false, only the requested/default provider is used with no fallback
+	EnableFallback bool `json:"enable_fallback" env:"STT_ENABLE_FALLBACK" default:"true"`
+
 	// Provider-specific configurations
 	Google       GoogleSTTConfig       `json:"google"`
 	Deepgram     DeepgramSTTConfig     `json:"deepgram"`
