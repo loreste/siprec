@@ -286,6 +286,95 @@ type XMLExtension struct {
 	InnerXML string `xml:",innerxml"`
 }
 
+// OracleExtensionData holds Oracle SBC specific extension data extracted from SIPREC metadata.
+// These are vendor-specific fields in the http://acmepacket.com/siprec/extensiondata namespace.
+type OracleExtensionData struct {
+	UCID         string // Universal Call ID (hex encoded)
+	CallerOrig   bool   // Whether this is a caller-originated call
+	CallingParty bool   // Whether this participant is the calling party
+}
+
+// ExtractOracleExtensions extracts Oracle SBC extension data from XMLExtension elements.
+// Oracle uses the namespace http://acmepacket.com/siprec/extensiondata with elements like:
+// - <apkt:ucid>00FA080018803B69810C6D;encoding=hex</apkt:ucid>
+// - <apkt:callerOrig>true</apkt:callerOrig>
+// - <apkt:callingParty>true</apkt:callingParty>
+func ExtractOracleExtensions(extensions []XMLExtension) *OracleExtensionData {
+	if len(extensions) == 0 {
+		return nil
+	}
+
+	data := &OracleExtensionData{}
+	found := false
+
+	for _, ext := range extensions {
+		// Check for Oracle/ACME namespace
+		if ext.XMLName.Space == "http://acmepacket.com/siprec/extensiondata" ||
+			strings.HasPrefix(ext.XMLName.Local, "apkt:") ||
+			strings.Contains(ext.InnerXML, "acmepacket.com/siprec/extensiondata") {
+
+			inner := ext.InnerXML
+
+			// Extract UCID
+			if ucid := extractXMLElement(inner, "ucid"); ucid != "" {
+				data.UCID = ucid
+				found = true
+			}
+
+			// Extract callerOrig
+			if callerOrig := extractXMLElement(inner, "callerOrig"); callerOrig != "" {
+				data.CallerOrig = strings.EqualFold(callerOrig, "true")
+				found = true
+			}
+
+			// Extract callingParty
+			if callingParty := extractXMLElement(inner, "callingParty"); callingParty != "" {
+				data.CallingParty = strings.EqualFold(callingParty, "true")
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return nil
+	}
+	return data
+}
+
+// extractXMLElement extracts the content of an XML element from a string.
+// Handles both prefixed (apkt:element) and non-prefixed (element) forms.
+func extractXMLElement(xml string, elementName string) string {
+	// Try with apkt: prefix first
+	patterns := []string{
+		"<apkt:" + elementName + ">",
+		"<" + elementName + ">",
+	}
+
+	for _, startTag := range patterns {
+		if idx := strings.Index(xml, startTag); idx >= 0 {
+			contentStart := idx + len(startTag)
+			// Find the closing tag
+			endTag1 := "</apkt:" + elementName + ">"
+			endTag2 := "</" + elementName + ">"
+
+			endIdx := strings.Index(xml[contentStart:], endTag1)
+			if endIdx < 0 {
+				endIdx = strings.Index(xml[contentStart:], endTag2)
+			}
+
+			if endIdx >= 0 {
+				content := xml[contentStart : contentStart+endIdx]
+				// Clean up the content (remove encoding info like ;encoding=hex)
+				if semicolonIdx := strings.Index(content, ";"); semicolonIdx > 0 {
+					content = content[:semicolonIdx]
+				}
+				return strings.TrimSpace(content)
+			}
+		}
+	}
+	return ""
+}
+
 // RSParticipantSessionAssoc captures participantsessionassoc relationships per RFC 7865.
 // Associates a participant with a communication session.
 type RSParticipantSessionAssoc struct {
@@ -490,4 +579,74 @@ func (m *RSMetadata) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error 
 	*m = RSMetadata(aux)
 	m.Normalize()
 	return nil
+}
+
+// GetOracleSessionExtensions extracts Oracle-specific session-level extension data.
+// Returns UCID and callerOrig from session extensiondata if present.
+func (m *RSMetadata) GetOracleSessionExtensions() *OracleExtensionData {
+	if m == nil {
+		return nil
+	}
+
+	// Check sessions for Oracle extensions
+	for _, sess := range m.Sessions {
+		if data := ExtractOracleExtensions(sess.Extensions); data != nil {
+			return data
+		}
+	}
+
+	// Check recording sessions
+	for _, rs := range m.RecordingSessions {
+		if data := ExtractOracleExtensions(rs.Extensions); data != nil {
+			return data
+		}
+	}
+
+	return nil
+}
+
+// GetOracleParticipantExtensions extracts Oracle-specific participant extension data.
+// Returns a map of participant ID to their OracleExtensionData (callingParty info).
+func (m *RSMetadata) GetOracleParticipantExtensions() map[string]*OracleExtensionData {
+	if m == nil {
+		return nil
+	}
+
+	result := make(map[string]*OracleExtensionData)
+	for _, p := range m.Participants {
+		if data := ExtractOracleExtensions(p.Extensions); data != nil {
+			id := p.ID
+			if id == "" {
+				id = p.LegacyID
+			}
+			if id != "" {
+				result[id] = data
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// IdentifyCallingParticipant returns the participant ID of the calling party.
+// Uses Oracle's callingParty extension if available.
+func (m *RSMetadata) IdentifyCallingParticipant() string {
+	if m == nil {
+		return ""
+	}
+
+	participantExts := m.GetOracleParticipantExtensions()
+	if participantExts == nil {
+		return ""
+	}
+
+	for id, ext := range participantExts {
+		if ext.CallingParty {
+			return id
+		}
+	}
+	return ""
 }
