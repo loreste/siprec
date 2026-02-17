@@ -10,6 +10,7 @@ import (
 	"siprec-server/pkg/core"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/siprec"
+	"siprec-server/pkg/version"
 
 	"github.com/sirupsen/logrus"
 )
@@ -47,7 +48,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		Status:    "healthy",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Uptime:    time.Since(s.startTime).Round(time.Second).String(),
-		Version:   "1.0.0",
+		Version:   version.Version,
 		Checks:    make(map[string]CheckResult),
 	}
 
