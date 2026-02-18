@@ -114,6 +114,7 @@ type CommunicationID struct {
 type RSMetadata struct {
 	XMLName                  xml.Name                    `xml:"urn:ietf:params:xml:ns:recording:1 recording"`
 	DataMode                 string                      `xml:"datamode,omitempty"`
+	DataModeAlt              string                      `xml:"dataMode,omitempty"` // Avaya uses camelCase
 	SessionID                string                      `xml:"session,attr,omitempty"`
 	State                    string                      `xml:"state,attr,omitempty"`
 	Reason                   string                      `xml:"reason,attr,omitempty"`
@@ -202,7 +203,9 @@ type Stream struct {
 	StreamIDAlt    string   `xml:"stream_id,attr,omitempty"`
 	ID             string   `xml:"id,attr,omitempty"`
 	Session        string   `xml:"session,attr,omitempty"`
+	SessionAlt     string   `xml:"session_id,attr,omitempty"` // Avaya uses session_id
 	Mode           string   `xml:"mode,attr,omitempty"`
+	ModeElement    string   `xml:"mode,omitempty"` // Avaya uses <mode> element
 	Type           string   `xml:"type,attr,omitempty"`
 	AssociateTime  string   `xml:"associate-time,omitempty"`
 	ParticipantRef []string `xml:"participant-ref"`
@@ -390,6 +393,12 @@ func (m *RSMetadata) Normalize() {
 		return
 	}
 
+	// Handle dataMode case variations (Avaya uses camelCase)
+	if m.DataMode == "" && m.DataModeAlt != "" {
+		m.DataMode = m.DataModeAlt
+	}
+	m.DataModeAlt = ""
+
 	for i := range m.Group {
 		if m.Group[i].ID == "" {
 			m.Group[i].ID = m.Group[i].LegacyID
@@ -478,9 +487,20 @@ func (m *RSMetadata) Normalize() {
 		if m.Streams[i].Label == "" {
 			m.Streams[i].Label = m.Streams[i].LabelElement
 		}
+		// Handle mode as element (Avaya uses <mode>separate</mode>)
+		if m.Streams[i].Mode == "" && m.Streams[i].ModeElement != "" {
+			m.Streams[i].Mode = m.Streams[i].ModeElement
+		}
+		// Handle session_id attribute variant (Avaya)
+		if m.Streams[i].Session == "" && m.Streams[i].SessionAlt != "" {
+			m.Streams[i].Session = m.Streams[i].SessionAlt
+		}
+		// Clean up alternative fields
 		m.Streams[i].StreamIDAlt = ""
 		m.Streams[i].ID = ""
 		m.Streams[i].LabelElement = ""
+		m.Streams[i].ModeElement = ""
+		m.Streams[i].SessionAlt = ""
 	}
 
 	if m.SessionRecordingAssoc.SessionID == "" {
@@ -511,14 +531,25 @@ func (m *RSMetadata) Normalize() {
 	}
 }
 
-// ResolveStreamParticipant finds the participant associated with a stream label.
+// ResolveStreamParticipant finds the participant associated with a stream label or stream ID.
 // Resolution order:
-// 1. ParticipantStreamAssoc — explicit associations with send/receive
+// 1. ParticipantStreamAssoc — explicit associations with send/receive (checks Stream, StreamID, and Send elements)
 // 2. Stream.ParticipantRef — direct participant references on stream elements
 // 3. RSParticipant.Send — participant's send stream list
+// 4. ParticipantStreamAssoc.Send matching stream ID that maps to the given label
 func (m *RSMetadata) ResolveStreamParticipant(streamLabel string) *RSParticipant {
 	if m == nil || streamLabel == "" {
 		return nil
+	}
+
+	// Build a map of stream ID -> stream label for Avaya-style lookups
+	streamIDToLabel := make(map[string]string)
+	streamLabelToID := make(map[string]string)
+	for _, stream := range m.Streams {
+		if stream.StreamID != "" && stream.Label != "" {
+			streamIDToLabel[stream.StreamID] = stream.Label
+			streamLabelToID[stream.Label] = stream.StreamID
+		}
 	}
 
 	// 1. Check ParticipantStreamAssoc for explicit mapping
@@ -527,7 +558,32 @@ func (m *RSMetadata) ResolveStreamParticipant(streamLabel string) *RSParticipant
 		if streamRef == "" {
 			streamRef = assoc.StreamID
 		}
-		if streamRef == streamLabel {
+
+		// Direct match on Stream/StreamID attribute
+		matched := streamRef == streamLabel
+
+		// Also check Send[] elements (Avaya uses <send>streamID</send>)
+		if !matched {
+			for _, sendRef := range assoc.Send {
+				// Match if Send contains the label directly
+				if sendRef == streamLabel {
+					matched = true
+					break
+				}
+				// Match if Send contains a stream ID whose label matches
+				if label, ok := streamIDToLabel[sendRef]; ok && label == streamLabel {
+					matched = true
+					break
+				}
+				// Match if streamLabel is actually a stream ID
+				if sendRef == streamLabel {
+					matched = true
+					break
+				}
+			}
+		}
+
+		if matched {
 			participantRef := assoc.Participant
 			if participantRef == "" {
 				participantRef = assoc.ParticipantID
