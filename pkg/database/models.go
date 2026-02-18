@@ -85,7 +85,7 @@ type CDR struct {
 	ErrorMessage     *string    `db:"error_message" json:"error_message,omitempty"`
 	BillingCode      *string    `db:"billing_code" json:"billing_code,omitempty"`
 	CostCenter       *string    `db:"cost_center" json:"cost_center,omitempty"`
-	VendorType       *string    `db:"vendor_type" json:"vendor_type,omitempty"`         // avaya, cisco, oracle, genesys, asterisk, freeswitch, opensips, generic
+	VendorType       *string    `db:"vendor_type" json:"vendor_type,omitempty"`         // avaya, cisco, oracle, genesys, audiocodes, ribbon, sansay, huawei, microsoft, asterisk, freeswitch, opensips, generic
 	UCID             *string    `db:"ucid" json:"ucid,omitempty"`                       // Universal Call ID (Avaya/Oracle)
 	OracleUCID       *string    `db:"oracle_ucid" json:"oracle_ucid,omitempty"`         // Oracle SBC UCID
 	ConversationID   *string    `db:"conversation_id" json:"conversation_id,omitempty"` // Oracle Conversation ID
@@ -126,6 +126,25 @@ type CDR struct {
 	AvayaAgentID    *string `db:"avaya_agent_id" json:"avaya_agent_id,omitempty"`
 	AvayaVDN        *string `db:"avaya_vdn" json:"avaya_vdn,omitempty"`
 	AvayaSkillGroup *string `db:"avaya_skill_group" json:"avaya_skill_group,omitempty"`
+	// AudioCodes-specific fields
+	AudioCodesSessionID *string `db:"audiocodes_session_id" json:"audiocodes_session_id,omitempty"`
+	AudioCodesCallID    *string `db:"audiocodes_call_id" json:"audiocodes_call_id,omitempty"`
+	// Ribbon-specific fields (formerly Sonus/GENBAND)
+	RibbonSessionID *string `db:"ribbon_session_id" json:"ribbon_session_id,omitempty"`
+	RibbonCallID    *string `db:"ribbon_call_id" json:"ribbon_call_id,omitempty"`
+	RibbonGWID      *string `db:"ribbon_gw_id" json:"ribbon_gw_id,omitempty"`
+	// Sansay-specific fields
+	SansaySessionID *string `db:"sansay_session_id" json:"sansay_session_id,omitempty"`
+	SansayCallID    *string `db:"sansay_call_id" json:"sansay_call_id,omitempty"`
+	SansayTrunkID   *string `db:"sansay_trunk_id" json:"sansay_trunk_id,omitempty"`
+	// Huawei-specific fields
+	HuaweiSessionID *string `db:"huawei_session_id" json:"huawei_session_id,omitempty"`
+	HuaweiCallID    *string `db:"huawei_call_id" json:"huawei_call_id,omitempty"`
+	HuaweiTrunkID   *string `db:"huawei_trunk_id" json:"huawei_trunk_id,omitempty"`
+	// Microsoft Teams/Skype for Business/Lync-specific fields
+	MSConversationID *string `db:"ms_conversation_id" json:"ms_conversation_id,omitempty"`
+	MSCallID         *string `db:"ms_call_id" json:"ms_call_id,omitempty"`
+	MSCorrelationID  *string `db:"ms_correlation_id" json:"ms_correlation_id,omitempty"`
 	CreatedAt       time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
 }

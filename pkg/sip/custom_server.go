@@ -112,7 +112,7 @@ type SIPMessage struct {
 
 	// Vendor-specific fields for enterprise compatibility
 	UserAgent       string
-	VendorType      string // "avaya", "cisco", "oracle", "genesys", "asterisk", "freeswitch", "opensips", "generic"
+	VendorType      string // "avaya", "cisco", "oracle", "genesys", "audiocodes", "ribbon", "sansay", "huawei", "microsoft", "asterisk", "freeswitch", "opensips", "generic"
 	VendorHeaders   map[string]string
 	UCIDHeaders     []string // Universal Call ID variations (all vendors)
 	SessionIDHeader string   // Cisco Session-ID header
@@ -161,6 +161,31 @@ type SIPMessage struct {
 	OpenSIPSCallID        string // OpenSIPS Call-ID correlation
 	OpenSIPSDialogID      string // OpenSIPS dialog identifier
 	OpenSIPSTransactionID string // OpenSIPS transaction ID
+
+	// AudioCodes specific fields
+	AudioCodesSessionID string // AudioCodes session identifier
+	AudioCodesCallID    string // AudioCodes call ID
+	AudioCodesACAction  string // X-AC-Action header value (start-siprec, pause-siprec, etc.)
+
+	// Ribbon specific fields (formerly Sonus/GENBAND)
+	RibbonSessionID string // Ribbon session identifier
+	RibbonCallID    string // Ribbon call ID
+	RibbonGWID      string // Ribbon gateway ID
+
+	// Sansay specific fields
+	SansaySessionID string // Sansay VSXi session identifier
+	SansayCallID    string // Sansay call ID
+	SansayTrunkID   string // Sansay trunk ID
+
+	// Huawei specific fields
+	HuaweiSessionID string // Huawei session identifier
+	HuaweiCallID    string // Huawei call ID
+	HuaweiTrunkID   string // Huawei trunk ID
+
+	// Microsoft Teams/Skype for Business/Lync specific fields
+	MSConversationID string // Microsoft Conversation ID (ms-conversation-id)
+	MSCallID         string // Microsoft Call ID
+	MSCorrelationID  string // Microsoft Correlation ID
 
 	// Avaya specific fields
 	AvayaUCID       string // Avaya Universal Call ID
@@ -1417,6 +1442,67 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				}
 				if message.AvayaSkillGroup != "" {
 					update.AvayaSkillGroup = &message.AvayaSkillGroup
+					hasUpdates = true
+				}
+				// AudioCodes-specific CDR fields
+				if message.AudioCodesSessionID != "" {
+					update.AudioCodesSessionID = &message.AudioCodesSessionID
+					hasUpdates = true
+				}
+				if message.AudioCodesCallID != "" {
+					update.AudioCodesCallID = &message.AudioCodesCallID
+					hasUpdates = true
+				}
+				// Ribbon-specific CDR fields
+				if message.RibbonSessionID != "" {
+					update.RibbonSessionID = &message.RibbonSessionID
+					hasUpdates = true
+				}
+				if message.RibbonCallID != "" {
+					update.RibbonCallID = &message.RibbonCallID
+					hasUpdates = true
+				}
+				if message.RibbonGWID != "" {
+					update.RibbonGWID = &message.RibbonGWID
+					hasUpdates = true
+				}
+				// Sansay-specific CDR fields
+				if message.SansaySessionID != "" {
+					update.SansaySessionID = &message.SansaySessionID
+					hasUpdates = true
+				}
+				if message.SansayCallID != "" {
+					update.SansayCallID = &message.SansayCallID
+					hasUpdates = true
+				}
+				if message.SansayTrunkID != "" {
+					update.SansayTrunkID = &message.SansayTrunkID
+					hasUpdates = true
+				}
+				// Huawei-specific CDR fields
+				if message.HuaweiSessionID != "" {
+					update.HuaweiSessionID = &message.HuaweiSessionID
+					hasUpdates = true
+				}
+				if message.HuaweiCallID != "" {
+					update.HuaweiCallID = &message.HuaweiCallID
+					hasUpdates = true
+				}
+				if message.HuaweiTrunkID != "" {
+					update.HuaweiTrunkID = &message.HuaweiTrunkID
+					hasUpdates = true
+				}
+				// Microsoft-specific CDR fields
+				if message.MSConversationID != "" {
+					update.MSConversationID = &message.MSConversationID
+					hasUpdates = true
+				}
+				if message.MSCallID != "" {
+					update.MSCallID = &message.MSCallID
+					hasUpdates = true
+				}
+				if message.MSCorrelationID != "" {
+					update.MSCorrelationID = &message.MSCorrelationID
 					hasUpdates = true
 				}
 				if hasUpdates {
@@ -4681,6 +4767,16 @@ func (s *CustomSIPServer) extractVendorInformation(message *SIPMessage) {
 		s.extractFreeSWITCHHeaders(message)
 	case "opensips":
 		s.extractOpenSIPSHeaders(message)
+	case "audiocodes":
+		s.extractAudioCodesHeaders(message)
+	case "ribbon":
+		s.extractRibbonHeaders(message)
+	case "sansay":
+		s.extractSansayHeaders(message)
+	case "huawei":
+		s.extractHuaweiHeaders(message)
+	case "microsoft":
+		s.extractMicrosoftHeaders(message)
 	default:
 		s.extractGenericHeaders(message)
 	}
@@ -4806,6 +4902,51 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		return "opensips"
 	}
 
+	// Detect AudioCodes (Mediant SBC)
+	if strings.Contains(userAgent, "audiocodes") ||
+		strings.Contains(userAgent, "mediant") ||
+		strings.Contains(userAgent, "device /") { // AudioCodes User-Agent format: "Device /7.40A.600.231"
+		return "audiocodes"
+	}
+
+	// Detect Ribbon (formerly Sonus/GENBAND)
+	if strings.Contains(userAgent, "ribbon") ||
+		strings.Contains(userAgent, "sonus") ||
+		strings.Contains(userAgent, "genband") ||
+		strings.Contains(userAgent, "sbc edge") ||
+		strings.Contains(userAgent, "sbc core") ||
+		strings.Contains(userAgent, "swe lite") {
+		return "ribbon"
+	}
+
+	// Detect Sansay
+	if strings.Contains(userAgent, "sansay") ||
+		strings.Contains(userAgent, "vsxi") ||
+		strings.Contains(userAgent, "vsx ") {
+		return "sansay"
+	}
+
+	// Detect Huawei
+	if strings.Contains(userAgent, "huawei") ||
+		strings.Contains(userAgent, "espace") ||
+		strings.Contains(userAgent, "usg") ||
+		strings.Contains(userAgent, "eudemon") ||
+		strings.Contains(userAgent, "secospace") {
+		return "huawei"
+	}
+
+	// Detect Microsoft Teams/Skype for Business/Lync
+	if strings.Contains(userAgent, "teams") ||
+		strings.Contains(userAgent, "skype") ||
+		strings.Contains(userAgent, "lync") ||
+		strings.Contains(userAgent, "ocs") ||
+		strings.Contains(userAgent, "microsoft") ||
+		strings.Contains(userAgent, "ucma") ||
+		strings.Contains(userAgent, "mediation server") ||
+		strings.Contains(userAgent, "ms-") {
+		return "microsoft"
+	}
+
 	// Asterisk header detection fallback
 	if s.getHeaderValue(message, "x-asterisk-hangupcause") != "" ||
 		s.getHeaderValue(message, "x-asterisk-hangupcausecode") != "" ||
@@ -4828,6 +4969,44 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 		s.getHeaderValue(message, "x-opensips-transaction-id") != "" ||
 		s.getHeaderValue(message, "x-opensips-did") != "" {
 		return "opensips"
+	}
+
+	// AudioCodes header detection fallback
+	if s.getHeaderValue(message, "x-ac-action") != "" ||
+		s.getHeaderValue(message, "x-audiocodes-session-id") != "" ||
+		s.getHeaderValue(message, "x-ac-session-id") != "" {
+		return "audiocodes"
+	}
+
+	// Ribbon header detection fallback
+	if s.getHeaderValue(message, "x-ribbon-session-id") != "" ||
+		s.getHeaderValue(message, "x-sonus-session-id") != "" ||
+		s.getHeaderValue(message, "x-genband-session-id") != "" ||
+		s.getHeaderValue(message, "x-ribbon-call-id") != "" {
+		return "ribbon"
+	}
+
+	// Sansay header detection fallback
+	if s.getHeaderValue(message, "x-sansay-session-id") != "" ||
+		s.getHeaderValue(message, "x-sansay-call-id") != "" ||
+		s.getHeaderValue(message, "x-vsxi-session-id") != "" {
+		return "sansay"
+	}
+
+	// Huawei header detection fallback
+	if s.getHeaderValue(message, "x-huawei-session-id") != "" ||
+		s.getHeaderValue(message, "x-huawei-call-id") != "" ||
+		s.getHeaderValue(message, "x-huawei-trunk-id") != "" {
+		return "huawei"
+	}
+
+	// Microsoft Teams/Skype for Business/Lync header detection fallback
+	if s.getHeaderValue(message, "ms-conversation-id") != "" ||
+		s.getHeaderValue(message, "x-ms-conversation-id") != "" ||
+		s.getHeaderValue(message, "x-ms-call-id") != "" ||
+		s.getHeaderValue(message, "x-ms-correlation-id") != "" ||
+		s.getHeaderValue(message, "x-ms-exchange-organization") != "" {
+		return "microsoft"
 	}
 
 	return "generic"
@@ -5829,6 +6008,458 @@ func (s *CustomSIPServer) extractOpenSIPSHeaders(message *SIPMessage) {
 	}
 }
 
+// extractAudioCodesHeaders extracts AudioCodes-specific SIP headers
+// Supports AudioCodes Mediant SBC series
+func (s *CustomSIPServer) extractAudioCodesHeaders(message *SIPMessage) {
+	// AudioCodes-specific headers to extract
+	audiocodesHeaders := []string{
+		// Primary AudioCodes identifiers
+		"x-ac-action",
+		"x-ac-session-id",
+		"x-audiocodes-session-id",
+		"x-ac-call-id",
+		// Recording control
+		"x-ac-recording-action",
+		"x-ac-recording-server",
+		"x-ac-recording-ip-group",
+		// Routing info
+		"x-ac-source-ip-group",
+		"x-ac-dest-ip-group",
+		"x-ac-src-ip-group-name",
+		"x-ac-dst-ip-group-name",
+		// SRD (SIP Recording Destination) info
+		"x-ac-srd",
+		"x-ac-srd-name",
+		// Call classification
+		"x-ac-call-type",
+		"x-ac-media-type",
+		// Avaya UCID interworking (AudioCodes extracts from Avaya systems)
+		"x-ac-avaya-ucid",
+		// Quality metrics
+		"x-ac-mos",
+		"x-ac-quality",
+		// Device info
+		"x-ac-device-name",
+		"x-ac-fw-version",
+	}
+
+	for _, header := range audiocodesHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract X-AC-Action header (controls on-demand recording)
+	if value := s.getHeaderValue(message, "x-ac-action"); value != "" {
+		message.AudioCodesACAction = value
+		s.logger.WithFields(logrus.Fields{
+			"call_id":   message.CallID,
+			"ac_action": value,
+		}).Debug("Extracted AudioCodes X-AC-Action header")
+	}
+
+	// Extract AudioCodes Session ID
+	sessionHeaders := []string{
+		"x-ac-session-id",
+		"x-audiocodes-session-id",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AudioCodesSessionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"session_id": value,
+				"header":     header,
+			}).Debug("Extracted AudioCodes Session ID")
+			break
+		}
+	}
+
+	// Extract AudioCodes Call ID
+	if value := s.getHeaderValue(message, "x-ac-call-id"); value != "" {
+		message.AudioCodesCallID = value
+	}
+
+	// Extract Avaya UCID if AudioCodes is doing Avaya interworking
+	if value := s.getHeaderValue(message, "x-ac-avaya-ucid"); value != "" {
+		message.UCIDHeaders = append(message.UCIDHeaders, value)
+		s.logger.WithFields(logrus.Fields{
+			"call_id":    message.CallID,
+			"avaya_ucid": value,
+		}).Debug("Extracted Avaya UCID from AudioCodes")
+	}
+}
+
+// extractRibbonHeaders extracts Ribbon-specific SIP headers
+// Supports Ribbon SBC (formerly Sonus/GENBAND)
+func (s *CustomSIPServer) extractRibbonHeaders(message *SIPMessage) {
+	// Ribbon-specific headers to extract
+	ribbonHeaders := []string{
+		// Primary Ribbon identifiers
+		"x-ribbon-session-id",
+		"x-ribbon-call-id",
+		"x-ribbon-gw-id",
+		"x-ribbon-trunk-group",
+		// Legacy Sonus headers
+		"x-sonus-session-id",
+		"x-sonus-call-id",
+		"x-sonus-gw-id",
+		"x-sonus-trunk-group",
+		// Legacy GENBAND headers
+		"x-genband-session-id",
+		"x-genband-call-id",
+		// Recording info
+		"x-ribbon-recording-id",
+		"x-ribbon-siprec-session",
+		// Routing info
+		"x-ribbon-route",
+		"x-ribbon-zone",
+		"x-ribbon-policy",
+		// Call classification
+		"x-ribbon-call-type",
+		"x-ribbon-call-direction",
+		// Carrier info
+		"x-ribbon-carrier-id",
+		"x-ribbon-route-label",
+		// Quality and billing
+		"x-ribbon-lrn",
+		"x-ribbon-billing-id",
+		// Signaling group
+		"x-ribbon-sg-name",
+		"x-ribbon-sg-id",
+	}
+
+	for _, header := range ribbonHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract Ribbon Session ID (check multiple header variations)
+	sessionHeaders := []string{
+		"x-ribbon-session-id",
+		"x-sonus-session-id",
+		"x-genband-session-id",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.RibbonSessionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"session_id": value,
+				"header":     header,
+			}).Debug("Extracted Ribbon Session ID")
+			break
+		}
+	}
+
+	// Extract Ribbon Call ID
+	callIDHeaders := []string{
+		"x-ribbon-call-id",
+		"x-sonus-call-id",
+		"x-genband-call-id",
+	}
+	for _, header := range callIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.RibbonCallID = value
+			break
+		}
+	}
+
+	// Extract Gateway ID
+	gwHeaders := []string{
+		"x-ribbon-gw-id",
+		"x-sonus-gw-id",
+	}
+	for _, header := range gwHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.RibbonGWID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id": message.CallID,
+				"gw_id":   value,
+			}).Debug("Extracted Ribbon Gateway ID")
+			break
+		}
+	}
+}
+
+// extractSansayHeaders extracts Sansay-specific SIP headers
+// Supports Sansay VSXi SBC
+func (s *CustomSIPServer) extractSansayHeaders(message *SIPMessage) {
+	// Sansay-specific headers to extract
+	sansayHeaders := []string{
+		// Primary Sansay identifiers
+		"x-sansay-session-id",
+		"x-sansay-call-id",
+		"x-vsxi-session-id",
+		"x-vsxi-call-id",
+		// Trunk info
+		"x-sansay-trunk-id",
+		"x-sansay-trunk-group",
+		"x-sansay-ingress-trunk",
+		"x-sansay-egress-trunk",
+		// Routing info
+		"x-sansay-route-id",
+		"x-sansay-lcr-route",
+		"x-sansay-destination",
+		// Call classification
+		"x-sansay-call-type",
+		"x-sansay-call-direction",
+		// Billing/accounting
+		"x-sansay-billing-id",
+		"x-sansay-account-code",
+		"x-sansay-rate-id",
+		// Carrier info
+		"x-sansay-carrier-id",
+		"x-sansay-ani",
+		"x-sansay-dnis",
+		// Node info
+		"x-sansay-node-id",
+		"x-sansay-cluster-id",
+	}
+
+	for _, header := range sansayHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract Sansay Session ID
+	sessionHeaders := []string{
+		"x-sansay-session-id",
+		"x-vsxi-session-id",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.SansaySessionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"session_id": value,
+				"header":     header,
+			}).Debug("Extracted Sansay Session ID")
+			break
+		}
+	}
+
+	// Extract Sansay Call ID
+	callIDHeaders := []string{
+		"x-sansay-call-id",
+		"x-vsxi-call-id",
+	}
+	for _, header := range callIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.SansayCallID = value
+			break
+		}
+	}
+
+	// Extract Trunk ID
+	trunkHeaders := []string{
+		"x-sansay-trunk-id",
+		"x-sansay-ingress-trunk",
+	}
+	for _, header := range trunkHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.SansayTrunkID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":  message.CallID,
+				"trunk_id": value,
+			}).Debug("Extracted Sansay Trunk ID")
+			break
+		}
+	}
+}
+
+// extractHuaweiHeaders extracts Huawei-specific SIP headers
+// Supports Huawei SBC, eSpace, USG, and IMS equipment
+func (s *CustomSIPServer) extractHuaweiHeaders(message *SIPMessage) {
+	// Huawei-specific headers to extract
+	huaweiHeaders := []string{
+		// Primary Huawei identifiers
+		"x-huawei-session-id",
+		"x-huawei-call-id",
+		"x-huawei-correlation-id",
+		// Trunk and routing info
+		"x-huawei-trunk-id",
+		"x-huawei-trunk-group",
+		"x-huawei-route-id",
+		// IMS/VoLTE info
+		"x-huawei-icid",
+		"x-huawei-orig-ioi",
+		"x-huawei-term-ioi",
+		"p-charging-vector",
+		// Call classification
+		"x-huawei-call-type",
+		"x-huawei-service-type",
+		// Recording info
+		"x-huawei-recording-id",
+		"x-huawei-recording-session",
+		// Device info
+		"x-huawei-device-id",
+		"x-huawei-node-id",
+		// eSpace specific
+		"x-espace-user-id",
+		"x-espace-meeting-id",
+		"x-espace-conf-id",
+	}
+
+	for _, header := range huaweiHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract Huawei Session ID
+	sessionHeaders := []string{
+		"x-huawei-session-id",
+		"x-huawei-icid",
+	}
+	for _, header := range sessionHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.HuaweiSessionID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"session_id": value,
+				"header":     header,
+			}).Debug("Extracted Huawei Session ID")
+			break
+		}
+	}
+
+	// Extract Huawei Call ID
+	if value := s.getHeaderValue(message, "x-huawei-call-id"); value != "" {
+		message.HuaweiCallID = value
+	}
+
+	// Extract Huawei Trunk ID
+	trunkHeaders := []string{
+		"x-huawei-trunk-id",
+		"x-huawei-trunk-group",
+	}
+	for _, header := range trunkHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.HuaweiTrunkID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":  message.CallID,
+				"trunk_id": value,
+			}).Debug("Extracted Huawei Trunk ID")
+			break
+		}
+	}
+
+	// Extract IMS Charging Vector ICID if present
+	if value := s.getHeaderValue(message, "p-charging-vector"); value != "" {
+		// Parse ICID from P-Charging-Vector: icid-value=xxx;...
+		if strings.Contains(value, "icid-value=") {
+			parts := strings.Split(value, ";")
+			for _, part := range parts {
+				if strings.HasPrefix(strings.TrimSpace(part), "icid-value=") {
+					icid := strings.TrimPrefix(strings.TrimSpace(part), "icid-value=")
+					icid = strings.Trim(icid, "\"")
+					if icid != "" && message.HuaweiSessionID == "" {
+						message.HuaweiSessionID = icid
+						message.UCIDHeaders = append(message.UCIDHeaders, icid)
+					}
+					break
+				}
+			}
+		}
+	}
+}
+
+// extractMicrosoftHeaders extracts Microsoft Teams/Skype for Business/Lync-specific SIP headers
+func (s *CustomSIPServer) extractMicrosoftHeaders(message *SIPMessage) {
+	// Microsoft-specific headers to extract
+	microsoftHeaders := []string{
+		// Primary Microsoft identifiers
+		"ms-conversation-id",
+		"x-ms-conversation-id",
+		"x-ms-call-id",
+		"x-ms-correlation-id",
+		// Microsoft 365 / Teams
+		"x-ms-teams-tenant-id",
+		"x-ms-teams-call-id",
+		"x-ms-teams-meeting-id",
+		"x-ms-teams-user-id",
+		// Skype for Business / Lync
+		"x-ms-sbc-host",
+		"x-ms-mediation-server",
+		"x-ms-skype-chain-id",
+		"x-ms-primary-user-address",
+		// Exchange / Organization
+		"x-ms-exchange-organization",
+		"x-ms-organization-id",
+		// Call quality / diagnostics
+		"x-ms-call-diagnostics",
+		"x-ms-user-logon-data",
+		"x-ms-client-location",
+		// Direct routing
+		"x-ms-routing-profile",
+		"x-ms-route",
+		"x-ms-mediation-server-bypass",
+		// Recording and compliance
+		"x-ms-recording-id",
+		"x-ms-compliance-recording",
+		// Conference info
+		"x-ms-conf-id",
+		"x-ms-conference-uri",
+		"x-ms-user-ucid",
+		// SIP trunk info
+		"x-ms-trunk-context",
+		"x-ms-sip-trunk-id",
+	}
+
+	for _, header := range microsoftHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.VendorHeaders[header] = value
+		}
+	}
+
+	// Extract Microsoft Conversation ID (primary correlation)
+	convHeaders := []string{
+		"ms-conversation-id",
+		"x-ms-conversation-id",
+		"x-ms-skype-chain-id",
+	}
+	for _, header := range convHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.MSConversationID = value
+			message.UCIDHeaders = append(message.UCIDHeaders, value)
+			s.logger.WithFields(logrus.Fields{
+				"call_id":         message.CallID,
+				"conversation_id": value,
+				"header":          header,
+			}).Debug("Extracted Microsoft Conversation ID")
+			break
+		}
+	}
+
+	// Extract Microsoft Call ID
+	callIDHeaders := []string{
+		"x-ms-call-id",
+		"x-ms-teams-call-id",
+	}
+	for _, header := range callIDHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.MSCallID = value
+			break
+		}
+	}
+
+	// Extract Microsoft Correlation ID
+	if value := s.getHeaderValue(message, "x-ms-correlation-id"); value != "" {
+		message.MSCorrelationID = value
+		s.logger.WithFields(logrus.Fields{
+			"call_id":        message.CallID,
+			"correlation_id": value,
+		}).Debug("Extracted Microsoft Correlation ID")
+	}
+}
+
 // extractGenericHeaders extracts common headers for non-vendor-specific systems
 func (s *CustomSIPServer) extractGenericHeaders(message *SIPMessage) {
 	// Common headers that might be useful for any vendor
@@ -6197,6 +6828,91 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 
 	if message.AvayaSkillGroup != "" {
 		session.ExtendedMetadata["sip_avaya_skill_group"] = message.AvayaSkillGroup
+	}
+
+	// Store AudioCodes-specific metadata if present
+	if message.AudioCodesSessionID != "" {
+		session.ExtendedMetadata["sip_audiocodes_session_id"] = message.AudioCodesSessionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":            session.ID,
+			"audiocodes_session_id": message.AudioCodesSessionID,
+		}).Debug("Stored AudioCodes Session ID in recording session metadata")
+	}
+
+	if message.AudioCodesCallID != "" {
+		session.ExtendedMetadata["sip_audiocodes_call_id"] = message.AudioCodesCallID
+	}
+
+	if message.AudioCodesACAction != "" {
+		session.ExtendedMetadata["sip_audiocodes_ac_action"] = message.AudioCodesACAction
+	}
+
+	// Store Ribbon-specific metadata if present
+	if message.RibbonSessionID != "" {
+		session.ExtendedMetadata["sip_ribbon_session_id"] = message.RibbonSessionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":         session.ID,
+			"ribbon_session_id":  message.RibbonSessionID,
+		}).Debug("Stored Ribbon Session ID in recording session metadata")
+	}
+
+	if message.RibbonCallID != "" {
+		session.ExtendedMetadata["sip_ribbon_call_id"] = message.RibbonCallID
+	}
+
+	if message.RibbonGWID != "" {
+		session.ExtendedMetadata["sip_ribbon_gw_id"] = message.RibbonGWID
+	}
+
+	// Store Sansay-specific metadata if present
+	if message.SansaySessionID != "" {
+		session.ExtendedMetadata["sip_sansay_session_id"] = message.SansaySessionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":         session.ID,
+			"sansay_session_id":  message.SansaySessionID,
+		}).Debug("Stored Sansay Session ID in recording session metadata")
+	}
+
+	if message.SansayCallID != "" {
+		session.ExtendedMetadata["sip_sansay_call_id"] = message.SansayCallID
+	}
+
+	if message.SansayTrunkID != "" {
+		session.ExtendedMetadata["sip_sansay_trunk_id"] = message.SansayTrunkID
+	}
+
+	// Store Huawei-specific metadata if present
+	if message.HuaweiSessionID != "" {
+		session.ExtendedMetadata["sip_huawei_session_id"] = message.HuaweiSessionID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":         session.ID,
+			"huawei_session_id":  message.HuaweiSessionID,
+		}).Debug("Stored Huawei Session ID in recording session metadata")
+	}
+
+	if message.HuaweiCallID != "" {
+		session.ExtendedMetadata["sip_huawei_call_id"] = message.HuaweiCallID
+	}
+
+	if message.HuaweiTrunkID != "" {
+		session.ExtendedMetadata["sip_huawei_trunk_id"] = message.HuaweiTrunkID
+	}
+
+	// Store Microsoft Teams/Skype for Business/Lync-specific metadata if present
+	if message.MSConversationID != "" {
+		session.ExtendedMetadata["sip_ms_conversation_id"] = message.MSConversationID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":      session.ID,
+			"conversation_id": message.MSConversationID,
+		}).Debug("Stored Microsoft Conversation ID in recording session metadata")
+	}
+
+	if message.MSCallID != "" {
+		session.ExtendedMetadata["sip_ms_call_id"] = message.MSCallID
+	}
+
+	if message.MSCorrelationID != "" {
+		session.ExtendedMetadata["sip_ms_correlation_id"] = message.MSCorrelationID
 	}
 }
 

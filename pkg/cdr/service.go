@@ -285,6 +285,53 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 	if updates.AvayaSkillGroup != nil {
 		cdr.AvayaSkillGroup = updates.AvayaSkillGroup
 	}
+	// AudioCodes-specific fields
+	if updates.AudioCodesSessionID != nil {
+		cdr.AudioCodesSessionID = updates.AudioCodesSessionID
+	}
+	if updates.AudioCodesCallID != nil {
+		cdr.AudioCodesCallID = updates.AudioCodesCallID
+	}
+	// Ribbon-specific fields
+	if updates.RibbonSessionID != nil {
+		cdr.RibbonSessionID = updates.RibbonSessionID
+	}
+	if updates.RibbonCallID != nil {
+		cdr.RibbonCallID = updates.RibbonCallID
+	}
+	if updates.RibbonGWID != nil {
+		cdr.RibbonGWID = updates.RibbonGWID
+	}
+	// Sansay-specific fields
+	if updates.SansaySessionID != nil {
+		cdr.SansaySessionID = updates.SansaySessionID
+	}
+	if updates.SansayCallID != nil {
+		cdr.SansayCallID = updates.SansayCallID
+	}
+	if updates.SansayTrunkID != nil {
+		cdr.SansayTrunkID = updates.SansayTrunkID
+	}
+	// Huawei-specific fields
+	if updates.HuaweiSessionID != nil {
+		cdr.HuaweiSessionID = updates.HuaweiSessionID
+	}
+	if updates.HuaweiCallID != nil {
+		cdr.HuaweiCallID = updates.HuaweiCallID
+	}
+	if updates.HuaweiTrunkID != nil {
+		cdr.HuaweiTrunkID = updates.HuaweiTrunkID
+	}
+	// Microsoft-specific fields
+	if updates.MSConversationID != nil {
+		cdr.MSConversationID = updates.MSConversationID
+	}
+	if updates.MSCallID != nil {
+		cdr.MSCallID = updates.MSCallID
+	}
+	if updates.MSCorrelationID != nil {
+		cdr.MSCorrelationID = updates.MSCorrelationID
+	}
 
 	cdr.UpdatedAt = time.Now()
 
@@ -645,7 +692,7 @@ type CDRUpdate struct {
 	TranscriptionID  *string
 	BillingCode      *string
 	CostCenter       *string
-	VendorType       *string // avaya, cisco, oracle, genesys, asterisk, freeswitch, opensips, generic
+	VendorType       *string // avaya, cisco, oracle, genesys, audiocodes, ribbon, sansay, huawei, microsoft, asterisk, freeswitch, opensips, generic
 	UCID             *string // Universal Call ID
 	OracleUCID       *string // Oracle SBC specific UCID
 	ConversationID   *string // Oracle Conversation ID
@@ -686,6 +733,25 @@ type CDRUpdate struct {
 	AvayaAgentID    *string // Avaya Agent ID
 	AvayaVDN        *string // Avaya Vector Directory Number
 	AvayaSkillGroup *string // Avaya Skill Group
+	// AudioCodes-specific fields
+	AudioCodesSessionID *string // AudioCodes Session ID
+	AudioCodesCallID    *string // AudioCodes Call ID
+	// Ribbon-specific fields (formerly Sonus/GENBAND)
+	RibbonSessionID *string // Ribbon Session ID
+	RibbonCallID    *string // Ribbon Call ID
+	RibbonGWID      *string // Ribbon Gateway ID
+	// Sansay-specific fields
+	SansaySessionID *string // Sansay Session ID
+	SansayCallID    *string // Sansay Call ID
+	SansayTrunkID   *string // Sansay Trunk ID
+	// Huawei-specific fields
+	HuaweiSessionID *string // Huawei Session ID
+	HuaweiCallID    *string // Huawei Call ID
+	HuaweiTrunkID   *string // Huawei Trunk ID
+	// Microsoft Teams/Skype for Business/Lync-specific fields
+	MSConversationID *string // Microsoft Conversation ID
+	MSCallID         *string // Microsoft Call ID
+	MSCorrelationID  *string // Microsoft Correlation ID
 }
 
 type CDRFilters struct {

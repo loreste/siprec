@@ -4,13 +4,18 @@ IZI SIPREC automatically detects and extracts vendor-specific metadata from vari
 
 ## Supported Vendors
 
-All 8 vendors have **complete data flow** from SIP headers through to CDR database records:
+All 13 vendors have **complete data flow** from SIP headers through to CDR database records:
 
 | Vendor | Detection Method | Key Fields | Status |
 | --- | --- | --- | --- |
 | **Oracle SBC** | User-Agent, X-Oracle-* headers | UCID, Conversation ID | Complete |
 | **Cisco** | User-Agent, Session-ID header | Session ID, GUID | Complete |
 | **Avaya** | User-Agent, X-Avaya-* headers | UCID, Conf ID, Station ID, Agent ID, VDN, Skill Group | Complete |
+| **AudioCodes** | User-Agent (Device/, Mediant), X-AC-* headers | Session ID, Call ID, X-AC-Action | Complete |
+| **Ribbon** | User-Agent (Ribbon, Sonus, GENBAND), X-Ribbon-* headers | Session ID, Call ID, Gateway ID | Complete |
+| **Sansay** | User-Agent (Sansay, VSXi), X-Sansay-* headers | Session ID, Call ID, Trunk ID | Complete |
+| **Huawei** | User-Agent (Huawei, eSpace), X-Huawei-* headers | Session ID, Call ID, Trunk ID, ICID | Complete |
+| **Microsoft** | User-Agent (Teams, Skype, Lync), ms-conversation-id | Conversation ID, Call ID, Correlation ID | Complete |
 | **NICE** | User-Agent, X-NICE-* headers | Interaction ID, Session ID, Recording ID, Contact ID, Agent ID, Call ID | Complete |
 | **Genesys** | User-Agent, X-Genesys-* headers | Interaction ID, Conversation ID, Session ID, Queue, Agent ID, Campaign ID | Complete |
 | **Asterisk** | User-Agent, X-Asterisk-* headers | Unique ID, Linked ID, Channel ID, Account Code, Context | Complete |
@@ -260,6 +265,273 @@ User-to-User: 00FAC9640001000100000001;encoding=hex
 ```
 
 This is automatically parsed and stored as `avaya_ucid` in session metadata and CDR.
+
+---
+
+## AudioCodes Integration
+
+AudioCodes Mediant SBC series support SIPREC with on-demand recording control via the X-AC-Action header.
+
+### Detected Headers
+
+| Header | Purpose | CDR Field |
+| --- | --- | --- |
+| `X-AC-Action` | On-demand recording control (start-siprec, pause-siprec, etc.) | - |
+| `X-AC-Session-ID` | AudioCodes session identifier | `audiocodes_session_id` |
+| `X-AudioCodes-Session-ID` | Alternative session ID | `audiocodes_session_id` |
+| `X-AC-Call-ID` | AudioCodes call identifier | `audiocodes_call_id` |
+| `X-AC-Recording-Action` | Recording action type | - |
+| `X-AC-Recording-Server` | Recording server destination | - |
+| `X-AC-Recording-IP-Group` | Recording IP group | - |
+| `X-AC-Source-IP-Group` | Source IP group | - |
+| `X-AC-Dest-IP-Group` | Destination IP group | - |
+| `X-AC-Avaya-UCID` | Avaya UCID (interworking mode) | `ucid` |
+
+### User-Agent Patterns
+
+- `AudioCodes*`
+- `Mediant*`
+- `Device /*` (e.g., "Device /7.40A.600.231")
+
+### Stored Metadata
+
+| Metadata Key | Source |
+| --- | --- |
+| `sip_audiocodes_session_id` | X-AC-Session-ID or X-AudioCodes-Session-ID |
+| `sip_audiocodes_call_id` | X-AC-Call-ID |
+| `sip_audiocodes_ac_action` | X-AC-Action |
+| `sip_vendor_type` | "audiocodes" |
+
+### X-AC-Action Header
+
+The X-AC-Action header controls on-demand SIPREC sessions:
+
+```
+X-AC-Action: start-siprec;recording-ip-group=SRS_Group;recorded-side=peer
+```
+
+Supported actions:
+- `start-siprec` - Start recording
+- `pause-siprec` - Pause recording
+- `resume-siprec` - Resume recording
+- `stop-siprec` - Stop recording
+
+### Avaya Interworking
+
+AudioCodes can extract Avaya UCID from User-to-User headers and include it in its own XML metadata as `<ac:AvayaUCID>`. This is automatically extracted and stored.
+
+---
+
+## Ribbon Integration
+
+Ribbon SBC (formerly Sonus/GENBAND) supports SIPREC with configurable metadata profiles.
+
+### Detected Headers
+
+| Header | Purpose | CDR Field |
+| --- | --- | --- |
+| `X-Ribbon-Session-ID` | Ribbon session identifier | `ribbon_session_id` |
+| `X-Ribbon-Call-ID` | Ribbon call identifier | `ribbon_call_id` |
+| `X-Ribbon-GW-ID` | Gateway identifier | `ribbon_gw_id` |
+| `X-Ribbon-Trunk-Group` | Trunk group name | - |
+| `X-Ribbon-Recording-ID` | Recording identifier | - |
+| `X-Ribbon-SIPREC-Session` | SIPREC session ID | - |
+| `X-Ribbon-Route` | Route information | - |
+| `X-Ribbon-Zone` | Zone identifier | - |
+| `X-Ribbon-Carrier-ID` | Carrier identifier | - |
+| `X-Ribbon-Billing-ID` | Billing identifier | - |
+| `X-Sonus-Session-ID` | Legacy Sonus session ID | `ribbon_session_id` |
+| `X-Sonus-Call-ID` | Legacy Sonus call ID | `ribbon_call_id` |
+| `X-GENBAND-Session-ID` | Legacy GENBAND session ID | `ribbon_session_id` |
+
+### User-Agent Patterns
+
+- `Ribbon*`
+- `Sonus*`
+- `GENBAND*`
+- `SBC Edge*`
+- `SBC Core*`
+- `SWe Lite*`
+
+### Stored Metadata
+
+| Metadata Key | Source |
+| --- | --- |
+| `sip_ribbon_session_id` | X-Ribbon-Session-ID, X-Sonus-Session-ID, or X-GENBAND-Session-ID |
+| `sip_ribbon_call_id` | X-Ribbon-Call-ID or X-Sonus-Call-ID |
+| `sip_ribbon_gw_id` | X-Ribbon-GW-ID or X-Sonus-GW-ID |
+| `sip_vendor_type` | "ribbon" |
+
+### SIPREC Metadata Profiles
+
+Ribbon SBC supports customizable SIPREC metadata profiles (sipRecMetaDataProfile) that map SIP headers to XML metadata elements. The server automatically extracts both standard SIPREC metadata and any custom Ribbon extensions.
+
+---
+
+## Sansay Integration
+
+Sansay VSXi SBC supports SIPREC with trunk and routing information.
+
+### Detected Headers
+
+| Header | Purpose | CDR Field |
+| --- | --- | --- |
+| `X-Sansay-Session-ID` | Sansay session identifier | `sansay_session_id` |
+| `X-VSXi-Session-ID` | VSXi session identifier | `sansay_session_id` |
+| `X-Sansay-Call-ID` | Sansay call identifier | `sansay_call_id` |
+| `X-VSXi-Call-ID` | VSXi call identifier | `sansay_call_id` |
+| `X-Sansay-Trunk-ID` | Trunk identifier | `sansay_trunk_id` |
+| `X-Sansay-Trunk-Group` | Trunk group name | - |
+| `X-Sansay-Ingress-Trunk` | Ingress trunk ID | `sansay_trunk_id` |
+| `X-Sansay-Egress-Trunk` | Egress trunk ID | - |
+| `X-Sansay-Route-ID` | Route identifier | - |
+| `X-Sansay-LCR-Route` | LCR route information | - |
+| `X-Sansay-Billing-ID` | Billing identifier | - |
+| `X-Sansay-Account-Code` | Account code | - |
+| `X-Sansay-Carrier-ID` | Carrier identifier | - |
+| `X-Sansay-ANI` | ANI information | - |
+| `X-Sansay-DNIS` | DNIS information | - |
+
+### User-Agent Patterns
+
+- `Sansay*`
+- `VSXi*`
+- `VSX *`
+
+### Stored Metadata
+
+| Metadata Key | Source |
+| --- | --- |
+| `sip_sansay_session_id` | X-Sansay-Session-ID or X-VSXi-Session-ID |
+| `sip_sansay_call_id` | X-Sansay-Call-ID or X-VSXi-Call-ID |
+| `sip_sansay_trunk_id` | X-Sansay-Trunk-ID or X-Sansay-Ingress-Trunk |
+| `sip_vendor_type` | "sansay" |
+
+### Trunk and Routing Information
+
+Sansay VSXi provides detailed trunk and routing information that can be useful for:
+- Billing and accounting
+- Route analysis and optimization
+- Carrier management
+- Traffic reporting
+
+---
+
+## Huawei Integration
+
+Huawei SBC, eSpace, USG, and IMS equipment support SIPREC with IMS/VoLTE charging vector integration.
+
+### Detected Headers
+
+| Header | Purpose | CDR Field |
+| --- | --- | --- |
+| `X-Huawei-Session-ID` | Huawei session identifier | `huawei_session_id` |
+| `X-Huawei-Call-ID` | Huawei call identifier | `huawei_call_id` |
+| `X-Huawei-Correlation-ID` | Correlation identifier | - |
+| `X-Huawei-Trunk-ID` | Trunk identifier | `huawei_trunk_id` |
+| `X-Huawei-Trunk-Group` | Trunk group name | `huawei_trunk_id` |
+| `X-Huawei-Route-ID` | Route identifier | - |
+| `X-Huawei-ICID` | IMS Charging ID | `huawei_session_id` |
+| `P-Charging-Vector` | IMS charging vector (ICID extraction) | `huawei_session_id` |
+| `X-Huawei-Call-Type` | Call type classification | - |
+| `X-Huawei-Service-Type` | Service type | - |
+| `X-Huawei-Recording-ID` | Recording identifier | - |
+| `X-Huawei-Device-ID` | Device identifier | - |
+| `X-eSpace-User-ID` | eSpace user ID | - |
+| `X-eSpace-Meeting-ID` | eSpace meeting ID | - |
+| `X-eSpace-Conf-ID` | eSpace conference ID | - |
+
+### User-Agent Patterns
+
+- `Huawei*`
+- `eSpace*`
+- `USG*`
+- `Eudemon*`
+- `Secospace*`
+
+### Stored Metadata
+
+| Metadata Key | Source |
+| --- | --- |
+| `sip_huawei_session_id` | X-Huawei-Session-ID, X-Huawei-ICID, or P-Charging-Vector ICID |
+| `sip_huawei_call_id` | X-Huawei-Call-ID |
+| `sip_huawei_trunk_id` | X-Huawei-Trunk-ID or X-Huawei-Trunk-Group |
+| `sip_vendor_type` | "huawei" |
+
+### IMS Charging Vector Integration
+
+Huawei IMS equipment uses the P-Charging-Vector header for call correlation. The server automatically extracts the ICID (IMS Charging ID) from this header:
+
+```
+P-Charging-Vector: icid-value="1234567890";icid-generated-at=ims.example.com
+```
+
+The ICID is extracted and stored as the session identifier for call correlation.
+
+---
+
+## Microsoft Teams/Skype for Business/Lync Integration
+
+Microsoft unified communications platforms (Teams, Skype for Business, Lync) are supported via Direct Routing and SIP trunking through SBCs.
+
+### Detected Headers
+
+| Header | Purpose | CDR Field |
+| --- | --- | --- |
+| `ms-conversation-id` | Microsoft Conversation ID (primary) | `ms_conversation_id` |
+| `X-MS-Conversation-ID` | Alternative Conversation ID | `ms_conversation_id` |
+| `X-MS-Call-ID` | Microsoft Call ID | `ms_call_id` |
+| `X-MS-Teams-Call-ID` | Teams-specific Call ID | `ms_call_id` |
+| `X-MS-Correlation-ID` | Correlation ID for diagnostics | `ms_correlation_id` |
+| `X-MS-Skype-Chain-ID` | Skype for Business chain ID | `ms_conversation_id` |
+| `X-MS-Teams-Tenant-ID` | Microsoft 365 Tenant ID | - |
+| `X-MS-Teams-Meeting-ID` | Teams Meeting ID | - |
+| `X-MS-Teams-User-ID` | Teams User ID | - |
+| `X-MS-SBC-Host` | SBC hostname | - |
+| `X-MS-Mediation-Server` | Mediation server info | - |
+| `X-MS-Primary-User-Address` | Primary user SIP address | - |
+| `X-MS-Organization-ID` | Organization identifier | - |
+| `X-MS-Recording-ID` | Recording identifier | - |
+| `X-MS-Compliance-Recording` | Compliance recording flag | - |
+| `X-MS-Conf-ID` | Conference ID | - |
+| `X-MS-Conference-URI` | Conference URI | - |
+| `X-MS-Trunk-Context` | SIP trunk context | - |
+
+### User-Agent Patterns
+
+- `Teams*`
+- `Skype*`
+- `Lync*`
+- `OCS*`
+- `Microsoft*`
+- `UCMA*`
+- `Mediation Server*`
+- `MS-*`
+
+### Stored Metadata
+
+| Metadata Key | Source |
+| --- | --- |
+| `sip_ms_conversation_id` | ms-conversation-id, X-MS-Conversation-ID, or X-MS-Skype-Chain-ID |
+| `sip_ms_call_id` | X-MS-Call-ID or X-MS-Teams-Call-ID |
+| `sip_ms_correlation_id` | X-MS-Correlation-ID |
+| `sip_vendor_type` | "microsoft" |
+
+### Direct Routing Integration
+
+For Microsoft Teams Direct Routing, SIPREC is typically implemented via an SBC (such as AudioCodes) that sits between Teams and the PSTN. The SBC acts as the SIPREC client (SRC) and forwards recording sessions to the SIPREC server (SRS).
+
+Key considerations:
+- The SBC extracts Microsoft-specific headers from Teams calls
+- ms-conversation-id is the primary correlation identifier
+- Compliance recording headers indicate policy-based recording requirements
+
+### Skype for Business / Lync Integration
+
+For on-premises Skype for Business or Lync deployments:
+- The Mediation Server or SBA handles SIP trunking
+- X-MS-Skype-Chain-ID provides call correlation
+- Recording can be integrated via compatible SBCs
 
 ---
 
