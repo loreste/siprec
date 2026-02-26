@@ -147,7 +147,7 @@ func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.Recording
 		payload.Reason = session.StateReason
 
 		// Include session's extended metadata (Oracle UCID, Conversation ID, vendor info, etc.)
-		if session.ExtendedMetadata != nil && len(session.ExtendedMetadata) > 0 {
+		if len(session.ExtendedMetadata) > 0 {
 			if payload.Metadata == nil {
 				payload.Metadata = make(map[string]interface{})
 			}
@@ -160,7 +160,7 @@ func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.Recording
 		}
 	}
 
-	if extra != nil && len(extra) > 0 {
+	if len(extra) > 0 {
 		if payload.Metadata == nil {
 			payload.Metadata = make(map[string]interface{})
 		}

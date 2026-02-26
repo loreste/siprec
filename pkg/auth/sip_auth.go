@@ -232,7 +232,7 @@ func (s *SIPAuthenticator) generateChallenge(clientIP string) string {
 func (s *SIPAuthenticator) generateNonce(clientIP string) string {
 	// Generate random bytes
 	randomBytes := make([]byte, 16)
-	rand.Read(randomBytes)
+	_, _ = rand.Read(randomBytes)
 
 	// Create nonce with timestamp and random data
 	timestamp := time.Now().Unix()

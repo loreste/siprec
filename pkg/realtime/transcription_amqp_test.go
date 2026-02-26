@@ -98,7 +98,7 @@ func TestStreamingTranscriber_AMQPPublishing(t *testing.T) {
 	// Start transcriber
 	err := transcriber.Start()
 	require.NoError(t, err)
-	defer transcriber.Stop()
+	defer func() { _ = transcriber.Stop() }()
 
 	// Simulate audio processing
 	// We need enough data to trigger the mock transcription logic in processAudioChunk

@@ -22,7 +22,7 @@ type mockKMSProvider struct {
 func newMockKMSProvider() *mockKMSProvider {
 	// Generate a fixed master key for testing
 	masterKey := make([]byte, 32)
-	rand.Read(masterKey)
+	_, _ = rand.Read(masterKey)
 	return &mockKMSProvider{masterKey: masterKey}
 }
 

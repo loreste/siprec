@@ -455,10 +455,8 @@ func (s *StreamingTranscriptionService) enhanceMetadata(original map[string]inte
 	enhanced := make(map[string]interface{})
 
 	// Copy original metadata
-	if original != nil {
-		for k, v := range original {
-			enhanced[k] = v
-		}
+	for k, v := range original {
+		enhanced[k] = v
 	}
 
 	// Add streaming enhancements

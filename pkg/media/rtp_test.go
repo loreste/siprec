@@ -287,7 +287,6 @@ func TestFirstPacketLogging(t *testing.T) {
 
 	// Create a simple test to verify the first packet logging logic
 	// This simulates what happens in decodeAndProcess
-	firstPacketReceived := false
 	callUUID := "test-call-first-packet"
 	remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 5004}
 
@@ -303,19 +302,16 @@ func TestFirstPacketLogging(t *testing.T) {
 	}
 
 	// Simulate first packet logging
-	if !firstPacketReceived {
-		firstPacketReceived = true
-		logger.WithFields(logrus.Fields{
-			"call_uuid":    callUUID,
-			"remote_addr":  remoteAddr.String(),
-			"ssrc":         rtpPacket.SSRC,
-			"payload_type": rtpPacket.PayloadType,
-			"sequence":     rtpPacket.SequenceNumber,
-			"timestamp":    rtpPacket.Timestamp,
-			"local_port":   10000,
-			"payload_size": len(rtpPacket.Payload),
-		}).Info("First RTP packet received successfully")
-	}
+	logger.WithFields(logrus.Fields{
+		"call_uuid":    callUUID,
+		"remote_addr":  remoteAddr.String(),
+		"ssrc":         rtpPacket.SSRC,
+		"payload_type": rtpPacket.PayloadType,
+		"sequence":     rtpPacket.SequenceNumber,
+		"timestamp":    rtpPacket.Timestamp,
+		"local_port":   10000,
+		"payload_size": len(rtpPacket.Payload),
+	}).Info("First RTP packet received successfully")
 
 	// Verify logging
 	logOutput := logBuffer.String()

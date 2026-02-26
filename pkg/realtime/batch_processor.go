@@ -16,7 +16,6 @@ type BatchProcessor struct {
 
 	// Processing queue
 	queue      chan BatchItem
-	workers    []*Worker
 	workerPool *WorkerPool
 
 	// Batch accumulation
@@ -114,7 +113,7 @@ func (bp *BatchProcessor) Stop() error {
 
 	// Stop worker pool
 	if bp.workerPool != nil {
-		bp.workerPool.Stop()
+		_ = bp.workerPool.Stop()
 	}
 
 	bp.started = false
@@ -128,7 +127,7 @@ func (bp *BatchProcessor) Process(data []byte, processor func([]byte)) {
 	if !bp.started {
 		bp.startMutex.RUnlock()
 		// Auto-start if not started
-		bp.Start()
+		_ = bp.Start()
 		bp.startMutex.RLock()
 	}
 	bp.startMutex.RUnlock()

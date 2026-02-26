@@ -35,7 +35,7 @@ func TestDecodeAudioPayload_PCMU(t *testing.T) {
 			}
 
 			if len(tc.input) == 0 {
-				if result != nil && len(result) != 0 {
+				if len(result) != 0 {
 					t.Errorf("expected nil or empty result for empty input, got %d bytes", len(result))
 				}
 				return
@@ -73,7 +73,7 @@ func TestDecodeAudioPayload_PCMA(t *testing.T) {
 			}
 
 			if len(tc.input) == 0 {
-				if result != nil && len(result) != 0 {
+				if len(result) != 0 {
 					t.Errorf("expected nil or empty result for empty input, got %d bytes", len(result))
 				}
 				return
@@ -148,10 +148,8 @@ func TestDecodeAudioPayload_G722(t *testing.T) {
 
 			// Verify output is valid 16-bit PCM (can be read as int16)
 			for i := 0; i < len(result); i += 2 {
-				sample := int16(binary.LittleEndian.Uint16(result[i:]))
-				if sample < -32768 || sample > 32767 {
-					t.Errorf("sample %d out of range: %d", i/2, sample)
-				}
+				// Verify we can read valid int16 samples
+				_ = int16(binary.LittleEndian.Uint16(result[i:]))
 			}
 		})
 	}
@@ -197,10 +195,8 @@ func TestDecodeAudioPayload_OPUS(t *testing.T) {
 			// Verify output is valid 16-bit PCM
 			for i := 0; i < len(result); i += 2 {
 				if i+1 < len(result) {
-					sample := int16(binary.LittleEndian.Uint16(result[i:]))
-					if sample < -32768 || sample > 32767 {
-						t.Errorf("sample %d out of range: %d", i/2, sample)
-					}
+					// Verify we can read valid int16 samples
+					_ = int16(binary.LittleEndian.Uint16(result[i:]))
 				}
 			}
 		})
@@ -519,15 +515,12 @@ func TestDecodeAudioPayloadIntegration(t *testing.T) {
 		t.Errorf("expected 320 bytes, got %d", len(result))
 	}
 
-	// Verify output is valid audio (not all zeros, within range)
+	// Verify output is valid audio (not all zeros)
 	hasNonZero := false
 	for i := 0; i < len(result); i += 2 {
 		sample := int16(binary.LittleEndian.Uint16(result[i:]))
 		if sample != 0 {
 			hasNonZero = true
-		}
-		if sample < -32768 || sample > 32767 {
-			t.Errorf("sample out of range: %d", sample)
 		}
 	}
 	if !hasNonZero {
@@ -635,10 +628,8 @@ func TestDecodeAudioPayload_G729(t *testing.T) {
 
 			// Verify output is valid 16-bit PCM
 			for i := 0; i < len(result); i += 2 {
-				sample := int16(binary.LittleEndian.Uint16(result[i:]))
-				if sample < -32768 || sample > 32767 {
-					t.Errorf("sample %d out of range: %d", i/2, sample)
-				}
+				// Verify we can read valid int16 samples
+				_ = int16(binary.LittleEndian.Uint16(result[i:]))
 			}
 		})
 	}
@@ -1198,12 +1189,9 @@ func TestG729MultipleConsecutiveFrames(t *testing.T) {
 		t.Errorf("expected %d bytes for %d frames, got %d", expectedLen, numFrames, len(result))
 	}
 
-	// Verify all samples are valid
+	// Verify all samples can be read as valid int16
 	for i := 0; i < len(result); i += 2 {
-		sample := int16(binary.LittleEndian.Uint16(result[i:]))
-		if math.IsNaN(float64(sample)) {
-			t.Errorf("sample %d is NaN", i/2)
-		}
+		_ = int16(binary.LittleEndian.Uint16(result[i:]))
 	}
 
 	t.Logf("Successfully decoded %d frames (%dms of audio)", numFrames, numFrames*10)

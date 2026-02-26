@@ -175,7 +175,7 @@ func (wp *WorkerPool) SubmitWithPriority(fn func(), priority int) {
 	if !wp.started {
 		wp.startMutex.RUnlock()
 		// Auto-start if not started
-		wp.Start()
+		_ = wp.Start()
 		wp.startMutex.RLock()
 	}
 	wp.startMutex.RUnlock()

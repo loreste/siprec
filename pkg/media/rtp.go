@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	mathrand "math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,10 +27,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func init() {
-	// Initialize the random number generator
-	mathrand.Seed(time.Now().UnixNano())
-}
+// Note: As of Go 1.20, the random number generator is automatically seeded
 
 type audioMetricsCollector struct {
 	callID      string
@@ -536,7 +532,6 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 			if currentPayloadType == 0 {
 				forwarder.SetCodecInfo(byte(rtpPacket.PayloadType), currentCodecName, currentSampleRate, currentChannels)
-				currentPayloadType = byte(rtpPacket.PayloadType)
 			}
 
 			if currentCodecName == "" || currentSampleRate == 0 {

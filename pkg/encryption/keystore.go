@@ -428,6 +428,7 @@ func (fs *FileKeyStore) getDataKey() []byte {
 }
 
 // rotateDataKey rotates the data encryption key
+// nolint:unused // Reserved for future key rotation feature
 func (fs *FileKeyStore) rotateDataKey() error {
 	ctx := context.Background()
 	

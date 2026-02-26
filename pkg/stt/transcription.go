@@ -263,10 +263,8 @@ func (s *TranscriptionService) PublishTranscription(callUUID string, transcripti
 	event.isFinal = isFinal
 
 	// Copy metadata into pooled event's map
-	if metadata != nil {
-		for k, v := range metadata {
-			event.metadata[k] = v
-		}
+	for k, v := range metadata {
+		event.metadata[k] = v
 	}
 
 	// Non-blocking send with backpressure handling
