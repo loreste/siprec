@@ -87,7 +87,7 @@ func (m *CallMetadata) SessionIDOrEmpty() string {
 
 // SetVendorMetadata stores vendor-specific metadata (Oracle UCID, Conversation ID, etc.)
 func (m *CallMetadata) SetVendorMetadata(meta map[string]string) {
-	if meta == nil || len(meta) == 0 {
+	if len(meta) == 0 {
 		return
 	}
 	m.mu.Lock()

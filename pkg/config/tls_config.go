@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -66,7 +66,7 @@ func (tc *TLSConfig) GetTLSConfig(logger *logrus.Logger) (*tls.Config, error) {
 
 	// Load CA certificate if provided
 	if tc.CAFile != "" {
-		caCert, err := ioutil.ReadFile(tc.CAFile)
+		caCert, err := os.ReadFile(tc.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 		}

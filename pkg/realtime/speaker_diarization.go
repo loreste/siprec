@@ -538,7 +538,7 @@ func (sd *SpeakerDiarizer) Cleanup() {
 
 	// Cleanup components
 	if sd.processingPool != nil {
-		sd.processingPool.Stop()
+		_ = sd.processingPool.Stop()
 	}
 
 	sd.logger.Debug("Speaker diarizer cleaned up")

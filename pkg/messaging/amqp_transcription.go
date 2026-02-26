@@ -204,7 +204,6 @@ func (l *AMQPTranscriptionListener) processMessage(msg *transcriptionMessage) {
 			cancel()
 			publishSpan.SetAttributes(attribute.Int64("amqp.publish.duration_ms", time.Since(start).Milliseconds()))
 			if err != nil {
-				lastErr = err
 				if attempt < amqpMaxRetries {
 					continue // Try again
 				}
@@ -367,10 +366,8 @@ func (l *AMQPTranscriptionListener) OnTranscription(callUUID string, transcripti
 	msg.timestamp = time.Now()
 
 	// Copy metadata into pooled message's map
-	if metadata != nil {
-		for k, v := range metadata {
-			msg.metadata[k] = v
-		}
+	for k, v := range metadata {
+		msg.metadata[k] = v
 	}
 	msg.metadata["is_final"] = isFinal
 
