@@ -278,9 +278,9 @@ func (info *RedisClusterInfo) parseInfo(infoStr string) {
 		} else if strings.HasPrefix(line, "role:") {
 			info.Role = strings.TrimPrefix(line, "role:")
 		} else if strings.HasPrefix(line, "connected_slaves:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "connected_slaves:"), "%d", &info.ConnectedSlaves)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "connected_slaves:"), "%d", &info.ConnectedSlaves)
 		} else if strings.HasPrefix(line, "connected_clients:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "connected_clients:"), "%d", &info.ConnectedClients)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "connected_clients:"), "%d", &info.ConnectedClients)
 		}
 	}
 }

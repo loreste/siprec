@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -197,6 +198,17 @@ func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfi
 	}
 
 	return media.NewRecordingStorage(logger, store, recCfg.Storage.KeepLocal)
+}
+
+// safeInt32 safely converts an int to int32, clamping to valid range
+func safeInt32(v int) int32 {
+	if v > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if v < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(v)
 }
 
 func main() {
@@ -889,13 +901,13 @@ func initialize() error {
 						ProjectID:                  appConfig.STT.Google.ProjectID,
 						LanguageCode:               appConfig.STT.Google.Language,
 						Model:                      appConfig.STT.Google.Model,
-						SampleRateHertz:            int32(appConfig.STT.Google.SampleRate),
+						SampleRateHertz:            safeInt32(appConfig.STT.Google.SampleRate),
 						EnableAutomaticPunctuation: appConfig.STT.Google.EnableAutomaticPunctuation,
 						EnableWordTimeOffsets:      appConfig.STT.Google.EnableWordTimeOffsets,
 						EnableSpeakerDiarization:   appConfig.STT.Google.EnableDiarization,
-						DiarizationSpeakerCount:    int32(appConfig.STT.Google.DiarizationSpeakerCount),
+						DiarizationSpeakerCount:    safeInt32(appConfig.STT.Google.DiarizationSpeakerCount),
 						EnableProfanityFilter:      appConfig.STT.Google.ProfanityFilter,
-						MaxAlternatives:            int32(appConfig.STT.Google.MaxAlternatives),
+						MaxAlternatives:            safeInt32(appConfig.STT.Google.MaxAlternatives),
 						UseEnhanced:                appConfig.STT.Google.EnhancedModels,
 						InterimResults:             true,
 					})

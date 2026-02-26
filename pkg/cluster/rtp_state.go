@@ -108,7 +108,9 @@ func (m *RTPStateManager) Start(ctx context.Context) error {
 func (m *RTPStateManager) Stop() {
 	close(m.stopChan)
 	if m.pubsub != nil {
-		m.pubsub.Close()
+		if err := m.pubsub.Close(); err != nil {
+			m.logger.WithError(err).Warn("Error closing pubsub")
+		}
 	}
 	m.wg.Wait()
 	m.logger.Info("RTP state manager stopped")
