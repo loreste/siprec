@@ -157,9 +157,18 @@ func TestResumeAfterLongHoldRestartsListener(t *testing.T) {
 		// Good, it's running
 	}
 
-	currentForwarder.CleanupMutex.Lock()
-	connOpen := currentForwarder.Conn != nil
-	currentForwarder.CleanupMutex.Unlock()
+	// Wait briefly for the RTP goroutine to open the connection
+	// The connection is opened in a separate goroutine started by StartRTPForwarding
+	var connOpen bool
+	for i := 0; i < 50; i++ { // Wait up to 500ms
+		currentForwarder.CleanupMutex.Lock()
+		connOpen = currentForwarder.Conn != nil
+		currentForwarder.CleanupMutex.Unlock()
+		if connOpen {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	require.True(t, connOpen, "RTP Conn should be open")
 	// Verify it's listening on a valid port (might be different or same, but must be active)
 	require.NotZero(t, currentForwarder.LocalPort)

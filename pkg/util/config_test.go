@@ -272,7 +272,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	assert.NotNil(t, config, "Config should not be nil")
 
 	// Check default values
-	assert.Equal(t, []string{"PCMU", "PCMA", "G722"}, config.SupportedCodecs, "Default codecs should be set")
+	assert.Equal(t, []string{"PCMU", "PCMA", "G722", "G729"}, config.SupportedCodecs, "Default codecs should be set")
 	assert.Equal(t, []string{"google", "openai"}, config.SupportedVendors, "Default vendors should include google and openai")
 	assert.Equal(t, "google", config.DefaultVendor, "Default speech vendor should be google")
 	assert.Equal(t, 500, config.MaxConcurrentCalls, "Default MaxConcurrentCalls should be 500")
