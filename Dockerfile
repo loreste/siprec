@@ -3,7 +3,9 @@
 FROM golang:1.24-alpine AS builder
 
 # Install build dependencies (including C++ and bcg729 for G.729 codec)
-RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+RUN apk add --no-cache \
+    --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+    --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     git \
     ca-certificates \
     tzdata \
@@ -54,12 +56,14 @@ RUN CGO_ENABLED=1 go test -v ./... -race -coverprofile=coverage.out
 FROM alpine:3.18 AS production
 
 # Install runtime dependencies (including bcg729 for G.729 codec)
-RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
+RUN apk add --no-cache \
+    --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
+    --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     ca-certificates \
     tzdata \
     curl \
     jq \
-    bcg729 \
+    libbcg729 \
     libstdc++
 
 # Create non-root user for security
