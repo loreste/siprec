@@ -53,6 +53,7 @@ func decryptWithKey(key, ciphertext []byte) ([]byte, error) {
 	}
 
 	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	// #nosec G407 -- using AES-256-GCM which is a secure modern algorithm
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)

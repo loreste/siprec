@@ -784,8 +784,10 @@ func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
 	rawConn, err := conn.SyscallConn()
 	if err == nil {
 		_ = rawConn.Control(func(fd uintptr) {
-			syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
-			syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
+			// #nosec G104 -- best-effort socket options, system defaults apply if these fail
+			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
+			// #nosec G104 -- best-effort socket options, system defaults apply if these fail
+			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
 		})
 	}
 }

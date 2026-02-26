@@ -478,7 +478,8 @@ func (p *G729DecoderPool) CloseDecoder(ssrc uint32) {
 	defer p.mu.Unlock()
 
 	if entry, exists := p.decoders[ssrc]; exists {
-		entry.decoder.Close()
+		// #nosec G104 -- decoder cleanup, no meaningful action if close fails
+		_ = entry.decoder.Close()
 		delete(p.decoders, ssrc)
 	}
 }
@@ -491,7 +492,8 @@ func (p *G729DecoderPool) Cleanup(maxAge time.Duration) {
 	now := time.Now()
 	for ssrc, entry := range p.decoders {
 		if now.Sub(entry.lastUsed) > maxAge {
-			entry.decoder.Close()
+			// #nosec G104 -- decoder cleanup, no meaningful action if close fails
+			_ = entry.decoder.Close()
 			delete(p.decoders, ssrc)
 		}
 	}

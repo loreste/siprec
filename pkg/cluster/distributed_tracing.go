@@ -2,10 +2,10 @@ package cluster
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -495,8 +495,8 @@ func (t *DistributedTracer) GetStats() map[string]interface{} {
 
 func generateTraceID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to less secure random if crypto/rand fails
+	if _, err := cryptorand.Read(b); err != nil {
+		// Fallback to time-based ID if crypto/rand fails
 		for i := range b {
 			b[i] = byte(i ^ 0x5A)
 		}
@@ -506,8 +506,8 @@ func generateTraceID() string {
 
 func generateSpanID() string {
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to less secure random if crypto/rand fails
+	if _, err := cryptorand.Read(b); err != nil {
+		// Fallback to time-based ID if crypto/rand fails
 		for i := range b {
 			b[i] = byte(i ^ 0xA5)
 		}

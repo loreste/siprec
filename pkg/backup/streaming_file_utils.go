@@ -150,7 +150,8 @@ func (sc *streamCipher) Read(p []byte) (n int, err error) {
 		}
 	}
 
-	// Decrypt the chunk
+	// Decrypt the chunk using AES-GCM (secure authenticated encryption)
+	// #nosec G407 -- using AES-256-GCM which is a secure modern algorithm
 	decrypted, err := sc.gcm.Open(nil, sc.nonce, sc.buffer[:nr], nil)
 	if err != nil {
 		return 0, fmt.Errorf("decryption failed: %w", err)
