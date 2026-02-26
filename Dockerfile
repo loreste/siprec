@@ -19,7 +19,11 @@ RUN git clone https://gitlab.linphone.org/BC/public/bcg729.git /tmp/bcg729 && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr -DENABLE_STATIC=YES -DENABLE_SHARED=YES . && \
     make -j$(nproc) && \
     make install && \
+    ldconfig /usr/lib 2>/dev/null || true && \
     rm -rf /tmp/bcg729
+
+# Verify bcg729 installation
+RUN ls -la /usr/lib/libbcg729* && ls -la /usr/include/bcg729/
 
 # Set working directory
 WORKDIR /build
@@ -32,6 +36,10 @@ RUN go mod download && go mod verify
 
 # Copy source code
 COPY . .
+
+# Set CGO flags for bcg729 linkage
+ENV CGO_LDFLAGS="-L/usr/lib -lbcg729"
+ENV CGO_CFLAGS="-I/usr/include"
 
 # Build the application with optimizations (CGO enabled for bcg729 G.729 codec)
 RUN CGO_ENABLED=1 GOOS=linux go build \
