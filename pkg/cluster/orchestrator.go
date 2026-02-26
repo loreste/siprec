@@ -196,7 +196,9 @@ func (o *ClusterOrchestrator) Stop() {
 	}
 
 	if o.redisClient != nil {
-		o.redisClient.Close()
+		if err := o.redisClient.Close(); err != nil {
+			o.logger.WithError(err).Warn("Error closing Redis client")
+		}
 	}
 
 	o.started = false

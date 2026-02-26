@@ -330,13 +330,19 @@ func (p *OpenSourceModelProvider) buildGenericRequest(ctx context.Context, audio
 
 	// Add model-specific parameters
 	if p.config.Language != "" {
-		writer.WriteField("language", p.config.Language)
+		if err := writer.WriteField("language", p.config.Language); err != nil {
+			return nil, fmt.Errorf("failed to write language field: %w", err)
+		}
 	}
 	if p.config.ModelName != "" {
-		writer.WriteField("model", p.config.ModelName)
+		if err := writer.WriteField("model", p.config.ModelName); err != nil {
+			return nil, fmt.Errorf("failed to write model field: %w", err)
+		}
 	}
 	for key, value := range p.config.Options {
-		writer.WriteField(key, fmt.Sprintf("%v", value))
+		if err := writer.WriteField(key, fmt.Sprintf("%v", value)); err != nil {
+			return nil, fmt.Errorf("failed to write option field %s: %w", key, err)
+		}
 	}
 
 	if err := writer.Close(); err != nil {
@@ -384,11 +390,17 @@ func (p *OpenSourceModelProvider) buildOpenAICompatibleRequest(ctx context.Conte
 		return nil, err
 	}
 
-	writer.WriteField("model", p.config.ModelName)
-	if p.config.Language != "" {
-		writer.WriteField("language", p.config.Language)
+	if err := writer.WriteField("model", p.config.ModelName); err != nil {
+		return nil, fmt.Errorf("failed to write model field: %w", err)
 	}
-	writer.WriteField("response_format", "json")
+	if p.config.Language != "" {
+		if err := writer.WriteField("language", p.config.Language); err != nil {
+			return nil, fmt.Errorf("failed to write language field: %w", err)
+		}
+	}
+	if err := writer.WriteField("response_format", "json"); err != nil {
+		return nil, fmt.Errorf("failed to write response_format field: %w", err)
+	}
 
 	if err := writer.Close(); err != nil {
 		return nil, err
@@ -574,7 +586,9 @@ func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audio
 			p.languageStatesMu.Unlock()
 		}
 
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			p.logger.WithError(err).Debug("Error closing WebSocket connection")
+		}
 	}()
 
 	// Send configuration message
@@ -614,7 +628,9 @@ func (p *OpenSourceModelProvider) transcribeWebSocket(ctx context.Context, audio
 			n, readErr := audioStream.Read(buffer)
 			if readErr == io.EOF {
 				// Send end-of-stream
-				conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"end"}`))
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"end"}`)); err != nil {
+					p.logger.WithError(err).Debug("Error sending end-of-stream message")
+				}
 				// Wait for final results
 				select {
 				case err := <-errChan:
@@ -787,10 +803,12 @@ func (p *OpenSourceModelProvider) transcribeCLI(ctx context.Context, audioStream
 
 	// Write audio to temp file
 	if _, err := io.Copy(tmpFile, audioStream); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("failed to write audio: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
 	// Build command based on model type
 	var cmd *exec.Cmd
@@ -872,6 +890,7 @@ func (p *OpenSourceModelProvider) buildWhisperCommand(ctx context.Context, audio
 
 	args = append(args, p.config.ExtraArgs...)
 
+	// #nosec G204 -- executable path comes from trusted server configuration
 	return exec.CommandContext(ctx, executable, args...)
 }
 
@@ -905,6 +924,7 @@ func (p *OpenSourceModelProvider) buildPythonCommand(ctx context.Context, audioF
 
 	args = append(args, p.config.ExtraArgs...)
 
+	// #nosec G204 -- executable path comes from trusted server configuration
 	return exec.CommandContext(ctx, executable, args...)
 }
 
@@ -912,6 +932,7 @@ func (p *OpenSourceModelProvider) buildPythonCommand(ctx context.Context, audioF
 func (p *OpenSourceModelProvider) buildGenericCommand(ctx context.Context, audioFile string) *exec.Cmd {
 	executable := p.config.ExecutablePath
 	args := append([]string{audioFile}, p.config.ExtraArgs...)
+	// #nosec G204 -- executable path comes from trusted server configuration
 	return exec.CommandContext(ctx, executable, args...)
 }
 
@@ -1017,7 +1038,9 @@ func (p *OpenSourceModelProvider) Close() error {
 
 	for callUUID, conn := range p.connections {
 		p.logger.WithField("call_uuid", callUUID).Debug("Closing WebSocket connection")
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			p.logger.WithError(err).WithField("call_uuid", callUUID).Debug("Error closing WebSocket connection")
+		}
 	}
 	p.connections = make(map[string]*websocket.Conn)
 

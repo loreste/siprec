@@ -94,7 +94,9 @@ func (t *DistributedTracer) Start(ctx context.Context) error {
 func (t *DistributedTracer) Stop() {
 	close(t.stopChan)
 	if t.pubsub != nil {
-		t.pubsub.Close()
+		if err := t.pubsub.Close(); err != nil {
+			t.logger.WithError(err).Warn("Error closing pubsub")
+		}
 	}
 	t.wg.Wait()
 	t.logger.Info("Distributed tracer stopped")
@@ -493,13 +495,23 @@ func (t *DistributedTracer) GetStats() map[string]interface{} {
 
 func generateTraceID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to less secure random if crypto/rand fails
+		for i := range b {
+			b[i] = byte(i ^ 0x5A)
+		}
+	}
 	return hex.EncodeToString(b)
 }
 
 func generateSpanID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to less secure random if crypto/rand fails
+		for i := range b {
+			b[i] = byte(i ^ 0xA5)
+		}
+	}
 	return hex.EncodeToString(b)
 }
 

@@ -113,7 +113,9 @@ func (m *StreamMigrationManager) Start(ctx context.Context) error {
 func (m *StreamMigrationManager) Stop() {
 	close(m.stopChan)
 	if m.pubsub != nil {
-		m.pubsub.Close()
+		if err := m.pubsub.Close(); err != nil {
+			m.logger.WithError(err).Warn("Error closing pubsub")
+		}
 	}
 	m.wg.Wait()
 	m.logger.Info("Stream migration manager stopped")
@@ -169,7 +171,9 @@ func (m *StreamMigrationManager) InitiateMigration(ctx context.Context, callUUID
 	}
 
 	// Update RTP state
-	m.rtpStateManager.InitiateMigration(callUUID, targetNodeID)
+	if err := m.rtpStateManager.InitiateMigration(callUUID, targetNodeID); err != nil {
+		m.logger.WithError(err).Warn("Failed to initiate RTP state migration")
+	}
 
 	m.logger.WithFields(logrus.Fields{
 		"task_id":     task.ID,
@@ -194,14 +198,18 @@ func (m *StreamMigrationManager) AcceptMigration(ctx context.Context, taskID str
 
 	// Update status
 	task.Status = MigrationStatusPreparing
-	m.saveMigrationTask(ctx, task)
+	if err := m.saveMigrationTask(ctx, task); err != nil {
+		m.logger.WithError(err).Warn("Failed to save migration task status")
+	}
 
 	// Allocate resources for the new stream
 	if m.onMigrationRequest != nil {
 		if err := m.onMigrationRequest(task); err != nil {
 			task.Status = MigrationStatusFailed
 			task.Error = err.Error()
-			m.saveMigrationTask(ctx, task)
+			if saveErr := m.saveMigrationTask(ctx, task); saveErr != nil {
+				m.logger.WithError(saveErr).Warn("Failed to save migration task failure status")
+			}
 			m.publishMigrationEvent(task, "failed")
 			return fmt.Errorf("migration handler failed: %w", err)
 		}
@@ -209,7 +217,9 @@ func (m *StreamMigrationManager) AcceptMigration(ctx context.Context, taskID str
 
 	// Complete migration on this node
 	task.Status = MigrationStatusCompleting
-	m.saveMigrationTask(ctx, task)
+	if err := m.saveMigrationTask(ctx, task); err != nil {
+		m.logger.WithError(err).Warn("Failed to save migration task completing status")
+	}
 
 	// Create new stream state
 	newState := *task.StreamState
