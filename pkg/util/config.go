@@ -73,8 +73,8 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	// Load codecs
 	codecsEnv := os.Getenv("SUPPORTED_CODECS")
 	if codecsEnv == "" {
-		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722"}
-		logger.Info("No SUPPORTED_CODECS specified, defaulting to PCMU, PCMA, G722")
+		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "G729"}
+		logger.Info("No SUPPORTED_CODECS specified, defaulting to PCMU, PCMA, G722, G729")
 	} else {
 		config.SupportedCodecs = strings.Split(codecsEnv, ",")
 	}
