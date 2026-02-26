@@ -50,7 +50,7 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 		// Load codecs
 		codecsEnv := os.Getenv("SUPPORTED_CODECS")
 		if codecsEnv == "" {
-			config.SupportedCodecs = []string{"PCMU", "PCMA", "G722"}
+			config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "G729"}
 		} else {
 			config.SupportedCodecs = strings.Split(codecsEnv, ",")
 		}
@@ -179,7 +179,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		// Load codecs with defaults
 		codecsEnv := os.Getenv("SUPPORTED_CODECS")
 		if codecsEnv == "" {
-			config.SupportedCodecs = []string{"PCMU", "PCMA", "G722"}
+			config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "G729"}
 		} else {
 			config.SupportedCodecs = strings.Split(codecsEnv, ",")
 		}
