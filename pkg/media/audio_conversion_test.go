@@ -681,222 +681,11 @@ func TestDecodeAudioPayload_G729_SIDFrame(t *testing.T) {
 	}
 }
 
-// TestG729Decoder tests G.729 decoder state initialization
-func TestG729Decoder(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	// Check initial state
-	if decoder.prevPitch != 60 {
-		t.Errorf("expected prevPitch = 60, got %d", decoder.prevPitch)
-	}
-	if decoder.prevGain != 1.0 {
-		t.Errorf("expected prevGain = 1.0, got %f", decoder.prevGain)
-	}
-	if decoder.frameCount != 0 {
-		t.Errorf("expected frameCount = 0, got %d", decoder.frameCount)
-	}
-
-	// Check LSP initialization (should be equally spaced)
-	for i := 0; i < 10; i++ {
-		expected := float64(i+1) / 11.0
-		if math.Abs(decoder.prevLSP[i]-expected) > 0.001 {
-			t.Errorf("prevLSP[%d]: expected %f, got %f", i, expected, decoder.prevLSP[i])
-		}
-	}
-}
-
-// TestG729DecodeLSP tests LSP decoding
-func TestG729DecodeLSP(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	// Test with various index combinations
-	testCases := []struct {
-		l0, l1, l2, l3 int
-	}{
-		{0, 0, 0, 0},
-		{1, 1, 1, 1},
-		{2, 2, 2, 2},
-		{3, 3, 3, 3},
-	}
-
-	for _, tc := range testCases {
-		lsp := decoder.decodeLSP(tc.l0, tc.l1, tc.l2, tc.l3)
-
-		// Check LSP values are valid (between 0 and 1)
-		for i, val := range lsp {
-			if val < 0.0 || val > 1.0 {
-				t.Errorf("l0=%d,l1=%d,l2=%d,l3=%d: LSP[%d] = %f out of range [0,1]",
-					tc.l0, tc.l1, tc.l2, tc.l3, i, val)
-			}
-		}
-
-		// Check monotonic ordering
-		for i := 1; i < len(lsp); i++ {
-			if lsp[i] <= lsp[i-1] {
-				t.Errorf("l0=%d,l1=%d,l2=%d,l3=%d: LSP not monotonic at index %d: %f <= %f",
-					tc.l0, tc.l1, tc.l2, tc.l3, i, lsp[i], lsp[i-1])
-			}
-		}
-	}
-}
-
-// TestG729DecodeFixedCodebook tests fixed codebook decoding
-func TestG729DecodeFixedCodebook(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	testCases := []int{0, 1, 0x1FFF, 0x0ABC}
-
-	for _, index := range testCases {
-		vector := decoder.decodeFixedCodebook(index)
-
-		// Vector should be 40 samples
-		if len(vector) != 40 {
-			t.Errorf("index %d: expected 40 samples, got %d", index, len(vector))
-		}
-
-		// Should have exactly 4 non-zero pulses
-		nonZero := 0
-		for _, v := range vector {
-			if v != 0 {
-				nonZero++
-				// Each pulse should be +1 or -1
-				if math.Abs(v) != 1.0 {
-					t.Errorf("index %d: pulse value %f should be +/-1", index, v)
-				}
-			}
-		}
-		if nonZero != 4 {
-			t.Errorf("index %d: expected 4 pulses, got %d", index, nonZero)
-		}
-	}
-}
-
-// TestG729DecodePitchLag tests pitch lag decoding
-func TestG729DecodePitchLag(t *testing.T) {
-	decoder := NewG729Decoder()
-	decoder.prevPitch = 60
-
-	// First subframe (absolute)
-	lag1 := decoder.decodePitchLag(0, true)
-	if lag1 != 20 {
-		t.Errorf("expected minimum pitch lag 20, got %d", lag1)
-	}
-
-	lag2 := decoder.decodePitchLag(123, true)
-	if lag2 != 143 {
-		t.Errorf("expected pitch lag 143, got %d", lag2)
-	}
-
-	lag3 := decoder.decodePitchLag(200, true)
-	if lag3 != 143 {
-		t.Errorf("expected clamped pitch lag 143, got %d", lag3)
-	}
-
-	// Second subframe (relative to prevPitch)
-	decoder.prevPitch = 80
-	lag4 := decoder.decodePitchLag(8, false) // Delta = 0
-	if lag4 != 80 {
-		t.Errorf("expected relative pitch lag 80, got %d", lag4)
-	}
-}
-
-// TestG729LspToLP tests LSP to LP conversion
-func TestG729LspToLP(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	// Use default LSP values
-	lsp := make([]float64, 10)
-	for i := 0; i < 10; i++ {
-		lsp[i] = float64(i+1) / 11.0
-	}
-
-	lpc := decoder.lspToLP(lsp)
-
-	// Check LP coefficients
-	if len(lpc) != 11 {
-		t.Errorf("expected 11 LP coefficients, got %d", len(lpc))
-	}
-
-	// First coefficient should be 1.0
-	if lpc[0] != 1.0 {
-		t.Errorf("expected lpc[0] = 1.0, got %f", lpc[0])
-	}
-
-	// LP coefficients should be finite (not NaN or Inf)
-	for i := 1; i < len(lpc); i++ {
-		if math.IsNaN(lpc[i]) || math.IsInf(lpc[i], 0) {
-			t.Errorf("lpc[%d] = %f is invalid (NaN or Inf)", i, lpc[i])
-		}
-	}
-}
-
-// TestG729ConcealFrame tests frame erasure concealment
-func TestG729ConcealFrame(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	// First decode a valid frame to set state
-	validFrame := make([]byte, 10)
-	decoder.decodeFrame(validFrame)
-
-	// Then test concealment
-	output := decoder.concealFrame()
-
-	// Should produce 80 samples
-	if len(output) != 80 {
-		t.Errorf("expected 80 samples from concealment, got %d", len(output))
-	}
-
-	// Output should be valid (not NaN or Inf)
-	for i, sample := range output {
-		if math.IsNaN(sample) || math.IsInf(sample, 0) {
-			t.Errorf("sample %d is invalid: %f", i, sample)
-		}
-	}
-}
-
-// TestG729BitReader tests the G.729 bit reader
-func TestG729BitReader(t *testing.T) {
-	data := []byte{0xAB, 0xCD} // 10101011 11001101
-	br := newG729BitReader(data)
-
-	// Read 4 bits: should be 1010 = 10
-	val := br.readBits(4)
-	if val != 10 {
-		t.Errorf("expected 10, got %d", val)
-	}
-
-	// Read 4 more bits: should be 1011 = 11
-	val = br.readBits(4)
-	if val != 11 {
-		t.Errorf("expected 11, got %d", val)
-	}
-
-	// Read 8 bits: should be 11001101 = 205
-	val = br.readBits(8)
-	if val != 205 {
-		t.Errorf("expected 205, got %d", val)
-	}
-}
-
-// TestClampFloat64 tests float64 clamping
-func TestClampFloat64(t *testing.T) {
-	testCases := []struct {
-		val, min, max, expected float64
-	}{
-		{50.0, 0.0, 100.0, 50.0},
-		{-10.0, 0.0, 100.0, 0.0},
-		{150.0, 0.0, 100.0, 100.0},
-		{0.0, -100.0, 100.0, 0.0},
-	}
-
-	for _, tc := range testCases {
-		result := clampFloat64(tc.val, tc.min, tc.max)
-		if result != tc.expected {
-			t.Errorf("clampFloat64(%f, %f, %f) = %f, expected %f",
-				tc.val, tc.min, tc.max, result, tc.expected)
-		}
-	}
-}
+// Note: Internal G.729 decoder tests removed - now using bcg729 library
+// The following tests were removed as they tested internal implementation:
+// - TestG729Decoder, TestG729DecodeLSP, TestG729DecodeFixedCodebook
+// - TestG729DecodePitchLag, TestG729LspToLP, TestG729ConcealFrame
+// - TestG729BitReader, TestClampFloat64
 
 // BenchmarkDecodeAudioPayload_G729 benchmarks G.729 decoding
 func BenchmarkDecodeAudioPayload_G729(b *testing.B) {
@@ -1033,42 +822,6 @@ func TestG729GetCodecInfo(t *testing.T) {
 	}
 }
 
-// TestG729DecoderStatePersistence tests that decoder state persists across frames
-func TestG729DecoderStatePersistence(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	// Decode first frame
-	frame1 := make([]byte, 10)
-	for i := range frame1 {
-		frame1[i] = byte(i * 17) // Some varied data
-	}
-	output1 := decoder.decodeFrame(frame1)
-
-	// Check that state was updated
-	if decoder.frameCount != 1 {
-		t.Errorf("expected frameCount 1 after first frame, got %d", decoder.frameCount)
-	}
-
-	// Decode second frame
-	frame2 := make([]byte, 10)
-	for i := range frame2 {
-		frame2[i] = byte(i * 23) // Different data
-	}
-	output2 := decoder.decodeFrame(frame2)
-
-	if decoder.frameCount != 2 {
-		t.Errorf("expected frameCount 2 after second frame, got %d", decoder.frameCount)
-	}
-
-	// Both outputs should have 80 samples
-	if len(output1) != 80 {
-		t.Errorf("expected 80 samples from frame 1, got %d", len(output1))
-	}
-	if len(output2) != 80 {
-		t.Errorf("expected 80 samples from frame 2, got %d", len(output2))
-	}
-}
-
 // TestG729DecoderProducesNonSilentOutput tests that varied input produces non-silent output
 func TestG729DecoderProducesNonSilentOutput(t *testing.T) {
 	// Create a frame with varied data (simulating real encoded audio)
@@ -1102,12 +855,14 @@ func TestG729PartialFrame(t *testing.T) {
 		name        string
 		inputLen    int
 		expectError bool
+		numFrames   int // Expected number of decoded frames (0 if error expected)
 	}{
-		{"5 bytes (partial)", 5, false},
-		{"7 bytes (partial)", 7, false},
-		{"3 bytes (partial)", 3, false},
-		{"15 bytes (1.5 frames)", 15, false},
-		{"25 bytes (2.5 frames)", 25, false},
+		{"5 bytes (partial)", 5, true, 0},  // Too small, error expected
+		{"7 bytes (partial)", 7, true, 0},  // Too small, error expected
+		{"3 bytes (partial)", 3, true, 0},  // Too small, error expected
+		{"15 bytes (1.5 frames)", 15, false, 1}, // Only 1 complete frame
+		{"25 bytes (2.5 frames)", 25, false, 2}, // Only 2 complete frames
+		{"20 bytes (2 frames)", 20, false, 2},   // Exactly 2 frames
 	}
 
 	for _, tc := range testCases {
@@ -1126,12 +881,8 @@ func TestG729PartialFrame(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				// Should produce output based on complete frames
-				numCompleteFrames := tc.inputLen / 10
-				if numCompleteFrames == 0 {
-					numCompleteFrames = 1 // Partial frame treated as one
-				}
-				expectedLen := numCompleteFrames * 160
+				// Should produce output based on complete frames only
+				expectedLen := tc.numFrames * 160
 				if len(result) != expectedLen {
 					t.Errorf("expected %d bytes, got %d", expectedLen, len(result))
 				}
@@ -1195,69 +946,6 @@ func TestG729MultipleConsecutiveFrames(t *testing.T) {
 	}
 
 	t.Logf("Successfully decoded %d frames (%dms of audio)", numFrames, numFrames*10)
-}
-
-// TestG729StabilizeLSP tests the LSP stabilization function
-func TestG729StabilizeLSP(t *testing.T) {
-	decoder := NewG729Decoder()
-
-	testCases := []struct {
-		name     string
-		input    []float64
-		checkFn  func([]float64) bool
-	}{
-		{
-			name:  "already valid LSPs",
-			input: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9},
-			checkFn: func(lsp []float64) bool {
-				for i := 1; i < len(lsp); i++ {
-					if lsp[i] <= lsp[i-1] {
-						return false
-					}
-				}
-				return true
-			},
-		},
-		{
-			name:  "out of order LSPs",
-			input: []float64{0.5, 0.3, 0.7, 0.2, 0.8, 0.4, 0.9, 0.6, 0.95, 0.1},
-			checkFn: func(lsp []float64) bool {
-				for i := 1; i < len(lsp); i++ {
-					if lsp[i] <= lsp[i-1] {
-						return false
-					}
-				}
-				return true
-			},
-		},
-		{
-			name:  "negative values",
-			input: []float64{-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
-			checkFn: func(lsp []float64) bool {
-				return lsp[0] >= 0.0
-			},
-		},
-		{
-			name:  "values exceeding 1.0",
-			input: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.5},
-			checkFn: func(lsp []float64) bool {
-				return lsp[9] <= 1.0
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			lsp := make([]float64, len(tc.input))
-			copy(lsp, tc.input)
-
-			decoder.stabilizeLSP(lsp)
-
-			if !tc.checkFn(lsp) {
-				t.Errorf("LSP stabilization failed for case '%s': %v", tc.name, lsp)
-			}
-		})
-	}
 }
 
 // TestG729IntegrationWithRTPPacket tests full RTP packet processing for G.729
@@ -1442,67 +1130,6 @@ func TestG729ConcurrentDecoding(t *testing.T) {
 	}
 }
 
-// TestG729ConcurrentDecoderInstances tests multiple decoder instances running concurrently
-func TestG729ConcurrentDecoderInstances(t *testing.T) {
-	const numDecoders = 50
-	const framesPerDecoder = 100
-
-	var wg sync.WaitGroup
-	results := make(chan struct {
-		id         int
-		frameCount int
-		err        error
-	}, numDecoders)
-
-	for i := 0; i < numDecoders; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
-			decoder := NewG729Decoder()
-
-			for frame := 0; frame < framesPerDecoder; frame++ {
-				frameData := make([]byte, 10)
-				for j := range frameData {
-					frameData[j] = byte((id*framesPerDecoder + frame + j) & 0xFF)
-				}
-
-				output := decoder.decodeFrame(frameData)
-				if len(output) != 80 {
-					results <- struct {
-						id         int
-						frameCount int
-						err        error
-					}{id, frame, fmt.Errorf("wrong output length: %d", len(output))}
-					return
-				}
-			}
-
-			results <- struct {
-				id         int
-				frameCount int
-				err        error
-			}{id, decoder.frameCount, nil}
-		}(i)
-	}
-
-	wg.Wait()
-	close(results)
-
-	var successCount int
-	for r := range results {
-		if r.err != nil {
-			t.Errorf("decoder %d: %v", r.id, r.err)
-		} else if r.frameCount != framesPerDecoder {
-			t.Errorf("decoder %d: expected %d frames, got %d", r.id, framesPerDecoder, r.frameCount)
-		} else {
-			successCount++
-		}
-	}
-
-	t.Logf("Successfully completed %d/%d decoder instances", successCount, numDecoders)
-}
-
 // TestG729MemoryLeak tests for memory leaks during repeated decoding
 func TestG729MemoryLeak(t *testing.T) {
 	// Skip in short mode
@@ -1563,78 +1190,6 @@ func TestG729MemoryLeak(t *testing.T) {
 	if heapGrowth > maxAcceptableGrowth {
 		t.Errorf("excessive heap growth detected: %d bytes (max acceptable: %d)", heapGrowth, maxAcceptableGrowth)
 	}
-}
-
-// TestG729DecoderNoSharedState tests that decoders don't share state
-func TestG729DecoderNoSharedState(t *testing.T) {
-	decoder1 := NewG729Decoder()
-	decoder2 := NewG729Decoder()
-
-	// Decode with decoder1
-	frame1 := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22, 0x33, 0x44}
-	output1a := decoder1.decodeFrame(frame1)
-
-	// Decode different data with decoder2
-	frame2 := []byte{0x55, 0x66, 0x77, 0x88, 0x99, 0x00, 0x11, 0x22, 0x33, 0x44}
-	output2 := decoder2.decodeFrame(frame2)
-
-	// Decode same frame with decoder1 again
-	output1b := decoder1.decodeFrame(frame1)
-
-	// decoder1 state should not be affected by decoder2
-	if decoder1.frameCount != 2 {
-		t.Errorf("decoder1 frameCount: expected 2, got %d", decoder1.frameCount)
-	}
-	if decoder2.frameCount != 1 {
-		t.Errorf("decoder2 frameCount: expected 1, got %d", decoder2.frameCount)
-	}
-
-	// Outputs should all be valid
-	if len(output1a) != 80 || len(output1b) != 80 || len(output2) != 80 {
-		t.Error("invalid output lengths")
-	}
-}
-
-// TestG729RaceOnGlobalTables tests that global lookup tables are safe for concurrent access
-func TestG729RaceOnGlobalTables(t *testing.T) {
-	const numReaders = 100
-	var wg sync.WaitGroup
-
-	// Concurrent reads from global tables
-	for i := 0; i < numReaders; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
-			// Read from g729L0 table
-			for j := 0; j < len(g729L0); j++ {
-				_ = g729L0[j]
-			}
-
-			// Read from g729L1 table
-			for j := 0; j < len(g729L1); j++ {
-				_ = g729L1[j]
-			}
-
-			// Read from g729PitchGainTable
-			for j := 0; j < len(g729PitchGainTable); j++ {
-				_ = g729PitchGainTable[j]
-			}
-
-			// Read from g729FixedGainTable
-			for j := 0; j < len(g729FixedGainTable); j++ {
-				_ = g729FixedGainTable[j]
-			}
-
-			// Read from g729BwExpand
-			for j := 0; j < len(g729BwExpand); j++ {
-				_ = g729BwExpand[j]
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	t.Logf("Successfully completed %d concurrent table reads", numReaders)
 }
 
 // TestG729StressTest performs a stress test with varied inputs
@@ -1733,46 +1288,6 @@ func TestG729ConcurrentMixedCodecs(t *testing.T) {
 	}
 }
 
-// TestG729BitReaderConcurrent tests concurrent bit reader usage
-func TestG729BitReaderConcurrent(t *testing.T) {
-	const numGoroutines = 100
-	var wg sync.WaitGroup
-	errors := make(chan error, numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-
-			// Each goroutine creates its own bit reader
-			data := []byte{byte(id), byte(id + 1), byte(id + 2), byte(id + 3)}
-			br := newG729BitReader(data)
-
-			// Read various bit lengths
-			var results []int
-			results = append(results, br.readBits(4))
-			results = append(results, br.readBits(8))
-			results = append(results, br.readBits(12))
-			results = append(results, br.readBits(8))
-
-			// Verify we got valid results
-			for j, r := range results {
-				if r < 0 {
-					errors <- fmt.Errorf("goroutine %d: negative result at index %d: %d", id, j, r)
-					return
-				}
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(errors)
-
-	for err := range errors {
-		t.Error(err)
-	}
-}
-
 // BenchmarkG729ConcurrentDecoding benchmarks concurrent G.729 decoding
 func BenchmarkG729ConcurrentDecoding(b *testing.B) {
 	input := make([]byte, 100) // 10 frames
@@ -1790,11 +1305,4 @@ func BenchmarkG729ConcurrentDecoding(b *testing.B) {
 	})
 }
 
-// BenchmarkG729DecoderAllocation benchmarks decoder creation
-func BenchmarkG729DecoderAllocation(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		decoder := NewG729Decoder()
-		_ = decoder
-	}
-}
+// Note: BenchmarkG729DecoderAllocation removed - using bcg729 library now

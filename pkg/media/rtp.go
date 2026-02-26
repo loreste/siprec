@@ -570,7 +570,14 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				codecName = "PCMU"
 			}
 
-			pcm, err := DecodeAudioPayload(payload, codecName)
+			// Use stateful decoder for G.729 to maintain decoder state across packets
+			var pcm []byte
+			var err error
+			if codecName == "G729" || codecName == "G.729" || codecName == "G729A" {
+				pcm, err = DecodeG729WithSSRC(payload, rtpPacket.SSRC)
+			} else {
+				pcm, err = DecodeAudioPayload(payload, codecName)
+			}
 			if err != nil {
 				forwarder.Logger.WithError(err).WithFields(logrus.Fields{
 					"call_uuid":    callUUID,

@@ -4,6 +4,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sync"
+	"time"
+
+	"github.com/pidato/audio/g729"
 )
 
 var (
@@ -426,111 +430,100 @@ func (d *G722Decoder) qmfSynthesis(rlow, rhigh int) (int, int) {
 }
 
 // =============================================================================
-// G.729 Decoder - ITU-T G.729 CS-ACELP at 8 kbit/s
+// G.729 Decoder - Using bcg729 library (ITU-T G.729 compliant)
 // =============================================================================
 
-// G729Decoder implements the ITU-T G.729 decoder
-// G.729 uses CS-ACELP (Conjugate Structure Algebraic Code-Excited Linear Prediction)
-// Frame: 10ms = 80 samples at 8kHz, encoded in 10 bytes (80 bits)
-type G729Decoder struct {
-	// LP synthesis filter state (10th order)
-	synthFilterMem [10]float64
-
-	// Adaptive codebook (pitch) state
-	excitationMem [154]float64 // Past excitation for pitch prediction (143 max lag + 11 lookahead)
-
-	// Post-filter state
-	postFilterMem [10]float64
-
-	// Previous frame parameters for frame erasure concealment
-	prevLSP    [10]float64
-	prevGain   float64
-	prevPitch  int
-	frameCount int
-
-	// Smooth gain adaptation to prevent pumping
-	prevScaleFactor float64
+// G729DecoderPool manages stateful G.729 decoders for different streams.
+// G.729 is a stateful codec - decoder state must persist across packets
+// within the same stream for proper audio reconstruction.
+type G729DecoderPool struct {
+	mu       sync.RWMutex
+	decoders map[uint32]*g729DecoderEntry
 }
 
-// G.729 quantization tables
-var (
-	// LSP quantization codebook - first stage (L0)
-	g729L0 = [][]float64{
-		{0.04738, 0.10238, 0.17832, 0.25951, 0.36505, 0.47266, 0.59308, 0.72382, 0.84473, 0.93176},
-		{0.04486, 0.10165, 0.18134, 0.26519, 0.35910, 0.47534, 0.59003, 0.71155, 0.83569, 0.93823},
-		{0.04578, 0.09998, 0.16895, 0.24670, 0.33795, 0.44012, 0.55957, 0.69946, 0.83398, 0.92786},
-		{0.05066, 0.10455, 0.17297, 0.25299, 0.34436, 0.45270, 0.57214, 0.70242, 0.83008, 0.92255},
-	}
-
-	// LSP quantization codebook - second stage (L1, L2, L3)
-	g729L1 = [][]float64{
-		{-0.02014, -0.01831, -0.01538, -0.01245, -0.00842, -0.00659, -0.00476, -0.00403, -0.00256, -0.00146},
-		{0.00403, 0.00586, 0.00842, 0.01062, 0.01318, 0.01575, 0.01904, 0.02161, 0.02380, 0.02600},
-		{-0.00513, -0.00439, -0.00366, -0.00256, -0.00183, -0.00073, 0.00037, 0.00183, 0.00293, 0.00439},
-		{0.00696, 0.00879, 0.01099, 0.01282, 0.01501, 0.01721, 0.01941, 0.02161, 0.02380, 0.02563},
-	}
-
-	// Pitch gain quantization table (3 bits = 8 entries)
-	g729PitchGainTable = []float64{
-		0.0, 0.2, 0.4, 0.55, 0.7, 0.85, 0.95, 1.0,
-	}
-
-	// Fixed codebook gain quantization table (5 bits = 32 entries)
-	// Scaled conservatively to ensure LP synthesis output stays within
-	// reasonable bounds even with resonant filter characteristics
-	g729FixedGainTable = []float64{
-		0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016, 0.023,
-		0.032, 0.045, 0.064, 0.09, 0.128, 0.18, 0.256, 0.36,
-		0.512, 0.72, 1.02, 1.45, 2.05, 2.9, 4.1, 5.8,
-		8.2, 11.6, 16.4, 23.2, 32.8, 46.4, 65.5, 92.7,
-	}
-
-	// LP to LSP conversion bandwidth expansion coefficients
-	g729BwExpand = []float64{
-		0.9940, 0.9880, 0.9822, 0.9763, 0.9705, 0.9647, 0.9590, 0.9533, 0.9477, 0.9421,
-	}
-)
-
-// NewG729Decoder creates a new G.729 decoder
-func NewG729Decoder() *G729Decoder {
-	d := &G729Decoder{}
-	d.reset()
-	return d
+type g729DecoderEntry struct {
+	decoder  *g729.Decoder
+	lastUsed time.Time
 }
 
-func (d *G729Decoder) reset() {
-	// Initialize LSP to default values (equally spaced on unit circle)
-	for i := 0; i < 10; i++ {
-		d.prevLSP[i] = float64(i+1) / 11.0
-	}
-	d.prevGain = 1.0
-	d.prevPitch = 60
-	d.frameCount = 0
-	d.prevScaleFactor = 64.0 // Conservative initial scale factor
+// Global decoder pool for G.729 streams
+var g729Pool = &G729DecoderPool{
+	decoders: make(map[uint32]*g729DecoderEntry),
 }
 
-// decodeG729Packet decodes a G.729 payload to 16-bit PCM
-// Each 10-byte frame produces 80 samples (160 bytes of PCM)
-func decodeG729Packet(payload []byte) ([]byte, error) {
+// GetDecoder returns a decoder for the given SSRC, creating one if needed
+func (p *G729DecoderPool) GetDecoder(ssrc uint32) *g729.Decoder {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	entry, exists := p.decoders[ssrc]
+	if exists {
+		entry.lastUsed = time.Now()
+		return entry.decoder
+	}
+
+	// Create new decoder
+	decoder := g729.NewDecoder()
+	p.decoders[ssrc] = &g729DecoderEntry{
+		decoder:  decoder,
+		lastUsed: time.Now(),
+	}
+
+	return decoder
+}
+
+// CloseDecoder closes and removes a decoder for the given SSRC
+func (p *G729DecoderPool) CloseDecoder(ssrc uint32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if entry, exists := p.decoders[ssrc]; exists {
+		entry.decoder.Close()
+		delete(p.decoders, ssrc)
+	}
+}
+
+// Cleanup removes decoders that haven't been used for the specified duration
+func (p *G729DecoderPool) Cleanup(maxAge time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+	for ssrc, entry := range p.decoders {
+		if now.Sub(entry.lastUsed) > maxAge {
+			entry.decoder.Close()
+			delete(p.decoders, ssrc)
+		}
+	}
+}
+
+// DecodeG729WithSSRC decodes G.729 payload using a stateful decoder for the given SSRC.
+// This maintains decoder state across packets for proper audio reconstruction.
+func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("empty G.729 payload")
 	}
 
-	// G.729 frames are 10 bytes each
-	if len(payload)%10 != 0 {
-		// Handle partial frames - could be G.729B SID frame (2 bytes) or padding
-		if len(payload) == 2 {
-			// G.729B SID frame - generate comfort noise
+	decoder := g729Pool.GetDecoder(ssrc)
+	decoded := make([]int16, 80)
+
+	// Handle SID frames (2 bytes for G.729B comfort noise)
+	if len(payload) == 2 {
+		err := decoder.DecodeWithOptions(payload, false, true, false, decoded)
+		if err != nil {
 			return generateG729ComfortNoise(80), nil
 		}
-		// For other sizes, decode as many complete frames as possible
+		pcmData := make([]byte, 160)
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[i*2:], uint16(sample))
+		}
+		return pcmData, nil
 	}
 
-	decoder := NewG729Decoder()
+	// Calculate number of complete frames
 	numFrames := len(payload) / 10
 	if numFrames == 0 {
-		// If less than 10 bytes but not SID, treat as a single partial frame
-		numFrames = 1
+		return nil, fmt.Errorf("G.729 payload too small: %d bytes", len(payload))
 	}
 
 	// Each frame produces 80 samples (160 bytes PCM)
@@ -538,473 +531,96 @@ func decodeG729Packet(payload []byte) ([]byte, error) {
 
 	for frame := 0; frame < numFrames; frame++ {
 		startByte := frame * 10
-		endByte := startByte + 10
-		if endByte > len(payload) {
-			endByte = len(payload)
+		frameData := payload[startByte : startByte+10]
+
+		err := decoder.Decode(frameData, decoded)
+		if err != nil {
+			for i := 0; i < 80; i++ {
+				decoded[i] = 0
+			}
 		}
 
-		frameData := payload[startByte:endByte]
-		samples := decoder.decodeFrame(frameData)
-
-		// Convert float samples to 16-bit PCM little-endian
-		for i, sample := range samples {
-			pcmIdx := frame*160 + i*2
-			if pcmIdx+1 < len(pcmData) {
-				intSample := int16(clampFloat64(sample, -32768.0, 32767.0))
-				binary.LittleEndian.PutUint16(pcmData[pcmIdx:], uint16(intSample))
-			}
+		pcmIdx := frame * 160
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[pcmIdx+i*2:], uint16(sample))
 		}
 	}
 
 	return pcmData, nil
 }
 
-// decodeFrame decodes a single G.729 frame (10 bytes) to 80 PCM samples
-func (d *G729Decoder) decodeFrame(frameData []byte) []float64 {
-	d.frameCount++
-
-	if len(frameData) < 10 {
-		// Frame erasure - use concealment
-		return d.concealFrame()
-	}
-
-	// Parse the bitstream
-	br := newG729BitReader(frameData)
-
-	// Extract parameters from the 80-bit frame:
-	// L0 (1 bit) + L1 (7 bits) + L2 (5 bits) + L3 (5 bits) = 18 bits for LSP
-	// P1 (8 bits) + P2 (5 bits) = 13 bits for pitch (2 subframes)
-	// S1 (8 bits) + S2 (13 bits) + G1 (8 bits) + G2 (12 bits) = 41 bits for codebook
-	// Total = 72 bits (remaining 8 bits for parity/reserved)
-
-	// 1. Decode LSP parameters (Line Spectral Pairs)
-	l0 := br.readBits(1)  // First stage index (1 bit)
-	l1 := br.readBits(7)  // Second stage index 1 (7 bits)
-	l2 := br.readBits(5)  // Second stage index 2 (5 bits)
-	l3 := br.readBits(5)  // Second stage index 3 (5 bits)
-	lsp := d.decodeLSP(l0, l1, l2, l3)
-
-	// 2. Convert LSP to LP coefficients
-	lpc := d.lspToLP(lsp)
-
-	// 3. Decode pitch parameters for two subframes
-	p1 := br.readBits(8) // Pitch delay subframe 1 (8 bits)
-	p0 := br.readBits(5) // Pitch delay subframe 2 (5 bits relative)
-
-	// 4. Decode fixed codebook parameters
-	s1 := br.readBits(13) // Fixed codebook index subframe 1
-	ga1 := br.readBits(3) // Pitch gain subframe 1
-	gc1 := br.readBits(5) // Fixed codebook gain subframe 1
-
-	s2 := br.readBits(13) // Fixed codebook index subframe 2
-	ga2 := br.readBits(3) // Pitch gain subframe 2
-	gc2 := br.readBits(4) // Fixed codebook gain subframe 2
-
-	// 5. Decode the two subframes
-	output := make([]float64, 80)
-
-	// Subframe 1 (samples 0-39)
-	pitchLag1 := d.decodePitchLag(p1, true)
-	pitchGain1 := g729PitchGainTable[ga1&0x07]
-	fixedVector1 := d.decodeFixedCodebook(s1)
-	fixedGain1 := g729FixedGainTable[gc1&0x1F]
-	d.synthesizeSubframe(output[0:40], lpc, pitchLag1, pitchGain1, fixedVector1, fixedGain1)
-
-	// Subframe 2 (samples 40-79)
-	pitchLag2 := d.decodePitchLag(p0, false)
-	if pitchLag2 <= 0 {
-		pitchLag2 = pitchLag1 // Use previous pitch if invalid
-	}
-	pitchGain2 := g729PitchGainTable[ga2&0x07]
-	fixedVector2 := d.decodeFixedCodebook(s2)
-	fixedGain2 := g729FixedGainTable[gc2&0x0F] // 4-bit index into same table
-	d.synthesizeSubframe(output[40:80], lpc, pitchLag2, pitchGain2, fixedVector2, fixedGain2)
-
-	// Save state for next frame
-	copy(d.prevLSP[:], lsp)
-	d.prevPitch = pitchLag2
-	d.prevGain = (fixedGain1 + fixedGain2) / 2.0
-
-	// Apply frame-level scaling with smooth adaptation to prevent pumping
-	d.applyFrameScaling(output)
-
-	return output
+// CloseG729Stream closes the decoder for a specific stream (call when stream ends)
+func CloseG729Stream(ssrc uint32) {
+	g729Pool.CloseDecoder(ssrc)
 }
 
-// decodeLSP decodes Line Spectral Pair parameters from quantization indices
-func (d *G729Decoder) decodeLSP(l0, l1, l2, l3 int) []float64 {
-	lsp := make([]float64, 10)
-
-	// Two-stage vector quantization
-	// First stage (L0 selects one of 4 vectors)
-	l0Idx := l0 & 0x03
-	if l0Idx >= len(g729L0) {
-		l0Idx = 0
-	}
-	for i := 0; i < 10; i++ {
-		lsp[i] = g729L0[l0Idx][i]
-	}
-
-	// Second stage refinement (split into 3 parts)
-	// L1 refines LSP 0-2, L2 refines LSP 3-5, L3 refines LSP 6-9
-	l1Idx := l1 & 0x03
-	if l1Idx < len(g729L1) {
-		for i := 0; i < 3 && i < 10; i++ {
-			lsp[i] += g729L1[l1Idx][i]
-		}
-	}
-
-	l2Idx := l2 & 0x03
-	if l2Idx < len(g729L1) {
-		for i := 3; i < 6 && i < 10; i++ {
-			lsp[i] += g729L1[l2Idx][i]
-		}
-	}
-
-	l3Idx := l3 & 0x03
-	if l3Idx < len(g729L1) {
-		for i := 6; i < 10; i++ {
-			lsp[i] += g729L1[l3Idx][i]
-		}
-	}
-
-	// Ensure LSPs are ordered and stable
-	d.stabilizeLSP(lsp)
-
-	return lsp
+// CleanupG729Decoders removes idle decoders (call periodically)
+func CleanupG729Decoders(maxAge time.Duration) {
+	g729Pool.Cleanup(maxAge)
 }
 
-// stabilizeLSP ensures LSP values are monotonically increasing
-func (d *G729Decoder) stabilizeLSP(lsp []float64) {
-	const minGap = 0.0012 // Minimum gap between LSPs
+// decodeG729Packet decodes a G.729 payload to 16-bit PCM using bcg729 library
+// Note: For proper audio quality in streaming scenarios, use DecodeG729WithSSRC
+// which maintains decoder state across packets.
+// Each 10-byte frame produces 80 samples (160 bytes of PCM)
+func decodeG729Packet(payload []byte) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("empty G.729 payload")
+	}
 
-	// Ensure LSPs are in valid range [0, 1]
-	for i := range lsp {
-		if lsp[i] < 0.0 {
-			lsp[i] = 0.0
-		} else if lsp[i] > 1.0 {
-			lsp[i] = 1.0
+	// G.729 frames are 10 bytes each
+	// Handle SID frames (2 bytes for G.729B comfort noise)
+	if len(payload) == 2 {
+		// G.729B SID frame - use decoder with SID flag
+		decoder := g729.NewDecoder()
+		defer decoder.Close()
+		decoded := make([]int16, 80)
+		err := decoder.DecodeWithOptions(payload, false, true, false, decoded)
+		if err != nil {
+			return generateG729ComfortNoise(80), nil
 		}
-	}
-
-	// Ensure monotonic ordering with minimum gap
-	for i := 1; i < len(lsp); i++ {
-		if lsp[i] < lsp[i-1]+minGap {
-			lsp[i] = lsp[i-1] + minGap
+		pcmData := make([]byte, 160)
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[i*2:], uint16(sample))
 		}
+		return pcmData, nil
 	}
 
-	// If last LSP exceeds 1.0, compress all
-	if lsp[9] > 1.0-minGap {
-		scale := (1.0 - minGap*10) / lsp[9]
-		for i := range lsp {
-			lsp[i] *= scale
-		}
-	}
-}
-
-// lspToLP converts Line Spectral Pairs to LP coefficients
-// Uses the standard algorithm from ITU-T G.729
-func (d *G729Decoder) lspToLP(lsp []float64) []float64 {
-	lpc := make([]float64, 11) // a[0] to a[10], a[0] = 1.0
-	lpc[0] = 1.0
-
-	// Convert LSPs (normalized 0-1) to angular frequencies (0-π)
-	omega := make([]float64, 10)
-	for i := range lsp {
-		omega[i] = lsp[i] * math.Pi
+	// Calculate number of complete frames
+	numFrames := len(payload) / 10
+	if numFrames == 0 {
+		return nil, fmt.Errorf("G.729 payload too small: %d bytes", len(payload))
 	}
 
-	// Build P(z) and Q(z) polynomials from LSPs
-	// P(z) uses even-indexed LSPs (0, 2, 4, 6, 8)
-	// Q(z) uses odd-indexed LSPs (1, 3, 5, 7, 9)
-	f1 := make([]float64, 6) // Coefficients for P(z)
-	f2 := make([]float64, 6) // Coefficients for Q(z)
+	// Create decoder (reuse for all frames in packet)
+	decoder := g729.NewDecoder()
+	defer decoder.Close()
 
-	f1[0] = 1.0
-	f2[0] = 1.0
+	// Each frame produces 80 samples (160 bytes PCM)
+	pcmData := make([]byte, numFrames*160)
+	decoded := make([]int16, 80)
 
-	// Build polynomials iteratively
-	for i := 0; i < 5; i++ {
-		// P polynomial factor: (1 - 2*cos(omega[2i])*z^-1 + z^-2)
-		c1 := -2.0 * math.Cos(omega[2*i])
-		// Q polynomial factor: (1 - 2*cos(omega[2i+1])*z^-1 + z^-2)
-		c2 := -2.0 * math.Cos(omega[2*i+1])
+	for frame := 0; frame < numFrames; frame++ {
+		startByte := frame * 10
+		frameData := payload[startByte : startByte+10]
 
-		// Update f1 and f2 by convolving with factors
-		for k := i + 1; k >= 1; k-- {
-			f1[k] += c1*f1[k-1] + f1[max(0, k-2)]
-			f2[k] += c2*f2[k-1] + f2[max(0, k-2)]
-		}
-	}
-
-	// Convert to LP coefficients: a[i] = (f1[i] + f2[i])/2 for symmetric part
-	// and a[10-i+1] = (f1[i] - f2[i])/2 for antisymmetric
-	for i := 1; i <= 5; i++ {
-		sum := f1[i] + f2[i]
-		diff := f1[i] - f2[i]
-		lpc[i] = 0.5 * sum
-		lpc[11-i] = 0.5 * diff
-	}
-
-	// Apply bandwidth expansion for filter stability
-	// This prevents the filter from becoming unstable
-	for i := 1; i <= 10; i++ {
-		lpc[i] *= g729BwExpand[i-1]
-		// Clamp to reasonable range for stability
-		if lpc[i] > 2.0 {
-			lpc[i] = 2.0
-		} else if lpc[i] < -2.0 {
-			lpc[i] = -2.0
-		}
-	}
-
-	return lpc
-}
-
-// max returns the maximum of two integers
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// decodePitchLag decodes the pitch lag from the bitstream
-func (d *G729Decoder) decodePitchLag(code int, isFirst bool) int {
-	if isFirst {
-		// First subframe: absolute pitch (8 bits)
-		// Range: 20 to 143
-		pitchLag := code + 20
-		if pitchLag < 20 {
-			pitchLag = 20
-		} else if pitchLag > 143 {
-			pitchLag = 143
-		}
-		return pitchLag
-	}
-	// Second subframe: relative pitch (5 bits)
-	// Delta range: -8 to +7 relative to first subframe
-	delta := (code & 0x1F) - 8
-	pitchLag := d.prevPitch + delta
-	if pitchLag < 20 {
-		pitchLag = 20
-	} else if pitchLag > 143 {
-		pitchLag = 143
-	}
-	return pitchLag
-}
-
-// decodeFixedCodebook decodes the algebraic fixed codebook
-// G.729 uses 4 pulses with positions encoded in 13 bits
-func (d *G729Decoder) decodeFixedCodebook(index int) []float64 {
-	vector := make([]float64, 40)
-
-	// G.729 fixed codebook: 4 pulses in 40 samples
-	// Each pulse can be +1 or -1
-	// Positions are encoded in tracks
-
-	// Extract pulse positions and signs from 13-bit index
-	// Track 0, 1: 5 positions each (bits 0-4, 5-9)
-	// Track 2, 3: 5 positions each (bits 10-12 shared)
-
-	pos1 := (index & 0x07)       // 3 bits for track 0
-	pos2 := ((index >> 3) & 0x07) // 3 bits for track 1
-	pos3 := ((index >> 6) & 0x07) // 3 bits for track 2
-	pos4 := ((index >> 9) & 0x07) // 3 bits for track 3
-	signs := (index >> 12) & 0x0F // 4 bits for signs
-
-	// Map to actual positions in 40-sample subframe
-	// Each track has 8 possible positions spaced 5 samples apart
-	track0Pos := pos1 * 5
-	track1Pos := pos2*5 + 1
-	track2Pos := pos3*5 + 2
-	track3Pos := pos4*5 + 3
-
-	// Set pulses with signs
-	if track0Pos < 40 {
-		if (signs & 0x01) != 0 {
-			vector[track0Pos] = 1.0
-		} else {
-			vector[track0Pos] = -1.0
-		}
-	}
-	if track1Pos < 40 {
-		if (signs & 0x02) != 0 {
-			vector[track1Pos] = 1.0
-		} else {
-			vector[track1Pos] = -1.0
-		}
-	}
-	if track2Pos < 40 {
-		if (signs & 0x04) != 0 {
-			vector[track2Pos] = 1.0
-		} else {
-			vector[track2Pos] = -1.0
-		}
-	}
-	if track3Pos < 40 {
-		if (signs & 0x08) != 0 {
-			vector[track3Pos] = 1.0
-		} else {
-			vector[track3Pos] = -1.0
-		}
-	}
-
-	return vector
-}
-
-// synthesizeSubframe performs LP synthesis for a 40-sample subframe
-// Note: Output is in decoder's internal scale, scaling is applied at frame level
-func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchLag int, pitchGain float64, fixedVector []float64, fixedGain float64) {
-	// Compute excitation signal
-	excitation := make([]float64, 40)
-
-	for i := 0; i < 40; i++ {
-		// Adaptive codebook contribution (pitch)
-		var adaptiveContrib float64
-		excIdx := len(d.excitationMem) - pitchLag + i
-		if excIdx >= 0 && excIdx < len(d.excitationMem) {
-			adaptiveContrib = d.excitationMem[excIdx] * pitchGain
-		}
-
-		// Fixed codebook contribution
-		fixedContrib := fixedVector[i] * fixedGain
-
-		// Total excitation
-		excitation[i] = adaptiveContrib + fixedContrib
-	}
-
-	// LP synthesis filter: s(n) = excitation(n) - sum(a[i] * s(n-i))
-	for i := 0; i < 40; i++ {
-		sum := excitation[i]
-		for j := 1; j <= 10 && j <= i; j++ {
-			sum -= lpc[j] * output[i-j]
-		}
-		// Also use filter memory for initial samples
-		for j := i + 1; j <= 10; j++ {
-			memIdx := 10 - j + i
-			if memIdx >= 0 {
-				sum -= lpc[j] * d.synthFilterMem[memIdx]
+		// Decode using bcg729
+		err := decoder.Decode(frameData, decoded)
+		if err != nil {
+			// On error, generate silence for this frame
+			for i := 0; i < 80; i++ {
+				decoded[i] = 0
 			}
 		}
-		// Limit synthesis output to prevent runaway values from resonant filters
-		// This is a safety measure for potentially unstable filter configurations
-		if sum > 1000.0 {
-			sum = 1000.0
-		} else if sum < -1000.0 {
-			sum = -1000.0
-		}
-		output[i] = sum
-	}
 
-	// Update filter memory
-	for i := 0; i < 10; i++ {
-		if 30+i < 40 {
-			d.synthFilterMem[i] = output[30+i]
+		// Copy decoded samples to output
+		pcmIdx := frame * 160
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[pcmIdx+i*2:], uint16(sample))
 		}
 	}
 
-	// Update excitation memory
-	copy(d.excitationMem[:], d.excitationMem[40:])
-	copy(d.excitationMem[len(d.excitationMem)-40:], excitation)
-
-	// NOTE: Scaling is now done at frame level in decodeFrame() to prevent
-	// amplitude pumping between subframes. Output remains in decoder scale here.
-}
-
-// applyFrameScaling applies consistent scaling across the entire frame
-// Uses adaptive normalization to ensure output fits in 16-bit range without clipping
-func (d *G729Decoder) applyFrameScaling(output []float64) {
-	// Find peak amplitude across entire frame (both subframes)
-	maxAbs := 0.0
-	for _, v := range output {
-		if v > maxAbs {
-			maxAbs = v
-		} else if -v > maxAbs {
-			maxAbs = -v
-		}
-	}
-
-	// Calculate the exact scale factor needed to fit within range
-	// Target peak at 28000 to leave some headroom (85% of 32767)
-	const targetPeak = 28000.0
-	var instantScale float64
-	if maxAbs > 0.001 {
-		instantScale = targetPeak / maxAbs
-	} else {
-		instantScale = d.prevScaleFactor
-	}
-
-	// Limit maximum amplification to prevent noise amplification
-	if instantScale > 500.0 {
-		instantScale = 500.0
-	}
-
-	// Smooth the scale factor to prevent pumping
-	// Use asymmetric adaptation: fast attack (reduce gain quickly to prevent clipping)
-	// but slow release (increase gain slowly to prevent pumping)
-	var scaleFactor float64
-	if instantScale < d.prevScaleFactor {
-		// Need to reduce gain - do it quickly to prevent clipping
-		scaleFactor = d.prevScaleFactor*0.3 + instantScale*0.7
-	} else {
-		// Increasing gain - do it slowly to prevent pumping
-		scaleFactor = d.prevScaleFactor*0.9 + instantScale*0.1
-	}
-	d.prevScaleFactor = scaleFactor
-
-	// Apply scaling
-	for i := range output {
-		sample := output[i] * scaleFactor
-
-		// Soft clipping using tanh-like compression for values approaching limits
-		// This creates a smooth transition rather than harsh clipping
-		const softClipThreshold = 24000.0
-		if sample > softClipThreshold {
-			// Compress values above threshold
-			excess := sample - softClipThreshold
-			sample = softClipThreshold + (32767.0-softClipThreshold)*math.Tanh(excess/(32767.0-softClipThreshold))
-		} else if sample < -softClipThreshold {
-			excess := -sample - softClipThreshold
-			sample = -softClipThreshold - (32767.0-softClipThreshold)*math.Tanh(excess/(32767.0-softClipThreshold))
-		}
-
-		// Final safety clamp (should rarely be needed after soft clipping)
-		if sample > 32767.0 {
-			sample = 32767.0
-		} else if sample < -32768.0 {
-			sample = -32768.0
-		}
-		output[i] = sample
-	}
-}
-
-// concealFrame handles frame erasure by generating interpolated output
-func (d *G729Decoder) concealFrame() []float64 {
-	output := make([]float64, 80)
-
-	// Use previous parameters with attenuation
-	lpc := d.lspToLP(d.prevLSP[:])
-	pitchLag := d.prevPitch
-	pitchGain := d.prevGain * 0.9 // Attenuate
-	fixedGain := d.prevGain * 0.5
-
-	// Generate concealment excitation
-	fixedVector := make([]float64, 40)
-	for i := range fixedVector {
-		// Random noise with decay
-		fixedVector[i] = (float64((i*1103515245+12345)&0x7FFF)/32768.0 - 0.5) * 0.1
-	}
-
-	// Synthesize both subframes
-	d.synthesizeSubframe(output[0:40], lpc, pitchLag, pitchGain, fixedVector, fixedGain)
-	d.synthesizeSubframe(output[40:80], lpc, pitchLag, pitchGain*0.9, fixedVector, fixedGain*0.9)
-
-	// Apply frame-level scaling
-	d.applyFrameScaling(output)
-
-	return output
+	return pcmData, nil
 }
 
 // generateG729ComfortNoise generates comfort noise for SID frames
@@ -1020,45 +636,6 @@ func generateG729ComfortNoise(samples int) []byte {
 	}
 
 	return pcmData
-}
-
-// g729BitReader reads bits from G.729 frame data
-type g729BitReader struct {
-	data    []byte
-	bytePos int
-	bitPos  uint
-}
-
-func newG729BitReader(data []byte) *g729BitReader {
-	return &g729BitReader{data: data}
-}
-
-func (r *g729BitReader) readBits(n int) int {
-	result := 0
-	for i := 0; i < n; i++ {
-		if r.bytePos >= len(r.data) {
-			return result
-		}
-		bit := (r.data[r.bytePos] >> (7 - r.bitPos)) & 1
-		result = (result << 1) | int(bit)
-		r.bitPos++
-		if r.bitPos >= 8 {
-			r.bitPos = 0
-			r.bytePos++
-		}
-	}
-	return result
-}
-
-// clampFloat64 clamps a float64 value to a range
-func clampFloat64(val, minVal, maxVal float64) float64 {
-	if val < minVal {
-		return minVal
-	}
-	if val > maxVal {
-		return maxVal
-	}
-	return val
 }
 
 // =============================================================================

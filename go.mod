@@ -83,6 +83,8 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/mattn/go-ieproxy v0.0.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pidato/audio v0.0.0-20220728122954-3b00aadd47bd // indirect
+	github.com/pidato/unsafe v0.1.1 // indirect
 	github.com/pion/dtls/v2 v2.2.7 // indirect
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
