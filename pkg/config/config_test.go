@@ -229,7 +229,7 @@ func TestDefaultConfiguration(t *testing.T) {
 
 	// Verify STT defaults
 	assert.ElementsMatch(t, []string{"google", "deepgram", "elevenlabs", "speechmatics", "openai"}, config.STT.SupportedVendors)
-	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "OPUS"}, config.STT.SupportedCodecs)
+	assert.ElementsMatch(t, []string{"PCMU", "PCMA", "G722", "G729", "OPUS"}, config.STT.SupportedCodecs)
 	assert.Equal(t, "google", config.STT.DefaultVendor)
 	assert.Empty(t, config.STT.LanguageRouting)
 	assert.False(t, config.Network.RequireTLSOnly)
