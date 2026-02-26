@@ -98,20 +98,20 @@ check: fmt vet lint ## Run all code quality checks
 
 ##@ Build
 
-build: ## Build the main binary
+build: ## Build the main binary (CGO enabled for bcg729 G.729 codec)
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(BINARY_PATH)
+	CGO_ENABLED=1 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(BINARY_PATH)
 	@echo "Built $(BUILD_DIR)/$(BINARY_NAME)"
 
 build-mysql: ## Build the main binary with MySQL support enabled
 	@echo "Building $(BINARY_NAME) with MySQL support..."
 	$(MAKE) GO_BUILD_TAGS="mysql" build
 
-build-test: ## Build the test environment binary
+build-test: ## Build the test environment binary (CGO enabled for bcg729 G.729 codec)
 	@echo "Building $(TEST_BINARY)..."
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(TEST_BINARY) $(TEST_PATH)
+	CGO_ENABLED=1 $(GOBUILD) $(GO_TAG_ARGS) $(BUILD_FLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(TEST_BINARY) $(TEST_PATH)
 	@echo "Built $(BUILD_DIR)/$(TEST_BINARY)"
 
 build-all: build build-test ## Build all binaries
