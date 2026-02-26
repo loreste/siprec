@@ -655,7 +655,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 						continue
 					}
 					// Non-timeout error might mean connection closed
-					if strings.Contains(err.Error(), "use of closed") || strings.Contains(err.Error(), "closed network") {
+					if strings.Contains(err.Error(), "use of closed") ||
+						strings.Contains(err.Error(), "closed network") ||
+						strings.Contains(err.Error(), "bad file descriptor") {
 						forwarder.Logger.WithField("call_uuid", callUUID).Info("Connection closed, exiting")
 						return
 					}
@@ -751,31 +753,31 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 	}()
 }
 
-// SetUDPSocketBuffers sets optimal socket buffer sizes for RTP traffic
+// SetUDPSocketBuffers sets optimal socket buffer sizes for RTP traffic.
+// Uses SyscallConn().Control() instead of conn.File() to avoid putting the socket
+// into blocking mode (conn.File() breaks SetReadDeadline and can cause RTP goroutines to hang on BYE).
 func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
-	// Set read buffer size to handle network bursts
 	const readBufferSize = 16 * 1024 * 1024
-	err := conn.SetReadBuffer(readBufferSize)
-	if err != nil {
+	if err := conn.SetReadBuffer(readBufferSize); err != nil {
 		logger.WithError(err).Warn("Failed to set UDP read buffer size, using system default")
 	} else {
 		logger.WithField("size_bytes", readBufferSize).Debug("Set UDP read buffer size")
 	}
 
-	// Set write buffer size for outgoing packets
 	const writeBufferSize = 1 * 1024 * 1024
-	err = conn.SetWriteBuffer(writeBufferSize)
-	if err != nil {
+	if err := conn.SetWriteBuffer(writeBufferSize); err != nil {
 		logger.WithError(err).Warn("Failed to set UDP write buffer size, using system default")
 	} else {
 		logger.WithField("size_bytes", writeBufferSize).Debug("Set UDP write buffer size")
 	}
 
-	// Configure socket to not delay small packets
-	if fd, err := conn.File(); err == nil {
-		syscall.SetsockoptInt(int(fd.Fd()), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
-		syscall.SetsockoptInt(int(fd.Fd()), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
-		fd.Close()
+	// Use SyscallConn to set options without entering blocking mode
+	rawConn, err := conn.SyscallConn()
+	if err == nil {
+		_ = rawConn.Control(func(fd uintptr) {
+			syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
+			syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
+		})
 	}
 }
 
@@ -899,7 +901,9 @@ func readIncomingRTCP(forwarder *RTPForwarder, conn *net.UDPConn) {
 					continue
 				}
 				// Non-timeout error (connection closed, etc.)
-				if strings.Contains(err.Error(), "use of closed") || strings.Contains(err.Error(), "closed network") {
+				if strings.Contains(err.Error(), "use of closed") ||
+					strings.Contains(err.Error(), "closed network") ||
+					strings.Contains(err.Error(), "bad file descriptor") {
 					forwarder.Logger.Info("RTCP connection closed, exiting reader")
 					return
 				}
