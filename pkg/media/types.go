@@ -42,6 +42,7 @@ type RTPForwarder struct {
 	CodecName        string
 	SampleRate       int
 	Channels         int
+	codecMutex       sync.RWMutex // Protects codec fields from concurrent access
 
 	// WAV writer handles PCM containerization
 	WAVWriter *WAVWriter
@@ -220,7 +221,11 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 }
 
 // SetCodecInfo configures payload format information used for recording.
+// This method is thread-safe and can be called while RTP processing is active.
 func (f *RTPForwarder) SetCodecInfo(payloadType byte, codecName string, sampleRate, channels int) {
+	f.codecMutex.Lock()
+	defer f.codecMutex.Unlock()
+
 	f.CodecPayloadType = payloadType
 	f.CodecName = strings.ToUpper(codecName)
 	f.SampleRate = sampleRate
@@ -234,6 +239,13 @@ func (f *RTPForwarder) SetCodecInfo(payloadType byte, codecName string, sampleRa
 	if f.RTPStats != nil && sampleRate > 0 {
 		f.RTPStats.SetClockRate(sampleRate)
 	}
+}
+
+// GetCodecInfo returns codec configuration in a thread-safe manner.
+func (f *RTPForwarder) GetCodecInfo() (payloadType byte, codecName string, sampleRate, channels int) {
+	f.codecMutex.RLock()
+	defer f.codecMutex.RUnlock()
+	return f.CodecPayloadType, f.CodecName, f.SampleRate, f.Channels
 }
 
 // Stop safely stops the RTP forwarder by closing the stop channel
