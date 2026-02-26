@@ -1322,6 +1322,42 @@ func TestG729IntegrationWithRTPPacket(t *testing.T) {
 	}
 }
 
+// TestG729OutputNotClipped verifies the decoder doesn't produce heavily clipped audio
+func TestG729OutputNotClipped(t *testing.T) {
+	// Create varied input that simulates real G.729 encoded audio
+	frames := [][]byte{
+		{0xA5, 0x3C, 0x78, 0xF1, 0x2E, 0x9B, 0x47, 0xD0, 0x6A, 0x15},
+		{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22},
+		{0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99, 0x88, 0x77, 0x66},
+		{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99},
+	}
+
+	for i, frame := range frames {
+		result, err := DecodeAudioPayload(frame, "G729")
+		if err != nil {
+			t.Fatalf("frame %d: unexpected error: %v", i, err)
+		}
+
+		// Count clipped samples
+		clipped := 0
+		total := len(result) / 2
+		for j := 0; j < len(result); j += 2 {
+			sample := int16(binary.LittleEndian.Uint16(result[j:]))
+			if sample == 32767 || sample == -32768 {
+				clipped++
+			}
+		}
+
+		clippedPercent := float64(clipped) / float64(total) * 100
+		t.Logf("Frame %d: %d/%d samples clipped (%.2f%%)", i, clipped, total, clippedPercent)
+
+		// Clipping should be less than 10% for normal audio
+		if clippedPercent > 10 {
+			t.Errorf("frame %d: too many clipped samples: %.2f%% (should be <10%%)", i, clippedPercent)
+		}
+	}
+}
+
 // TestG729ComfortNoiseGeneration tests SID frame handling
 func TestG729ComfortNoiseGeneration(t *testing.T) {
 	// G.729B SID frames are 2 bytes

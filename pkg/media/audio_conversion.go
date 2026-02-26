@@ -473,11 +473,12 @@ var (
 	}
 
 	// Fixed codebook gain quantization table (5 bits = 32 entries)
+	// Scaled down for proper output levels - G.729 uses Q1 format internally
 	g729FixedGainTable = []float64{
-		0.125, 0.177, 0.250, 0.354, 0.500, 0.707, 1.000, 1.414,
-		2.000, 2.828, 4.000, 5.657, 8.000, 11.31, 16.00, 22.63,
-		32.00, 45.25, 64.00, 90.51, 128.0, 181.0, 256.0, 362.0,
-		512.0, 724.1, 1024., 1448., 2048., 2896., 4096., 5793.,
+		0.001, 0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016,
+		0.023, 0.032, 0.045, 0.064, 0.090, 0.128, 0.181, 0.256,
+		0.362, 0.512, 0.724, 1.024, 1.448, 2.048, 2.896, 4.096,
+		5.793, 8.192, 11.59, 16.38, 23.17, 32.77, 46.34, 65.54,
 	}
 
 	// LP to LSP conversion bandwidth expansion coefficients
@@ -611,7 +612,7 @@ func (d *G729Decoder) decodeFrame(frameData []byte) []float64 {
 	}
 	pitchGain2 := g729PitchGainTable[ga2&0x07]
 	fixedVector2 := d.decodeFixedCodebook(s2)
-	fixedGain2 := g729FixedGainTable[gc2&0x0F] * 2.0 // 4-bit has coarser quantization
+	fixedGain2 := g729FixedGainTable[gc2&0x0F] // 4-bit index into same table
 	d.synthesizeSubframe(output[40:80], lpc, pitchLag2, pitchGain2, fixedVector2, fixedGain2)
 
 	// Save state for next frame
@@ -892,14 +893,41 @@ func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchL
 	copy(d.excitationMem[:], d.excitationMem[40:])
 	copy(d.excitationMem[len(d.excitationMem)-40:], excitation)
 
-	// Apply post-processing (simple scaling to avoid clipping)
-	for i := range output {
-		output[i] *= 2.0 // Scale up for audibility
-		if output[i] > 32767.0 {
-			output[i] = 32767.0
-		} else if output[i] < -32768.0 {
-			output[i] = -32768.0
+	// Apply post-processing with proper scaling
+	// G.729 output needs to be scaled to 16-bit PCM range
+	// Use adaptive scaling based on peak amplitude to avoid clipping
+	maxAbs := 0.0
+	for _, v := range output {
+		if v > maxAbs {
+			maxAbs = v
+		} else if -v > maxAbs {
+			maxAbs = -v
 		}
+	}
+
+	// Calculate scale factor to fit in 16-bit range with headroom
+	var scaleFactor float64
+	if maxAbs > 0 {
+		// Target peak at 90% of max to leave headroom
+		scaleFactor = 29000.0 / maxAbs
+		// Don't amplify too much - cap the gain
+		if scaleFactor > 512.0 {
+			scaleFactor = 512.0
+		}
+	} else {
+		scaleFactor = 256.0
+	}
+
+	for i := range output {
+		sample := output[i] * scaleFactor
+
+		// Hard limit
+		if sample > 32767.0 {
+			sample = 32767.0
+		} else if sample < -32768.0 {
+			sample = -32768.0
+		}
+		output[i] = sample
 	}
 }
 
