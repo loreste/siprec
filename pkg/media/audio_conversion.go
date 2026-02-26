@@ -447,6 +447,9 @@ type G729Decoder struct {
 	prevGain   float64
 	prevPitch  int
 	frameCount int
+
+	// Smooth gain adaptation to prevent pumping
+	prevScaleFactor float64
 }
 
 // G.729 quantization tables
@@ -473,12 +476,13 @@ var (
 	}
 
 	// Fixed codebook gain quantization table (5 bits = 32 entries)
-	// Scaled down for proper output levels - G.729 uses Q1 format internally
+	// Scaled conservatively to ensure LP synthesis output stays within
+	// reasonable bounds even with resonant filter characteristics
 	g729FixedGainTable = []float64{
-		0.001, 0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016,
-		0.023, 0.032, 0.045, 0.064, 0.090, 0.128, 0.181, 0.256,
-		0.362, 0.512, 0.724, 1.024, 1.448, 2.048, 2.896, 4.096,
-		5.793, 8.192, 11.59, 16.38, 23.17, 32.77, 46.34, 65.54,
+		0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016, 0.023,
+		0.032, 0.045, 0.064, 0.09, 0.128, 0.18, 0.256, 0.36,
+		0.512, 0.72, 1.02, 1.45, 2.05, 2.9, 4.1, 5.8,
+		8.2, 11.6, 16.4, 23.2, 32.8, 46.4, 65.5, 92.7,
 	}
 
 	// LP to LSP conversion bandwidth expansion coefficients
@@ -502,6 +506,7 @@ func (d *G729Decoder) reset() {
 	d.prevGain = 1.0
 	d.prevPitch = 60
 	d.frameCount = 0
+	d.prevScaleFactor = 64.0 // Conservative initial scale factor
 }
 
 // decodeG729Packet decodes a G.729 payload to 16-bit PCM
@@ -619,6 +624,9 @@ func (d *G729Decoder) decodeFrame(frameData []byte) []float64 {
 	copy(d.prevLSP[:], lsp)
 	d.prevPitch = pitchLag2
 	d.prevGain = (fixedGain1 + fixedGain2) / 2.0
+
+	// Apply frame-level scaling with smooth adaptation to prevent pumping
+	d.applyFrameScaling(output)
 
 	return output
 }
@@ -847,6 +855,7 @@ func (d *G729Decoder) decodeFixedCodebook(index int) []float64 {
 }
 
 // synthesizeSubframe performs LP synthesis for a 40-sample subframe
+// Note: Output is in decoder's internal scale, scaling is applied at frame level
 func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchLag int, pitchGain float64, fixedVector []float64, fixedGain float64) {
 	// Compute excitation signal
 	excitation := make([]float64, 40)
@@ -879,6 +888,13 @@ func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchL
 				sum -= lpc[j] * d.synthFilterMem[memIdx]
 			}
 		}
+		// Limit synthesis output to prevent runaway values from resonant filters
+		// This is a safety measure for potentially unstable filter configurations
+		if sum > 1000.0 {
+			sum = 1000.0
+		} else if sum < -1000.0 {
+			sum = -1000.0
+		}
 		output[i] = sum
 	}
 
@@ -893,9 +909,14 @@ func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchL
 	copy(d.excitationMem[:], d.excitationMem[40:])
 	copy(d.excitationMem[len(d.excitationMem)-40:], excitation)
 
-	// Apply post-processing with proper scaling
-	// G.729 output needs to be scaled to 16-bit PCM range
-	// Use adaptive scaling based on peak amplitude to avoid clipping
+	// NOTE: Scaling is now done at frame level in decodeFrame() to prevent
+	// amplitude pumping between subframes. Output remains in decoder scale here.
+}
+
+// applyFrameScaling applies consistent scaling across the entire frame
+// Uses adaptive normalization to ensure output fits in 16-bit range without clipping
+func (d *G729Decoder) applyFrameScaling(output []float64) {
+	// Find peak amplitude across entire frame (both subframes)
 	maxAbs := 0.0
 	for _, v := range output {
 		if v > maxAbs {
@@ -905,23 +926,51 @@ func (d *G729Decoder) synthesizeSubframe(output []float64, lpc []float64, pitchL
 		}
 	}
 
-	// Calculate scale factor to fit in 16-bit range with headroom
-	var scaleFactor float64
-	if maxAbs > 0 {
-		// Target peak at 90% of max to leave headroom
-		scaleFactor = 29000.0 / maxAbs
-		// Don't amplify too much - cap the gain
-		if scaleFactor > 512.0 {
-			scaleFactor = 512.0
-		}
+	// Calculate the exact scale factor needed to fit within range
+	// Target peak at 28000 to leave some headroom (85% of 32767)
+	const targetPeak = 28000.0
+	var instantScale float64
+	if maxAbs > 0.001 {
+		instantScale = targetPeak / maxAbs
 	} else {
-		scaleFactor = 256.0
+		instantScale = d.prevScaleFactor
 	}
 
+	// Limit maximum amplification to prevent noise amplification
+	if instantScale > 500.0 {
+		instantScale = 500.0
+	}
+
+	// Smooth the scale factor to prevent pumping
+	// Use asymmetric adaptation: fast attack (reduce gain quickly to prevent clipping)
+	// but slow release (increase gain slowly to prevent pumping)
+	var scaleFactor float64
+	if instantScale < d.prevScaleFactor {
+		// Need to reduce gain - do it quickly to prevent clipping
+		scaleFactor = d.prevScaleFactor*0.3 + instantScale*0.7
+	} else {
+		// Increasing gain - do it slowly to prevent pumping
+		scaleFactor = d.prevScaleFactor*0.9 + instantScale*0.1
+	}
+	d.prevScaleFactor = scaleFactor
+
+	// Apply scaling
 	for i := range output {
 		sample := output[i] * scaleFactor
 
-		// Hard limit
+		// Soft clipping using tanh-like compression for values approaching limits
+		// This creates a smooth transition rather than harsh clipping
+		const softClipThreshold = 24000.0
+		if sample > softClipThreshold {
+			// Compress values above threshold
+			excess := sample - softClipThreshold
+			sample = softClipThreshold + (32767.0-softClipThreshold)*math.Tanh(excess/(32767.0-softClipThreshold))
+		} else if sample < -softClipThreshold {
+			excess := -sample - softClipThreshold
+			sample = -softClipThreshold - (32767.0-softClipThreshold)*math.Tanh(excess/(32767.0-softClipThreshold))
+		}
+
+		// Final safety clamp (should rarely be needed after soft clipping)
 		if sample > 32767.0 {
 			sample = 32767.0
 		} else if sample < -32768.0 {
@@ -951,6 +1000,9 @@ func (d *G729Decoder) concealFrame() []float64 {
 	// Synthesize both subframes
 	d.synthesizeSubframe(output[0:40], lpc, pitchLag, pitchGain, fixedVector, fixedGain)
 	d.synthesizeSubframe(output[40:80], lpc, pitchLag, pitchGain*0.9, fixedVector, fixedGain*0.9)
+
+	// Apply frame-level scaling
+	d.applyFrameScaling(output)
 
 	return output
 }
