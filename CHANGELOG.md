@@ -2,6 +2,36 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.0.2] - 2026-02-26
+
+### Added
+- **G.729 Codec Support**: Native G.729 (CS-ACELP) decoding using bcg729 library
+  - ITU-T G.729 compliant decoder via `github.com/pidato/audio/g729` bindings
+  - Stateful decoder pool for maintaining decoder state across RTP packets
+  - Support for G.729A (Annex A) which is decoder-compatible
+  - Support for G.729B SID frames (comfort noise)
+
+### Fixed
+- **G.729 Audio Quality**: Resolved noisy/distorted audio in G.729 recordings
+  - Replaced custom decoder with ITU-T compliant bcg729 implementation
+  - Added per-SSRC stateful decoding for proper audio reconstruction
+  - Fixed audio clipping issues with proper gain scaling
+
+- **Race Condition in RTPForwarder**: Fixed concurrent access to codec fields
+  - Added `codecMutex` to protect codec configuration
+  - Added thread-safe `GetCodecInfo()` method
+  - Updated RTP processing to use synchronized access
+
+### Documentation
+- Added G.729/bcg729 build requirements to README
+- Added installation instructions for Ubuntu/Debian, macOS, and RHEL/CentOS
+
+### Requirements
+- **bcg729 library required** for G.729 support
+  - Ubuntu/Debian: `apt-get install libbcg729-dev`
+  - macOS: `brew install bcg729`
+  - Build from source: https://gitlab.linphone.org/BC/public/bcg729.git
+
 ## [1.0.1] - 2026-02-17
 
 ### Added

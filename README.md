@@ -18,7 +18,7 @@ IZI SIPREC is a production-ready SIPREC-compliant recording endpoint with compre
 - **Multi-Vendor Support** – Automatic detection and metadata extraction for Oracle, Cisco, Avaya, NICE, Genesys, FreeSWITCH, Asterisk, and OpenSIPS SBCs
 
 ### Audio & Media Processing
-- **Multi-Codec Support** – PCMU, PCMA, G.722, Opus, EVS with automatic transcoding
+- **Multi-Codec Support** – PCMU, PCMA, G.722, G.729, Opus, EVS with automatic transcoding
 - **Audio Processing Pipeline** – Voice Activity Detection (VAD), noise reduction, echo cancellation
 - **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
 - **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
@@ -281,6 +281,51 @@ Every recording that is uploaded to remote storage now has a sidecar `<recording
 
 - Go 1.23 or newer
 - Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
+
+### G.729 Codec Support
+
+G.729 decoding requires the **bcg729** native library. Without it, G.729 streams will not be decoded correctly.
+
+**Ubuntu/Debian:**
+```bash
+# Install bcg729 development files
+sudo apt-get install libbcg729-dev
+
+# Or build from source:
+git clone https://gitlab.linphone.org/BC/public/bcg729.git
+cd bcg729
+cmake .
+make
+sudo make install
+sudo ldconfig
+```
+
+**macOS:**
+```bash
+brew install bcg729
+```
+
+**RHEL/CentOS/Rocky:**
+```bash
+# Enable EPEL repository first
+sudo dnf install epel-release
+sudo dnf install bcg729-devel
+
+# Or build from source (same as Ubuntu)
+```
+
+**Build with G.729 support:**
+```bash
+# CGO must be enabled (default for native builds)
+CGO_ENABLED=1 go build -o siprec ./cmd/siprec
+```
+
+**Verification:** If you see this warning during build, bcg729 is not properly installed:
+```
+github.com/pidato/audio/g729: build constraints exclude all Go files
+```
+
+**Cross-compilation note:** When cross-compiling (e.g., Linux binary on macOS), you need bcg729 compiled for the target platform. The easiest approach is to build directly on the target Linux server.
 
 ### Build Tags
 
