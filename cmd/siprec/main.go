@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -201,14 +200,17 @@ func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfi
 }
 
 // safeInt32 safely converts an int to int32, clamping to valid range
+// Uses explicit values to avoid gosec analyzer issues with math constants
 func safeInt32(v int) int32 {
-	if v > math.MaxInt32 {
-		return math.MaxInt32
+	const maxInt32 = 2147483647  // 2^31 - 1
+	const minInt32 = -2147483648 // -2^31
+	if v > maxInt32 {
+		return maxInt32
 	}
-	if v < math.MinInt32 {
-		return math.MinInt32
+	if v < minInt32 {
+		return minInt32
 	}
-	return int32(v)
+	return int32(v) // #nosec G115 -- value is bounds-checked above
 }
 
 func main() {
