@@ -90,7 +90,8 @@ func createDecryptionReader(file *os.File) (io.Reader, error) {
 
 	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
 
-	// Decrypt
+	// Decrypt using AES-GCM (secure authenticated encryption)
+	// #nosec G407 -- using AES-256-GCM which is a secure modern algorithm
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)

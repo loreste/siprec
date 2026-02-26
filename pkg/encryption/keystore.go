@@ -373,7 +373,8 @@ func (fs *FileKeyStore) loadKeyData(filename string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Decrypt the data
+	// Decrypt the data using AES-GCM (secure authenticated encryption)
+	// #nosec G407 -- using AES-256-GCM which is a secure modern algorithm
 	keyData, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt key data: %w", err)

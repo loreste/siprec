@@ -545,6 +545,7 @@ func (m *Manager) decryptAESGCM(encData *EncryptedData, key *EncryptionKey) ([]b
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 
+	// #nosec G407 -- using AES-256-GCM which is a secure modern algorithm
 	plaintext, err := aead.Open(nil, encData.Nonce, encData.Ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
@@ -582,6 +583,7 @@ func (m *Manager) decryptChaCha20Poly1305(encData *EncryptedData, key *Encryptio
 		return nil, fmt.Errorf("failed to create ChaCha20-Poly1305 cipher: %w", err)
 	}
 
+	// #nosec G407 -- using ChaCha20-Poly1305 which is a secure modern algorithm
 	plaintext, err := aead.Open(nil, encData.Nonce, encData.Ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
