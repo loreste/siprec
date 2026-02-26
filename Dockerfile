@@ -55,14 +55,17 @@ RUN CGO_ENABLED=1 go test -v ./... -race -coverprofile=coverage.out
 # Stage 3: Final production image
 FROM alpine:edge AS production
 
-# Install runtime dependencies (including bcg729 for G.729 codec)
+# Install runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     curl \
     jq \
-    bcg729 \
-    libstdc++
+    libstdc++ \
+    libgcc
+
+# Copy bcg729 shared library from builder
+COPY --from=builder /usr/lib/libbcg729.so* /usr/lib/
 
 # Create non-root user for security
 RUN addgroup -g 1000 siprec && \
