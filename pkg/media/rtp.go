@@ -289,11 +289,11 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		forwarder.CleanupMutex.Unlock()
 		forwarder.Storage = config.RecordingStorage
 
-		sampleRate := forwarder.SampleRate
+		// Get codec info in a thread-safe manner
+		_, codecName, sampleRate, channels := forwarder.GetCodecInfo()
 		if sampleRate == 0 {
 			sampleRate = 8000
 		}
-		channels := forwarder.Channels
 		if channels == 0 {
 			channels = 1
 		}
@@ -304,7 +304,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			sessionID := fmt.Sprintf("%s-%d", sanitizedUUID, forwarder.LocalPort)
 			metadata := &audio.RecordingMetadata{
 				SessionID:    sessionID,
-				Codec:        forwarder.CodecName,
+				Codec:        codecName,
 				SampleRate:   sampleRate,
 				Channels:     channels,
 				FileFormat:   "siprec",
@@ -531,15 +531,22 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 			forwarder.updateRemoteSession(remoteAddr, &rtpPacket)
 
-			if forwarder.CodecPayloadType == 0 {
-				forwarder.CodecPayloadType = rtpPacket.PayloadType
+			// Thread-safe codec info access
+			currentPayloadType, currentCodecName, currentSampleRate, currentChannels := forwarder.GetCodecInfo()
+
+			if currentPayloadType == 0 {
+				forwarder.SetCodecInfo(byte(rtpPacket.PayloadType), currentCodecName, currentSampleRate, currentChannels)
+				currentPayloadType = byte(rtpPacket.PayloadType)
 			}
 
-			if forwarder.CodecName == "" || forwarder.SampleRate == 0 {
+			if currentCodecName == "" || currentSampleRate == 0 {
 				if info, ok := GetCodecInfo(byte(rtpPacket.PayloadType)); ok {
 					forwarder.SetCodecInfo(byte(rtpPacket.PayloadType), info.Name, info.SampleRate, info.Channels)
+					currentCodecName = info.Name
+					currentSampleRate = info.SampleRate
+					currentChannels = info.Channels
 					if forwarder.WAVWriter != nil {
-						_ = forwarder.WAVWriter.SetFormat(forwarder.SampleRate, forwarder.Channels)
+						_ = forwarder.WAVWriter.SetFormat(currentSampleRate, currentChannels)
 					}
 				}
 			}
@@ -549,7 +556,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
-			if dtmfCh != nil && (rtpPacket.PayloadType == 101 || strings.EqualFold(forwarder.CodecName, "TELEPHONE-EVENT")) {
+			if dtmfCh != nil && (rtpPacket.PayloadType == 101 || strings.EqualFold(currentCodecName, "TELEPHONE-EVENT")) {
 				select {
 				case dtmfCh <- AcousticEvent{
 					Type:       "dtmf",
@@ -563,7 +570,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 			}
 
-			codecName := forwarder.CodecName
+			codecName := currentCodecName
 			if codecName == "" {
 				codecName = "PCMU"
 			}
