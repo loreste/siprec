@@ -1,14 +1,15 @@
 # Multi-stage Docker build for SIPREC server
 # Stage 1: Build environment with all dependencies
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
-# Install build dependencies
+# Install build dependencies (including C++ for bcg729 G.729 codec)
 RUN apk add --no-cache \
     git \
     ca-certificates \
     tzdata \
     make \
     gcc \
+    g++ \
     musl-dev
 
 # Set working directory
@@ -23,17 +24,17 @@ RUN go mod download && go mod verify
 # Copy source code
 COPY . .
 
-# Build the application with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build the application with optimizations (CGO enabled for bcg729 G.729 codec)
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags='-w -s -extldflags "-static"' \
-    -a -installsuffix cgo \
+    -a \
     -o siprec \
     ./cmd/siprec
 
 # Build test environment binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags='-w -s -extldflags "-static"' \
-    -a -installsuffix cgo \
+    -a \
     -o testenv \
     ./cmd/testenv
 
@@ -47,8 +48,8 @@ RUN apk add --no-cache curl jq
 COPY test/ ./test/
 COPY test-recordings/ ./test-recordings/
 
-# Run tests (this stage can be used for CI/CD)
-RUN go test -v ./... -race -coverprofile=coverage.out
+# Run tests (this stage can be used for CI/CD, CGO enabled for bcg729)
+RUN CGO_ENABLED=1 go test -v ./... -race -coverprofile=coverage.out
 
 # Stage 3: Final production image
 FROM alpine:3.18 AS production
