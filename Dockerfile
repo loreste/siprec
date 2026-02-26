@@ -2,10 +2,8 @@
 # Stage 1: Build environment with all dependencies
 FROM golang:1.24-alpine AS builder
 
-# Install build dependencies (including C++ and bcg729 for G.729 codec)
-# Use edge repository for bcg729-dev package
+# Install build dependencies
 RUN apk add --no-cache \
-    --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     git \
     ca-certificates \
     tzdata \
@@ -13,7 +11,15 @@ RUN apk add --no-cache \
     gcc \
     g++ \
     musl-dev \
-    bcg729-dev
+    cmake
+
+# Build bcg729 from source for G.729 codec support
+RUN git clone https://gitlab.linphone.org/BC/public/bcg729.git /tmp/bcg729 && \
+    cd /tmp/bcg729 && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr -DENABLE_STATIC=YES -DENABLE_SHARED=YES . && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/bcg729
 
 # Set working directory
 WORKDIR /build
