@@ -45,6 +45,7 @@ docker-compose*.yml
 Dockerfile*
 Makefile*
 scripts/
+!scripts/docker-entrypoint.sh
 .env*
 
 # Test data (except essential test files)
