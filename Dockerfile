@@ -2,15 +2,16 @@
 # Stage 1: Build environment with all dependencies
 FROM golang:1.24-alpine AS builder
 
-# Install build dependencies (including C++ for bcg729 G.729 codec)
-RUN apk add --no-cache \
+# Install build dependencies (including C++ and bcg729 for G.729 codec)
+RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     git \
     ca-certificates \
     tzdata \
     make \
     gcc \
     g++ \
-    musl-dev
+    musl-dev \
+    bcg729-dev
 
 # Set working directory
 WORKDIR /build
@@ -26,15 +27,13 @@ COPY . .
 
 # Build the application with optimizations (CGO enabled for bcg729 G.729 codec)
 RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags='-w -s -extldflags "-static"' \
-    -a \
+    -ldflags='-w -s' \
     -o siprec \
     ./cmd/siprec
 
 # Build test environment binary
 RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags='-w -s -extldflags "-static"' \
-    -a \
+    -ldflags='-w -s' \
     -o testenv \
     ./cmd/testenv
 
@@ -54,12 +53,14 @@ RUN CGO_ENABLED=1 go test -v ./... -race -coverprofile=coverage.out
 # Stage 3: Final production image
 FROM alpine:3.18 AS production
 
-# Install runtime dependencies
-RUN apk add --no-cache \
+# Install runtime dependencies (including bcg729 for G.729 codec)
+RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
     ca-certificates \
     tzdata \
     curl \
-    jq
+    jq \
+    bcg729 \
+    libstdc++
 
 # Create non-root user for security
 RUN addgroup -g 1000 siprec && \
