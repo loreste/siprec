@@ -315,7 +315,7 @@ type STTConfig struct {
 	SupportedVendors []string `json:"supported_vendors" env:"SUPPORTED_VENDORS" default:"google,openai"`
 
 	// Supported audio codecs
-	SupportedCodecs []string `json:"supported_codecs" env:"SUPPORTED_CODECS" default:"PCMU,PCMA,G722"`
+	SupportedCodecs []string `json:"supported_codecs" env:"SUPPORTED_CODECS" default:"PCMU,PCMA,G722,G729"`
 
 	// Default STT vendor
 	DefaultVendor string `json:"default_vendor" env:"DEFAULT_SPEECH_VENDOR" default:"google"`
@@ -1716,11 +1716,11 @@ func loadSTTConfig(logger *logrus.Logger, config *STTConfig) error {
 	// Load supported codecs - check both SUPPORTED_CODECS and STT_SUPPORTED_CODECS
 	codecsStr := getEnv("STT_SUPPORTED_CODECS", "")
 	if codecsStr == "" {
-		codecsStr = getEnv("SUPPORTED_CODECS", "PCMU,PCMA,G722,OPUS")
+		codecsStr = getEnv("SUPPORTED_CODECS", "PCMU,PCMA,G722,G729,OPUS")
 	}
 	if codecsStr == "" {
-		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "OPUS"}
-		logger.Info("No codecs specified, defaulting to: PCMU, PCMA, G722, OPUS")
+		config.SupportedCodecs = []string{"PCMU", "PCMA", "G722", "G729", "OPUS"}
+		logger.Info("No codecs specified, defaulting to: PCMU, PCMA, G722, G729, OPUS")
 	} else {
 		codecs := strings.Split(codecsStr, ",")
 		for i, codec := range codecs {

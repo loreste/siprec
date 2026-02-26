@@ -24,6 +24,7 @@ var SupportedCodecs = map[byte]CodecInfo{
 	0:   {Name: "PCMU", PayloadType: 0, SampleRate: 8000, Channels: 1, Description: "G.711 μ-law"},
 	8:   {Name: "PCMA", PayloadType: 8, SampleRate: 8000, Channels: 1, Description: "G.711 a-law"},
 	9:   {Name: "G722", PayloadType: 9, SampleRate: 16000, Channels: 1, Description: "G.722 wideband"},
+	18:  {Name: "G729", PayloadType: 18, SampleRate: 8000, Channels: 1, Description: "G.729 CS-ACELP"},
 	96:  {Name: "OPUS", PayloadType: 96, SampleRate: 48000, Channels: 2, Description: "Opus codec"},
 	97:  {Name: "EVS", PayloadType: 97, SampleRate: 16000, Channels: 1, Description: "Enhanced Voice Services"},
 	98:  {Name: "OPUS_MONO", PayloadType: 98, SampleRate: 48000, Channels: 1, Description: "Opus mono"},
@@ -63,6 +64,12 @@ func IsOpusCodec(payloadType byte) bool {
 func IsEVSCodec(payloadType byte) bool {
 	codec, exists := SupportedCodecs[payloadType]
 	return exists && (codec.Name == "EVS" || codec.Name == "EVS_WB" || codec.Name == "EVS_SWB")
+}
+
+// IsG729Codec checks if the payload type represents a G.729 codec
+func IsG729Codec(payloadType byte) bool {
+	codec, exists := SupportedCodecs[payloadType]
+	return exists && codec.Name == "G729"
 }
 
 // ProcessAudioPacket extracts and processes audio data based on codec
