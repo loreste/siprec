@@ -97,12 +97,20 @@ jobs:
         go-version: '1.24'
         cache: true
 
+    - name: Install gosec
+      run: go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+
     - name: Run gosec
-      uses: securego/gosec@master
-      with:
-        # Exclude G115 (integer overflow) - causes analyzer crash with certain constant patterns
-        # G115 checks are handled manually with explicit bounds checking
-        args: '-no-fail -exclude=G115 -fmt sarif -out gosec-results.sarif ./...'
+      run: |
+        gosec -no-fail -exclude=G115 -fmt sarif -out gosec-results.sarif ./...
+
+    - name: Fix SARIF format
+      run: |
+        # Fix invalid null relationships in SARIF output
+        jq 'walk(if type == "object" and has("relationships") then
+          .relationships = [.relationships[] | select(. != null)]
+        else . end)' gosec-results.sarif > gosec-results-fixed.sarif
+        mv gosec-results-fixed.sarif gosec-results.sarif
 
     - name: Upload SARIF file
       uses: github/codeql-action/upload-sarif@v3
