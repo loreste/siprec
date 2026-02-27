@@ -25,9 +25,8 @@ type PerformanceMonitor struct {
 	cpuLimit            float64
 	
 	// Current metrics
-	lastGCTime          time.Time
-	lastCPUTime         time.Duration
-	lastMemCheckTime    time.Time
+	lastGCTime       time.Time
+	lastMemCheckTime time.Time
 	
 	// Statistics
 	gcCount             int

@@ -287,11 +287,7 @@ func (d *PIIDetector) isValidSSN(ssn string) bool {
 
 	// Check for valid serial number (last 4 digits)
 	serialNumber := digits[5:9]
-	if serialNumber == "0000" {
-		return false
-	}
-
-	return true
+	return serialNumber != "0000"
 }
 
 // isValidCreditCard performs Luhn algorithm validation on credit card numbers

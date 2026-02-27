@@ -746,24 +746,21 @@ func StartMetrics(logger *logrus.Logger, metricsEnabled bool) {
 }
 
 // updateResourceMetrics updates resource usage metrics periodically
-func updateResourceMetrics(logger *logrus.Logger) {
+func updateResourceMetrics(_ *logrus.Logger) {
 	// Update resource metrics every 5 seconds
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			// These would be implemented elsewhere and referenced here
-			// Just placeholder examples to show the concept
-			bufferCount := getBufferCount()
-			portsCount := getPortsInUse()
-			activeCallCount := getActiveCalls()
+	for range ticker.C {
+		// These would be implemented elsewhere and referenced here
+		// Just placeholder examples to show the concept
+		bufferCount := getBufferCount()
+		portsCount := getPortsInUse()
+		activeCallCount := getActiveCalls()
 
-			MemoryBuffersActive.Set(float64(bufferCount))
-			PortsInUse.Set(float64(portsCount))
-			ActiveCalls.Set(float64(activeCallCount))
-		}
+		MemoryBuffersActive.Set(float64(bufferCount))
+		PortsInUse.Set(float64(portsCount))
+		ActiveCalls.Set(float64(activeCallCount))
 	}
 }
 
