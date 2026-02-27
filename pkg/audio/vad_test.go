@@ -114,7 +114,7 @@ func TestVADReset(t *testing.T) {
 	for i := 0; i < 320; i += 2 {
 		loud[i+1] = 0x40
 	}
-	vad.Process(loud)
+	_, _ = vad.Process(loud)
 	assert.True(t, vad.IsVoiceActive())
 
 	// Reset

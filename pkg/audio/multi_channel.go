@@ -619,7 +619,7 @@ func (cr *ChannelRecorder) WriteSample(data []byte, timestamp time.Time) error {
 	// Update quality metrics (if available and has ProcessRTPPacket method)
 	if cr.qualityMetrics != nil {
 		if processor, ok := cr.qualityMetrics.(interface{ ProcessRTPPacket([]byte, time.Time) error }); ok {
-			processor.ProcessRTPPacket(data, timestamp)
+			_ = processor.ProcessRTPPacket(data, timestamp)
 		}
 	}
 
