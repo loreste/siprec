@@ -1,7 +1,0 @@
-./doc.go
-./exemplar.go
-./label.go
-./metric.go
-./point.go
-./type_string.go
-./unit.go

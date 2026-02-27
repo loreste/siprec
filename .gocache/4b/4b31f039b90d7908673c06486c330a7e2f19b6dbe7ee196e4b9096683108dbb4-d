@@ -1,7 +1,0 @@
-./audio_config.go
-./compat.go
-./config.go
-./hotreload.go
-./stt_validator.go
-./tls_config.go
-./validation.go

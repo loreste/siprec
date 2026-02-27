@@ -1,7 +1,0 @@
-./debug.go
-./decode.go
-./encode.go
-./error.go
-./header.go
-./header_value.go
-./message.go

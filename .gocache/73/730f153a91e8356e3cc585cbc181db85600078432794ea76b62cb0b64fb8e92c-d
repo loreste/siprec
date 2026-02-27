@@ -1,3 +1,0 @@
-./fsnotify.go
-./kqueue.go
-./open_mode_darwin.go

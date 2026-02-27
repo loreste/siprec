@@ -1,8 +1,0 @@
-./aws_provider.go
-./executable_provider.go
-./externalaccount.go
-./file_provider.go
-./info.go
-./programmatic_provider.go
-./url_provider.go
-./x509_provider.go

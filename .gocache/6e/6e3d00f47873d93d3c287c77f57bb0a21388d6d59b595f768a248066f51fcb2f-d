@@ -1,9 +1,0 @@
-./core.go
-./defaultlog.go
-./defaultlog_syslog.go
-./doc.go
-./error.go
-./progress.go
-./request.go
-./response.go
-./version.go
