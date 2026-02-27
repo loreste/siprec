@@ -51,17 +51,17 @@ func TestPausableWriter(t *testing.T) {
 	t.Run("resumes writing after pause", func(t *testing.T) {
 		buf := &bytes.Buffer{}
 		pw := NewPausableWriter(buf)
-		
+
 		// Write initial data
-		pw.Write([]byte("before pause "))
-		
+		_, _ = pw.Write([]byte("before pause "))
+
 		// Pause and try to write
 		pw.Pause()
-		pw.Write([]byte("during pause "))
-		
+		_, _ = pw.Write([]byte("during pause "))
+
 		// Resume and write again
 		pw.Resume()
-		pw.Write([]byte("after resume"))
+		_, _ = pw.Write([]byte("after resume"))
 		
 		expected := "before pause after resume"
 		if buf.String() != expected {
@@ -136,7 +136,7 @@ func TestPausableReader(t *testing.T) {
 		done := make(chan bool)
 		go func() {
 			buf := make([]byte, 9)
-			pr.Read(buf)
+			_, _ = pr.Read(buf)
 			done <- true
 		}()
 		
@@ -170,7 +170,7 @@ func TestPausableReader(t *testing.T) {
 			defer wg.Done()
 			buf := make([]byte, 10)
 			for i := 0; i < 50; i++ {
-				pr.Read(buf)
+				_, _ = pr.Read(buf)
 			}
 		}()
 		

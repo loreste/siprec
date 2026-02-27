@@ -98,7 +98,7 @@ func stunDiscoveryFromServer(stunServer string, logger *logrus.Logger) (*NATMapp
 	defer localConn.Close()
 
 	// Set timeout
-	localConn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = localConn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Get local address
 	localAddr := localConn.LocalAddr().(*net.UDPAddr)

@@ -142,19 +142,16 @@ type G722Decoder struct {
 }
 
 type g722BandState struct {
-	s    int // Reconstructed signal
-	sp   int // Predicted signal
-	sz   int // Predictor zero section output
-	r    [3]int
-	a    [3]int // Predictor coefficients (pole section)
-	ap   [3]int // Delayed predictor coefficients
-	p    [3]int // Partial signal
-	d    [7]int // Quantized difference signal
-	b    [7]int // Predictor coefficients (zero section)
-	bp   [7]int // Delayed predictor coefficients
-	sg   [7]int // Sign of difference signal
-	nb   int    // Delay line for scale factor
-	det  int    // Scale factor (step size)
+	s   int // Reconstructed signal
+	sp  int // Predicted signal
+	r   [3]int
+	a   [3]int // Predictor coefficients (pole section)
+	p   [3]int // Partial signal
+	d   [7]int // Quantized difference signal
+	b   [7]int // Predictor coefficients (zero section)
+	sg  [7]int // Sign of difference signal
+	nb  int    // Delay line for scale factor
+	det int    // Scale factor (step size)
 }
 
 // G.722 quantization tables per ITU-T G.722

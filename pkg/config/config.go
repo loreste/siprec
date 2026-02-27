@@ -2682,20 +2682,6 @@ func getEnvInt(key string, defaultValue int) int {
 	return intValue
 }
 
-// Helper function to get a duration environment variable with a default value
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return defaultValue
-	}
-
-	return duration
-}
 
 // getEnvFloat retrieves an environment variable and converts it to float64
 func getEnvFloat(key string, defaultValue float64) float64 {
