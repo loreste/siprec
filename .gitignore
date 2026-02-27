@@ -130,3 +130,6 @@ siprec-enhanced-deployment.tar.gz
 # Deployment scripts (keep public ones)
 !deploy_gcp_linux.sh
 !deploy-quick.sh
+
+# Go build cache
+.gocache/
