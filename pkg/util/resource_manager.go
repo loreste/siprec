@@ -480,7 +480,7 @@ func (rm *ResourceManager) CreateGoroutineResource(id string, fn func(context.Co
 	ctx, cancel := context.WithCancel(rm.ctx)
 	resource := NewGoroutineResource(id, cancel)
 
-	rm.Register(resource)
+	_ = rm.Register(resource)
 
 	go func() {
 		defer resource.Done()

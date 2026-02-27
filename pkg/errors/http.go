@@ -67,7 +67,7 @@ func WriteError(w http.ResponseWriter, err error) {
 	// Write the response
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	enc.Encode(response)
+	_ = enc.Encode(response)
 }
 
 // HTTPStatusFromError determines the appropriate HTTP status code for an error
@@ -89,24 +89,4 @@ func HTTPStatusFromError(err error) int {
 
 	// Default to internal server error
 	return http.StatusInternalServerError
-}
-
-// Error code to HTTP status mapping
-var errorCodeStatusMap = map[string]int{
-	"NOT_FOUND":           http.StatusNotFound,
-	"INVALID_INPUT":       http.StatusBadRequest,
-	"INTERNAL_ERROR":      http.StatusInternalServerError,
-	"NOT_IMPLEMENTED":     http.StatusNotImplemented,
-	"TIMEOUT":             http.StatusGatewayTimeout,
-	"UNAVAILABLE":         http.StatusServiceUnavailable,
-	"ALREADY_EXISTS":      http.StatusConflict,
-	"PERMISSION_DENIED":   http.StatusForbidden,
-	"UNAUTHENTICATED":     http.StatusUnauthorized,
-	"RESOURCE_EXHAUSTED":  http.StatusTooManyRequests,
-	"FAILED_PRECONDITION": http.StatusPreconditionFailed,
-	"ABORTED":             http.StatusConflict,
-	"CANCELED":            http.StatusRequestTimeout,
-	"SESSION_NOT_FOUND":   http.StatusNotFound,
-	"INVALID_SIP_MESSAGE": http.StatusBadRequest,
-	"INVALID_METADATA":    http.StatusBadRequest,
 }
