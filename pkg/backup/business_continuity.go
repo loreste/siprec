@@ -227,7 +227,9 @@ func (bcm *BusinessContinuityManager) performServiceHealthCheck(name string, ser
 	// Evaluate failover conditions
 	if !primaryHealthy && standbyHealthy && service.Config.AutoFailover {
 		if bcm.evaluateFailoverConditions(service) {
-			bcm.initiateFailover(name, service, "primary_service_unhealthy")
+			if err := bcm.initiateFailover(name, service, "primary_service_unhealthy"); err != nil {
+				bcm.logger.WithError(err).Error("Failed to initiate failover")
+			}
 		}
 	}
 
@@ -328,7 +330,9 @@ func (bcm *BusinessContinuityManager) checkServiceReplication(name string, servi
 
 		if service.Config.AutoFailover {
 			if bcm.evaluateFailoverConditions(service) {
-				bcm.initiateFailover(name, service, "high_replication_lag")
+				if err := bcm.initiateFailover(name, service, "high_replication_lag"); err != nil {
+					bcm.logger.WithError(err).Error("Failed to initiate failover for high replication lag")
+				}
 			}
 		}
 	}

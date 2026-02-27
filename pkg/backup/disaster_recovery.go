@@ -160,7 +160,9 @@ func (drm *DisasterRecoveryManager) checkSystemHealth() {
 
 		if drm.config.AutoRecoveryEnabled {
 			// Trigger automatic failover
-			drm.TriggerRecovery("datacenter_failover", "Primary datacenter health check failed", "auto")
+			if _, err := drm.TriggerRecovery("datacenter_failover", "Primary datacenter health check failed", "auto"); err != nil {
+				drm.logger.WithError(err).Error("Failed to trigger automatic recovery")
+			}
 		} else {
 			// Send notification for manual intervention
 			drm.sendRecoveryNotification("Primary datacenter unhealthy - manual intervention required")

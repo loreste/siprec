@@ -654,7 +654,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			case <-ticker.C:
 				// Try read with short deadline to catch any buffered packets
 				buffer, returnBuffer := GetPacketBuffer(1500)
-				udpConn.SetReadDeadline(time.Now().Add(5 * time.Millisecond)) // Short deadline for non-blocking-ish read
+				_ = udpConn.SetReadDeadline(time.Now().Add(5 * time.Millisecond)) // Short deadline for non-blocking-ish read
 				n, addr, err := udpConn.ReadFromUDP(buffer)
 
 				if err != nil {
@@ -903,7 +903,7 @@ func readIncomingRTCP(forwarder *RTPForwarder, conn *net.UDPConn) {
 			return
 		case <-ticker.C:
 			// Non-blocking read with immediate deadline
-			conn.SetReadDeadline(time.Now())
+			_ = conn.SetReadDeadline(time.Now())
 			n, addr, err := conn.ReadFromUDP(buffer)
 
 			if err != nil {

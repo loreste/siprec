@@ -185,10 +185,7 @@ func (v *ConfigValidator) validateSTTConfig(config *Config) {
 		v.addError("stt_default_vendor", config.STT.DefaultVendor, "reference", "Default STT vendor must be in the list of configured vendors")
 	}
 
-	// Validate language code - skip for now as this field doesn't exist in current Config
-	if false && !v.isValidLanguageCode("") {
-		// Language code validation skipped for now
-	}
+	// Note: Language code validation skipped - field doesn't exist in current Config
 }
 
 // validateHTTPConfig validates HTTP server configuration

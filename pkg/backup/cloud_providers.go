@@ -479,7 +479,7 @@ func performHealthCheck(ctx context.Context, url string) bool {
 	defer resp.Body.Close()
 	
 	// Read and discard body to ensure connection can be reused
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	
 	// Check if status is 2xx
 	return resp.StatusCode >= 200 && resp.StatusCode < 300

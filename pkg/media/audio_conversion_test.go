@@ -564,7 +564,7 @@ func BenchmarkDecodeAudioPayload_PCMU(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		DecodeAudioPayload(data, "PCMU")
+		_, _ = DecodeAudioPayload(data, "PCMU")
 	}
 }
 
@@ -577,7 +577,7 @@ func BenchmarkDecodeAudioPayload_G722(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		DecodeAudioPayload(data, "G722")
+		_, _ = DecodeAudioPayload(data, "G722")
 	}
 }
 
@@ -589,7 +589,7 @@ func BenchmarkDecodeAudioPayload_OPUS(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		DecodeAudioPayload(data, "OPUS")
+		_, _ = DecodeAudioPayload(data, "OPUS")
 	}
 }
 
