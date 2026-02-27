@@ -133,9 +133,7 @@ func (p *AudioPipeline) Start(reader io.Reader) io.Reader {
 			default:
 				n, err := reader.Read(buffer)
 				if err != nil {
-					if err != io.EOF {
-						// Log error here
-					}
+					// Note: non-EOF errors are silently ignored in streaming context
 					return
 				}
 

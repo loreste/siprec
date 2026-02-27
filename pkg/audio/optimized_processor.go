@@ -28,7 +28,6 @@ type OptimizedAudioProcessor struct {
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
-	wg     sync.WaitGroup
 }
 
 // AudioProcessingTask represents an audio processing job

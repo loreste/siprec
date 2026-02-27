@@ -88,8 +88,8 @@ func TestPipelineCompleteCall(t *testing.T) {
 		QualityScore: 0.85,
 		Keywords:     map[string]int{"test": 1},
 	}
-	store.Set("test-call", state)
-	
+	_ = store.Set("test-call", state)
+
 	// Complete the call
 	snapshot, err := pipeline.CompleteCall("test-call")
 	if err != nil {

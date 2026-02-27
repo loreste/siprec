@@ -213,14 +213,14 @@ func (sm *SessionManager) TerminateSession(sessionID string, reason string) erro
 
 	// Schedule cleanup task
 	task := func() {
-		CleanupSessionResources(session)
+		_ = CleanupSessionResources(session)
 		sm.removeSession(sessionID)
 	}
 
 	// Use dedicated cleanup pool
 	if !sm.workerPool.SubmitTask("session_cleanup", task) {
 		// Fallback to immediate cleanup if pool is full
-		CleanupSessionResources(session)
+		_ = CleanupSessionResources(session)
 		sm.removeSession(sessionID)
 	}
 

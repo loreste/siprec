@@ -140,6 +140,6 @@ func BenchmarkAudioEnhancer_ProcessAudio(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		enhancer.ProcessAudio(ctx, samples)
+		_, _ = enhancer.ProcessAudio(ctx, samples)
 	}
 }
