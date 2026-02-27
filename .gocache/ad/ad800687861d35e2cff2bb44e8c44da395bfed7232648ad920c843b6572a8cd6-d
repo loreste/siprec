@@ -1,6 +1,0 @@
-./parser.go
-./session.go
-./session_manager.go
-./types.go
-./parser_test.go
-./session_test.go

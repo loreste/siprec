@@ -1,6 +1,0 @@
-./ieproxy.go
-./ieproxy_unix.go
-./pac_unix.go
-./proxy_middleman.go
-./proxy_middleman_unix.go
-./utils.go
