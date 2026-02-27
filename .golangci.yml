@@ -1,0 +1,39 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  errcheck:
+    # Ignore certain function calls where error checking is not critical
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+      - (net.Conn).Close
+      - (*database/sql.Rows).Close
+      - (*database/sql.Tx).Rollback
+
+issues:
+  # Exclude test files from certain checks
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: test/
+      linters:
+        - errcheck
+    # Exclude unused field checks for stub implementations
+    - path: stub\.go
+      linters:
+        - unused
+    - path: mysql_stub\.go
+      linters:
+        - unused
