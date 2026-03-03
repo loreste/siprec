@@ -11,6 +11,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+// UserContextKey is the context key for storing user info
+const UserContextKey contextKey = "user"
+
 // AuthMiddleware provides authentication middleware for HTTP handlers
 type AuthMiddleware struct {
 	simpleAuth *auth.SimpleAuthenticator
@@ -97,7 +103,7 @@ func (am *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 		}
 
 		// Add user info to context
-		ctx := context.WithValue(r.Context(), "user", userInfo)
+		ctx := context.WithValue(r.Context(), UserContextKey, userInfo)
 		r = r.WithContext(ctx)
 
 		// Continue with authenticated user
@@ -261,7 +267,7 @@ func (am *AuthMiddleware) getRolePermissions(role string) []string {
 
 // GetUserFromContext extracts user info from request context
 func GetUserFromContext(ctx context.Context) (*auth.UserInfo, bool) {
-	user, ok := ctx.Value("user").(*auth.UserInfo)
+	user, ok := ctx.Value(UserContextKey).(*auth.UserInfo)
 	return user, ok
 }
 

@@ -264,7 +264,6 @@ func (m *ProviderManager) StreamToProvider(ctx context.Context, providerName str
 						"call_uuid": callUUID,
 						"attempt":   vendor,
 					}).Warn("Audio stream is not seekable; STT fallback limited")
-					seekableWarningLogged = true
 				}
 				break
 			}
