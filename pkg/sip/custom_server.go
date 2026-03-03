@@ -2552,13 +2552,12 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 		return
 	}
 
-	logger.WithFields(logrus.Fields{
-		"call_state":  callState.State,
-		"pending_ack": callState.PendingAckCSeq,
-		"cseq":        seq,
-	}).Debug("Processing BYE request")
-
 	if callState != nil {
+		logger.WithFields(logrus.Fields{
+			"call_state":  callState.State,
+			"pending_ack": callState.PendingAckCSeq,
+			"cseq":        seq,
+		}).Debug("Processing BYE request")
 		callScope = callState.TraceScope
 	} else if scope, ok := tracing.GetCallScope(message.CallID); ok {
 		callScope = scope

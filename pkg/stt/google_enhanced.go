@@ -467,10 +467,6 @@ func (p *GoogleProviderEnhanced) buildRecognitionConfig() *speechpb.RecognitionC
 			MinSpeakerCount:          p.config.MinSpeakerCount,
 			MaxSpeakerCount:          p.config.MaxSpeakerCount,
 		}
-
-		if p.config.DiarizationSpeakerCount > 0 {
-			config.DiarizationConfig.SpeakerTag = p.config.DiarizationSpeakerCount
-		}
 	}
 
 	// Speech contexts (phrase hints)
@@ -795,9 +791,9 @@ func (c *GoogleConnection) buildResultMetadata(result *speechpb.StreamingRecogni
 		words := make([]map[string]interface{}, len(alternative.Words))
 		for i, word := range alternative.Words {
 			wordInfo := map[string]interface{}{
-				"word":        word.Word,
-				"confidence":  word.Confidence,
-				"speaker_tag": word.SpeakerTag,
+				"word":          word.Word,
+				"confidence":    word.Confidence,
+				"speaker_label": word.SpeakerLabel,
 			}
 
 			// Add timing if available
