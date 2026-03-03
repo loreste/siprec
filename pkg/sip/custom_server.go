@@ -144,18 +144,18 @@ type SIPMessage struct {
 	NICEAgentID       string // NICE agent identifier
 
 	// Asterisk specific fields
-	AsteriskUniqueID   string // Asterisk unique channel identifier
-	AsteriskLinkedID   string // Asterisk linked channel ID (for bridged calls)
-	AsteriskChannelID  string // Asterisk channel name
+	AsteriskUniqueID    string // Asterisk unique channel identifier
+	AsteriskLinkedID    string // Asterisk linked channel ID (for bridged calls)
+	AsteriskChannelID   string // Asterisk channel name
 	AsteriskAccountCode string // Asterisk CDR account code
-	AsteriskContext    string // Asterisk dialplan context
+	AsteriskContext     string // Asterisk dialplan context
 
 	// FreeSWITCH specific fields
-	FreeSWITCHUUID         string // FreeSWITCH call UUID
-	FreeSWITCHCoreUUID     string // FreeSWITCH core UUID
-	FreeSWITCHChannelName  string // FreeSWITCH channel name
-	FreeSWITCHProfileName  string // FreeSWITCH sofia profile
-	FreeSWITCHAccountCode  string // FreeSWITCH account code
+	FreeSWITCHUUID        string // FreeSWITCH call UUID
+	FreeSWITCHCoreUUID    string // FreeSWITCH core UUID
+	FreeSWITCHChannelName string // FreeSWITCH channel name
+	FreeSWITCHProfileName string // FreeSWITCH sofia profile
+	FreeSWITCHAccountCode string // FreeSWITCH account code
 
 	// OpenSIPS specific fields
 	OpenSIPSCallID        string // OpenSIPS Call-ID correlation
@@ -931,8 +931,8 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 			// Rate limited - send 503 Service Unavailable
 			logger.WithField("client_ip", clientIP).Warn("INVITE rate limited")
 			headers := map[string]string{
-				"Retry-After":            "60",
-				correlation.SIPHeader:    correlationID.String(),
+				"Retry-After":         "60",
+				correlation.SIPHeader: correlationID.String(),
 			}
 			s.sendResponse(message, 503, "Service Unavailable - Rate Limit Exceeded", headers, nil)
 			// Audit log for rate limiting
@@ -966,8 +966,8 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 				// Send 401 Unauthorized with WWW-Authenticate challenge
 				logger.WithField("client_ip", clientIP).Info("Sending authentication challenge")
 				headers := map[string]string{
-					"WWW-Authenticate":       challenge,
-					correlation.SIPHeader:    correlationID.String(),
+					"WWW-Authenticate":    challenge,
+					correlation.SIPHeader: correlationID.String(),
 				}
 				s.sendResponse(message, 401, "Unauthorized", headers, nil)
 				// Audit log for auth challenge
@@ -1082,8 +1082,8 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		OriginalInvite:   message,
 		RTPForwarders:    make([]*media.RTPForwarder, 0),
 		StreamForwarders: make(map[string]*media.RTPForwarder),
-		rtpCtx:           callCtx,     // Store context for RTP goroutines
-		cancelCtx:        cancelFunc,  // Store cancel function for cleanup
+		rtpCtx:           callCtx,    // Store context for RTP goroutines
+		cancelCtx:        cancelFunc, // Store cancel function for cleanup
 	}
 	mediaIP := s.resolveMediaIPAddress(message)
 
@@ -1556,11 +1556,11 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		}
 
 		logger.WithFields(logrus.Fields{
-			"policy_action":     policyDecision.Action,
-			"policy_id":         policyDecision.PolicyID,
-			"allow_audio":       policyDecision.AllowAudio,
-			"allow_video":       policyDecision.AllowVideo,
-			"retention_days":    policyDecision.RetentionDays,
+			"policy_action":  policyDecision.Action,
+			"policy_id":      policyDecision.PolicyID,
+			"allow_audio":    policyDecision.AllowAudio,
+			"allow_video":    policyDecision.AllowVideo,
+			"retention_days": policyDecision.RetentionDays,
 		}).Debug("Policy evaluation completed")
 	}
 
@@ -2869,12 +2869,34 @@ func (s *CustomSIPServer) handleUpdateMessage(message *SIPMessage) {
 	}
 
 	// UPDATE is used for mid-call SDP renegotiation (hold/resume, codec changes)
-	// For a SIPREC server, we primarily care about tracking session state
+	// and for refreshed SIPREC metadata (e.g. participant identity updates).
 	callState.LastActivity = time.Now()
 
-	// Check if there's SDP in the UPDATE
 	contentType := s.getHeaderValue(message, "Content-Type")
-	if len(message.Body) > 0 && strings.Contains(strings.ToLower(contentType), "application/sdp") {
+	lowerContentType := strings.ToLower(contentType)
+
+	// Process SIPREC metadata in UPDATE (single-part application/rs-metadata or multipart)
+	if len(message.Body) > 0 && callState.RecordingSession != nil {
+		var rsMetadata []byte
+		if strings.Contains(lowerContentType, "rs-metadata") && !strings.HasPrefix(lowerContentType, "multipart/") {
+			rsMetadata = message.Body
+		} else if strings.HasPrefix(lowerContentType, "multipart/") {
+			_, rsMetadata = s.extractSiprecContent(message.Body, contentType)
+		}
+		if len(rsMetadata) > 0 {
+			parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, contentType)
+			if err != nil {
+				logger.WithError(err).Warn("Failed to parse SIPREC metadata in UPDATE")
+			} else if err := s.updateRecordingSession(callState.RecordingSession, parsedMetadata, logger); err != nil {
+				logger.WithError(err).Warn("Failed to update recording session from UPDATE metadata")
+			} else {
+				logger.WithField("call_id", message.CallID).Info("Recording session updated from UPDATE SIPREC metadata")
+			}
+		}
+	}
+
+	// Check if there's SDP in the UPDATE
+	if len(message.Body) > 0 && strings.Contains(lowerContentType, "application/sdp") {
 		// Parse the new SDP
 		parsedSDP, err := ParseSDPTolerant(message.Body, s.logger)
 		if err != nil {
@@ -3089,8 +3111,8 @@ func (s *CustomSIPServer) sendReferNotify(originalRefer *SIPMessage, callState *
 	// Try to send NOTIFY using sipgo's client transaction
 	if s.ua != nil {
 		// Get From, To, and Contact from original REFER
-		from := s.getHeaderValue(originalRefer, "To")   // Our To becomes From
-		to := s.getHeaderValue(originalRefer, "From")     // Their From becomes To
+		from := s.getHeaderValue(originalRefer, "To") // Our To becomes From
+		to := s.getHeaderValue(originalRefer, "From") // Their From becomes To
 		contact := s.buildContactHeader(originalRefer)
 
 		// Create request using sipgo
@@ -3337,10 +3359,10 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"call_id":            callID,
-		"rtp_forwarders":     len(callState.RTPForwarders),
-		"stream_forwarders":  len(callState.StreamForwarders),
-		"single_forwarder":   callState.RTPForwarder != nil,
+		"call_id":           callID,
+		"rtp_forwarders":    len(callState.RTPForwarders),
+		"stream_forwarders": len(callState.StreamForwarders),
+		"single_forwarder":  callState.RTPForwarder != nil,
 	}).Debug("Starting forwarder cleanup in finalizeCall")
 
 	recordingPaths := make([]string, 0, len(callState.RTPForwarders))
@@ -6595,6 +6617,14 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 		}).Debug("Stored UUI in recording session metadata")
 	}
 
+	// Store SIP From and To headers and their user parts for participant resolution
+	if fromVal := s.getHeaderValue(message, "From"); fromVal != "" {
+		session.ExtendedMetadata["sip_from"] = fromVal
+	}
+	if toVal := s.getHeaderValue(message, "To"); toVal != "" {
+		session.ExtendedMetadata["sip_to"] = toVal
+	}
+
 	// Store all X-headers with "sip_" prefix to avoid collisions
 	if len(message.XHeaders) > 0 {
 		for name, value := range message.XHeaders {
@@ -6851,8 +6881,8 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 	if message.RibbonSessionID != "" {
 		session.ExtendedMetadata["sip_ribbon_session_id"] = message.RibbonSessionID
 		s.logger.WithFields(logrus.Fields{
-			"session_id":         session.ID,
-			"ribbon_session_id":  message.RibbonSessionID,
+			"session_id":        session.ID,
+			"ribbon_session_id": message.RibbonSessionID,
 		}).Debug("Stored Ribbon Session ID in recording session metadata")
 	}
 
@@ -6868,8 +6898,8 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 	if message.SansaySessionID != "" {
 		session.ExtendedMetadata["sip_sansay_session_id"] = message.SansaySessionID
 		s.logger.WithFields(logrus.Fields{
-			"session_id":         session.ID,
-			"sansay_session_id":  message.SansaySessionID,
+			"session_id":        session.ID,
+			"sansay_session_id": message.SansaySessionID,
 		}).Debug("Stored Sansay Session ID in recording session metadata")
 	}
 
@@ -6885,8 +6915,8 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 	if message.HuaweiSessionID != "" {
 		session.ExtendedMetadata["sip_huawei_session_id"] = message.HuaweiSessionID
 		s.logger.WithFields(logrus.Fields{
-			"session_id":         session.ID,
-			"huawei_session_id":  message.HuaweiSessionID,
+			"session_id":        session.ID,
+			"huawei_session_id": message.HuaweiSessionID,
 		}).Debug("Stored Huawei Session ID in recording session metadata")
 	}
 
