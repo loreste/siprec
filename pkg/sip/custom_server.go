@@ -3935,6 +3935,15 @@ func buildStreamMetadata(streamLabel string, rsMeta *siprec.RSMetadata, session 
 		"stream_label": streamLabel,
 	}
 
+	if session != nil {
+		if session.ID != "" {
+			meta["session_id"] = session.ID
+		}
+		for k, v := range session.ExtendedMetadata {
+			meta[k] = v
+		}
+	}
+
 	if rsMeta == nil {
 		return meta
 	}
