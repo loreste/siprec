@@ -549,6 +549,8 @@ func (t *testServerTransaction) Respond(res *sipparser.Response) error {
 
 func (t *testServerTransaction) Acks() <-chan *sipparser.Request { return t.acks }
 
+func (t *testServerTransaction) OnCancel(sipparser.FnTxCancel) bool { return true }
+
 func (t *testServerTransaction) OnTerminate(sipparser.FnTxTerminate) bool { return true }
 
 func (t *testServerTransaction) Terminate() {}
