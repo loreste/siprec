@@ -182,7 +182,7 @@ type SIPRateLimiter interface {
 // CallData holds information about an active call
 type CallData struct {
 	// Forwarder for RTP packets
-	Forwarder *media.RTPForwarder
+	Forwarder *media.RTPForwarder `json:"-"`
 
 	// SIPREC recording session information
 	RecordingSession *siprec.RecordingSession
@@ -197,10 +197,10 @@ type CallData struct {
 	RemoteAddress string
 
 	// TraceScope links the call to its OpenTelemetry span
-	TraceScope *tracing.CallScope
+	TraceScope *tracing.CallScope `json:"-"`
 
 	// Mutex for protecting mutable fields
-	mu sync.RWMutex
+	mu sync.RWMutex `json:"-"`
 }
 
 // DialogInfo holds information about a SIP dialog
