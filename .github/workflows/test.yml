@@ -87,11 +87,59 @@ jobs:
         go-version: '1.23'
         cache: true
 
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+
     - name: Build application
       run: make build
 
+    - name: Start server
+      run: |
+        # Create minimal test configuration
+        cat > .env << 'EOF'
+        HTTP_ENABLED=true
+        HTTP_PORT=8080
+        HTTP_TLS_ENABLED=false
+        SIP_PORT=5060
+        SIP_TLS_ENABLED=false
+        STT_PROVIDER=opensource
+        LOG_LEVEL=info
+        RECORDING_PATH=/tmp/recordings
+        RTP_PORT_MIN=10000
+        RTP_PORT_MAX=10100
+        EOF
+
+        # Create recordings directory
+        mkdir -p /tmp/recordings
+
+        # Start server in background
+        ./build/siprec &
+        SERVER_PID=$!
+        echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+
+        # Wait for server to be ready (max 60 seconds)
+        for i in {1..30}; do
+          if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+            echo "Server is ready"
+            exit 0
+          fi
+          echo "Waiting for server... attempt $i"
+          sleep 2
+        done
+        echo "Server failed to start"
+        exit 1
+
     - name: Run E2E tests
       run: go test -v -tags=e2e ./test/e2e/...
+
+    - name: Stop server
+      if: always()
+      run: |
+        if [ -n "$SERVER_PID" ]; then
+          kill $SERVER_PID 2>/dev/null || true
+        fi
 
   lint:
     name: Lint
