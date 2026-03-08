@@ -6,7 +6,7 @@
 
 IZI SIPREC is a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 1.0.0
+**Version:** 1.0.2
 
 ## Core Features
 
@@ -279,7 +279,7 @@ Every recording that is uploaded to remote storage now has a sidecar `<recording
 
 ### Requirements
 
-- Go 1.23 or newer
+- Go 1.24 or newer
 - Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
 
 ### G.729 Codec Support
