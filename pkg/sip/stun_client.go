@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pion/stun"
+	"github.com/pion/stun/v3"
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/version"
