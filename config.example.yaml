@@ -1,0 +1,337 @@
+# SIPREC Server Configuration
+# ============================
+# This file contains all configuration options for the SIPREC server.
+# Copy this file to config.yaml and modify as needed.
+#
+# Configuration Loading Priority:
+#   1. Environment variables (highest priority - always override)
+#   2. Config file (this file)
+#   3. Default values
+#
+# To use this config file, either:
+#   - Place it as config.yaml in the working directory
+#   - Set CONFIG_FILE=/path/to/config.yaml environment variable
+#   - Place it at /etc/siprec/config.yaml
+#
+# For secrets (API keys, passwords), use environment variables:
+#   export DEEPGRAM_API_KEY=your-key
+#   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+
+# Network Configuration
+network:
+  # External IP for SDP/SIP (auto = auto-detect via STUN)
+  external_ip: "auto"
+
+  # Internal IP for binding (auto = auto-detect)
+  internal_ip: "auto"
+
+  # SIP host address to bind to (0.0.0.0 = all interfaces)
+  host: "0.0.0.0"
+
+  # SIP ports to listen on (both UDP and TCP)
+  ports:
+    - 5060
+    - 5061
+
+  # RTP port range
+  rtp_port_min: 10000
+  rtp_port_max: 20000
+
+  # RTP inactivity timeout
+  rtp_timeout: 30s
+
+  # RTP bind IP (empty = all interfaces)
+  rtp_bind_ip: ""
+
+  # TLS Configuration
+  enable_tls: false
+  tls_port: 5062
+  tls_cert_file: "./certs/cert.pem"
+  tls_key_file: "./certs/key.pem"
+
+  # SRTP Configuration
+  enable_srtp: false
+
+  # NAT Configuration
+  behind_nat: false
+  stun_servers:
+    - "stun.l.google.com:19302"
+    - "stun1.l.google.com:19302"
+
+# HTTP Server Configuration
+http:
+  port: 8080
+  enabled: true
+  enable_metrics: true
+  enable_api: true
+  read_timeout: 10s
+  write_timeout: 30s
+
+  # CORS Configuration
+  cors_enabled: false
+  cors_allowed_origins:
+    - "*"
+
+# Recording Configuration
+recording:
+  # Directory to store recordings
+  directory: "./recordings"
+
+  # Maximum recording duration
+  max_duration: 4h
+
+  # Days to keep recordings before cleanup (0 = no cleanup)
+  cleanup_days: 30
+
+  # Combine SIPREC legs into single multi-channel file
+  combine_legs: true
+
+  # Audio format settings
+  audio_format: "wav"
+  sample_rate: 8000
+  bits_per_sample: 16
+  channel_count: 1
+
+  # Compression (for storage)
+  compress_enabled: false
+  compress_format: "gzip"
+
+# Speech-to-Text Configuration
+stt:
+  # Default STT provider
+  default_vendor: "google"
+
+  # Enabled STT vendors
+  supported_vendors:
+    - "google"
+    - "deepgram"
+    - "azure"
+    - "aws"
+    - "openai"
+    - "speechmatics"
+    - "elevenlabs"
+
+  # Supported audio codecs
+  supported_codecs:
+    - "PCMU"
+    - "PCMA"
+    - "G722"
+    - "G729"
+    - "OPUS"
+
+  # Provider-specific settings (API keys via env vars)
+  google:
+    # credentials_file set via GOOGLE_APPLICATION_CREDENTIALS env var
+    language: "en-US"
+    enable_punctuation: true
+    enable_word_timestamps: true
+
+  deepgram:
+    # api_key set via DEEPGRAM_API_KEY env var
+    model: "nova-2"
+    language: "en"
+    punctuate: true
+    diarize: false
+
+  azure:
+    # key set via AZURE_SPEECH_KEY env var
+    # region set via AZURE_SPEECH_REGION env var
+    language: "en-US"
+
+  openai:
+    # api_key set via OPENAI_API_KEY env var
+    model: "whisper-1"
+
+# Logging Configuration
+logging:
+  # Log level: debug, info, warn, error, fatal
+  level: "info"
+
+  # Log format: json, text
+  format: "json"
+
+  # Output file (empty = stdout)
+  output_file: ""
+
+# Resource Limits
+resources:
+  max_concurrent_calls: 500
+
+# Messaging Configuration (RabbitMQ/AMQP)
+messaging:
+  # Enable AMQP publishing
+  enabled: false
+
+  # AMQP URL (set via AMQP_URL env var for secrets)
+  # url: "amqp://user:pass@localhost:5672/"
+
+  # Queue name for transcriptions
+  queue_name: "siprec.transcriptions"
+
+  # Exchange configuration
+  exchange_name: "siprec"
+  exchange_type: "topic"
+
+  # Publishing options
+  publish_partial: true
+  publish_final: true
+
+  # Connection settings
+  heartbeat: 30s
+  connection_timeout: 30s
+  max_reconnect_attempts: 0  # 0 = unlimited
+
+# Session Redundancy
+redundancy:
+  enabled: true
+  session_timeout: 30s
+  session_check_interval: 10s
+
+  # Storage type: memory, redis
+  storage_type: "memory"
+
+# Redis Configuration (for session storage and clustering)
+cluster:
+  enabled: false
+  node_id: "node-1"
+
+  redis:
+    mode: "standalone"  # standalone, sentinel, cluster
+    address: "localhost:6379"
+    # password set via REDIS_PASSWORD env var
+    database: 0
+    pool_size: 20
+
+# Encryption Configuration
+encryption:
+  # Encrypt recordings at rest
+  recording_encryption: false
+  algorithm: "aes-256-gcm"
+
+  # Key rotation
+  key_rotation_enabled: false
+  key_rotation_interval: 24h
+
+# PII Detection and Redaction
+pii:
+  enabled: false
+
+  # Types of PII to detect
+  types:
+    - "ssn"
+    - "credit_card"
+    - "phone"
+    - "email"
+
+  # Redaction settings
+  redact_audio: false
+  redact_transcript: true
+  redaction_char: "*"
+
+# Analytics Configuration
+analytics:
+  enabled: false
+
+  # Elasticsearch integration
+  elasticsearch:
+    addresses:
+      - "http://localhost:9200"
+    index: "siprec-analytics"
+    # username/password via env vars
+
+# Compliance Configuration
+compliance:
+  pci:
+    enabled: false
+
+  gdpr:
+    enabled: false
+    export_dir: "./exports"
+
+  audit:
+    tamper_proof: false
+    log_path: "./logs/audit-chain.log"
+
+# Circuit Breaker Configuration
+circuit_breaker:
+  enabled: true
+
+  # STT circuit breaker
+  stt_failure_threshold: 3
+  stt_timeout: 30s
+  stt_request_timeout: 45s
+
+  # AMQP circuit breaker
+  amqp_failure_threshold: 5
+  amqp_timeout: 60s
+
+# Performance Monitoring
+performance:
+  enabled: true
+  memory_limit_mb: 512
+  cpu_limit: 80
+  gc_threshold_mb: 100
+  monitor_interval: 30s
+  auto_gc: true
+
+# Rate Limiting
+rate_limit:
+  enabled: false
+
+  # HTTP rate limiting
+  http_requests_per_second: 100.0
+  http_request_burst: 200
+
+  # SIP rate limiting
+  sip_requests_per_second: 100.0
+  sip_request_burst: 200
+
+# Hot Reload Configuration
+hot_reload:
+  enabled: true
+  watch_interval: 2s
+  backup_dir: "./config_backups"
+
+# Tracing Configuration (OpenTelemetry)
+tracing:
+  enabled: false
+  service_name: "siprec"
+
+  # OTLP exporter
+  otlp_endpoint: "localhost:4317"
+  otlp_insecure: true
+
+  # Sampling
+  sample_rate: 1.0
+
+# Authentication
+auth:
+  # API authentication
+  api_enabled: false
+  # api_key set via API_KEY env var
+
+  # JWT authentication
+  jwt_enabled: false
+  # jwt_secret set via JWT_SECRET env var
+  jwt_expiry: 24h
+
+# Alerting Configuration
+alerting:
+  enabled: false
+
+  # Email alerts
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    # credentials via env vars
+
+  # Slack alerts
+  slack:
+    enabled: false
+    # webhook_url via SLACK_WEBHOOK_URL env var
+
+  # Webhook alerts
+  webhook:
+    enabled: false
+    url: ""

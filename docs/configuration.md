@@ -1,6 +1,164 @@
 # Configuration
 
-All settings are provided through environment variables. The core service only requires SIP bind details; everything else is optional.
+IZI SIPREC supports multiple configuration methods with the following priority order (highest to lowest):
+
+1. **Environment variables** - Always take precedence
+2. **Configuration file** (YAML/JSON) - Production-ready structured configuration
+3. **`.env` file** - Development convenience
+4. **Built-in defaults** - Sensible defaults for all settings
+
+## Configuration File (Recommended for Production)
+
+For production deployments, use a YAML or JSON configuration file. The server automatically searches for configuration files in these locations:
+
+1. Path specified in `CONFIG_FILE` environment variable
+2. `./config.yaml` or `./config.yml` or `./config.json` (current directory)
+3. `/etc/siprec/config.yaml` or `/etc/siprec/config.yml` or `/etc/siprec/config.json`
+4. `$HOME/.siprec/config.yaml` or `$HOME/.siprec/config.yml` or `$HOME/.siprec/config.json`
+
+### Minimal Configuration Example
+
+```yaml
+# config.yaml - Minimal configuration (defaults apply for missing values)
+network:
+  host: "0.0.0.0"
+  ports:
+    - 5060
+
+http:
+  port: 8080
+
+logging:
+  level: "info"
+```
+
+### Full Configuration Example
+
+```yaml
+# config.yaml - Production configuration
+network:
+  external_ip: "auto"
+  internal_ip: "auto"
+  host: "0.0.0.0"
+  ports:
+    - 5060
+    - 5061
+  rtp_port_min: 10000
+  rtp_port_max: 20000
+  rtp_timeout: 30s
+  enable_tls: false
+  enable_srtp: false
+
+http:
+  port: 8080
+  enabled: true
+  enable_metrics: true
+  enable_api: true
+  read_timeout: 10s
+  write_timeout: 30s
+
+recording:
+  directory: "./recordings"
+  max_duration: 4h
+  cleanup_days: 30
+  combine_legs: true
+  format: "wav"
+  quality: 5
+
+stt:
+  default_vendor: "google"
+  supported_vendors:
+    - "google"
+    - "deepgram"
+    - "azure"
+    - "aws"
+    - "openai"
+  supported_codecs:
+    - "PCMU"
+    - "PCMA"
+    - "G722"
+    - "G729"
+    - "OPUS"
+
+logging:
+  level: "info"
+  format: "json"
+
+resources:
+  max_concurrent_calls: 500
+
+redundancy:
+  enabled: true
+  session_timeout: 30s
+  session_check_interval: 10s
+  storage_type: "memory"  # Use "redis" for production HA
+
+encryption:
+  algorithm: "AES-256-GCM"
+  encryption_key_store: "memory"
+
+performance:
+  enabled: true
+  memory_limit_mb: 512
+  cpu_limit: 80
+  gc_threshold_mb: 100
+  monitor_interval: 30s
+  enable_auto_gc: true
+
+circuit_breaker:
+  enabled: true
+  stt_failure_threshold: 3
+  stt_timeout: 30s
+  stt_request_timeout: 45s
+```
+
+### JSON Configuration
+
+JSON format is also supported:
+
+```json
+{
+  "network": {
+    "host": "0.0.0.0",
+    "ports": [5060, 5061]
+  },
+  "http": {
+    "port": 8080,
+    "enabled": true
+  },
+  "logging": {
+    "level": "info"
+  }
+}
+```
+
+### Using Configuration Files with Docker
+
+```bash
+# Mount config file
+docker run -v /path/to/config.yaml:/etc/siprec/config.yaml ghcr.io/loreste/siprec:latest
+
+# Or specify via environment variable
+docker run -e CONFIG_FILE=/app/config.yaml -v /path/to/config.yaml:/app/config.yaml ghcr.io/loreste/siprec:latest
+```
+
+### Environment Variable Overrides
+
+Environment variables always override configuration file values. This allows you to:
+- Use a base configuration file
+- Override sensitive values (API keys, passwords) via environment variables
+- Customize per-environment settings without modifying the config file
+
+```bash
+# Base config from file, override specific values
+CONFIG_FILE=/etc/siprec/config.yaml
+HTTP_PORT=9090  # Overrides http.port from config file
+LOG_LEVEL=debug  # Overrides logging.level from config file
+```
+
+## Environment Variables Reference
+
+Environment variables can be used standalone or to override configuration file values. The core service only requires SIP bind details; everything else is optional.
 
 ## SIP & Networking
 

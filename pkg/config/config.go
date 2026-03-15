@@ -1216,8 +1216,19 @@ type RateLimitConfig struct {
 	SIPRequestBurst      int     `json:"sip_request_burst" env:"RATE_LIMIT_SIP_REQUEST_BURST" default:"200"`
 }
 
-// Load loads the configuration from environment variables or .env file
+// Load loads the configuration from a config file, environment variables, or .env file
+// Priority order: config file (YAML/JSON) > environment variables > .env file > defaults
 func Load(logger *logrus.Logger) (*Config, error) {
+	// Check for config file first (production mode)
+	configFile := FindConfigFile()
+	if configFile != "" {
+		logger.WithField("config_file", configFile).Info("Loading configuration from file")
+		return LoadFromFile(logger, configFile)
+	}
+
+	// Fall back to .env / environment variables (development mode)
+	logger.Debug("No config file found, using .env/environment variables")
+
 	// Get current working directory
 	wd, err := os.Getwd()
 	if err != nil {
