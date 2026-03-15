@@ -267,7 +267,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}).Error("Failed to listen on UDP port for RTCP")
 				rtpSpan.RecordError(err)
 				rtpSpan.SetStatus(codes.Error, "listen udp rtcp failed")
-				udpConn.Close()
+				if closeErr := udpConn.Close(); closeErr != nil {
+					forwarder.Logger.WithError(closeErr).Warn("Failed to close UDP connection during cleanup")
+				}
 				if metrics.IsMetricsEnabled() {
 					metrics.RecordRTPDroppedPackets("rtcp_listen_failure", 1)
 				}
@@ -672,7 +674,9 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					} else {
 						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("Failed to stream audio samples to STT provider")
 					}
-					sttWriter.Close()
+					if closeErr := sttWriter.Close(); closeErr != nil {
+						forwarder.Logger.WithError(closeErr).WithField("call_uuid", callUUID).Debug("Failed to close STT writer")
+					}
 					sttWriter = nil
 				}
 			}
