@@ -15,7 +15,7 @@ The project is designed for high-performance **telecom recording** environments 
 
 This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 1.0.2
+**Version:** 1.1.0
 
 ## Use Cases
 
@@ -485,12 +485,14 @@ siprec/
 │   ├── encryption/      # End-to-end encryption
 │   ├── errors/          # Error handling utilities
 │   ├── http/            # HTTP server and API handlers
+│   ├── lawfulintercept/ # Lawful intercept with LEA delivery
 │   ├── media/           # RTP/SRTP and audio processing
 │   ├── messaging/       # AMQP/RabbitMQ client
 │   ├── metrics/         # Prometheus metrics
 │   ├── performance/     # Performance monitoring
 │   ├── pii/             # PII detection and redaction
 │   ├── realtime/        # Real-time analytics pipeline
+│   ├── resources/       # Resource management and limits
 │   ├── security/        # Security and audit logging
 │   ├── session/         # Session management and Redis
 │   ├── sip/             # SIP server and handler
