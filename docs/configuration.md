@@ -721,3 +721,170 @@ grep '"call_id":"call-12345"' /var/log/siprec.log
 
 Authorization headers are automatically redacted in audit logs to prevent credential exposure. The redacted format shows `[REDACTED-<length>]` to indicate the header was present without exposing sensitive data.
 
+## AMQP/RabbitMQ Integration
+
+Real-time transcription delivery via AMQP message queues.
+
+### Basic Configuration
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AMQP_URL` | RabbitMQ connection URL | - |
+| `AMQP_QUEUE_NAME` | Queue name for transcriptions | - |
+| `PUBLISH_PARTIAL_TRANSCRIPTS` | Publish interim results | `true` |
+| `PUBLISH_FINAL_TRANSCRIPTS` | Publish final results | `true` |
+
+**Example:**
+
+```bash
+AMQP_URL=amqp://username:password@rabbitmq:5672/
+AMQP_QUEUE_NAME=transcriptions
+```
+
+### Enhanced Realtime Publisher
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ENABLE_REALTIME_AMQP` | Enable enhanced realtime publishing | `false` |
+| `REALTIME_QUEUE_NAME` | Queue for realtime events | `siprec_realtime` |
+| `REALTIME_EXCHANGE_NAME` | Exchange name | - |
+| `REALTIME_ROUTING_KEY` | Routing key | `siprec.realtime` |
+| `REALTIME_BATCH_SIZE` | Messages per batch | `10` |
+| `REALTIME_BATCH_TIMEOUT` | Max wait for batch | `1s` |
+| `REALTIME_QUEUE_SIZE` | Internal queue size | `1000` |
+
+### Analytics Publishing
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PUBLISH_SENTIMENT_UPDATES` | Include sentiment analysis | `true` |
+| `PUBLISH_KEYWORD_DETECTIONS` | Include keyword detection | `true` |
+| `PUBLISH_SPEAKER_CHANGES` | Include speaker events | `true` |
+
+### Connection Pool & Reliability
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AMQP_MAX_CONNECTIONS` | Connection pool size | `10` |
+| `AMQP_MAX_CHANNELS_PER_CONN` | Channels per connection | `100` |
+| `AMQP_CONNECTION_TIMEOUT` | Connection timeout | `30s` |
+| `AMQP_HEARTBEAT` | Heartbeat interval | `10s` |
+| `AMQP_PUBLISH_TIMEOUT` | Publish timeout | `5s` |
+| `AMQP_PUBLISH_CONFIRM` | Wait for broker ACK | `true` |
+| `AMQP_MAX_RETRIES` | Max retry attempts | `3` |
+| `AMQP_RETRY_DELAY` | Delay between retries | `2s` |
+
+### TLS Security
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AMQP_TLS_ENABLED` | Enable TLS encryption | `false` |
+| `AMQP_TLS_CERT_FILE` | Client certificate path | - |
+| `AMQP_TLS_KEY_FILE` | Client key path | - |
+| `AMQP_TLS_CA_FILE` | CA certificate path | - |
+| `AMQP_TLS_SKIP_VERIFY` | Skip certificate verification | `false` |
+
+### Dead Letter Queue
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AMQP_DLQ_ENABLED` | Enable dead letter queue | `false` |
+| `AMQP_DLQ_EXCHANGE` | DLQ exchange name | `siprec.dlx` |
+| `AMQP_DLQ_ROUTING_KEY` | DLQ routing key | `failed` |
+| `AMQP_MESSAGE_TTL` | Message time-to-live | `24h` |
+
+**Production Example:**
+
+```bash
+# Connection
+AMQP_URL=amqps://user:pass@rabbitmq.example.com:5671/
+AMQP_QUEUE_NAME=siprec_transcriptions
+
+# Enhanced realtime with batching
+ENABLE_REALTIME_AMQP=true
+REALTIME_BATCH_SIZE=10
+REALTIME_BATCH_TIMEOUT=1s
+
+# Include analytics
+PUBLISH_SENTIMENT_UPDATES=true
+PUBLISH_KEYWORD_DETECTIONS=true
+
+# TLS security
+AMQP_TLS_ENABLED=true
+AMQP_TLS_CA_FILE=/etc/ssl/certs/rabbitmq-ca.pem
+
+# Reliability
+AMQP_MAX_CONNECTIONS=10
+AMQP_PUBLISH_CONFIRM=true
+AMQP_MAX_RETRIES=3
+```
+
+See [Real-time Transcription](realtime-transcription.md) for message formats and consumer examples.
+
+## Real-Time Analytics
+
+### Sentiment Analysis
+
+Automatic sentiment analysis on all transcriptions.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SENTIMENT_ANALYSIS_ENABLED` | Enable sentiment analysis | `true` |
+| `SENTIMENT_CONTEXT_WINDOW` | Context window for trend analysis | `5` |
+| `SENTIMENT_CACHE_SIZE` | Cache size for results | `1000` |
+
+**Features:**
+- Lexicon-based scoring (50+ positive/negative words)
+- Emotion detection (joy, anger, sadness, fear, love, surprise)
+- Negation handling ("not good" → negative)
+- Intensifier support ("very good" → higher magnitude)
+- Per-speaker sentiment tracking
+
+### Keyword Detection
+
+Automatic detection of compliance and security keywords.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `KEYWORD_DETECTION_ENABLED` | Enable keyword detection | `true` |
+| `KEYWORD_MIN_CONFIDENCE` | Minimum detection confidence | `0.6` |
+| `KEYWORD_FUZZY_MATCH` | Enable fuzzy matching | `true` |
+
+**Predefined Categories:**
+
+| Category | Keywords |
+| --- | --- |
+| **Financial** | credit card, SSN, bank account, transactions |
+| **Healthcare** | HIPAA, PHI, medical record, patient ID |
+| **Legal** | confidential, attorney-client, litigation |
+| **Security** | password, hack, breach, malware, phishing |
+
+**Custom Keywords** (via config file):
+
+```yaml
+keyword_detection:
+  custom_keywords:
+    internal:
+      - pattern: "project-x"
+        severity: "critical"
+        weight: 0.95
+      - pattern: "secret project"
+        severity: "high"
+        weight: 0.9
+```
+
+### Compliance Monitoring
+
+Real-time compliance rule evaluation.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `COMPLIANCE_MONITORING_ENABLED` | Enable compliance monitoring | `true` |
+| `PCI_COMPLIANCE_MODE` | Enable PCI DSS safeguards | `false` |
+| `GDPR_COMPLIANCE_MODE` | Enable GDPR safeguards | `false` |
+
+**GDPR Endpoints:**
+- `POST /api/compliance/gdpr/export` - Export user data
+- `DELETE /api/compliance/gdpr/erase` - Erase user data
+- `GET /api/compliance/status` - Compliance status
+
