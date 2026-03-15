@@ -54,6 +54,20 @@ func GetCodecInfo(payloadType byte) (CodecInfo, bool) {
 	return codec, exists
 }
 
+// PCMBytesPerPacket returns the number of PCM bytes (16-bit LE) corresponding to one
+// typical RTP packet for the given codec at the given sample rate. Used for packet-loss
+// concealment (inserting silence for missing packets). Assumes 20ms packetization for
+// narrowband/wideband voice codecs.
+func PCMBytesPerPacket(codecName string, sampleRate int) int {
+	if sampleRate <= 0 {
+		sampleRate = 8000
+	}
+	// 20ms at sampleRate, 16-bit mono: (sampleRate * 20 / 1000) * 2
+	const msPerPacket = 20
+	samples := sampleRate * msPerPacket / 1000
+	return samples * 2
+}
+
 // IsOpusCodec checks if the payload type represents an Opus codec
 func IsOpusCodec(payloadType byte) bool {
 	codec, exists := SupportedCodecs[payloadType]

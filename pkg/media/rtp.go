@@ -486,6 +486,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		sttWriter := sttPipeWriter
 
 		var firstPacketReceived bool
+		var lastSeq *uint16 // for PLC: insert silence when sequence gaps are detected
 		decodeAndProcess := func(packet []byte, arrival time.Time, remoteAddr *net.UDPAddr) {
 			if len(packet) == 0 {
 				return
@@ -593,6 +594,42 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
+			// Packet loss concealment (PLC): insert silence for missing packets so the
+			// recording stays time-accurate and stereo combine aligns both legs.
+			sampleRate := currentSampleRate
+			if sampleRate <= 0 {
+				sampleRate = 8000
+			}
+			if lastSeq != nil {
+				expectedNext := uint16(*lastSeq + 1)
+				seq := rtpPacket.SequenceNumber
+				var lost int
+				if seq != expectedNext {
+					if seq > expectedNext {
+						lost = int(seq - expectedNext)
+					} else {
+						// Wraparound
+						lost = int(seq) + (65536 - int(expectedNext))
+					}
+					const maxPLC = 100 // cap at ~2s at 20ms/packet to avoid runaway on bad sequence
+					if lost > maxPLC {
+						lost = maxPLC
+					}
+					if lost > 0 && recordingWriter != nil {
+						bytesPerPacket := PCMBytesPerPacket(codecName, sampleRate)
+						silenceLen := lost * bytesPerPacket
+						if silenceLen > 0 {
+							silence := make([]byte, silenceLen)
+							if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
+								forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
+							} else if metrics.IsMetricsEnabled() {
+								metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+							}
+						}
+					}
+				}
+			}
+
 			recordingPayload, transcriptionPayload, procErr := prepareRecordingAndTranscriptionPayloads(pcm, forwarder, config.AudioProcessing.Enabled, callUUID)
 			if procErr != nil {
 				forwarder.Logger.WithError(procErr).WithField("call_uuid", callUUID).Debug("Failed to process audio chunk")
@@ -620,6 +657,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 				return
 			}
+			seq := rtpPacket.SequenceNumber
+			lastSeq = &seq
 			if sttWriter != nil && len(transcriptionPayload) > 0 {
 				if _, err := sttWriter.Write(transcriptionPayload); err != nil {
 					if errors.Is(err, io.ErrClosedPipe) {
@@ -652,111 +691,99 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exiting via ctx.Done()")
 				return
 			case <-ticker.C:
-				// Try read with short deadline to catch any buffered packets
-				buffer, returnBuffer := GetPacketBuffer(1500)
-				_ = udpConn.SetReadDeadline(time.Now().Add(5 * time.Millisecond)) // Short deadline for non-blocking-ish read
-				n, addr, err := udpConn.ReadFromUDP(buffer)
-
-				if err != nil {
-					returnBuffer(buffer)
-					// Timeout is expected for non-blocking read, just continue
-					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Drain all buffered packets in this tick to avoid per-leg latency variance.
+				// Each read uses a short deadline; on timeout we exit the drain loop.
+				_ = udpConn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
+				for {
+					buffer, returnBuffer := GetPacketBuffer(1500)
+					n, addr, err := udpConn.ReadFromUDP(buffer)
+					if err != nil {
+						returnBuffer(buffer)
+						if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+							break
+						}
+						if strings.Contains(err.Error(), "use of closed") ||
+							strings.Contains(err.Error(), "closed network") ||
+							strings.Contains(err.Error(), "bad file descriptor") {
+							forwarder.Logger.WithField("call_uuid", callUUID).Info("Connection closed, exiting")
+							return
+						}
+						break
+					}
+					if n == 0 {
+						returnBuffer(buffer)
 						continue
 					}
-					// Non-timeout error might mean connection closed
-					if strings.Contains(err.Error(), "use of closed") ||
-						strings.Contains(err.Error(), "closed network") ||
-						strings.Contains(err.Error(), "bad file descriptor") {
-						forwarder.Logger.WithField("call_uuid", callUUID).Info("Connection closed, exiting")
-						return
+
+					arrival := time.Now()
+					if forwarder.UseRTCPMux && isRTCPPacket(buffer[:n]) {
+						handleRTCPPacket(forwarder, buffer[:n], addr)
+						returnBuffer(buffer)
+						continue
 					}
-					// Other error, continue to check stop conditions
-					continue
-				}
 
-				if n == 0 {
-					returnBuffer(buffer)
-					continue
-				}
-
-				arrival := time.Now()
-
-				// Process the packet (keeping existing logic)
-				if forwarder.UseRTCPMux && isRTCPPacket(buffer[:n]) {
-					handleRTCPPacket(forwarder, buffer[:n], addr)
-					returnBuffer(buffer)
-					continue
-				}
-
-				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPPacket(n)
-				}
-
-				var processBuffer []byte
-				var processReturnBuffer func(interface{})
-
-				if config.EnableSRTP && srtpSession != nil {
-					// SRTP processing
-					forwarder.SRTPEnabled = true
-					decryptedRTP, returnDecryptedBuffer := GetPacketBuffer(n + 64)
-					var finishProcessingTimer func()
 					if metrics.IsMetricsEnabled() {
-						finishProcessingTimer = metrics.ObserveRTPProcessing("srtp_decryption")
+						metrics.RecordRTPPacket(n)
 					}
 
-					var ssrc uint32
-					if n >= 12 {
-						ssrc = uint32(buffer[8])<<24 | uint32(buffer[9])<<16 | uint32(buffer[10])<<8 | uint32(buffer[11])
-					}
+					var processBuffer []byte
+					processReturnBuffer := func() { returnBuffer(buffer) }
 
-					readStream, err := srtpSession.OpenReadStream(ssrc)
-					if err != nil {
+					if config.EnableSRTP && srtpSession != nil {
+						forwarder.SRTPEnabled = true
+						decryptedRTP, returnDecryptedBuffer := GetPacketBuffer(n + 64)
+						var finishProcessingTimer func()
 						if metrics.IsMetricsEnabled() {
-							metrics.RecordSRTPDecryptionErrors("open_stream_error", 1)
+							finishProcessingTimer = metrics.ObserveRTPProcessing("srtp_decryption")
 						}
-						forwarder.Logger.WithError(err).WithFields(logrus.Fields{
-							"call_uuid": callUUID,
-							"ssrc":      ssrc,
-						}).Debug("Failed to open SRTP read stream")
+						var ssrc uint32
+						if n >= 12 {
+							ssrc = uint32(buffer[8])<<24 | uint32(buffer[9])<<16 | uint32(buffer[10])<<8 | uint32(buffer[11])
+						}
+						readStream, err := srtpSession.OpenReadStream(ssrc)
+						if err != nil {
+							if metrics.IsMetricsEnabled() {
+								metrics.RecordSRTPDecryptionErrors("open_stream_error", 1)
+							}
+							forwarder.Logger.WithError(err).WithFields(logrus.Fields{
+								"call_uuid": callUUID,
+								"ssrc":      ssrc,
+							}).Debug("Failed to open SRTP read stream")
+							if finishProcessingTimer != nil {
+								finishProcessingTimer()
+							}
+							returnBuffer(buffer)
+							returnDecryptedBuffer(decryptedRTP)
+							continue
+						}
+						decryptedLen, err := readStream.Read(decryptedRTP[:cap(decryptedRTP)])
 						if finishProcessingTimer != nil {
 							finishProcessingTimer()
 						}
-						returnBuffer(buffer)
-						returnDecryptedBuffer(decryptedRTP)
-						continue
-					}
-
-					decryptedLen, err := readStream.Read(decryptedRTP[:cap(decryptedRTP)])
-					if finishProcessingTimer != nil {
-						finishProcessingTimer()
-					}
-					if err != nil {
-						if metrics.IsMetricsEnabled() {
-							metrics.RecordSRTPDecryptionErrors("read_error", 1)
+						if err != nil {
+							if metrics.IsMetricsEnabled() {
+								metrics.RecordSRTPDecryptionErrors("read_error", 1)
+							}
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to read from SRTP stream")
+							returnBuffer(buffer)
+							returnDecryptedBuffer(decryptedRTP)
+							continue
 						}
-						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to read from SRTP stream")
-						returnBuffer(buffer)
-						returnDecryptedBuffer(decryptedRTP)
-						continue
+						if metrics.IsMetricsEnabled() {
+							metrics.RecordSRTPPacketsProcessed("rx", 1)
+						}
+						processBuffer = decryptedRTP[:decryptedLen]
+						processReturnBuffer = func() {
+							returnBuffer(buffer)
+							returnDecryptedBuffer(decryptedRTP)
+						}
+					} else {
+						processBuffer = buffer[:n]
 					}
 
-					if metrics.IsMetricsEnabled() {
-						metrics.RecordSRTPPacketsProcessed("rx", 1)
-					}
-
-					processBuffer = decryptedRTP[:decryptedLen]
-					processReturnBuffer = func(interface{}) {
-						returnBuffer(buffer)
-						returnDecryptedBuffer(decryptedRTP)
-					}
-				} else {
-					// Plain RTP
-					processBuffer = buffer[:n]
-					processReturnBuffer = returnBuffer
+					decodeAndProcess(processBuffer, arrival, addr)
+					processReturnBuffer()
 				}
-
-				decodeAndProcess(processBuffer, arrival, addr)
-				processReturnBuffer(nil)
 			}
 		}
 	}()
