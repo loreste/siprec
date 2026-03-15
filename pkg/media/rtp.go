@@ -603,27 +603,33 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if lastSeq != nil {
 				expectedNext := uint16(*lastSeq + 1)
 				seq := rtpPacket.SequenceNumber
-				var lost int
 				if seq != expectedNext {
-					if seq > expectedNext {
-						lost = int(seq - expectedNext)
+					// Reordered (late) packet: seq is earlier than lastSeq in the 16-bit window.
+					// uint16(*lastSeq-seq) < 32768 means the packet is in the recent half, not wraparound.
+					if seq <= *lastSeq && uint16(*lastSeq-seq) < 32768 {
+						// Out-of-order arrival: skip PLC, do not insert silence.
 					} else {
-						// Wraparound
-						lost = int(seq) + (65536 - int(expectedNext))
-					}
-					const maxPLC = 100 // cap at ~2s at 20ms/packet to avoid runaway on bad sequence
-					if lost > maxPLC {
-						lost = maxPLC
-					}
-					if lost > 0 && recordingWriter != nil {
-						bytesPerPacket := PCMBytesPerPacket(codecName, sampleRate)
-						silenceLen := lost * bytesPerPacket
-						if silenceLen > 0 {
-							silence := make([]byte, silenceLen)
-							if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
-								forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
-							} else if metrics.IsMetricsEnabled() {
-								metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+						var lost int
+						if seq > expectedNext {
+							lost = int(seq - expectedNext)
+						} else {
+							// Wraparound
+							lost = int(seq) + (65536 - int(expectedNext))
+						}
+						const maxPLC = 100 // cap at ~2s at 20ms/packet to avoid runaway on bad sequence
+						if lost > maxPLC {
+							lost = maxPLC
+						}
+						if lost > 0 && recordingWriter != nil {
+							bytesPerPacket := PCMBytesPerPacket(codecName, sampleRate)
+							silenceLen := lost * bytesPerPacket
+							if silenceLen > 0 {
+								silence := make([]byte, silenceLen)
+								if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
+									forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
+								} else if metrics.IsMetricsEnabled() {
+									metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+								}
 							}
 						}
 					}
