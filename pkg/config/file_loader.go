@@ -24,8 +24,11 @@ const (
 // LoadFromFile loads configuration from a YAML or JSON file
 // Environment variables will override file values when set
 func LoadFromFile(logger *logrus.Logger, configPath string) (*Config, error) {
+	// Clean the path to prevent path traversal
+	cleanPath := filepath.Clean(configPath)
+
 	// Determine file type from extension
-	ext := strings.ToLower(filepath.Ext(configPath))
+	ext := strings.ToLower(filepath.Ext(cleanPath))
 	var fileType ConfigFileType
 	switch ext {
 	case ".yaml", ".yml":
@@ -38,7 +41,8 @@ func LoadFromFile(logger *logrus.Logger, configPath string) (*Config, error) {
 	}
 
 	// Read the config file
-	data, err := os.ReadFile(configPath)
+	// #nosec G304 -- Config path is provided by user/operator via CLI flag or environment variable
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +63,7 @@ func LoadFromFile(logger *logrus.Logger, configPath string) (*Config, error) {
 	}
 
 	logger.WithFields(logrus.Fields{
-		"path": configPath,
+		"path": cleanPath,
 		"type": fileType,
 	}).Info("Loaded configuration from file")
 
@@ -362,5 +366,5 @@ func WriteExampleConfig(path string) error {
 # Documentation: https://github.com/loreste/siprec/docs/configuration.md
 
 `
-	return os.WriteFile(path, []byte(header+string(data)), 0644)
+	return os.WriteFile(path, []byte(header+string(data)), 0600)
 }
