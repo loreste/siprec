@@ -111,6 +111,11 @@ func newDefaultConfig() *Config {
 		},
 		Resources: ResourceConfig{
 			MaxConcurrentCalls: 500,
+			MaxRTPStreams:      1500,
+			WorkerPoolSize:     0,
+			MaxMemoryMB:        0,
+			HorizontalScaling:  false,
+			NodeID:             "",
 		},
 		Redundancy: RedundancyConfig{
 			Enabled:              true,
@@ -139,6 +144,19 @@ func newDefaultConfig() *Config {
 			STTFailureThreshold: 3,
 			STTTimeout:          30 * time.Second,
 			STTRequestTimeout:   45 * time.Second,
+		},
+		LawfulIntercept: LawfulInterceptConfig{
+			Enabled:      false,
+			MutualTLS:    true,
+			AuditLogPath: "/var/log/siprec/li_audit.log",
+		},
+		SpeakerDiarization: SpeakerDiarizationConfig{
+			Enabled:              true,
+			MaxSpeakers:          10,
+			SimilarityThreshold:  0.7,
+			VoiceFeatures:        true,
+			CrossSessionTracking: false,
+			ProfileRetentionDays: 30,
 		},
 	}
 }
@@ -330,7 +348,7 @@ func WriteExampleConfig(path string) error {
 		},
 		STT: STTConfig{
 			DefaultVendor:    "google",
-			SupportedVendors: []string{"google", "deepgram", "azure", "aws", "openai"},
+			SupportedVendors: []string{"google", "deepgram", "azure", "aws", "openai", "elevenlabs", "speechmatics", "whisper"},
 			SupportedCodecs:  []string{"PCMU", "PCMA", "G722", "G729", "OPUS"},
 		},
 		Logging: LoggingConfig{
@@ -339,12 +357,30 @@ func WriteExampleConfig(path string) error {
 		},
 		Resources: ResourceConfig{
 			MaxConcurrentCalls: 500,
+			MaxRTPStreams:      1500,
+			WorkerPoolSize:     0,
+			MaxMemoryMB:        0,
+			HorizontalScaling:  false,
+			NodeID:             "",
 		},
 		Redundancy: RedundancyConfig{
 			Enabled:              true,
 			SessionTimeout:       30 * time.Second,
 			SessionCheckInterval: 10 * time.Second,
 			StorageType:          "memory",
+		},
+		LawfulIntercept: LawfulInterceptConfig{
+			Enabled:      false,
+			MutualTLS:    true,
+			AuditLogPath: "/var/log/siprec/li_audit.log",
+		},
+		SpeakerDiarization: SpeakerDiarizationConfig{
+			Enabled:              true,
+			MaxSpeakers:          10,
+			SimilarityThreshold:  0.7,
+			VoiceFeatures:        true,
+			CrossSessionTracking: false,
+			ProfileRetentionDays: 30,
 		},
 	}
 

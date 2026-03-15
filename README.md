@@ -5,14 +5,15 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
+[![Scalability](https://img.shields.io/badge/Scale-100k%2B%20Concurrent-orange.svg)](docs/cluster-configuration.md)
 
 ## Overview
 
 IZI SIPREC is an open-source **SIPREC Session Recording Server (SRS)** written in Golang. It receives SIPREC recording sessions from SBCs, PBXs, or SIP proxies and captures the RTP streams for storage, analysis, or compliance recording.
 
-The project is designed for high-performance **telecom recording** environments and can handle large numbers of concurrent **VoIP recording** and **SIP recording** sessions.
+The project is designed for high-performance **telecom recording** environments and can scale to **100,000+ concurrent recordings** with horizontal scaling and Redis-backed session management.
 
-This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
+This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
 **Version:** 1.0.2
 
@@ -54,6 +55,7 @@ Works with any SIPREC-compliant source, including:
 - **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
 - **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
 - **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
+- **Speaker Diarization** – Automatic speaker separation with voice feature extraction, cross-session speaker tracking, and configurable similarity thresholds
 
 ### Speech-to-Text (STT)
 - **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
@@ -70,6 +72,7 @@ Works with any SIPREC-compliant source, including:
 - **Encrypted Recording Pipeline** – Streams media through AES-256-GCM into `.siprec` containers with per-recording key metadata
 - **PCI DSS Compliance Mode** – Automatic security hardening and required safeguards
 - **GDPR Tools** – Data export and erasure APIs with audit trails
+- **Lawful Intercept Support** – Secure LEA delivery with mutual TLS, warrant verification, encryption, and tamper-proof audit logging
 - **TLS Support** – Secure SIP signaling with configurable certificates
 - **Authentication** – JWT tokens and API key authentication with role-based access
 
@@ -87,6 +90,13 @@ Works with any SIPREC-compliant source, including:
 - **AMQP/RabbitMQ** – Real-time transcription delivery with batching and retries
 - **Multi-Endpoint Fan-Out** – Publish to multiple message queues simultaneously
 - **MySQL/MariaDB** – Optional database persistence for sessions, transcriptions, and CDRs
+
+### Enterprise Scaling
+- **100k+ Concurrent Recordings** – Horizontal scaling with Redis-backed session sharing
+- **Worker Pool Management** – Configurable worker pools with automatic CPU-based sizing
+- **Memory Management** – Configurable memory limits with automatic garbage collection
+- **Node Clustering** – Multi-node deployments with unique node IDs for distributed processing
+- **RTP Stream Optimization** – Configurable RTP stream limits (typically 2-3x concurrent calls)
 
 ### Operational Features
 - **Pause/Resume API** – Control recording and transcription mid-call via REST API
@@ -247,6 +257,42 @@ export REDIS_PASSWORD=your-password
 | `MYSQL_DATABASE` | Database name | `siprec` |
 | `MYSQL_USER` | Database user | - |
 | `MYSQL_PASSWORD` | Database password | - |
+
+### Enterprise Scaling
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `MAX_CONCURRENT_CALLS` | Maximum concurrent recording sessions | `500` |
+| `MAX_RTP_STREAMS` | Maximum RTP streams (typically 2-3x calls) | `1500` |
+| `WORKER_POOL_SIZE` | Worker pool size (0 = auto based on CPU) | `0` |
+| `MAX_MEMORY_MB` | Maximum memory usage in MB (0 = unlimited) | `0` |
+| `HORIZONTAL_SCALING` | Enable horizontal scaling mode | `false` |
+| `NODE_ID` | Unique node ID for clustered deployments | - |
+
+### Speaker Diarization
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `DIARIZATION_ENABLED` | Enable speaker diarization | `true` |
+| `DIARIZATION_MAX_SPEAKERS` | Maximum speakers per session | `10` |
+| `DIARIZATION_THRESHOLD` | Speaker similarity threshold (0.0-1.0) | `0.7` |
+| `DIARIZATION_VOICE_FEATURES` | Enable voice feature extraction | `true` |
+| `DIARIZATION_CROSS_SESSION` | Enable cross-session speaker tracking | `false` |
+| `DIARIZATION_PROFILE_RETENTION` | Speaker profile retention in days | `30` |
+
+### Lawful Intercept
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `LI_ENABLED` | Enable lawful intercept support | `false` |
+| `LI_DELIVERY_ENDPOINT` | Secure LEA delivery endpoint (HTTPS) | - |
+| `LI_ENCRYPTION_KEY_PATH` | Path to encryption key for intercepts | - |
+| `LI_WARRANT_ENDPOINT` | External warrant verification endpoint | - |
+| `LI_AUDIT_LOG_PATH` | Audit log path for intercept operations | `/var/log/siprec/li_audit.log` |
+| `LI_MUTUAL_TLS` | Require mutual TLS for LEA delivery | `true` |
+| `LI_CLIENT_CERT_PATH` | Client certificate for LEA mTLS | - |
+| `LI_CLIENT_KEY_PATH` | Client key for LEA mTLS | - |
+| `LI_RETENTION_DAYS` | Intercept data retention in days | `365` |
 
 ### Analytics
 
@@ -567,12 +613,35 @@ The server has been extensively load tested with the following results:
 | 20,000 | 30s | UDP | 100% | 1,554 MB | ~17% |
 
 **Key Performance Metrics:**
-- **Concurrent Calls**: Tested up to 20,000 simultaneous sessions
+- **Concurrent Calls**: Tested up to 20,000 simultaneous sessions (single node)
 - **Call Duration**: Validated with 5-minute sustained calls at 6,000 concurrent
 - **Memory Efficiency**: ~55 KB per concurrent call (signaling only)
 - **CPU Efficiency**: Linear scaling, ~0.001% per concurrent call
 - **Latency**: Sub-50ms for SIP signaling, <100ms for STT streaming
 - **Throughput**: 10,000+ RTP packets/sec per core
+
+### Enterprise Scale (100k+ Concurrent)
+
+For deployments requiring 100,000+ concurrent recordings:
+
+```bash
+# Enable horizontal scaling with Redis session sharing
+HORIZONTAL_SCALING=true
+REDIS_URL=redis://cluster:6379
+NODE_ID=node-1
+
+# Resource configuration per node
+MAX_CONCURRENT_CALLS=25000
+MAX_RTP_STREAMS=75000
+WORKER_POOL_SIZE=64
+MAX_MEMORY_MB=16384
+```
+
+**Recommended Infrastructure:**
+- **4-5 nodes** with 32+ CPU cores and 32GB RAM each
+- **Redis Cluster** for session state sharing
+- **Load balancer** (HAProxy, NGINX, or cloud LB) for SIP distribution
+- **Shared storage** (NFS, S3, or GCS) for recordings
 
 ### SIPp Load Testing
 
@@ -611,4 +680,4 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 
 ### Keywords
 
-SIPREC, Session Recording Server, SRS, VoIP recording, SIP recording, telecom recording, call recording, Golang SIP server, Go SIP, OpenSIPS SIPREC, Kamailio SIPREC, FreeSWITCH recording, Asterisk SIPREC, SBC recording server, lawful intercept recording, compliance recording, contact center recording, RTP capture, speech-to-text, real-time transcription, PCI DSS recording, GDPR compliant recording, encrypted call recording, Oracle SBC SIPREC, Cisco CUBE recording, AudioCodes SIPREC, Ribbon SBC recording, enterprise call recording, VoIP compliance
+SIPREC, Session Recording Server, SRS, VoIP recording, SIP recording, telecom recording, call recording, Golang SIP server, Go SIP, OpenSIPS SIPREC, Kamailio SIPREC, FreeSWITCH recording, Asterisk SIPREC, SBC recording server, lawful intercept recording, compliance recording, contact center recording, RTP capture, speech-to-text, real-time transcription, PCI DSS recording, GDPR compliant recording, encrypted call recording, Oracle SBC SIPREC, Cisco CUBE recording, AudioCodes SIPREC, Ribbon SBC recording, enterprise call recording, VoIP compliance, AI transcription, speaker diarization, speaker separation, 100k concurrent recordings, horizontal scaling, enterprise scale recording, LEA delivery, CALEA compliant, voice analytics, sentiment analysis
