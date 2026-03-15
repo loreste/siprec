@@ -11,6 +11,14 @@ IZI SIPREC provides a compact implementation of RFC 7865/7866 recording flows.
 - **High Availability** – Built-in session redundancy and failover handling (configurable via Redis).
 - **Optional STT streaming** – A provider manager routes captured audio to providers like Google, Deepgram, or Whisper. Supports **PII Redaction** and **Language Switching**.
 - **Multi-vendor support** – Automatic detection and metadata extraction for Oracle, Cisco, Avaya, NICE, Genesys, FreeSWITCH, Asterisk, and OpenSIPS. See [Vendor Integration](vendor-integration.md) for details.
+- **Production-ready configuration** – YAML/JSON configuration files with sensible defaults, environment variable overrides, and automatic config file discovery. See [Configuration](configuration.md) for details.
+
+## Performance Features
+
+- **Audio synchronization** – RTP packet drain loop prevents buffer buildup during high load, maintaining audio sync across channels.
+- **Packet Loss Concealment (PLC)** – Automatic silence insertion for missing RTP sequence numbers, ensuring continuous audio streams.
+- **Circuit breaker** – Automatic STT failover and recovery for improved reliability.
+- **Resource management** – Configurable memory limits, CPU throttling, and automatic garbage collection tuning.
 
 ## Data Flow Summary
 

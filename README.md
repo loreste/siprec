@@ -95,7 +95,48 @@ docker run -p 5060:5060/udp -p 8080:8080 siprec
 
 ## Configuration
 
-The server is configured via environment variables. See `.env.example` for a complete list.
+The server supports multiple configuration methods with the following priority:
+
+1. **Environment variables** (highest priority - always override)
+2. **Configuration file** (YAML or JSON)
+3. **`.env` file** (development)
+4. **Default values**
+
+### Configuration File (Production)
+
+For production deployments, use a YAML or JSON configuration file:
+
+```bash
+# Option 1: Place config.yaml in the working directory
+cp config.example.yaml config.yaml
+./siprec
+
+# Option 2: Specify config file via environment variable
+export CONFIG_FILE=/etc/siprec/config.yaml
+./siprec
+
+# Option 3: Use standard location
+cp config.example.yaml /etc/siprec/config.yaml
+./siprec
+```
+
+The server searches for config files in this order:
+- `$CONFIG_FILE` environment variable
+- `./config.yaml` or `./config.yml` or `./config.json`
+- `/etc/siprec/config.yaml`
+- `$HOME/.siprec/config.yaml`
+
+See `config.example.yaml` for a complete configuration reference.
+
+### Environment Variables
+
+Environment variables can override any config file setting. For secrets (API keys, passwords), always use environment variables:
+
+```bash
+export DEEPGRAM_API_KEY=your-api-key
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+export REDIS_PASSWORD=your-password
+```
 
 ### Essential Variables
 
