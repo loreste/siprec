@@ -40,7 +40,7 @@ var (
 	SessionFailures      *prometheus.CounterVec
 	SessionDurationTotal *prometheus.HistogramVec
 	SessionsPaused       *prometheus.CounterVec
-	SessionsResumed      *prometheus.CounterVec
+	SessionsResumed      prometheus.Counter
 	SessionPauseDuration *prometheus.HistogramVec
 
 	// Recording metrics
@@ -305,15 +305,14 @@ func initSessionMetrics() {
 			Name: "siprec_sessions_paused_total",
 			Help: "Total sessions paused",
 		},
-		[]string{"session_id", "pause_type"},
+		[]string{"pause_type"},
 	)
 
-	SessionsResumed = prometheus.NewCounterVec(
+	SessionsResumed = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "siprec_sessions_resumed_total",
 			Help: "Total sessions resumed",
 		},
-		[]string{"session_id"},
 	)
 
 	SessionPauseDuration = prometheus.NewHistogramVec(
@@ -322,7 +321,7 @@ func initSessionMetrics() {
 			Help:    "Duration of session pauses",
 			Buckets: prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s to ~6 minutes
 		},
-		[]string{"session_id", "pause_type"},
+		[]string{"pause_type"},
 	)
 }
 
@@ -451,7 +450,7 @@ func initSecurityMetrics() {
 			Name: "siprec_rate_limit_exceeded_total",
 			Help: "Total rate limit violations",
 		},
-		[]string{"endpoint", "client_ip"},
+		[]string{"endpoint"},
 	)
 
 	SecurityEvents = prometheus.NewCounterVec(
@@ -684,21 +683,21 @@ func RecordSessionTerminated(transport, reason string) {
 	}
 }
 
-func RecordSessionPaused(sessionID, pauseType string) {
+func RecordSessionPaused(pauseType string) {
 	if metricsEnabled {
-		SessionsPaused.WithLabelValues(sessionID, pauseType).Inc()
+		SessionsPaused.WithLabelValues(pauseType).Inc()
 	}
 }
 
-func RecordSessionResumed(sessionID string) {
+func RecordSessionResumed() {
 	if metricsEnabled {
-		SessionsResumed.WithLabelValues(sessionID).Inc()
+		SessionsResumed.Inc()
 	}
 }
 
-func RecordSessionPauseDuration(sessionID, pauseType string, duration time.Duration) {
+func RecordSessionPauseDuration(pauseType string, duration time.Duration) {
 	if metricsEnabled {
-		SessionPauseDuration.WithLabelValues(sessionID, pauseType).Observe(duration.Seconds())
+		SessionPauseDuration.WithLabelValues(pauseType).Observe(duration.Seconds())
 	}
 }
 
