@@ -18,30 +18,32 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
-	Network         NetworkConfig          `json:"network"`
-	HTTP            HTTPConfig             `json:"http"`
-	Recording       RecordingConfig        `json:"recording"`
-	STT             STTConfig              `json:"stt"`
-	Resources       ResourceConfig         `json:"resources"`
-	Logging         LoggingConfig          `json:"logging"`
-	Messaging       MessagingConfig        `json:"messaging"`
-	Redundancy      RedundancyConfig       `json:"redundancy"`
-	Encryption      EncryptionConfig       `json:"encryption"`
-	AsyncSTT        AsyncSTTConfig         `json:"async_stt"`
-	HotReload       HotReloadConfig        `json:"hot_reload"`
-	Performance     PerformanceConfig      `json:"performance"`
-	CircuitBreaker  CircuitBreakerConfig   `json:"circuit_breaker"`
-	PauseResume     PauseResumeConfig      `json:"pause_resume"`
-	PII             PIIConfig              `json:"pii"`
-	Tracing         TracingConfig          `json:"tracing"`
-	Analytics       AnalyticsConfig        `json:"analytics"`
-	Database        DatabaseConfig         `json:"database"`
-	Compliance      ComplianceConfig       `json:"compliance"`
-	Auth            AuthConfig             `json:"auth"`
-	Alerting        AlertingConfig         `json:"alerting"`
-	Cluster         ClusterConfig          `json:"cluster"`
-	AudioProcessing AudioEnhancementConfig `json:"audio_processing"`
-	RateLimit       RateLimitConfig        `json:"rate_limit"`
+	Network            NetworkConfig            `json:"network" yaml:"network"`
+	HTTP               HTTPConfig               `json:"http" yaml:"http"`
+	Recording          RecordingConfig          `json:"recording" yaml:"recording"`
+	STT                STTConfig                `json:"stt" yaml:"stt"`
+	Resources          ResourceConfig           `json:"resources" yaml:"resources"`
+	Logging            LoggingConfig            `json:"logging" yaml:"logging"`
+	Messaging          MessagingConfig          `json:"messaging" yaml:"messaging"`
+	Redundancy         RedundancyConfig         `json:"redundancy" yaml:"redundancy"`
+	Encryption         EncryptionConfig         `json:"encryption" yaml:"encryption"`
+	AsyncSTT           AsyncSTTConfig           `json:"async_stt" yaml:"async_stt"`
+	HotReload          HotReloadConfig          `json:"hot_reload" yaml:"hot_reload"`
+	Performance        PerformanceConfig        `json:"performance" yaml:"performance"`
+	CircuitBreaker     CircuitBreakerConfig     `json:"circuit_breaker" yaml:"circuit_breaker"`
+	PauseResume        PauseResumeConfig        `json:"pause_resume" yaml:"pause_resume"`
+	PII                PIIConfig                `json:"pii" yaml:"pii"`
+	Tracing            TracingConfig            `json:"tracing" yaml:"tracing"`
+	Analytics          AnalyticsConfig          `json:"analytics" yaml:"analytics"`
+	Database           DatabaseConfig           `json:"database" yaml:"database"`
+	Compliance         ComplianceConfig         `json:"compliance" yaml:"compliance"`
+	Auth               AuthConfig               `json:"auth" yaml:"auth"`
+	Alerting           AlertingConfig           `json:"alerting" yaml:"alerting"`
+	Cluster            ClusterConfig            `json:"cluster" yaml:"cluster"`
+	AudioProcessing    AudioEnhancementConfig   `json:"audio_processing" yaml:"audio_processing"`
+	RateLimit          RateLimitConfig          `json:"rate_limit" yaml:"rate_limit"`
+	LawfulIntercept    LawfulInterceptConfig    `json:"lawful_intercept" yaml:"lawful_intercept"`
+	SpeakerDiarization SpeakerDiarizationConfig `json:"speaker_diarization" yaml:"speaker_diarization"`
 }
 
 // ClusterConfig holds cluster management configuration
@@ -730,8 +732,74 @@ type OpenSourceSTTConfig struct {
 
 // ResourceConfig holds resource limitation configurations
 type ResourceConfig struct {
-	// Maximum concurrent calls
-	MaxConcurrentCalls int `json:"max_concurrent_calls" env:"MAX_CONCURRENT_CALLS" default:"500"`
+	// Maximum concurrent calls (default 500, can scale to 100k+ with proper infrastructure)
+	MaxConcurrentCalls int `json:"max_concurrent_calls" yaml:"max_concurrent_calls" env:"MAX_CONCURRENT_CALLS" default:"500"`
+
+	// Maximum concurrent RTP streams (typically 2-3x MaxConcurrentCalls)
+	MaxRTPStreams int `json:"max_rtp_streams" yaml:"max_rtp_streams" env:"MAX_RTP_STREAMS" default:"1500"`
+
+	// Worker pool size for processing (0 = auto based on CPU cores)
+	WorkerPoolSize int `json:"worker_pool_size" yaml:"worker_pool_size" env:"WORKER_POOL_SIZE" default:"0"`
+
+	// Maximum memory usage in MB (0 = unlimited)
+	MaxMemoryMB int `json:"max_memory_mb" yaml:"max_memory_mb" env:"MAX_MEMORY_MB" default:"0"`
+
+	// Enable horizontal scaling mode (requires Redis for session sharing)
+	HorizontalScaling bool `json:"horizontal_scaling" yaml:"horizontal_scaling" env:"HORIZONTAL_SCALING" default:"false"`
+
+	// Node ID for clustered deployments
+	NodeID string `json:"node_id" yaml:"node_id" env:"NODE_ID" default:""`
+}
+
+// LawfulInterceptConfig holds lawful intercept configuration
+type LawfulInterceptConfig struct {
+	// Enable lawful intercept support
+	Enabled bool `json:"enabled" yaml:"enabled" env:"LI_ENABLED" default:"false"`
+
+	// Intercept delivery endpoint (secure HTTPS endpoint for LEA delivery)
+	DeliveryEndpoint string `json:"delivery_endpoint" yaml:"delivery_endpoint" env:"LI_DELIVERY_ENDPOINT"`
+
+	// Intercept encryption key (for encrypting intercepted content)
+	EncryptionKeyPath string `json:"encryption_key_path" yaml:"encryption_key_path" env:"LI_ENCRYPTION_KEY_PATH"`
+
+	// Warrant verification endpoint (optional external warrant validation)
+	WarrantVerificationEndpoint string `json:"warrant_verification_endpoint" yaml:"warrant_verification_endpoint" env:"LI_WARRANT_ENDPOINT"`
+
+	// Audit log path for intercept operations
+	AuditLogPath string `json:"audit_log_path" yaml:"audit_log_path" env:"LI_AUDIT_LOG_PATH" default:"/var/log/siprec/li_audit.log"`
+
+	// Secure delivery with mutual TLS
+	MutualTLS bool `json:"mutual_tls" yaml:"mutual_tls" env:"LI_MUTUAL_TLS" default:"true"`
+
+	// Client certificate for LEA delivery
+	ClientCertPath string `json:"client_cert_path" yaml:"client_cert_path" env:"LI_CLIENT_CERT_PATH"`
+
+	// Client key for LEA delivery
+	ClientKeyPath string `json:"client_key_path" yaml:"client_key_path" env:"LI_CLIENT_KEY_PATH"`
+
+	// Retention period for intercept records (days)
+	RetentionDays int `json:"retention_days" yaml:"retention_days" env:"LI_RETENTION_DAYS" default:"365"`
+}
+
+// SpeakerDiarizationConfig holds speaker separation configuration
+type SpeakerDiarizationConfig struct {
+	// Enable speaker diarization
+	Enabled bool `json:"enabled" yaml:"enabled" env:"DIARIZATION_ENABLED" default:"true"`
+
+	// Maximum speakers per session
+	MaxSpeakers int `json:"max_speakers" yaml:"max_speakers" env:"DIARIZATION_MAX_SPEAKERS" default:"10"`
+
+	// Speaker similarity threshold (0.0-1.0, lower = more strict matching)
+	SimilarityThreshold float64 `json:"similarity_threshold" yaml:"similarity_threshold" env:"DIARIZATION_THRESHOLD" default:"0.7"`
+
+	// Enable voice feature extraction
+	VoiceFeatures bool `json:"voice_features" yaml:"voice_features" env:"DIARIZATION_VOICE_FEATURES" default:"true"`
+
+	// Enable cross-session speaker tracking (requires database)
+	CrossSessionTracking bool `json:"cross_session_tracking" yaml:"cross_session_tracking" env:"DIARIZATION_CROSS_SESSION" default:"false"`
+
+	// Speaker profile retention days
+	ProfileRetentionDays int `json:"profile_retention_days" yaml:"profile_retention_days" env:"DIARIZATION_PROFILE_RETENTION" default:"30"`
 }
 
 // LoggingConfig holds logging-related configurations
