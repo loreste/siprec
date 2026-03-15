@@ -27,7 +27,7 @@ type Manager struct {
 	interceptsMu sync.RWMutex
 
 	// Statistics
-	stats *Stats
+	stats *statsInternal
 
 	// Lifecycle
 	ctx    context.Context
@@ -78,19 +78,33 @@ const (
 	InterceptStatusRevoked   InterceptStatus = "revoked"
 )
 
-// Stats tracks lawful intercept statistics
+// Stats tracks lawful intercept statistics (returned copy, no mutex)
 type Stats struct {
-	mutex              sync.RWMutex
-	TotalIntercepts    int64     `json:"total_intercepts"`
-	ActiveIntercepts   int64     `json:"active_intercepts"`
-	CallsIntercepted   int64     `json:"calls_intercepted"`
-	BytesDelivered     int64     `json:"bytes_delivered"`
-	DeliveryFailures   int64     `json:"delivery_failures"`
-	DeliverySuccesses  int64     `json:"delivery_successes"`
-	WarrantChecks      int64     `json:"warrant_checks"`
-	WarrantFailures    int64     `json:"warrant_failures"`
-	LastDeliveryTime   time.Time `json:"last_delivery_time"`
-	LastWarrantCheck   time.Time `json:"last_warrant_check"`
+	TotalIntercepts   int64     `json:"total_intercepts"`
+	ActiveIntercepts  int64     `json:"active_intercepts"`
+	CallsIntercepted  int64     `json:"calls_intercepted"`
+	BytesDelivered    int64     `json:"bytes_delivered"`
+	DeliveryFailures  int64     `json:"delivery_failures"`
+	DeliverySuccesses int64     `json:"delivery_successes"`
+	WarrantChecks     int64     `json:"warrant_checks"`
+	WarrantFailures   int64     `json:"warrant_failures"`
+	LastDeliveryTime  time.Time `json:"last_delivery_time"`
+	LastWarrantCheck  time.Time `json:"last_warrant_check"`
+}
+
+// statsInternal tracks statistics with mutex protection
+type statsInternal struct {
+	mutex             sync.RWMutex
+	TotalIntercepts   int64
+	ActiveIntercepts  int64
+	CallsIntercepted  int64
+	BytesDelivered    int64
+	DeliveryFailures  int64
+	DeliverySuccesses int64
+	WarrantChecks     int64
+	WarrantFailures   int64
+	LastDeliveryTime  time.Time
+	LastWarrantCheck  time.Time
 }
 
 // NewManager creates a new lawful intercept manager
@@ -105,7 +119,7 @@ func NewManager(cfg Config, logger *logrus.Logger) (*Manager, error) {
 		config:     cfg,
 		logger:     logger.WithField("component", "lawful_intercept"),
 		intercepts: make(map[string]*Intercept),
-		stats:      &Stats{},
+		stats:      &statsInternal{},
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -361,7 +375,18 @@ func (m *Manager) RevokeIntercept(interceptID, reason string) error {
 func (m *Manager) GetStats() Stats {
 	m.stats.mutex.RLock()
 	defer m.stats.mutex.RUnlock()
-	return *m.stats
+	return Stats{
+		TotalIntercepts:   m.stats.TotalIntercepts,
+		ActiveIntercepts:  m.stats.ActiveIntercepts,
+		CallsIntercepted:  m.stats.CallsIntercepted,
+		BytesDelivered:    m.stats.BytesDelivered,
+		DeliveryFailures:  m.stats.DeliveryFailures,
+		DeliverySuccesses: m.stats.DeliverySuccesses,
+		WarrantChecks:     m.stats.WarrantChecks,
+		WarrantFailures:   m.stats.WarrantFailures,
+		LastDeliveryTime:  m.stats.LastDeliveryTime,
+		LastWarrantCheck:  m.stats.LastWarrantCheck,
+	}
 }
 
 // GetActiveIntercepts returns all active intercepts
