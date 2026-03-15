@@ -1,10 +1,14 @@
-# IZI SIPREC
+# IZI SIPREC Server (Golang)
 
-> Enterprise-grade SIP recording service with advanced speech-to-text, real-time analytics, PII redaction, and multi-cloud storage.
+> Open Source SIPREC Session Recording Server written in Go.
 
 ## Overview
 
-IZI SIPREC is a production-ready SIPREC-compliant recording endpoint with comprehensive enterprise features. The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
+IZI SIPREC is an open-source SIPREC Session Recording Server (SRS) written in Golang. It receives SIPREC recording sessions from SBCs, PBXs, or SIP proxies and captures the RTP streams for storage, analysis, or compliance recording.
+
+The project is designed for high-performance telecom environments and can handle large numbers of concurrent recording sessions.
+
+The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
 **Version:** 1.0.2
 
