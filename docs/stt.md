@@ -321,3 +321,63 @@ WHISPER_TIMEOUT=30m
 WHISPER_MAX_CONCURRENT=2
 WHISPER_MODEL=small
 ```
+
+## Real-Time Analytics Integration
+
+Transcriptions are automatically processed through the real-time analytics pipeline, which provides:
+
+### Sentiment Analysis
+
+Every transcription segment is analyzed for emotional tone:
+
+```json
+{
+  "sentiment": {
+    "label": "positive",    // positive, negative, neutral
+    "score": 0.85,          // confidence 0-1
+    "magnitude": 0.7,       // intensity 0-1
+    "subjectivity": 0.6     // 0=objective, 1=subjective
+  }
+}
+```
+
+**Features:**
+- Lexicon-based scoring with 50+ sentiment words
+- Emotion pattern detection (joy, anger, sadness, fear, love, surprise)
+- Negation handling ("not good" reduces positive score)
+- Intensifier support ("very good" increases magnitude)
+- Per-speaker sentiment tracking and trends
+
+### Keyword Detection
+
+Compliance and security keywords are automatically detected:
+
+```json
+{
+  "keywords": [
+    {
+      "text": "credit card",
+      "category": "compliance",
+      "confidence": 0.95,
+      "severity": "high"
+    }
+  ]
+}
+```
+
+**Predefined Categories:**
+- **Compliance**: credit card, SSN, bank account, HIPAA, PHI, medical records
+- **Security**: password, hack, breach, malware, phishing, unauthorized access
+- **Custom**: Add your own keywords via configuration
+
+### Publishing Analytics via AMQP
+
+Enable analytics in AMQP messages:
+
+```bash
+ENABLE_REALTIME_AMQP=true
+PUBLISH_SENTIMENT_UPDATES=true
+PUBLISH_KEYWORD_DETECTIONS=true
+```
+
+See [Real-time Transcription](realtime-transcription.md) for complete AMQP configuration.
