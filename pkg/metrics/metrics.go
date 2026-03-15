@@ -17,9 +17,9 @@ var (
 	metricsEnabled     = true
 
 	// RTP metrics
-	RTPPacketsReceived *prometheus.CounterVec
-	RTPBytesReceived   *prometheus.CounterVec
-	RTPPacketLatency   *prometheus.HistogramVec
+	RTPPacketsReceived prometheus.Counter
+	RTPBytesReceived   prometheus.Counter
+	RTPPacketLatency   prometheus.Histogram
 	RTPDroppedPackets  *prometheus.CounterVec
 	RTPProcessingTime  *prometheus.HistogramVec
 
@@ -38,7 +38,7 @@ var (
 	// Rate limiting metrics
 	RateLimitRequestsTotal  *prometheus.CounterVec
 	RateLimitBlockedTotal   *prometheus.CounterVec
-	RateLimitCurrentBucket  *prometheus.GaugeVec
+	RateLimitCurrentBucket  prometheus.Gauge
 	SIPRateLimitedTotal     *prometheus.CounterVec
 
 	// SRTP metrics
@@ -49,7 +49,7 @@ var (
 	// Audio processing metrics
 	AudioProcessingLatency *prometheus.HistogramVec
 	VADEvents              *prometheus.CounterVec
-	NoiseReductionLevel    *prometheus.GaugeVec
+	NoiseReductionLevel    prometheus.Gauge
 
 	// Resource metrics
 	PortsInUse          prometheus.Gauge
@@ -112,29 +112,26 @@ func Init(logger *logrus.Logger) {
 		registry = prometheus.NewRegistry()
 
 		// Initialize RTP metrics
-		RTPPacketsReceived = prometheus.NewCounterVec(
+		RTPPacketsReceived = prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "siprec_rtp_packets_received_total",
 				Help: "Total number of RTP packets received",
 			},
-			[]string{"call_uuid"},
 		)
 
-		RTPBytesReceived = prometheus.NewCounterVec(
+		RTPBytesReceived = prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "siprec_rtp_bytes_received_total",
 				Help: "Total number of RTP bytes received",
 			},
-			[]string{"call_uuid"},
 		)
 
-		RTPPacketLatency = prometheus.NewHistogramVec(
+		RTPPacketLatency = prometheus.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "siprec_rtp_packet_latency_seconds",
 				Help:    "Latency of RTP packet processing",
 				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10), // From 0.1ms to ~100ms
 			},
-			[]string{"call_uuid"},
 		)
 
 		RTPDroppedPackets = prometheus.NewCounterVec(
@@ -142,7 +139,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_rtp_dropped_packets_total",
 				Help: "Total number of dropped RTP packets",
 			},
-			[]string{"call_uuid", "reason"},
+			[]string{"reason"},
 		)
 
 		RTPProcessingTime = prometheus.NewHistogramVec(
@@ -151,7 +148,7 @@ func Init(logger *logrus.Logger) {
 				Help:    "Time taken to process RTP packets",
 				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10),
 			},
-			[]string{"call_uuid", "processing_type"},
+			[]string{"processing_type"},
 		)
 
 		// Initialize SIP metrics
@@ -202,7 +199,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_sip_ip_access_blocked_total",
 				Help: "Total number of SIP requests blocked by IP access control",
 			},
-			[]string{"source_ip", "reason"},
+			[]string{"reason"},
 		)
 
 		SIPIPAccessAllowed = prometheus.NewCounterVec(
@@ -210,7 +207,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_sip_ip_access_allowed_total",
 				Help: "Total number of SIP requests allowed by IP access control",
 			},
-			[]string{"source_ip", "match_type"},
+			[]string{"match_type"},
 		)
 
 		SIPAuthFailures = prometheus.NewCounterVec(
@@ -218,7 +215,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_sip_auth_failures_total",
 				Help: "Total number of SIP authentication failures",
 			},
-			[]string{"source_ip", "reason"},
+			[]string{"reason"},
 		)
 
 		// Initialize rate limiting metrics
@@ -227,7 +224,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_rate_limit_requests_total",
 				Help: "Total number of requests processed by rate limiter",
 			},
-			[]string{"client_ip", "path", "status"},
+			[]string{"path", "status"},
 		)
 
 		RateLimitBlockedTotal = prometheus.NewCounterVec(
@@ -235,15 +232,14 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_rate_limit_blocked_total",
 				Help: "Total number of requests blocked by rate limiter",
 			},
-			[]string{"client_ip", "path"},
+			[]string{"path"},
 		)
 
-		RateLimitCurrentBucket = prometheus.NewGaugeVec(
+		RateLimitCurrentBucket = prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "siprec_rate_limit_bucket_tokens",
-				Help: "Current number of tokens in rate limit bucket",
+				Help: "Aggregate number of tokens across all rate limit buckets",
 			},
-			[]string{"client_ip"},
 		)
 
 		SIPRateLimitedTotal = prometheus.NewCounterVec(
@@ -251,7 +247,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_sip_rate_limited_total",
 				Help: "Total number of SIP requests blocked by rate limiter",
 			},
-			[]string{"client_ip", "method"},
+			[]string{"method"},
 		)
 
 		// Initialize SRTP metrics
@@ -260,7 +256,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_srtp_encryption_errors_total",
 				Help: "Total number of SRTP encryption errors",
 			},
-			[]string{"call_uuid"},
+			[]string{"error_type"},
 		)
 
 		SRTPDecryptionErrors = prometheus.NewCounterVec(
@@ -268,7 +264,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_srtp_decryption_errors_total",
 				Help: "Total number of SRTP decryption errors",
 			},
-			[]string{"call_uuid", "error_type"},
+			[]string{"error_type"},
 		)
 
 		SRTPPacketsProcessed = prometheus.NewCounterVec(
@@ -276,7 +272,7 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_srtp_packets_processed_total",
 				Help: "Total number of SRTP packets processed",
 			},
-			[]string{"call_uuid", "direction"},
+			[]string{"direction"},
 		)
 
 		// Initialize audio processing metrics
@@ -286,7 +282,7 @@ func Init(logger *logrus.Logger) {
 				Help:    "Latency of audio processing operations",
 				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 10),
 			},
-			[]string{"call_uuid", "processing_type"},
+			[]string{"processing_type"},
 		)
 
 		VADEvents = prometheus.NewCounterVec(
@@ -294,15 +290,14 @@ func Init(logger *logrus.Logger) {
 				Name: "siprec_vad_events_total",
 				Help: "Total number of Voice Activity Detection events",
 			},
-			[]string{"call_uuid", "event_type"},
+			[]string{"event_type"},
 		)
 
-		NoiseReductionLevel = prometheus.NewGaugeVec(
+		NoiseReductionLevel = prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "siprec_noise_reduction_level_db",
 				Help: "Noise reduction level in dB",
 			},
-			[]string{"call_uuid"},
 		)
 
 		// Initialize resource metrics
@@ -798,29 +793,29 @@ func RecordSIPResponse(statusCode int, statusClass string) {
 }
 
 // RecordRTPPacket records metrics for an RTP packet
-func RecordRTPPacket(callUUID string, bytes int) {
+func RecordRTPPacket(bytes int) {
 	if metricsEnabled {
-		RTPPacketsReceived.WithLabelValues(callUUID).Inc()
-		RTPBytesReceived.WithLabelValues(callUUID).Add(float64(bytes))
+		RTPPacketsReceived.Inc()
+		RTPBytesReceived.Add(float64(bytes))
 	}
 }
 
 // RecordRTPLatency records the latency of RTP packet processing
-func RecordRTPLatency(callUUID string, duration time.Duration) {
+func RecordRTPLatency(duration time.Duration) {
 	if metricsEnabled {
-		RTPPacketLatency.WithLabelValues(callUUID).Observe(duration.Seconds())
+		RTPPacketLatency.Observe(duration.Seconds())
 	}
 }
 
 // RecordRTPDroppedPackets records dropped RTP packets
-func RecordRTPDroppedPackets(callUUID, reason string, count float64) {
+func RecordRTPDroppedPackets(reason string, count float64) {
 	if metricsEnabled {
-		RTPDroppedPackets.WithLabelValues(callUUID, reason).Add(count)
+		RTPDroppedPackets.WithLabelValues(reason).Add(count)
 	}
 }
 
 // ObserveRTPProcessing records the time taken for RTP processing with a timer function
-func ObserveRTPProcessing(callUUID, processType string) func() {
+func ObserveRTPProcessing(processType string) func() {
 	if !metricsEnabled {
 		return func() {}
 	}
@@ -828,7 +823,7 @@ func ObserveRTPProcessing(callUUID, processType string) func() {
 	start := time.Now()
 	return func() {
 		duration := time.Since(start)
-		RTPProcessingTime.WithLabelValues(callUUID, processType).Observe(duration.Seconds())
+		RTPProcessingTime.WithLabelValues(processType).Observe(duration.Seconds())
 	}
 }
 
@@ -871,23 +866,23 @@ func SetAMQPConnectionStatus(connected bool) {
 }
 
 // RecordSRTPEncryptionErrors records SRTP encryption errors
-func RecordSRTPEncryptionErrors(callUUID, errorType string, count float64) {
+func RecordSRTPEncryptionErrors(errorType string, count float64) {
 	if metricsEnabled {
-		SRTPEncryptionErrors.WithLabelValues(callUUID).Add(count)
+		SRTPEncryptionErrors.WithLabelValues(errorType).Add(count)
 	}
 }
 
 // RecordSRTPDecryptionErrors records SRTP decryption errors
-func RecordSRTPDecryptionErrors(callUUID, errorType string, count float64) {
+func RecordSRTPDecryptionErrors(errorType string, count float64) {
 	if metricsEnabled {
-		SRTPDecryptionErrors.WithLabelValues(callUUID, errorType).Add(count)
+		SRTPDecryptionErrors.WithLabelValues(errorType).Add(count)
 	}
 }
 
 // RecordSRTPPacketsProcessed records processed SRTP packets
-func RecordSRTPPacketsProcessed(callUUID, direction string, count float64) {
+func RecordSRTPPacketsProcessed(direction string, count float64) {
 	if metricsEnabled {
-		SRTPPacketsProcessed.WithLabelValues(callUUID, direction).Add(count)
+		SRTPPacketsProcessed.WithLabelValues(direction).Add(count)
 	}
 }
 
@@ -916,10 +911,9 @@ func SetMetricsEnabled(enabled bool) {
 }
 
 // RecordAudioProcessingError records audio processing errors
-func RecordAudioProcessingError(callUUID, errorType string, count float64) {
+func RecordAudioProcessingError(errorType string, count float64) {
 	if metricsEnabled {
-		// Use VADEvents counter for error tracking since we don't have a dedicated counter
-		VADEvents.WithLabelValues(callUUID, "error_"+errorType).Add(count)
+		VADEvents.WithLabelValues("error_" + errorType).Add(count)
 	}
 }
 
@@ -998,51 +992,51 @@ func SubWhisperTempFileUsage(bytes int64) {
 }
 
 // RecordIPAccessBlocked records a blocked IP access attempt
-func RecordIPAccessBlocked(sourceIP, reason string) {
+func RecordIPAccessBlocked(reason string) {
 	if metricsEnabled {
-		SIPIPAccessBlocked.WithLabelValues(sourceIP, reason).Inc()
+		SIPIPAccessBlocked.WithLabelValues(reason).Inc()
 	}
 }
 
 // RecordIPAccessAllowed records an allowed IP access
-func RecordIPAccessAllowed(sourceIP, matchType string) {
+func RecordIPAccessAllowed(matchType string) {
 	if metricsEnabled {
-		SIPIPAccessAllowed.WithLabelValues(sourceIP, matchType).Inc()
+		SIPIPAccessAllowed.WithLabelValues(matchType).Inc()
 	}
 }
 
 // RecordSIPAuthFailure records a SIP authentication failure
-func RecordSIPAuthFailure(sourceIP, reason string) {
+func RecordSIPAuthFailure(reason string) {
 	if metricsEnabled {
-		SIPAuthFailures.WithLabelValues(sourceIP, reason).Inc()
+		SIPAuthFailures.WithLabelValues(reason).Inc()
 	}
 }
 
 // RecordRateLimitRequest records a rate-limited request (allowed or blocked)
-func RecordRateLimitRequest(clientIP, path, status string) {
+func RecordRateLimitRequest(path, status string) {
 	if metricsEnabled {
-		RateLimitRequestsTotal.WithLabelValues(clientIP, path, status).Inc()
+		RateLimitRequestsTotal.WithLabelValues(path, status).Inc()
 	}
 }
 
 // RecordRateLimitBlocked records a blocked request due to rate limiting
-func RecordRateLimitBlocked(clientIP, path string) {
+func RecordRateLimitBlocked(path string) {
 	if metricsEnabled {
-		RateLimitBlockedTotal.WithLabelValues(clientIP, path).Inc()
+		RateLimitBlockedTotal.WithLabelValues(path).Inc()
 	}
 }
 
-// UpdateRateLimitBucket updates the current token count for a client
-func UpdateRateLimitBucket(clientIP string, tokens float64) {
+// UpdateRateLimitBucket updates the aggregate token count across all rate limit buckets
+func UpdateRateLimitBucket(tokens float64) {
 	if metricsEnabled {
-		RateLimitCurrentBucket.WithLabelValues(clientIP).Set(tokens)
+		RateLimitCurrentBucket.Set(tokens)
 	}
 }
 
 // RecordSIPRateLimited records a SIP request blocked by rate limiting
-func RecordSIPRateLimited(clientIP, method string) {
+func RecordSIPRateLimited(method string) {
 	if metricsEnabled {
-		SIPRateLimitedTotal.WithLabelValues(clientIP, method).Inc()
+		SIPRateLimitedTotal.WithLabelValues(method).Inc()
 	}
 }
 

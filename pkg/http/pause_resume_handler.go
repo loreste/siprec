@@ -183,7 +183,7 @@ func (h *PauseResumeHandler) handlePauseSession(w http.ResponseWriter, r *http.R
 		} else if !pauseRecording && pauseTranscription {
 			pauseType = "transcription"
 		}
-		metrics.RecordSessionPaused(sessionID, pauseType)
+		metrics.RecordSessionPaused(pauseType)
 	}
 
 	// Get updated status
@@ -226,7 +226,7 @@ func (h *PauseResumeHandler) handleResumeSession(w http.ResponseWriter, r *http.
 
 	// Record metrics
 	if metrics.IsMetricsEnabled() {
-		metrics.RecordSessionResumed(sessionID)
+		metrics.RecordSessionResumed()
 	}
 
 	// Get updated status
@@ -320,8 +320,8 @@ func (h *PauseResumeHandler) handlePauseAll(w http.ResponseWriter, r *http.Reque
 		} else if !pauseRecording && pauseTranscription {
 			pauseType = "transcription"
 		}
-		for sessionID := range statuses {
-			metrics.RecordSessionPaused(sessionID, pauseType)
+		for range statuses {
+			metrics.RecordSessionPaused(pauseType)
 		}
 	}
 
@@ -361,8 +361,8 @@ func (h *PauseResumeHandler) handleResumeAll(w http.ResponseWriter, r *http.Requ
 
 	// Record metrics
 	if metrics.IsMetricsEnabled() {
-		for sessionID := range statuses {
-			metrics.RecordSessionResumed(sessionID)
+		for range statuses {
+			metrics.RecordSessionResumed()
 		}
 	}
 
