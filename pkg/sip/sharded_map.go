@@ -1,7 +1,6 @@
 package sip
 
 import (
-	"hash/fnv"
 	"sync"
 )
 
@@ -47,11 +46,18 @@ func NewShardedMap(shardCount int) *ShardedMap {
 }
 
 // getShard returns the appropriate shard for a given key
+// Uses inline FNV-1a hash to avoid allocation
 func (sm *ShardedMap) getShard(key string) *mapShard {
-	// Hash the key to determine which shard to use
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	hash := h.Sum32()
+	// Inline FNV-1a hash - no allocation
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	hash := uint32(offset32)
+	for i := 0; i < len(key); i++ {
+		hash ^= uint32(key[i])
+		hash *= prime32
+	}
 
 	// Use the hash to select a shard via masking (fast modulo for powers of 2)
 	return sm.shards[hash&sm.shardMask]

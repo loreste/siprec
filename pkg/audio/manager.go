@@ -22,7 +22,7 @@ type ProcessingManager struct {
 
 	// Runtime state
 	enabled bool
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	logger  *logrus.Logger
 
 	// Metrics
@@ -77,19 +77,24 @@ func NewProcessingManager(config ProcessingConfig, logger *logrus.Logger) *Proce
 
 // ProcessAudio processes a chunk of audio data
 func (pm *ProcessingManager) ProcessAudio(data []byte) ([]byte, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+	// Fast path: check enabled without lock using atomic
+	pm.mu.RLock()
+	enabled := pm.enabled
+	pipeline := pm.pipeline
+	vad := pm.vad
+	enableVAD := pm.config.EnableVAD
+	pm.mu.RUnlock()
 
-	if !pm.enabled {
+	if !enabled {
 		return data, nil
 	}
 
-	// Increment metrics
+	// Increment metrics atomically (no lock needed)
 	atomic.AddUint64(&pm.packetsProcessed, 1)
 	atomic.AddUint64(&pm.bytesProcessed, uint64(len(data)))
 
-	// Use the pipeline to process the audio
-	processed, err := pm.pipeline.Process(data)
+	// Use the pipeline to process the audio (pipeline is thread-safe)
+	processed, err := pipeline.Process(data)
 
 	// Track errors
 	if err != nil {
@@ -98,8 +103,8 @@ func (pm *ProcessingManager) ProcessAudio(data []byte) ([]byte, error) {
 	}
 
 	// Track voice activity if VAD is enabled
-	if pm.config.EnableVAD && pm.vad != nil {
-		if pm.vad.IsVoiceActive() {
+	if enableVAD && vad != nil {
+		if vad.IsVoiceActive() {
 			atomic.AddUint64(&pm.voiceDetected, 1)
 		} else {
 			atomic.AddUint64(&pm.silenceDetected, 1)
@@ -107,7 +112,8 @@ func (pm *ProcessingManager) ProcessAudio(data []byte) ([]byte, error) {
 	}
 
 	// Log periodic stats (every 100 packets)
-	if pm.packetsProcessed%100 == 0 {
+	packetsProcessed := atomic.LoadUint64(&pm.packetsProcessed)
+	if packetsProcessed%100 == 0 {
 		pm.logStats()
 	}
 
