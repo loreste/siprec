@@ -2,6 +2,35 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.1.0] - 2026-03-15
+
+### Added
+- **Lawful Intercept Package** (`pkg/lawfulintercept/`): Complete implementation for lawful intercept requirements
+  - `Manager`: Intercept lifecycle management with warrant verification and content delivery
+  - `DeliveryClient`: Secure LEA delivery with mutual TLS, batching, retries, and exponential backoff
+  - `AuditLogger`: Tamper-evident audit logging with buffered writes and log rotation
+  - `WarrantVerifier`: External warrant verification with response caching
+  - `ContentEncryptor`: Hybrid RSA-OAEP + AES-256-GCM encryption for intercepted content
+  - Comprehensive audit event types: system start/stop, intercept started/revoked/expired, content delivered, warrant verified/failed
+
+- **Resource Management Package** (`pkg/resources/`): Enterprise resource control and limits enforcement
+  - `Manager`: Central resource manager coordinating all resource limits
+  - `WorkerPool`: Bounded goroutine pool with panic recovery and configurable sizing
+  - `MemoryMonitor`: Memory limit enforcement with automatic GC triggers and detailed stats
+  - `RTPLimiter`: Concurrent RTP stream limiting with atomic operations and wait-for-slot support
+  - Resource exhaustion callbacks for alerting and load balancing integration
+
+### Performance
+- **Lock-free RTP timestamp tracking**: Replaced mutex-protected timestamp with atomic int64 operations
+- **Optimized ShardedMap hashing**: Inline FNV-1a hash eliminates allocations in hot path
+- **Read-write lock optimization**: Changed ProcessingManager to use RWMutex for read-heavy workloads
+- **Memory leak fix**: Fixed slice memory leak in STT result buffer management
+
+### Technical
+- Full test coverage with race detection for all new packages
+- Atomic operations throughout for thread-safe concurrent access
+- Integration with existing config system via ResourceConfig, LawfulInterceptConfig
+
 ## [1.0.2] - 2026-02-26
 
 ### Added
