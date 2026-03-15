@@ -1,16 +1,43 @@
 # IZI SIPREC Server (Golang)
 
-> Open Source SIPREC Session Recording Server written in Go.
+> Open Source SIPREC Session Recording Server written in Go for VoIP and telecom call recording.
+
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
 
 ## Overview
 
-IZI SIPREC is an open-source SIPREC Session Recording Server (SRS) written in Golang. It receives SIPREC recording sessions from SBCs, PBXs, or SIP proxies and captures the RTP streams for storage, analysis, or compliance recording.
+IZI SIPREC is an open-source **SIPREC Session Recording Server (SRS)** written in Golang. It receives SIPREC recording sessions from SBCs, PBXs, or SIP proxies and captures the RTP streams for storage, analysis, or compliance recording.
 
-The project is designed for high-performance telecom environments and can handle large numbers of concurrent recording sessions.
+The project is designed for high-performance **telecom recording** environments and can handle large numbers of concurrent **VoIP recording** and **SIP recording** sessions.
 
-The server handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
+This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor speech-to-text streaming, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
 **Version:** 1.0.2
+
+## Use Cases
+
+- **Enterprise Call Recording** – Record all inbound/outbound calls for quality assurance and training
+- **Compliance Recording** – Meet regulatory requirements for financial services, healthcare, and legal industries
+- **Lawful Intercept Recording** – Support lawful interception requirements with secure, tamper-proof recordings
+- **Contact Center Recording** – Capture customer interactions for analytics and compliance
+- **SBC Recording Server** – Deploy as the recording endpoint for any SIPREC-compliant Session Border Controller
+- **VoIP Recording Platform** – Centralized recording for distributed VoIP infrastructure
+
+## Supported Platforms
+
+Works with any SIPREC-compliant source, including:
+
+- **OpenSIPS SIPREC** – Full compatibility with OpenSIPS SIPREC module
+- **Kamailio SIPREC** – Native support for Kamailio's SIPREC implementation
+- **FreeSWITCH Recording** – Record calls from FreeSWITCH via SIPREC
+- **Asterisk SIPREC** – Compatible with Asterisk's SIPREC capabilities
+- **Oracle SBC** – Tested with Oracle Communications Session Border Controller
+- **Cisco CUBE** – Works with Cisco Unified Border Element
+- **Ribbon/GENBAND SBC** – Full metadata extraction support
+- **AudioCodes SBC** – Compatible with AudioCodes Mediant series
+- **Avaya SBCE** – Avaya Session Border Controller for Enterprise
 
 ## Core Features
 
@@ -569,7 +596,7 @@ sipp <server>:5060 -t tn -sf siprec_scenario.xml -l 6000 -m 6000 -r 100 -timeout
 
 ## License
 
-GPL-3.0 – see [LICENSE](LICENSE) for details.
+Apache 2.0 – see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
@@ -579,3 +606,9 @@ Contributions are welcome! Please open an issue or pull request on GitHub.
 
 - Issues: https://github.com/loreste/siprec/issues
 - Documentation: https://github.com/loreste/siprec/tree/main/docs
+
+---
+
+### Keywords
+
+SIPREC, Session Recording Server, SRS, VoIP recording, SIP recording, telecom recording, call recording, Golang SIP server, Go SIP, OpenSIPS SIPREC, Kamailio SIPREC, FreeSWITCH recording, Asterisk SIPREC, SBC recording server, lawful intercept recording, compliance recording, contact center recording, RTP capture, speech-to-text, real-time transcription, PCI DSS recording, GDPR compliant recording, encrypted call recording, Oracle SBC SIPREC, Cisco CUBE recording, AudioCodes SIPREC, Ribbon SBC recording, enterprise call recording, VoIP compliance
