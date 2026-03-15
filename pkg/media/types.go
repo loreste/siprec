@@ -25,8 +25,8 @@ type RTPForwarder struct {
 	CallUUID         string
 	TranscriptChan   chan string
 	RecordingFile    *os.File                 // Used to store the recorded media stream
-	LastRTPTime      time.Time                // Tracks the last time an RTP packet was received
-	lastRTPMutex     sync.RWMutex             // Mutex to protect LastRTPTime access
+	LastRTPTime      time.Time                // Tracks the last time an RTP packet was received (legacy, use lastRTPNano)
+	lastRTPNano      int64                    // Atomic: Unix nano timestamp of last RTP packet (lock-free)
 	Timeout          time.Duration            // Timeout duration for inactive RTP streams
 	RecordingSession *siprec.RecordingSession // SIPREC session information
 	RecordingPaused  bool                     // Flag to indicate if recording is paused

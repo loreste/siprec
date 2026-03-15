@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -247,9 +248,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		forwarder.CleanupMutex.Lock()
 		forwarder.Conn = udpConn
 		forwarder.CleanupMutex.Unlock()
-		forwarder.lastRTPMutex.Lock()
-		forwarder.LastRTPTime = time.Now()
-		forwarder.lastRTPMutex.Unlock()
+		// Initialize last RTP timestamp atomically
+		atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
 
 		SetUDPSocketBuffers(udpConn, forwarder.Logger)
 
@@ -503,9 +503,8 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
-			forwarder.lastRTPMutex.Lock()
-			forwarder.LastRTPTime = time.Now()
-			forwarder.lastRTPMutex.Unlock()
+			// Use atomic store for lock-free timestamp update (hot path optimization)
+			atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
 
 			// Log first RTP packet for diagnostics
 			if !firstPacketReceived {
@@ -847,10 +846,9 @@ func MonitorRTPTimeout(ctx context.Context, forwarder *RTPForwarder, callUUID st
 			forwarder.Logger.WithField("call_uuid", callUUID).Info("RTP timeout monitor exiting via ctx.Done()")
 			return
 		case <-ticker.C:
-			// Check how long since last RTP packet
-			forwarder.lastRTPMutex.RLock()
-			lastActivity := forwarder.LastRTPTime
-			forwarder.lastRTPMutex.RUnlock()
+			// Check how long since last RTP packet (lock-free read)
+			lastNano := atomic.LoadInt64(&forwarder.lastRTPNano)
+			lastActivity := time.Unix(0, lastNano)
 			timeSinceLastRTP := time.Since(lastActivity)
 
 			// Issue warning at 50% timeout threshold

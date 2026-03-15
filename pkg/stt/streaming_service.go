@@ -285,9 +285,11 @@ func (s *StreamingTranscriptionService) processFinalResult(buffer *StreamBuffer,
 	buffer.FinalResults = append(buffer.FinalResults, result)
 	buffer.WordCount += len(result.Text)
 
-	// Maintain buffer size
+	// Maintain buffer size - use efficient removal to avoid O(n) slice shift
 	if len(buffer.FinalResults) > s.config.BufferSize {
-		buffer.FinalResults = buffer.FinalResults[1:]
+		// Copy to start of slice to avoid memory leak from slice header pointing to old data
+		copy(buffer.FinalResults, buffer.FinalResults[1:])
+		buffer.FinalResults = buffer.FinalResults[:len(buffer.FinalResults)-1]
 	}
 
 	// Clear interim results that are now superseded
@@ -324,9 +326,10 @@ func (s *StreamingTranscriptionService) processInterimResult(buffer *StreamBuffe
 	// Add to buffer
 	buffer.InterimResults = append(buffer.InterimResults, result)
 
-	// Maintain buffer size
+	// Maintain buffer size - use efficient removal to avoid memory leak
 	if len(buffer.InterimResults) > s.config.BufferSize/2 {
-		buffer.InterimResults = buffer.InterimResults[1:]
+		copy(buffer.InterimResults, buffer.InterimResults[1:])
+		buffer.InterimResults = buffer.InterimResults[:len(buffer.InterimResults)-1]
 	}
 
 	s.logger.WithFields(logrus.Fields{
