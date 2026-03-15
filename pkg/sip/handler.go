@@ -425,18 +425,18 @@ func (h *Handler) AuthenticateRequest(authHeader, method, uri, clientIP string) 
 	if h.ipAccessController != nil {
 		if !h.ipAccessController.IsAllowed(clientIP) {
 			h.Logger.WithField("client_ip", clientIP).Warn("SIP request blocked by IP access control")
-			metrics.RecordIPAccessBlocked(clientIP, "ip_filter")
+			metrics.RecordIPAccessBlocked("ip_filter")
 			return false, "" // No challenge, just reject
 		}
 		// Record allowed access
-		metrics.RecordIPAccessAllowed(clientIP, "ip_filter")
+		metrics.RecordIPAccessAllowed("ip_filter")
 	}
 
 	// Check Digest authentication if enabled
 	if h.sipAuthenticator != nil {
 		result := h.sipAuthenticator.Authenticate(authHeader, method, uri, clientIP)
 		if !result.Success {
-			metrics.RecordSIPAuthFailure(clientIP, result.Reason)
+			metrics.RecordSIPAuthFailure(result.Reason)
 			return false, result.Challenge
 		}
 		h.Logger.WithFields(logrus.Fields{
@@ -500,7 +500,7 @@ func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
 				"method":    method,
 				"limit_type": "distributed",
 			}).Warn("SIP request rejected by distributed rate limiter")
-			metrics.RecordSIPRateLimited(clientIP, method)
+			metrics.RecordSIPRateLimited(method)
 			return false
 		}
 	}
@@ -517,7 +517,7 @@ func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
 			"method":    method,
 			"limit_type": "local",
 		}).Warn("SIP request rate limited")
-		metrics.RecordSIPRateLimited(clientIP, method)
+		metrics.RecordSIPRateLimited(method)
 	}
 	return allowed
 }
