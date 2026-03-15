@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,12 +83,12 @@ func TestRTPTimeoutBehavior(t *testing.T) {
 
 	// Create a forwarder with a short timeout for testing
 	forwarder := &RTPForwarder{
-		Timeout:     2 * time.Second,
-		LastRTPTime: time.Now(),
-		StopChan:    make(chan struct{}),
-		Logger:      logger,
-		remoteMutex: sync.Mutex{},
-		RemoteSSRC:  12345,
+		Timeout:      2 * time.Second,
+		lastRTPNano:  time.Now().UnixNano(), // Use atomic timestamp field
+		StopChan:     make(chan struct{}),
+		Logger:       logger,
+		remoteMutex:  sync.Mutex{},
+		RemoteSSRC:   12345,
 	}
 
 	// Start monitoring in background
@@ -125,13 +126,13 @@ func TestRTPTimeoutWarning(t *testing.T) {
 
 	// Create a forwarder with a short timeout for testing
 	forwarder := &RTPForwarder{
-		Timeout:     4 * time.Second, // Warning at 2 seconds
-		LastRTPTime: time.Now(),
-		StopChan:    make(chan struct{}),
-		Logger:      logger,
-		remoteMutex: sync.Mutex{},
-		LocalPort:   10000,
-		RemoteSSRC:  12345,
+		Timeout:      4 * time.Second, // Warning at 2 seconds
+		lastRTPNano:  time.Now().UnixNano(), // Use atomic timestamp field
+		StopChan:     make(chan struct{}),
+		Logger:       logger,
+		remoteMutex:  sync.Mutex{},
+		LocalPort:    10000,
+		RemoteSSRC:   12345,
 	}
 
 	// Start monitoring
@@ -270,10 +271,10 @@ func TestRTPPacketReceptionAndRecording(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, fileInfo.Size(), int64(44), "WAV file should be larger than header size")
 
-	// Verify LastRTPTime is updated
-	initialTime := forwarder.LastRTPTime
-	forwarder.LastRTPTime = time.Now()
-	assert.True(t, forwarder.LastRTPTime.After(initialTime))
+	// Verify lastRTPNano is updated (using atomic operations)
+	initialNano := atomic.LoadInt64(&forwarder.lastRTPNano)
+	atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
+	assert.Greater(t, atomic.LoadInt64(&forwarder.lastRTPNano), initialNano)
 }
 
 // TestFirstPacketLogging verifies that first packet is logged with details
@@ -320,6 +321,56 @@ func TestFirstPacketLogging(t *testing.T) {
 	assert.Contains(t, logOutput, "192.168.1.100:5004")
 	assert.Contains(t, logOutput, "ssrc")
 	assert.Contains(t, logOutput, "payload_type")
+}
+
+// TestRTPTimestampConcurrentAccess verifies atomic timestamp operations are race-free
+func TestRTPTimestampConcurrentAccess(t *testing.T) {
+	metrics.EnableMetrics(false)
+
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+
+	forwarder := &RTPForwarder{
+		Timeout:     30 * time.Second,
+		lastRTPNano: time.Now().UnixNano(),
+		StopChan:    make(chan struct{}),
+		Logger:      logger,
+	}
+
+	// Run concurrent reads and writes
+	var wg sync.WaitGroup
+	const numGoroutines = 100
+	const numOperations = 1000
+
+	// Writers
+	for i := 0; i < numGoroutines/2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
+			}
+		}()
+	}
+
+	// Readers
+	for i := 0; i < numGoroutines/2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				nano := atomic.LoadInt64(&forwarder.lastRTPNano)
+				// Verify the timestamp is valid (non-zero and reasonable)
+				assert.Greater(t, nano, int64(0))
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify final state
+	finalNano := atomic.LoadInt64(&forwarder.lastRTPNano)
+	assert.Greater(t, finalNano, int64(0))
 }
 
 // TestRTPForwarderCleanup verifies proper resource cleanup
