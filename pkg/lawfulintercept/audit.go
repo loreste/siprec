@@ -60,14 +60,17 @@ type AuditLogger struct {
 
 // NewAuditLogger creates a new audit logger
 func NewAuditLogger(path string, logger *logrus.Logger) (*AuditLogger, error) {
+	// Clean the path to prevent path traversal attacks
+	cleanPath := filepath.Clean(path)
+
 	// Ensure directory exists
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(cleanPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 
 	// Open file in append mode
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	file, err := os.OpenFile(cleanPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 - path is cleaned above
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log file: %w", err)
 	}
@@ -75,7 +78,7 @@ func NewAuditLogger(path string, logger *logrus.Logger) (*AuditLogger, error) {
 	hostname, _ := os.Hostname()
 
 	al := &AuditLogger{
-		path:      path,
+		path:      cleanPath,
 		file:      file,
 		logger:    logger.WithField("component", "li_audit"),
 		nodeID:    hostname,

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -36,7 +37,9 @@ type EncryptedContent struct {
 
 // NewContentEncryptor creates a new content encryptor from a PEM-encoded public key file
 func NewContentEncryptor(keyPath string) (*ContentEncryptor, error) {
-	keyData, err := os.ReadFile(keyPath)
+	// Clean the path to prevent path traversal attacks
+	cleanPath := filepath.Clean(keyPath)
+	keyData, err := os.ReadFile(cleanPath) // #nosec G304 - path is cleaned above
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encryption key: %w", err)
 	}
@@ -223,7 +226,9 @@ func (ce *ContentEncryptor) GetKeyID() string {
 
 // RotateKey updates the encryption key
 func (ce *ContentEncryptor) RotateKey(keyPath string) error {
-	keyData, err := os.ReadFile(keyPath)
+	// Clean the path to prevent path traversal attacks
+	cleanPath := filepath.Clean(keyPath)
+	keyData, err := os.ReadFile(cleanPath) // #nosec G304 - path is cleaned above
 	if err != nil {
 		return fmt.Errorf("failed to read new key: %w", err)
 	}

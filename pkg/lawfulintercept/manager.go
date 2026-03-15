@@ -408,14 +408,19 @@ func (m *Manager) Close() error {
 	m.cancel()
 	m.wg.Wait()
 
+	// Log before closing auditor
+	if m.auditor != nil {
+		m.auditor.Log(AuditEventSystemStop, "system", "Lawful intercept manager stopped", nil)
+	}
+
 	if m.delivery != nil {
 		m.delivery.Close()
 	}
 	if m.auditor != nil {
-		m.auditor.Close()
+		if err := m.auditor.Close(); err != nil {
+			m.logger.WithError(err).Error("Failed to close audit logger")
+		}
 	}
-
-	m.auditor.Log(AuditEventSystemStop, "system", "Lawful intercept manager stopped", nil)
 	m.logger.Info("Lawful intercept manager closed")
 
 	return nil
