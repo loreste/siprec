@@ -240,7 +240,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			rtpSpan.RecordError(err)
 			rtpSpan.SetStatus(codes.Error, "listen udp failed")
 			if metrics.IsMetricsEnabled() {
-				metrics.RecordRTPDroppedPackets(callUUID, "listen_failure", 1)
+				metrics.RecordRTPDroppedPackets("listen_failure", 1)
 			}
 			return
 		}
@@ -269,7 +269,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				rtpSpan.SetStatus(codes.Error, "listen udp rtcp failed")
 				udpConn.Close()
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "rtcp_listen_failure", 1)
+					metrics.RecordRTPDroppedPackets("rtcp_listen_failure", 1)
 				}
 				return
 			}
@@ -335,7 +335,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				rtpSpan.RecordError(err)
 				rtpSpan.SetStatus(codes.Error, "recording file creation failed")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "file_creation_failed", 1)
+					metrics.RecordRTPDroppedPackets("file_creation_failed", 1)
 				}
 				return
 			}
@@ -349,7 +349,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					"channels":    channels,
 				}).Error("Failed to initialize WAV writer")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "wav_writer_init_failed", 1)
+					metrics.RecordRTPDroppedPackets("wav_writer_init_failed", 1)
 				}
 				return
 			}
@@ -401,7 +401,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to set up SRTP session")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordSRTPEncryptionErrors(callUUID, "session_setup_failed", 1)
+					metrics.RecordSRTPEncryptionErrors("session_setup_failed", 1)
 				}
 				return
 			}
@@ -495,7 +495,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if err := rtpPacket.Unmarshal(packet); err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("Failed to unmarshal RTP packet")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "parse_error", 1)
+					metrics.RecordRTPDroppedPackets("parse_error", 1)
 				}
 				return
 			}
@@ -585,7 +585,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					"payload_type": rtpPacket.PayloadType,
 				}).Warn("Failed to decode audio payload to PCM")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "decode_error", 1)
+					metrics.RecordRTPDroppedPackets("decode_error", 1)
 				}
 				return
 			}
@@ -597,7 +597,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if procErr != nil {
 				forwarder.Logger.WithError(procErr).WithField("call_uuid", callUUID).Debug("Failed to process audio chunk")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordAudioProcessingError(callUUID, "processing_error", 1)
+					metrics.RecordAudioProcessingError("processing_error", 1)
 				}
 				return
 			}
@@ -607,7 +607,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			forwarder.pauseMutex.RUnlock()
 			if paused {
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "recording_paused", 1)
+					metrics.RecordRTPDroppedPackets("recording_paused", 1)
 				}
 				return
 			}
@@ -616,7 +616,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if _, err := recordingWriter.Write(recordingPayload); err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write PCM audio to recording")
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPDroppedPackets(callUUID, "write_error", 1)
+					metrics.RecordRTPDroppedPackets("write_error", 1)
 				}
 				return
 			}
@@ -632,7 +632,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 			}
 			if metrics.IsMetricsEnabled() {
-				metrics.RecordRTPLatency(callUUID, time.Since(startWrite))
+				metrics.RecordRTPLatency(time.Since(startWrite))
 			}
 		}
 
@@ -689,7 +689,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 
 				if metrics.IsMetricsEnabled() {
-					metrics.RecordRTPPacket(callUUID, n)
+					metrics.RecordRTPPacket(n)
 				}
 
 				var processBuffer []byte
@@ -701,7 +701,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					decryptedRTP, returnDecryptedBuffer := GetPacketBuffer(n + 64)
 					var finishProcessingTimer func()
 					if metrics.IsMetricsEnabled() {
-						finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "srtp_decryption")
+						finishProcessingTimer = metrics.ObserveRTPProcessing("srtp_decryption")
 					}
 
 					var ssrc uint32
@@ -712,7 +712,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					readStream, err := srtpSession.OpenReadStream(ssrc)
 					if err != nil {
 						if metrics.IsMetricsEnabled() {
-							metrics.RecordSRTPDecryptionErrors(callUUID, "open_stream_error", 1)
+							metrics.RecordSRTPDecryptionErrors("open_stream_error", 1)
 						}
 						forwarder.Logger.WithError(err).WithFields(logrus.Fields{
 							"call_uuid": callUUID,
@@ -732,7 +732,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					}
 					if err != nil {
 						if metrics.IsMetricsEnabled() {
-							metrics.RecordSRTPDecryptionErrors(callUUID, "read_error", 1)
+							metrics.RecordSRTPDecryptionErrors("read_error", 1)
 						}
 						forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to read from SRTP stream")
 						returnBuffer(buffer)
@@ -741,7 +741,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					}
 
 					if metrics.IsMetricsEnabled() {
-						metrics.RecordSRTPPacketsProcessed(callUUID, "rx", 1)
+						metrics.RecordSRTPPacketsProcessed("rx", 1)
 					}
 
 					processBuffer = decryptedRTP[:decryptedLen]
@@ -955,7 +955,7 @@ func prepareRecordingAndTranscriptionPayloads(pcm []byte, forwarder *RTPForwarde
 
 	var finishProcessingTimer func()
 	if metrics.IsMetricsEnabled() {
-		finishProcessingTimer = metrics.ObserveRTPProcessing(callUUID, "audio_processing")
+		finishProcessingTimer = metrics.ObserveRTPProcessing("audio_processing")
 	}
 
 	processed, err := processingManager.ProcessAudio(pcm)
