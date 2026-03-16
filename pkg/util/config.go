@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -244,9 +245,10 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	config.HTTPEnableAPI = os.Getenv("HTTP_ENABLE_API") != "false"         // Enabled by default
 
 	// Ensure recording directory exists
-	if _, err := os.Stat(config.RecordingDir); os.IsNotExist(err) {
-		logger.Infof("Creating recording directory: %s", config.RecordingDir)
-		if err := os.MkdirAll(config.RecordingDir, 0755); err != nil {
+	cleanRecDir := filepath.Clean(config.RecordingDir)
+	if _, err := os.Stat(cleanRecDir); os.IsNotExist(err) {
+		logger.Infof("Creating recording directory: %s", cleanRecDir)
+		if err := os.MkdirAll(cleanRecDir, 0755); err != nil {
 			return nil, fmt.Errorf("failed to create recording directory: %w", err)
 		}
 	}

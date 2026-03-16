@@ -40,7 +40,7 @@ func NewGoroutinePool(maxWorkers int, queueSize int) *GoroutinePool {
 		queueSize = maxWorkers * 10
 	}
 
-	// #nosec G115 -- context.Background is appropriate for long-running pool context
+	// #nosec G118 -- context.Background is appropriate for long-running pool context
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &GoroutinePool{

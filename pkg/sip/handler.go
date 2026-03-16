@@ -306,7 +306,7 @@ func NewHandler(logger *logrus.Logger, config *Config, sttManager *stt.ProviderM
 	}
 
 	if enablePersistence {
-		// #nosec G115 -- context.Background is appropriate for session monitor context
+		// #nosec G118 -- context.Background is appropriate for session monitor context
 		handler.monitorCtx, handler.monitorCancel = context.WithCancel(context.Background())
 		handler.sessionMonitorWG.Add(1)
 		go handler.monitorSessions(handler.monitorCtx)

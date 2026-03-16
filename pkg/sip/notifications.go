@@ -184,6 +184,7 @@ func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.Recording
 func (n *MetadataNotifier) send(parentCtx context.Context, endpoint string, body []byte) {
 	ctx := parentCtx
 	if ctx == nil {
+		// #nosec G118 -- context.Background is fallback when no parent context provided
 		ctx = context.Background()
 	}
 

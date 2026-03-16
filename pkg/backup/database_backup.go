@@ -448,10 +448,12 @@ func (bm *DatabaseBackupManager) executeBackupCommandWithEnv(command string, arg
 
 // encryptBackup encrypts a backup file using AES-256-GCM
 func (bm *DatabaseBackupManager) encryptBackup(filePath string) (string, error) {
-	encryptedPath := filePath + ".enc"
+	// Sanitize file paths to prevent path traversal
+	cleanPath := filepath.Clean(filePath)
+	encryptedPath := cleanPath + ".enc"
 
 	// Read the source file
-	plaintext, err := os.ReadFile(filePath)
+	plaintext, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read backup file: %w", err)
 	}
@@ -489,7 +491,7 @@ func (bm *DatabaseBackupManager) encryptBackup(filePath string) (string, error) 
 	}
 
 	// Remove original file
-	if err := os.Remove(filePath); err != nil {
+	if err := os.Remove(cleanPath); err != nil {
 		bm.logger.WithError(err).Warning("Failed to remove original backup file")
 	}
 

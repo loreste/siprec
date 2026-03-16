@@ -298,7 +298,8 @@ func (p *AzureSpeechProvider) streamWithWebSocket(ctx context.Context, audioStre
 		return fmt.Errorf("failed to connect to Azure Speech WebSocket: %w", err)
 	}
 
-	// Create session context
+	// Create session context (uses parent ctx, not Background)
+	// #nosec G118 -- context derives from parent request context
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	// Create and register session with proper channels
