@@ -134,6 +134,51 @@ docker build -t siprec .
 docker run -p 5060:5060/udp -p 8080:8080 siprec
 ```
 
+### CLI Tool (siprecctl)
+
+The `siprecctl` command-line tool provides administrative control over the SIPREC server.
+
+```bash
+# Build the CLI
+go build -o siprecctl ./cmd/siprecctl
+
+# Check server health
+siprecctl health
+
+# List active sessions
+siprecctl sessions list
+
+# Pause/resume recordings
+siprecctl pause <call-id>
+siprecctl resume <call-id>
+
+# View resource usage
+siprecctl resources
+
+# Lawful intercept management
+siprecctl li list
+siprecctl li register --warrant W123 --target +15551234567
+siprecctl li stats
+
+# Generate example config
+siprecctl config generate -f yaml -o config.yaml
+
+# Connect to a different server
+siprecctl -s http://192.168.1.100:8080 health
+```
+
+**Available Commands:**
+| Command | Description |
+|---------|-------------|
+| `health` | Check server health and dependencies |
+| `stats` | Show server statistics |
+| `sessions list/get/terminate` | Manage recording sessions |
+| `pause/resume <call-id>` | Control recording for a call |
+| `pause-all/resume-all` | Control all recordings |
+| `resources` | Show resource utilization |
+| `config validate/generate/show` | Configuration management |
+| `li list/register/revoke/stats/audit` | Lawful intercept operations |
+
 ## Configuration
 
 The server supports multiple configuration methods with the following priority:
@@ -470,7 +515,9 @@ go test ./pkg/sip -run TestCombineRecordingLegs
 
 ```
 siprec/
-├── cmd/siprec/          # Main application entry point
+├── cmd/
+│   ├── siprec/          # Main server entry point
+│   └── siprecctl/       # CLI tool entry point
 ├── pkg/
 │   ├── alerting/        # Multi-channel alerting system
 │   ├── audio/           # Audio processing algorithms
@@ -478,6 +525,7 @@ siprec/
 │   ├── backup/          # Multi-cloud storage backends
 │   ├── cdr/             # Call Detail Records
 │   ├── circuitbreaker/  # Circuit breaker for STT resilience
+│   ├── cli/             # CLI tool implementation
 │   ├── compliance/      # PCI DSS and GDPR tools
 │   ├── config/          # Configuration management
 │   ├── database/        # MySQL/MariaDB integration

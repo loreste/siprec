@@ -132,4 +132,4 @@ siprec-enhanced-deployment.tar.gz
 !deploy-quick.sh
 
 # Go build cache
-.gocache/
+.gocache/siprecctl
