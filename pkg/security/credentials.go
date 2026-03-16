@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -126,7 +127,7 @@ func (cp *CredentialProvider) getFromSecureFile(name string) (string, error) {
 	}
 
 	// Read credentials file
-	credFile := fmt.Sprintf("%s/credentials.json", configDir)
+	credFile := filepath.Clean(fmt.Sprintf("%s/credentials.json", configDir))
 	data, err := os.ReadFile(credFile)
 	if err != nil {
 		return "", err

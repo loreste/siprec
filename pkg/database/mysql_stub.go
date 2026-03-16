@@ -62,6 +62,6 @@ func (m *MySQLDatabase) Migrate() error {
 
 // getContext returns a cancellable context with a short timeout so callers can compile.
 func (m *MySQLDatabase) getContext() (context.Context, context.CancelFunc) {
-	// #nosec G115 -- context.Background is appropriate for stub database context
+	// #nosec G118 -- context.Background is appropriate for stub database context
 	return context.WithTimeout(context.Background(), 5*time.Second)
 }

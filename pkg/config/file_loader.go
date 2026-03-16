@@ -165,8 +165,9 @@ func newDefaultConfig() *Config {
 func FindConfigFile() string {
 	// Check command line flag first (via CONFIG_FILE env var)
 	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
-		if _, err := os.Stat(configFile); err == nil {
-			return configFile
+		cleanPath := filepath.Clean(configFile)
+		if _, err := os.Stat(cleanPath); err == nil {
+			return cleanPath
 		}
 	}
 

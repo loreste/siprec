@@ -446,6 +446,7 @@ func (m *ProviderManager) Shutdown(ctx context.Context) error {
 			m.logger.WithField("provider", name).Debug("Shutting down enhanced provider")
 
 			// Create a timeout context for each provider shutdown
+			// #nosec G118 -- context derives from parent shutdown context
 			providerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			cancels = append(cancels, cancel)
 

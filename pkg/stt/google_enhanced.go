@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -222,10 +223,11 @@ func (p *GoogleProviderEnhanced) setupAuthentication() error {
 
 	// Check for environment variable
 	if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-		if _, err := os.Stat(credFile); err != nil {
-			return fmt.Errorf("credentials file from environment not found: %s", credFile)
+		cleanCredFile := filepath.Clean(credFile)
+		if _, err := os.Stat(cleanCredFile); err != nil {
+			return fmt.Errorf("credentials file from environment not found: %s", cleanCredFile)
 		}
-		p.logger.WithField("credentials_file", credFile).Info("Using credentials from environment")
+		p.logger.WithField("credentials_file", cleanCredFile).Info("Using credentials from environment")
 		return nil
 	}
 

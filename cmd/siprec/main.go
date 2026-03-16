@@ -226,7 +226,7 @@ func main() {
 	logger.SetOutput(os.Stdout)
 
 	// Initialize the root context for graceful shutdown
-	// #nosec G115 -- context.Background is appropriate for application root context
+	// #nosec G118 -- context.Background is appropriate for application root context
 	rootCtx, rootCancel = context.WithCancel(context.Background())
 	defer rootCancel()
 

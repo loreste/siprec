@@ -351,6 +351,7 @@ func (m *StreamMigrationManager) queueMigration(ctx context.Context, task *Migra
 
 // publishMigrationEvent publishes a migration event
 func (m *StreamMigrationManager) publishMigrationEvent(task *MigrationTask, action string) {
+	// #nosec G118 -- context.Background is appropriate for async event publishing
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -428,6 +429,7 @@ func (m *StreamMigrationManager) handleMigrationEvent(payload string) {
 
 // processMigrationRequest processes an incoming migration request
 func (m *StreamMigrationManager) processMigrationRequest(taskID string) {
+	// #nosec G118 -- context.Background is appropriate for async migration task
 	ctx, cancel := context.WithTimeout(context.Background(), migrationTimeout)
 	defer cancel()
 
@@ -438,6 +440,7 @@ func (m *StreamMigrationManager) processMigrationRequest(taskID string) {
 
 // handleOutgoingMigrationComplete handles completion of outgoing migration
 func (m *StreamMigrationManager) handleOutgoingMigrationComplete(taskID string) {
+	// #nosec G118 -- context.Background is appropriate for async completion handler
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -462,6 +465,7 @@ func (m *StreamMigrationManager) handleOutgoingMigrationComplete(taskID string) 
 
 // handleOutgoingMigrationFailed handles failure of outgoing migration
 func (m *StreamMigrationManager) handleOutgoingMigrationFailed(taskID string) {
+	// #nosec G118 -- context.Background is appropriate for async failure handler
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -546,6 +550,7 @@ func (m *StreamMigrationManager) GetStats() map[string]interface{} {
 	pendingCount := len(m.pendingMigrations)
 	m.migrationMu.RUnlock()
 
+	// #nosec G118 -- context.Background is appropriate for stats query
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 

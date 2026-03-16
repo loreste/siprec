@@ -127,7 +127,7 @@ type CallScope struct {
 // Context returns the context carrying the call span.
 func (c *CallScope) Context() context.Context {
 	if c == nil {
-		// #nosec G115 -- context.Background is fallback when scope is nil
+		// #nosec G118 -- context.Background is fallback when scope is nil
 		return context.Background()
 	}
 	return c.ctx
@@ -136,7 +136,7 @@ func (c *CallScope) Context() context.Context {
 // Span returns the root span for the call.
 func (c *CallScope) Span() trace.Span {
 	if c == nil {
-		// #nosec G115 -- context.Background is fallback when scope is nil
+		// #nosec G118 -- context.Background is fallback when scope is nil
 		return trace.SpanFromContext(context.Background())
 	}
 	return c.span
@@ -189,7 +189,7 @@ func (c *CallScope) End(err error) {
 // Init configures the global tracer provider based on repository configuration.
 func Init(ctx context.Context, cfg config.TracingConfig, logger *logrus.Logger) (func(context.Context) error, error) {
 	if ctx == nil {
-		// #nosec G115 -- context.Background is fallback when no context provided
+		// #nosec G118 -- context.Background is fallback when no context provided
 		ctx = context.Background()
 	}
 
@@ -264,7 +264,7 @@ func Init(ctx context.Context, cfg config.TracingConfig, logger *logrus.Logger) 
 // StartCallScope registers and returns a new per-call tracing scope.
 func StartCallScope(parent context.Context, callID string, attrs ...attribute.KeyValue) *CallScope {
 	if parent == nil {
-		// #nosec G115 -- context.Background is fallback when no parent context provided
+		// #nosec G118 -- context.Background is fallback when no parent context provided
 		parent = context.Background()
 	}
 
@@ -310,7 +310,7 @@ func ContextForCall(callID string) context.Context {
 	if scope, ok := GetCallScope(callID); ok {
 		return scope.Context()
 	}
-	// #nosec G115 -- context.Background is fallback when no call scope exists
+	// #nosec G118 -- context.Background is fallback when no call scope exists
 	return context.Background()
 }
 
@@ -330,7 +330,7 @@ func MetadataFromContext(ctx context.Context) *CallMetadata {
 // SpanFromContext safely resolves a span from context, falling back to a no-op span.
 func SpanFromContext(ctx context.Context) trace.Span {
 	if ctx == nil {
-		// #nosec G115 -- context.Background is fallback when no context provided
+		// #nosec G118 -- context.Background is fallback when no context provided
 		return trace.SpanFromContext(context.Background())
 	}
 	return trace.SpanFromContext(ctx)

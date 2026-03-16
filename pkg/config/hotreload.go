@@ -413,10 +413,11 @@ func (h *HotReloadManager) backupCurrentConfig() error {
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	backupPath := filepath.Join(backupDir, fmt.Sprintf("config_backup_%s.yaml", timestamp))
+	backupPath := filepath.Clean(filepath.Join(backupDir, fmt.Sprintf("config_backup_%s.yaml", timestamp)))
 
 	// Read current config file
-	data, err := os.ReadFile(h.configPath)
+	cleanConfigPath := filepath.Clean(h.configPath)
+	data, err := os.ReadFile(cleanConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to read current config: %w", err)
 	}

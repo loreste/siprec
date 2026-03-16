@@ -70,7 +70,7 @@ func NewSessionManager(config *SessionManagerConfig) *SessionManager {
 		config.MaxSessions = 1000
 	}
 
-	// #nosec G115 -- context.Background is appropriate for session manager context
+	// #nosec G118 -- context.Background is appropriate for session manager context
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &SessionManager{

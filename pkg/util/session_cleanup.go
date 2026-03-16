@@ -40,7 +40,7 @@ func NewSessionCleanupService(logger *logrus.Logger, rm *ResourceManager, config
 		config.SessionTimeout = 5 * time.Minute
 	}
 
-	// #nosec G115 -- context.Background is appropriate for long-running cleanup service
+	// #nosec G118 -- context.Background is appropriate for long-running cleanup service
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &SessionCleanupService{

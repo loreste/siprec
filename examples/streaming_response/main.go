@@ -233,7 +233,8 @@ func deepgramStreamingExample(logger *logrus.Logger) {
 
 	// Create Deepgram STT config
 	deepgramConfig := &config.DeepgramSTTConfig{
-		Enabled:   true,
+		Enabled: true,
+		// #nosec G101 -- This is a placeholder demo API key in example code
 		APIKey:    "demo-api-key",
 		Language:  "en-US",
 		Model:     "nova-2",
