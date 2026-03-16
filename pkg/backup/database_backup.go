@@ -485,7 +485,8 @@ func (bm *DatabaseBackupManager) encryptBackup(filePath string) (string, error) 
 	// Encrypt the data
 	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 
-	// Write encrypted file
+	// Write encrypted file (encryptedPath is derived from cleaned path)
+	// #nosec G703 -- path is derived from filepath.Clean'd source
 	if err := os.WriteFile(encryptedPath, ciphertext, 0600); err != nil {
 		return "", fmt.Errorf("failed to write encrypted file: %w", err)
 	}

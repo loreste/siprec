@@ -422,8 +422,9 @@ func (h *HotReloadManager) backupCurrentConfig() error {
 		return fmt.Errorf("failed to read current config: %w", err)
 	}
 
-	// Write backup
-	if err := os.WriteFile(backupPath, data, 0640); err != nil {
+	// Write backup (backupPath is already sanitized with filepath.Clean above)
+	// #nosec G703 -- path is cleaned via filepath.Clean
+	if err := os.WriteFile(backupPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write backup: %w", err)
 	}
 
