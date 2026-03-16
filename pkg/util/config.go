@@ -248,7 +248,7 @@ func LoadConfig(logger *logrus.Logger) (*Configuration, error) {
 	cleanRecDir := filepath.Clean(config.RecordingDir)
 	if _, err := os.Stat(cleanRecDir); os.IsNotExist(err) {
 		logger.Infof("Creating recording directory: %s", cleanRecDir)
-		if err := os.MkdirAll(cleanRecDir, 0755); err != nil {
+		if err := os.MkdirAll(cleanRecDir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create recording directory: %w", err)
 		}
 	}

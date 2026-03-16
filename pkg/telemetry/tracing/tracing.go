@@ -270,6 +270,7 @@ func StartCallScope(parent context.Context, callID string, attrs ...attribute.Ke
 
 	metadata := &CallMetadata{CallID: callID}
 	ctxWithMeta := context.WithValue(parent, metadataKey{}, metadata)
+	// #nosec G118 -- context derives from parent context parameter
 	ctx, cancel := context.WithCancel(ctxWithMeta)
 
 	callAttrs := []attribute.KeyValue{attribute.String("call.id", callID)}

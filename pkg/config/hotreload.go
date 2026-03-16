@@ -423,7 +423,7 @@ func (h *HotReloadManager) backupCurrentConfig() error {
 	}
 
 	// Write backup
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+	if err := os.WriteFile(backupPath, data, 0640); err != nil {
 		return fmt.Errorf("failed to write backup: %w", err)
 	}
 

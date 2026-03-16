@@ -1067,6 +1067,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		attribute.Bool("siprec.initial_invite", true),
 	)
 	// Create cancellable context for RTP forwarding goroutines
+	// #nosec G118 -- context derives from callScope parent context
 	callCtx, cancelFunc := context.WithCancel(callScope.Context())
 
 	// Create or update call state

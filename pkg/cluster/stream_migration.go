@@ -535,6 +535,7 @@ func (m *StreamMigrationManager) queueProcessor(ctx context.Context) {
 
 			// Only process if targeted at this node
 			if task.TargetNodeID == m.nodeID {
+				// #nosec G118 -- goroutine creates its own context with timeout
 				go m.processMigrationRequest(task.ID)
 			} else {
 				// Re-publish for the target node
