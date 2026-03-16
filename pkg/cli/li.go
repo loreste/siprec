@@ -9,6 +9,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var liCmd = &cobra.Command{
@@ -296,9 +298,10 @@ func runLIStats(cmd *cobra.Command, args []string) {
 
 	fmt.Println("Lawful Intercept Statistics")
 	fmt.Println(strings.Repeat("=", 40))
+	titleCaser := cases.Title(language.English)
 	for key, value := range stats {
 		displayKey := strings.ReplaceAll(key, "_", " ")
-		displayKey = strings.Title(displayKey)
+		displayKey = titleCaser.String(displayKey)
 		fmt.Printf("%-25s %v\n", displayKey+":", value)
 	}
 }
