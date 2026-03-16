@@ -190,30 +190,32 @@ func parseSTUNResponse(response []byte) (string, int, error) {
 	offset := 20
 	msgLength := int(response[2])<<8 | int(response[3])
 
-	for offset < 20+msgLength {
-		if offset+4 > len(response) {
-			break
-		}
-
-		attrType := int(response[offset])<<8 | int(response[offset+1])
-		attrLength := int(response[offset+2])<<8 | int(response[offset+3])
+	for offset < 20+msgLength && offset+4 <= len(response) {
+		// Extract attribute type and length with bounds-safe slice access
+		attrSlice := response[offset : offset+4]
+		attrType := int(attrSlice[0])<<8 | int(attrSlice[1])
+		attrLength := int(attrSlice[2])<<8 | int(attrSlice[3])
 
 		if attrType == 0x0020 { // XOR-MAPPED-ADDRESS
-			if offset+4+attrLength > len(response) || attrLength < 8 {
+			// Need at least 8 bytes for XOR-MAPPED-ADDRESS (family + port + IPv4)
+			if attrLength < 8 || offset+4+attrLength > len(response) {
 				break
 			}
 
+			// Extract attribute data with bounds-safe slice access
+			attrData := response[offset+4 : offset+4+attrLength]
+
 			// Parse XOR-MAPPED-ADDRESS
-			family := response[offset+5]
-			if family == 0x01 { // IPv4
+			family := attrData[1] // byte 0 is reserved, byte 1 is family
+			if family == 0x01 {   // IPv4
 				// XOR port with magic cookie high 16 bits
-				port := (int(response[offset+6])<<8 | int(response[offset+7])) ^ 0x2112
+				port := (int(attrData[2])<<8 | int(attrData[3])) ^ 0x2112
 
 				// XOR IP with magic cookie
 				ip := make([]byte, 4)
 				magicCookie := []byte{0x21, 0x12, 0xA4, 0x42}
 				for i := 0; i < 4; i++ {
-					ip[i] = response[offset+8+i] ^ magicCookie[i]
+					ip[i] = attrData[4+i] ^ magicCookie[i]
 				}
 
 				return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]), port, nil

@@ -245,6 +245,7 @@ func (sr *StreamResource) Name() string {
 
 // NewResourceManager creates a new resource manager
 func NewResourceManager(logger *logrus.Logger) *ResourceManager {
+	// #nosec G115 -- context.Background is appropriate for long-running resource manager
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	rm := &ResourceManager{

@@ -387,8 +387,9 @@ func (bm *DatabaseBackupManager) executeBackupCommand(command string, args []str
 }
 
 // executeBackupCommandWithEnv executes a backup command with environment variables
+// The command parameter is only called with hardcoded values ("mysqldump", "pg_dump")
 func (bm *DatabaseBackupManager) executeBackupCommandWithEnv(command string, args []string, outputPath string, env []string) (int64, string, error) {
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, args...) // #nosec G204 -- command is hardcoded in callers, not user input
 	if env != nil {
 		cmd.Env = env
 	}
