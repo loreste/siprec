@@ -59,7 +59,7 @@ func NewTranscriptionHub(logger *logrus.Logger) *TranscriptionHub {
 		logger:          logger,
 		clients:         make(map[*Client]bool),
 		callSubscribers: make(map[string]map[*Client]bool),
-		broadcast:       make(chan *TranscriptionMessage),
+		broadcast:       make(chan *TranscriptionMessage, 256), // Buffered to prevent blocking
 		register:        make(chan *Client),
 		unregister:      make(chan *Client),
 	}

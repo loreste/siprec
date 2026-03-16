@@ -21,6 +21,7 @@ type AnalyticsWebSocketHandler struct {
 	register     chan *AnalyticsClient
 	unregister   chan *AnalyticsClient
 	broadcast    chan *AnalyticsMessage
+	stopChan     chan struct{} // Channel to signal shutdown
 	pingInterval time.Duration // Configurable ping interval for testing
 }
 
@@ -58,8 +59,14 @@ func NewAnalyticsWebSocketHandler(logger *logrus.Logger) *AnalyticsWebSocketHand
 		register:     make(chan *AnalyticsClient),
 		unregister:   make(chan *AnalyticsClient),
 		broadcast:    make(chan *AnalyticsMessage, 256),
+		stopChan:     make(chan struct{}),
 		pingInterval: 54 * time.Second, // Default ping interval
 	}
+}
+
+// Stop gracefully shuts down the WebSocket handler
+func (h *AnalyticsWebSocketHandler) Stop() {
+	close(h.stopChan)
 }
 
 // Start begins the WebSocket handler's event loop
@@ -74,6 +81,17 @@ func (h *AnalyticsWebSocketHandler) run() {
 
 	for {
 		select {
+		case <-h.stopChan:
+			// Graceful shutdown - close all client connections
+			h.clientsMu.Lock()
+			for client := range h.clients {
+				close(client.send)
+				delete(h.clients, client)
+			}
+			h.clientsMu.Unlock()
+			h.logger.Info("Analytics WebSocket handler stopped")
+			return
+
 		case client := <-h.register:
 			h.clientsMu.Lock()
 			h.clients[client] = true
