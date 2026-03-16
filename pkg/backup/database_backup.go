@@ -450,7 +450,7 @@ func (bm *DatabaseBackupManager) executeBackupCommandWithEnv(command string, arg
 func (bm *DatabaseBackupManager) encryptBackup(filePath string) (string, error) {
 	// Sanitize file paths to prevent path traversal
 	cleanPath := filepath.Clean(filePath)
-	encryptedPath := cleanPath + ".enc"
+	encryptedPath := filepath.Clean(cleanPath + ".enc")
 
 	// Read the source file
 	plaintext, err := os.ReadFile(cleanPath)

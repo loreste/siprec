@@ -177,6 +177,7 @@ func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.Recording
 
 	for _, endpoint := range endpoints {
 		url := endpoint
+		// #nosec G118 -- goroutine receives parent context
 		go n.send(ctx, url, body)
 	}
 }
