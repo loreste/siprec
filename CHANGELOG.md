@@ -26,10 +26,22 @@ All notable changes to IZI SIPREC will be documented in this file.
 - **Read-write lock optimization**: Changed ProcessingManager to use RWMutex for read-heavy workloads
 - **Memory leak fix**: Fixed slice memory leak in STT result buffer management
 
+### Changed
+- **Go 1.25 Requirement**: Updated minimum Go version from 1.24 to 1.25
+- **Security Hardening**: Fixed all gosec security scan alerts (30 issues resolved)
+  - Fixed slice bounds issues (G602) in STUN handling
+  - Fixed path traversal concerns (G703) with filepath.Clean()
+  - Fixed directory permissions (G301) from 0755 to 0750
+  - Fixed file permissions (G306) from 0644 to 0600
+  - Documented context.Background() usage (G118) for long-running services
+
 ### Technical
 - Full test coverage with race detection for all new packages
 - Atomic operations throughout for thread-safe concurrent access
 - Integration with existing config system via ResourceConfig, LawfulInterceptConfig
+- Fixed potential goroutine leak in AnalyticsWebSocketHandler with proper Stop() method
+- Fixed unbounded goroutine spawning in ResourceManager cleanup with semaphore limiting
+- Added buffered channel to TranscriptionHub broadcast to prevent sender blocking
 
 ## [1.0.2] - 2026-02-26
 
