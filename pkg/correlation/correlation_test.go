@@ -82,6 +82,7 @@ func TestWithCorrelationID_AndFromContext(t *testing.T) {
 }
 
 func TestFromContext_WithNilContext(t *testing.T) {
+	//nolint:staticcheck // SA1012: intentionally testing nil context behavior
 	id := FromContext(nil)
 	assert.True(t, id.IsEmpty())
 }

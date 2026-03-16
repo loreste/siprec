@@ -54,7 +54,7 @@ func TestAMQPMetricsCollector_Creation(t *testing.T) {
 	// Test getting snapshot
 	snapshot := collector.GetSnapshot()
 	if snapshot == nil {
-		t.Error("Snapshot should not be nil")
+		t.Fatal("Snapshot should not be nil")
 	}
 
 	if snapshot.Timestamp.IsZero() {

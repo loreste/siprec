@@ -360,19 +360,57 @@ func (rm *ResourceManager) CleanupStale(maxAge time.Duration) int {
 		}
 	}
 
+	// Collect resources to close
+	resourcesToClose := make([]Resource, 0, len(staleResources))
 	for _, id := range staleResources {
 		resource := rm.resources[id]
 		delete(rm.resources, id)
-		
-		// Close resource in background to avoid blocking
-		go func(r Resource) {
-			if err := r.Close(); err != nil {
-				rm.logger.WithError(err).WithField("resource_id", r.ID()).Warning("Error closing stale resource")
-			}
-		}(resource)
+		resourcesToClose = append(resourcesToClose, resource)
 	}
 
-	if len(staleResources) > 0 {
+	// Close resources with bounded concurrency and timeout
+	if len(resourcesToClose) > 0 {
+		var wg sync.WaitGroup
+		// Limit concurrent closes to prevent goroutine explosion
+		sem := make(chan struct{}, 10)
+
+		for _, resource := range resourcesToClose {
+			wg.Add(1)
+			sem <- struct{}{} // Acquire semaphore
+			go func(r Resource) {
+				defer wg.Done()
+				defer func() { <-sem }() // Release semaphore
+
+				// Close with timeout to prevent goroutine hangs
+				done := make(chan error, 1)
+				go func() {
+					done <- r.Close()
+				}()
+
+				select {
+				case err := <-done:
+					if err != nil {
+						rm.logger.WithError(err).WithField("resource_id", r.ID()).Warning("Error closing stale resource")
+					}
+				case <-time.After(5 * time.Second):
+					rm.logger.WithField("resource_id", r.ID()).Warning("Timeout closing stale resource")
+				}
+			}(resource)
+		}
+
+		// Wait for all cleanup goroutines with overall timeout
+		cleanupDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(cleanupDone)
+		}()
+
+		select {
+		case <-cleanupDone:
+		case <-time.After(30 * time.Second):
+			rm.logger.Warning("Cleanup timed out, some resources may not be fully closed")
+		}
+
 		rm.logger.WithField("count", len(staleResources)).Info("Cleaned up stale resources")
 	}
 
