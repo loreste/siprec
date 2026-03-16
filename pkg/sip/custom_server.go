@@ -230,6 +230,7 @@ type headerEntry struct {
 
 // NewCustomSIPServer creates a new custom SIP server
 func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServer {
+	// #nosec G115 -- context.Background is appropriate for server shutdown context
 	ctx, cancel := context.WithCancel(context.Background())
 	server := &CustomSIPServer{
 		logger:       logger,

@@ -471,6 +471,7 @@ func (q *RedisSTTQueue) Dequeue(ctx context.Context) (*STTJob, error) {
 	}
 
 	if ctx == nil {
+		// #nosec G115 -- context.Background is fallback when no context provided
 		ctx = context.Background()
 	}
 
@@ -760,6 +761,7 @@ func (q *RedisSTTQueue) Purge() error {
 	}
 
 	pattern := fmt.Sprintf("%s:*", q.keyPrefix)
+	// #nosec G115 -- context.Background is appropriate for batch purge operation
 	ctx := context.Background()
 
 	iter := q.client.Scan(ctx, 0, pattern, 500).Iterator()
@@ -801,6 +803,7 @@ func (q *RedisSTTQueue) newOpContext() (context.Context, context.CancelFunc) {
 		timeout = 5 * time.Second
 	}
 
+	// #nosec G115 -- context.Background is appropriate for internal operation contexts
 	return context.WithTimeout(context.Background(), timeout)
 }
 
