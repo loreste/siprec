@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var resourcesCmd = &cobra.Command{
@@ -76,11 +78,12 @@ func runResources(cmd *cobra.Command, args []string) {
 		fmt.Println("\nSIPREC Metrics:")
 		fmt.Println(strings.Repeat("-", 50))
 
+		titleCaser := cases.Title(language.English)
 		for key, value := range metrics {
 			if strings.HasPrefix(key, "siprec_") {
 				displayKey := strings.TrimPrefix(key, "siprec_")
 				displayKey = strings.ReplaceAll(displayKey, "_", " ")
-				displayKey = strings.Title(displayKey)
+				displayKey = titleCaser.String(displayKey)
 				fmt.Printf("%-30s %.0f\n", displayKey+":", value)
 			}
 		}
