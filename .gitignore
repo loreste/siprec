@@ -25,6 +25,7 @@ coverage.html
 /build/
 /dist/
 /siprec
+siprecctl
 testenv
 
 # Dependency directories
