@@ -564,7 +564,8 @@ siprec/
 
 ## Documentation
 
-- [Configuration Guide](docs/configuration.md)
+- [Installation Guide](docs/installation.md) – Complete setup instructions for all platforms
+- [Configuration Guide](docs/configuration.md) – All configuration options
 - [Audio Pipeline Architecture](docs/audio-pipeline.md) – RTP processing, G.729 decoding, SSRC validation
 - [Speech-to-Text Integration](docs/stt.md)
 - [Real-Time Transcription](docs/realtime-transcription.md)
