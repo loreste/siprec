@@ -452,7 +452,8 @@ func (d *G729StreamDecoder) Decode(payload []byte, ssrc uint32) ([]byte, error) 
 	}
 
 	if d.ssrc != 0 && d.ssrc != ssrc {
-		d.decoder.Close()
+		// #nosec G104 -- decoder cleanup, no meaningful action if close fails
+		_ = d.decoder.Close()
 		d.decoder = g729.NewDecoder()
 	}
 	d.ssrc = ssrc
@@ -526,7 +527,8 @@ func (d *G729StreamDecoder) ConcealPackets(numPackets, pcmBytesPerPacket int) []
 // Close releases the underlying decoder resources.
 func (d *G729StreamDecoder) Close() {
 	if d.decoder != nil {
-		d.decoder.Close()
+		// #nosec G104 -- decoder cleanup, no meaningful action if close fails
+		_ = d.decoder.Close()
 		d.decoder = nil
 	}
 	d.active = false
@@ -545,13 +547,17 @@ func isG729Oscillation(decoded []int16) bool {
 
 	railedCount := 0
 	signChanges := 0
-	for i, s := range decoded {
+	prevPositive := decoded[0] > 0
+	for i := 0; i < n; i++ {
+		s := decoded[i]
 		if s > railThreshold || s < -railThreshold {
 			railedCount++
 		}
-		if i > 0 && (decoded[i] > 0) != (decoded[i-1] > 0) {
+		currPositive := s > 0
+		if i > 0 && currPositive != prevPositive {
 			signChanges++
 		}
+		prevPositive = currPositive
 	}
 
 	// Unstable: >50% of samples railed AND frequent sign alternation (>25%)

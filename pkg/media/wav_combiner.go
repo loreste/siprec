@@ -38,7 +38,8 @@ func CombineWAVRecordingsAligned(outputPath string, legs []LegTiming) error {
 	defer func() {
 		for _, r := range readers {
 			if r != nil {
-				r.Close()
+				// #nosec G104 -- best-effort cleanup in defer
+				_ = r.Close()
 			}
 		}
 	}()
@@ -49,7 +50,8 @@ func CombineWAVRecordingsAligned(outputPath string, legs []LegTiming) error {
 			return fmt.Errorf("failed to open %s: %w", leg.Path, err)
 		}
 		if reader.Channels != 1 {
-			reader.Close()
+			// #nosec G104 -- closing reader on validation failure
+			_ = reader.Close()
 			return fmt.Errorf("%s is not mono (channels=%d)", leg.Path, reader.Channels)
 		}
 		readers = append(readers, reader)
