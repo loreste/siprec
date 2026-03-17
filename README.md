@@ -15,7 +15,7 @@ The project is designed for high-performance **telecom recording** environments 
 
 This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 1.1.1
+**Version:** 1.2.0
 
 ## Use Cases
 
@@ -57,7 +57,11 @@ Works with any SIPREC-compliant source, including:
 - **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
 - **Jitter Buffer** – Per-leg RTP packet reordering with configurable buffer size and delay
 - **Packet Loss Concealment** – DTX-aware silence insertion for time-accurate recordings with G.729 Annex B support
+- **G.729 Per-Stream Decoder** – Isolated decoder per RTP stream eliminates cross-call state leakage
 - **G.729 Stability** – Oscillation detection prevents decoder artifacts from corrupting recordings
+- **SSRC Validation** – Locks SSRC from first RTP packet, drops mismatched packets to prevent crosstalk
+- **SSRC Auto-Correction** – Switches SSRC when locked source goes silent and alternate has sustained traffic
+- **Port Allocation Cooldown** – Avoids recently freed ports to prevent stale RTP crosstalk
 - **Start-Time Alignment** – Wall-clock synchronized multi-leg WAV combining for accurate stereo output
 - **Speaker Diarization** – Automatic speaker separation with voice feature extraction, cross-session speaker tracking, and configurable similarity thresholds
 
@@ -649,6 +653,32 @@ RTP_TIMEOUT=90s
 # Consider wider port range for better allocation
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=30000
+```
+
+### SSRC Mismatch and RTP Crosstalk
+
+If you see warnings about SSRC mismatches in logs:
+```
+Dropping RTP packet with unexpected SSRC
+```
+
+This is normal protective behavior. The server locks the SSRC from the first RTP packet received on each port to prevent stale traffic from previous calls on recycled ports from corrupting new recordings.
+
+**Why this happens:**
+- UDP ports are reused after calls end
+- Delayed packets from previous calls may arrive on ports now assigned to new calls
+- Without SSRC validation, these stale packets would corrupt the new recording
+
+**If legitimate SSRC changes are being rejected:**
+The server automatically handles these scenarios:
+1. **SIP signaling changes** – re-INVITE and UPDATE messages reset the expected SSRC
+2. **Silent SSRC change** – If the locked SSRC goes completely silent and a new SSRC shows sustained traffic, the server switches automatically
+3. **Hold/Resume** – SSRC is reset when the call resumes from hold
+
+**SSRC correction blocked during hold:**
+If the SBC stops sending RTP during hold, the server enters "RTP suspended" state and blocks SSRC correction to prevent accepting stale traffic. This is logged as:
+```
+RTP timeout on SIPREC forwarder — keeping alive until BYE
 ```
 
 ### G.729 Audio Quality Issues

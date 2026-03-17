@@ -2,6 +2,52 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.2.0] - 2026-03-17
+
+### Added
+- **Per-Stream G.729 Decoder**: Each RTP stream now has its own dedicated G.729 decoder instance
+  - Eliminates cross-call state leakage and race conditions from shared decoder pool
+  - Decoder state is properly isolated per goroutine for thread safety
+  - Added `ConcealPackets()` method for proper PLC that advances decoder state
+
+- **SSRC Validation & Locking**: First RTP packet locks the expected SSRC for the stream
+  - Packets with mismatched SSRC are dropped to prevent stale traffic from port reuse
+  - Protects against cross-talk from delayed packets on recycled ports
+  - Per-stream mismatch counters logged at stream end for diagnostics
+
+- **SSRC Correction Mechanism**: Automatic SSRC switching when the locked SSRC goes silent
+  - Handles "first-packet poisoning" after restart when stale packet locks wrong SSRC
+  - Handles "silent SSRC change" when SBC changes SSRC during hold/unhold without signaling
+  - Safety guards: requires 50+ packets from alternate SSRC AND 30+ consecutive non-locked packets
+  - Blocked during hold state or RTP suspended state to prevent accepting stale traffic
+
+- **Port Allocation Cooldown**: Recently freed ports are avoided to prevent stale RTP crosstalk
+  - Fresh (never-used) ports preferred over recently released ports
+  - Cooldown ports used as fallback only when all fresh ports are exhausted
+  - Prevents new calls from receiving delayed packets from previous calls
+
+- **SIPREC Forwarder Resilience**: SIPREC forwarders now survive RTP timeout instead of terminating
+  - Enter `RTPSuspended` state when RTP times out (SBC stopped RTP without signaling)
+  - Wait for BYE signal from SIP layer for proper cleanup
+  - SSRC correction blocked during suspended state to prevent accepting stale traffic
+
+- **ResetRemoteSSRC API**: SIP signaling events (re-INVITE, UPDATE) reset SSRC lock
+  - Called on re-INVITE with SDP to allow new SSRC from SBC
+  - Called on hold/resume transitions to handle media renegotiation
+  - Clears RTPSuspended state so forwarder is fully active for new stream
+
+### Fixed
+- **gosec Security Alerts**: Fixed all remaining security scanner warnings
+  - G104: Added explicit error ignoring with `#nosec` comments for cleanup operations
+  - G602: Refactored slice access patterns to avoid index bounds warnings
+
+### Technical
+- Per-goroutine `G729StreamDecoder` scoped to RTP forwarding lifetime
+- Atomic `RTPSuspended` flag for lock-free state checking in hot path
+- Port manager tracks recently freed ports with timestamp for cooldown logic
+- All changes validated with race detection and memory leak testing
+- 50 iterations × 100 packets memory test shows 0 goroutine leaks, 0 MB memory growth
+
 ## [1.1.1] - 2026-03-17
 
 ### Fixed
