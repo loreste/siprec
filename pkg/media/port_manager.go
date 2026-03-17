@@ -92,31 +92,18 @@ func NewPortManager(minPort, maxPort int) *PortManager {
 	}
 }
 
-// AllocatePort allocates a free RTP port from the configured range with optimization
-// Returns the allocated port or an error if no ports are available
+// AllocatePort allocates a free RTP port from the configured range with optimization.
+// Recently freed ports are kept in a cooldown period to prevent cross-talk from
+// stale RTP packets arriving on reused ports. Fresh ports are preferred.
 func (pm *PortManager) AllocatePort() (int, error) {
 	pm.portsMutex.Lock()
 	defer pm.portsMutex.Unlock()
 
-	// Try to reuse recently freed ports first (better for OS and networking)
-	if cachedPorts := pm.getRecentlyFreedPorts(); len(cachedPorts) > 0 {
-		for _, port := range cachedPorts {
-			if !pm.usedPorts[port] && portAvailable(port) {
-				pm.usedPorts[port] = true
-				pm.stats.AllocationCount++
-				pm.stats.ReuseHits++
-				pm.updateStats()
-				return port, nil
-			}
-		}
-	}
+	coolingDown := pm.buildCooldownSet()
 
-	// First try - look for a port that's known to be available
+	// First try — prefer ports that are NOT recently freed (cooldown)
 	for port := pm.minPort; port <= pm.maxPort; port += 2 {
-		// RTP ports are typically even
-		if !pm.usedPorts[port] {
-			// Check if the port is actually available while holding the lock
-			// to prevent race conditions with other goroutines
+		if !pm.usedPorts[port] && !coolingDown[port] {
 			if portAvailable(port) {
 				pm.usedPorts[port] = true
 				pm.stats.AllocationCount++
@@ -126,8 +113,18 @@ func (pm *PortManager) AllocatePort() (int, error) {
 		}
 	}
 
-	// Second try - check all ports in the range regardless of our usedPorts map
-	// This handles cases where ports were released externally
+	// Fallback — use cooling-down ports rather than failing
+	for port := range coolingDown {
+		if !pm.usedPorts[port] && portAvailable(port) {
+			pm.usedPorts[port] = true
+			pm.stats.AllocationCount++
+			pm.stats.ReuseHits++
+			pm.updateStats()
+			return port, nil
+		}
+	}
+
+	// Last resort — check all ports regardless of usedPorts map
 	for port := pm.minPort; port <= pm.maxPort; port += 2 {
 		if portAvailable(port) {
 			pm.usedPorts[port] = true
@@ -140,58 +137,24 @@ func (pm *PortManager) AllocatePort() (int, error) {
 	return 0, fmt.Errorf("no free ports available in range %d-%d", pm.minPort, pm.maxPort)
 }
 
-// AllocatePortPair allocates an RTP/RTCP port pair according to RFC 3550
-// RTP uses even port, RTCP uses RTP port + 1 (odd port)
-// Returns PortPair or error if no pairs are available
+// AllocatePortPair allocates an RTP/RTCP port pair according to RFC 3550.
+// RTP uses even port, RTCP uses RTP port + 1 (odd port).
+// Recently freed ports are kept in cooldown to prevent cross-talk.
 func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
 	pm.portsMutex.Lock()
 	defer pm.portsMutex.Unlock()
 
-	// Try to reuse recently freed port pairs first
-	if cachedPorts := pm.getRecentlyFreedPorts(); len(cachedPorts) > 0 {
-		for _, rtpPort := range cachedPorts {
-			rtcpPort := rtpPort + 1
-			// Ensure RTP port is even and both ports are available
-			if rtpPort%2 == 0 && rtcpPort <= pm.maxPort &&
-				!pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] &&
-				portAvailable(rtpPort) && portAvailable(rtcpPort) {
+	coolingDown := pm.buildCooldownSet()
 
-				pm.usedPorts[rtpPort] = true
-				pm.usedPorts[rtcpPort] = true
-				pm.stats.AllocationCount += 2 // Count both ports
-				pm.stats.ReuseHits++
-				pm.updateStats()
-				return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
-			}
-		}
-	}
-
-	// First try - look for consecutive even/odd port pairs
+	// First try — prefer pairs where the RTP port is NOT cooling down
 	for port := pm.minPort; port <= pm.maxPort-1; port += 2 {
-		// Ensure port is even (RTP requirement)
-		if port%2 == 0 {
-			rtpPort := port
-			rtcpPort := port + 1
-
-			// Check if both ports are available
-			if !pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] {
-				if portAvailable(rtpPort) && portAvailable(rtcpPort) {
-					pm.usedPorts[rtpPort] = true
-					pm.usedPorts[rtcpPort] = true
-					pm.stats.AllocationCount += 2 // Count both ports
-					pm.updateStats()
-					return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
-				}
-			}
+		if port%2 != 0 {
+			continue
 		}
-	}
+		rtpPort := port
+		rtcpPort := port + 1
 
-	// Second try - check all even ports regardless of our usedPorts map
-	for port := pm.minPort; port <= pm.maxPort-1; port += 2 {
-		if port%2 == 0 {
-			rtpPort := port
-			rtcpPort := port + 1
-
+		if !pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] && !coolingDown[rtpPort] {
 			if portAvailable(rtpPort) && portAvailable(rtcpPort) {
 				pm.usedPorts[rtpPort] = true
 				pm.usedPorts[rtcpPort] = true
@@ -199,6 +162,44 @@ func (pm *PortManager) AllocatePortPair() (*PortPair, error) {
 				pm.updateStats()
 				return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
 			}
+		}
+	}
+
+	// Fallback — use cooling-down port pairs rather than failing
+	for port := range coolingDown {
+		if port%2 != 0 {
+			continue
+		}
+		rtpPort := port
+		rtcpPort := port + 1
+		if rtcpPort > pm.maxPort {
+			continue
+		}
+		if !pm.usedPorts[rtpPort] && !pm.usedPorts[rtcpPort] {
+			if portAvailable(rtpPort) && portAvailable(rtcpPort) {
+				pm.usedPorts[rtpPort] = true
+				pm.usedPorts[rtcpPort] = true
+				pm.stats.AllocationCount += 2
+				pm.stats.ReuseHits++
+				pm.updateStats()
+				return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
+			}
+		}
+	}
+
+	// Last resort — check all even ports regardless of usedPorts map
+	for port := pm.minPort; port <= pm.maxPort-1; port += 2 {
+		if port%2 != 0 {
+			continue
+		}
+		rtpPort := port
+		rtcpPort := port + 1
+		if portAvailable(rtpPort) && portAvailable(rtcpPort) {
+			pm.usedPorts[rtpPort] = true
+			pm.usedPorts[rtcpPort] = true
+			pm.stats.AllocationCount += 2
+			pm.updateStats()
+			return &PortPair{RTPPort: rtpPort, RTCPPort: rtcpPort}, nil
 		}
 	}
 
@@ -268,6 +269,18 @@ func (pm *PortManager) GetStats() PortManagerStats {
 	stats.UsedPorts = len(pm.usedPorts)
 	stats.AvailablePorts = pm.stats.TotalPorts - stats.UsedPorts
 	return stats
+}
+
+// buildCooldownSet returns a set of ports that were recently freed and should
+// be avoided to prevent cross-talk from stale RTP traffic. Caller must hold
+// portsMutex.
+func (pm *PortManager) buildCooldownSet() map[int]bool {
+	ports := pm.getRecentlyFreedPorts()
+	set := make(map[int]bool, len(ports))
+	for _, p := range ports {
+		set[p] = true
+	}
+	return set
 }
 
 // getRecentlyFreedPorts returns recently freed ports for reuse optimization

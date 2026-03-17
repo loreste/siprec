@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"siprec-server/pkg/audio"
@@ -88,6 +89,12 @@ type RTPForwarder struct {
 
 	// Cleanup tracking
 	MarkedForCleanup bool // Flag indicating if this forwarder has been marked for cleanup
+
+	// SIPREC RTP gap tracking: set when a SIPREC forwarder survives an
+	// RTP timeout. While set, SSRC correction is blocked to prevent
+	// stale traffic from being accepted during the gap. Cleared when
+	// an accepted packet arrives or a SIP signal resets the SSRC.
+	RTPSuspended int32 // atomic: 1 = suspended, 0 = normal
 
 	// RTP/RTCP statistics
 	LocalSSRC  uint32
@@ -276,6 +283,27 @@ func (f *RTPForwarder) Stop() {
 		f.CleanupMutex.Unlock()
 		f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() completed")
 	})
+}
+
+// ResetRemoteSSRC clears the expected SSRC so the next RTP packet's SSRC is
+// accepted. This must be called when SIP signaling indicates a potential media
+// change (UPDATE, re-INVITE) that may legitimately alter the SSRC.
+func (f *RTPForwarder) ResetRemoteSSRC() {
+	f.remoteMutex.Lock()
+	prev := f.RemoteSSRC
+	f.RemoteSSRC = 0
+	f.remoteMutex.Unlock()
+
+	// SIP signaling is an explicit lifecycle event — clear the RTP
+	// suspended state so the forwarder is fully active for the new stream.
+	atomic.StoreInt32(&f.RTPSuspended, 0)
+
+	if f.Logger != nil && prev != 0 {
+		f.Logger.WithFields(logrus.Fields{
+			"call_uuid":     f.CallUUID,
+			"previous_ssrc": prev,
+		}).Info("Remote SSRC reset due to SIP signaling; will accept next SSRC")
+	}
 }
 
 // Pause pauses recording and/or transcription

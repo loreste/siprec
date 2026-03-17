@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"sync"
-	"time"
 
 	"github.com/pidato/audio/g729"
 )
@@ -430,70 +428,108 @@ func (d *G722Decoder) qmfSynthesis(rlow, rhigh int) (int, int) {
 // G.729 Decoder - Using bcg729 library (ITU-T G.729 compliant)
 // =============================================================================
 
-// G729DecoderPool manages stateful G.729 decoders for different streams.
-// G.729 is a stateful codec - decoder state must persist across packets
-// within the same stream for proper audio reconstruction.
-type G729DecoderPool struct {
-	mu       sync.RWMutex
-	decoders map[uint32]*g729DecoderEntry
+// G729StreamDecoder wraps a stateful G.729 decoder for a single RTP stream.
+// It must be used from a single goroutine (not thread-safe).
+// The decoder tracks the SSRC and resets itself if the source changes mid-stream.
+type G729StreamDecoder struct {
+	decoder *g729.Decoder
+	ssrc    uint32
+	active  bool
 }
 
-type g729DecoderEntry struct {
-	decoder  *g729.Decoder
-	lastUsed time.Time
-}
-
-// Global decoder pool for G.729 streams
-var g729Pool = &G729DecoderPool{
-	decoders: make(map[uint32]*g729DecoderEntry),
-}
-
-// GetDecoder returns a decoder for the given SSRC, creating one if needed
-func (p *G729DecoderPool) GetDecoder(ssrc uint32) *g729.Decoder {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	entry, exists := p.decoders[ssrc]
-	if exists {
-		entry.lastUsed = time.Now()
-		return entry.decoder
-	}
-
-	// Create new decoder
-	decoder := g729.NewDecoder()
-	p.decoders[ssrc] = &g729DecoderEntry{
-		decoder:  decoder,
-		lastUsed: time.Now(),
-	}
-
-	return decoder
-}
-
-// CloseDecoder closes and removes a decoder for the given SSRC
-func (p *G729DecoderPool) CloseDecoder(ssrc uint32) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if entry, exists := p.decoders[ssrc]; exists {
-		// #nosec G104 -- decoder cleanup, no meaningful action if close fails
-		_ = entry.decoder.Close()
-		delete(p.decoders, ssrc)
+// NewG729StreamDecoder creates a new per-stream G.729 decoder.
+func NewG729StreamDecoder() *G729StreamDecoder {
+	return &G729StreamDecoder{
+		decoder: g729.NewDecoder(),
+		active:  true,
 	}
 }
 
-// Cleanup removes decoders that haven't been used for the specified duration
-func (p *G729DecoderPool) Cleanup(maxAge time.Duration) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// Decode decodes a G.729 payload, resetting the decoder if the SSRC changed.
+func (d *G729StreamDecoder) Decode(payload []byte, ssrc uint32) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("empty G.729 payload")
+	}
 
-	now := time.Now()
-	for ssrc, entry := range p.decoders {
-		if now.Sub(entry.lastUsed) > maxAge {
-			// #nosec G104 -- decoder cleanup, no meaningful action if close fails
-			_ = entry.decoder.Close()
-			delete(p.decoders, ssrc)
+	if d.ssrc != 0 && d.ssrc != ssrc {
+		d.decoder.Close()
+		d.decoder = g729.NewDecoder()
+	}
+	d.ssrc = ssrc
+
+	decoded := make([]int16, 80)
+
+	if len(payload) == 2 {
+		err := d.decoder.DecodeWithOptions(payload, false, true, false, decoded)
+		if err != nil {
+			return generateG729ComfortNoise(80), nil
+		}
+		pcmData := make([]byte, 160)
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[i*2:], uint16(sample))
+		}
+		return pcmData, nil
+	}
+
+	numFrames := len(payload) / 10
+	if numFrames == 0 {
+		return nil, fmt.Errorf("G.729 payload too small: %d bytes", len(payload))
+	}
+
+	pcmData := make([]byte, numFrames*160)
+
+	for frame := 0; frame < numFrames; frame++ {
+		startByte := frame * 10
+		frameData := payload[startByte : startByte+10]
+
+		err := d.decoder.Decode(frameData, decoded)
+		if err != nil || isG729Oscillation(decoded) {
+			for i := 0; i < 80; i++ {
+				decoded[i] = 0
+			}
+		}
+
+		pcmIdx := frame * 160
+		for i, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[pcmIdx+i*2:], uint16(sample))
 		}
 	}
+
+	return pcmData, nil
+}
+
+// ConcealPackets generates packet-loss concealment audio for lost RTP packets.
+// Each call advances the decoder state so the next real frame decodes cleanly.
+// pcmBytesPerPacket should match the PCM output of a normal decode (typically
+// 320 bytes for 20ms G.729 packets or 160 bytes for 10ms packets).
+func (d *G729StreamDecoder) ConcealPackets(numPackets, pcmBytesPerPacket int) []byte {
+	if numPackets <= 0 || d.decoder == nil || pcmBytesPerPacket <= 0 {
+		return nil
+	}
+	framesPerPacket := pcmBytesPerPacket / 160
+	if framesPerPacket <= 0 {
+		framesPerPacket = 2
+	}
+	totalFrames := numPackets * framesPerPacket
+	pcmData := make([]byte, totalFrames*160)
+	decoded := make([]int16, 80)
+	dummyFrame := make([]byte, 10)
+	for i := 0; i < totalFrames; i++ {
+		_ = d.decoder.DecodeWithOptions(dummyFrame, true, false, false, decoded)
+		for j, sample := range decoded {
+			binary.LittleEndian.PutUint16(pcmData[i*160+j*2:], uint16(sample))
+		}
+	}
+	return pcmData
+}
+
+// Close releases the underlying decoder resources.
+func (d *G729StreamDecoder) Close() {
+	if d.decoder != nil {
+		d.decoder.Close()
+		d.decoder = nil
+	}
+	d.active = false
 }
 
 // isG729Oscillation detects when the G.729 synthesis filter has gone unstable.
@@ -522,67 +558,12 @@ func isG729Oscillation(decoded []int16) bool {
 	return railedCount > n/2 && signChanges > n/4
 }
 
-// DecodeG729WithSSRC decodes G.729 payload using a stateful decoder for the given SSRC.
-// This maintains decoder state across packets for proper audio reconstruction.
+// DecodeG729WithSSRC is a stateless convenience wrapper that decodes a G.729
+// payload using a fresh decoder. It exists for backward compatibility; callers
+// that process a continuous RTP stream should use G729StreamDecoder instead to
+// maintain proper inter-packet decoder state.
 func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
-	if len(payload) == 0 {
-		return nil, fmt.Errorf("empty G.729 payload")
-	}
-
-	decoder := g729Pool.GetDecoder(ssrc)
-	decoded := make([]int16, 80)
-
-	// Handle SID frames (2 bytes for G.729B comfort noise)
-	if len(payload) == 2 {
-		err := decoder.DecodeWithOptions(payload, false, true, false, decoded)
-		if err != nil {
-			return generateG729ComfortNoise(80), nil
-		}
-		pcmData := make([]byte, 160)
-		for i, sample := range decoded {
-			binary.LittleEndian.PutUint16(pcmData[i*2:], uint16(sample))
-		}
-		return pcmData, nil
-	}
-
-	// Calculate number of complete frames
-	numFrames := len(payload) / 10
-	if numFrames == 0 {
-		return nil, fmt.Errorf("G.729 payload too small: %d bytes", len(payload))
-	}
-
-	// Each frame produces 80 samples (160 bytes PCM)
-	pcmData := make([]byte, numFrames*160)
-
-	for frame := 0; frame < numFrames; frame++ {
-		startByte := frame * 10
-		frameData := payload[startByte : startByte+10]
-
-		err := decoder.Decode(frameData, decoded)
-		if err != nil || isG729Oscillation(decoded) {
-			// Replace corrupt/unstable output with silence
-			for i := 0; i < 80; i++ {
-				decoded[i] = 0
-			}
-		}
-
-		pcmIdx := frame * 160
-		for i, sample := range decoded {
-			binary.LittleEndian.PutUint16(pcmData[pcmIdx+i*2:], uint16(sample))
-		}
-	}
-
-	return pcmData, nil
-}
-
-// CloseG729Stream closes the decoder for a specific stream (call when stream ends)
-func CloseG729Stream(ssrc uint32) {
-	g729Pool.CloseDecoder(ssrc)
-}
-
-// CleanupG729Decoders removes idle decoders (call periodically)
-func CleanupG729Decoders(maxAge time.Duration) {
-	g729Pool.Cleanup(maxAge)
+	return decodeG729Packet(payload)
 }
 
 // decodeG729Packet decodes a G.729 payload to 16-bit PCM using bcg729 library

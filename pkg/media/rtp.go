@@ -502,11 +502,56 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 		sttWriter := sttPipeWriter
 
+		// Per-stream G.729 decoder — scoped to this goroutine so there is no
+		// cross-call state leakage or data-race on the decoder internals.
+		var g729StreamDec *G729StreamDecoder
+		defer func() {
+			if g729StreamDec != nil {
+				g729StreamDec.Close()
+			}
+		}()
+
 		var firstPacketReceived bool
-		var lastSeq *uint16       // for PLC: insert silence when sequence gaps are detected
-		var lastTimestamp uint32  // RTP timestamp of last processed packet
-		var hasLastTimestamp bool // whether lastTimestamp is valid
-		var lastDecodedPCMSize int // actual PCM bytes produced by last decoded packet (for PLC)
+		var ssrcMismatchLogged bool   // rate-limit the mismatch warning to one per stream
+		var ssrcMismatchCount uint64  // total stale packets dropped for this stream
+		var lastAcceptedSSRC uint32   // tracks the SSRC accepted by the previous packet
+		var lastSeq *uint16           // for PLC: insert silence when sequence gaps are detected
+		var lastTimestamp uint32      // RTP timestamp of last processed packet
+		var hasLastTimestamp bool     // whether lastTimestamp is valid
+		var lastDecodedPCMSize int    // actual PCM bytes produced by last decoded packet (for PLC)
+
+		// SSRC correction state: handles two scenarios where the locked SSRC
+		// becomes wrong and must be switched:
+		//   1. "First-packet poisoning" — after restart, a stale packet locks
+		//      the wrong SSRC before the legitimate stream arrives.
+		//   2. "Silent SSRC change" — the SBC changes SSRC during hold/unhold
+		//      without sending a SIP UPDATE, so our signaling-based reset
+		//      never fires.
+		// The correction is safe because it ONLY fires when the locked SSRC
+		// has gone completely silent (inactivity check) AND the alternate
+		// has sustained traffic. When both streams are concurrent, the
+		// inactivity check blocks the switch — preventing cross-talk.
+		const (
+			ssrcCorrectionThreshold  = 50 // packets from an alternate SSRC needed to trigger switch
+			ssrcCorrectionInactivity = 30 // consecutive non-locked packets required (locked SSRC must be silent)
+		)
+		var ssrcLockedAt time.Time            // when RemoteSSRC was last locked from an RTP packet
+		var ssrcCorrectionCount uint32        // how many times SSRC was corrected on this stream
+		var alternateSSRC uint32              // candidate SSRC that may replace the locked one
+		var alternateSSRCCount uint32         // how many packets we've seen from alternateSSRC
+		var packetsSinceLastLockedSSRC uint32 // consecutive non-locked packets; reset on each accepted locked-SSRC packet
+
+		defer func() {
+			if ssrcMismatchCount > 0 || ssrcCorrectionCount > 0 {
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid":           callUUID,
+					"ssrc_mismatch_total": ssrcMismatchCount,
+					"accepted_ssrc":       lastAcceptedSSRC,
+					"ssrc_corrections":    ssrcCorrectionCount,
+				}).Warn("RTP stream ended with SSRC-mismatched packets dropped")
+			}
+		}()
+
 		decodeAndProcess := func(packet []byte, arrival time.Time, remoteAddr *net.UDPAddr) {
 			if len(packet) == 0 {
 				return
@@ -521,10 +566,150 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
+			// ── SSRC validation ─────────────────────────────────────────
+			// Lock the SSRC from the first RTP packet so that stale
+			// traffic on a reused port is filtered out.
+			//
+			// When the locked SSRC goes silent and a different SSRC
+			// shows sustained traffic, the lock is switched. This
+			// handles both first-packet poisoning (after restart) and
+			// the SBC silently changing SSRC during hold/unhold.
+			forwarder.remoteMutex.Lock()
+			expectedSSRC := forwarder.RemoteSSRC
+			isNewLock := expectedSSRC == 0
+			if isNewLock {
+				forwarder.RemoteSSRC = rtpPacket.SSRC
+				expectedSSRC = rtpPacket.SSRC
+				ssrcLockedAt = time.Now()
+				alternateSSRC = 0
+				alternateSSRCCount = 0
+				packetsSinceLastLockedSSRC = 0
+			}
+			forwarder.remoteMutex.Unlock()
+
+			if isNewLock {
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid":   callUUID,
+					"locked_ssrc": rtpPacket.SSRC,
+					"remote_addr": remoteAddr.String(),
+					"local_port":  forwarder.LocalPort,
+				}).Info("SSRC locked from RTP packet")
+			}
+
+			if rtpPacket.SSRC != expectedSSRC {
+				packetsSinceLastLockedSSRC++
+				corrected := false
+
+				// Block SSRC correction when the legitimate stream is
+				// expected to be silent:
+				//   - During hold (TranscriptionPaused) — SBC signaled hold
+				//   - During RTP gap (RTPSuspended) — SBC stopped RTP
+				//     without signaling, forwarder survived timeout
+				// In both cases, stale traffic must not be accepted.
+				forwarder.pauseMutex.RLock()
+				isOnHold := forwarder.TranscriptionPaused
+				forwarder.pauseMutex.RUnlock()
+				isSuspended := atomic.LoadInt32(&forwarder.RTPSuspended) == 1
+				correctionBlocked := isOnHold || isSuspended
+
+				if !correctionBlocked {
+					// Track the most common alternate SSRC
+					if rtpPacket.SSRC == alternateSSRC {
+						alternateSSRCCount++
+					} else {
+						alternateSSRC = rtpPacket.SSRC
+						alternateSSRCCount = 1
+					}
+				}
+
+				// Switch SSRC when BOTH conditions are met:
+				//   1. The alternate has sustained traffic (≥50 packets)
+				//   2. The locked SSRC has gone silent (≥30 consecutive
+				//      packets with no locked-SSRC traffic)
+				// Condition 2 is the key safety guard: when both streams
+				// are concurrently active, each locked-SSRC packet resets
+				// the counter to 0 — so the switch NEVER fires during
+				// concurrent traffic, preventing cross-talk.
+				// Also blocked during hold or RTP gap to prevent accepting
+				// stale traffic when the legitimate stream is silent by design.
+				if !correctionBlocked &&
+					alternateSSRCCount >= ssrcCorrectionThreshold &&
+					packetsSinceLastLockedSSRC >= ssrcCorrectionInactivity {
+					corrected = true
+					ssrcCorrectionCount++
+
+					oldSSRC := expectedSSRC
+					forwarder.remoteMutex.Lock()
+					forwarder.RemoteSSRC = alternateSSRC
+					forwarder.remoteMutex.Unlock()
+
+					lastSeq = nil
+					hasLastTimestamp = false
+					lastDecodedPCMSize = 0
+					ssrcMismatchLogged = false
+					firstPacketReceived = false
+					if g729StreamDec != nil {
+						g729StreamDec.Close()
+						g729StreamDec = nil
+					}
+
+					elapsedSinceLock := time.Since(ssrcLockedAt)
+
+					// Reset alternate tracking for the next potential switch
+					alternateSSRC = 0
+					alternateSSRCCount = 0
+					packetsSinceLastLockedSSRC = 0
+					ssrcLockedAt = time.Now()
+
+					forwarder.Logger.WithFields(logrus.Fields{
+						"call_uuid":          callUUID,
+						"old_ssrc":           oldSSRC,
+						"new_ssrc":           rtpPacket.SSRC,
+						"correction_number":  ssrcCorrectionCount,
+						"dropped_before":     ssrcMismatchCount,
+						"elapsed_since_lock": elapsedSinceLock.Milliseconds(),
+						"local_port":         forwarder.LocalPort,
+					}).Warn("SSRC switched: locked SSRC went silent, accepting new stream")
+				}
+
+				if !corrected {
+					ssrcMismatchCount++
+					if !ssrcMismatchLogged {
+						ssrcMismatchLogged = true
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid":     callUUID,
+							"expected_ssrc": expectedSSRC,
+							"received_ssrc": rtpPacket.SSRC,
+							"remote_addr":   remoteAddr.String(),
+							"local_port":    forwarder.LocalPort,
+							"on_hold":       isOnHold,
+							"rtp_suspended": isSuspended,
+						}).Warn("Dropping RTP packet with unexpected SSRC")
+					}
+					if metrics.IsMetricsEnabled() {
+						metrics.RecordRTPDroppedPackets("ssrc_mismatch", 1)
+					}
+					return
+				}
+			} else {
+				packetsSinceLastLockedSSRC = 0
+				// Accepted packet from the locked SSRC — clear suspended
+				// state so the forwarder knows RTP has resumed.
+				if atomic.CompareAndSwapInt32(&forwarder.RTPSuspended, 1, 0) {
+					forwarder.Logger.WithFields(logrus.Fields{
+						"call_uuid":  callUUID,
+						"ssrc":       rtpPacket.SSRC,
+						"local_port": forwarder.LocalPort,
+					}).Info("RTP resumed after gap — SIPREC forwarder reactivated")
+				}
+			}
+
+			// Only update activity timer for accepted packets so that
+			// stale traffic does not prevent timeout cleanup.
 			// Use atomic store for lock-free timestamp update (hot path optimization)
 			atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
 
-			// Log first RTP packet for diagnostics and record start time for WAV alignment (Fix G)
+			// Log first accepted RTP packet for diagnostics and record start time for WAV alignment (Fix G)
 			if !firstPacketReceived {
 				firstPacketReceived = true
 				// Record first RTP timestamp for leg alignment during WAV combining
@@ -549,9 +734,25 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}).Info("First RTP packet received successfully")
 			}
 
-			if forwarder.RemoteSSRC == 0 {
-				forwarder.RemoteSSRC = rtpPacket.SSRC
+			// When the SSRC changes legitimately (after a SIP signaling
+			// reset), clear per-stream state so that the gap/PLC logic
+			// does not compare timestamps across different RTP sessions.
+			if lastAcceptedSSRC != 0 && rtpPacket.SSRC != lastAcceptedSSRC {
+				lastSeq = nil
+				hasLastTimestamp = false
+				lastDecodedPCMSize = 0
+				ssrcMismatchLogged = false
+				if g729StreamDec != nil {
+					g729StreamDec.Close()
+					g729StreamDec = nil
+				}
+				forwarder.Logger.WithFields(logrus.Fields{
+					"call_uuid": callUUID,
+					"old_ssrc":  lastAcceptedSSRC,
+					"new_ssrc":  rtpPacket.SSRC,
+				}).Info("SSRC changed after signaling reset; RTP stream state cleared")
 			}
+			lastAcceptedSSRC = rtpPacket.SSRC
 			if forwarder.RTPStats != nil {
 				forwarder.RTPStats.Update(&rtpPacket, arrival)
 			}
@@ -581,6 +782,28 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				return
 			}
 
+			// Skip non-audio payload types: once the audio codec PT is
+			// established, packets with a different PT are event payloads
+			// (e.g. RFC 2833 DTMF on a dynamic PT) — not audio. Decoding
+			// them with the audio codec produces errors or garbage and
+			// creates sequence-number gaps that trigger spurious PLC.
+			if currentPayloadType != 0 && byte(rtpPacket.PayloadType) != currentPayloadType {
+				if dtmfCh != nil {
+					select {
+					case dtmfCh <- AcousticEvent{
+						Type:       "dtmf",
+						Confidence: 0.9,
+						Timestamp:  time.Now(),
+						Details: map[string]interface{}{
+							"payload_type": rtpPacket.PayloadType,
+						},
+					}:
+					default:
+					}
+				}
+				return
+			}
+
 			if dtmfCh != nil && (rtpPacket.PayloadType == 101 || strings.EqualFold(currentCodecName, "TELEPHONE-EVENT")) {
 				select {
 				case dtmfCh <- AcousticEvent{
@@ -599,12 +822,122 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			if codecName == "" {
 				codecName = "PCMU"
 			}
+			isG729 := codecName == "G729" || codecName == "G.729" || codecName == "G729A"
 
-			// Use stateful decoder for G.729 to maintain decoder state across packets
+			// ── PLC / gap handling ──────────────────────────────────────────
+			// Runs BEFORE decode so that the G.729 decoder's internal state is
+			// advanced through any missing frames, preventing clicks/pops when
+			// the next real frame arrives.
+			//
+			// Two categories of gap:
+			//   • Short timestamp gap (≤60 ms): real packet loss → insert
+			//     concealment (G.729) or silence (other codecs).
+			//   • Large timestamp gap (>60 ms): DTX or ringing/hold → insert
+			//     silence proportional to the RTP timestamp delta so that the
+			//     recording stays time-aligned with the other call leg.
+			sampleRate := currentSampleRate
+			if sampleRate <= 0 {
+				sampleRate = 8000
+			}
+			isReordered := false
+			dtxTimestampThreshold := uint32(sampleRate * 60 / 1000) // 60 ms
+			if lastSeq != nil {
+				expectedNext := uint16(*lastSeq + 1)
+				seq := rtpPacket.SequenceNumber
+				if seq != expectedNext {
+					if uint16(*lastSeq-seq) < 32768 {
+						isReordered = true
+					} else if hasLastTimestamp {
+						tsGap := rtpPacket.Timestamp - lastTimestamp
+						expectedDelta := uint32(sampleRate / 50) // 20 ms per packet
+						if tsGap <= dtxTimestampThreshold && recordingWriter != nil {
+							// Short gap → real packet loss
+							var lost int
+							if seq > expectedNext {
+								lost = int(seq - expectedNext)
+							} else {
+								lost = int(seq) + (65536 - int(expectedNext))
+							}
+							const maxPLC = 10
+							if lost > maxPLC {
+								lost = maxPLC
+							}
+							if lost > 0 {
+								if g729StreamDec != nil && isG729 {
+									bytesPerPacket := lastDecodedPCMSize
+									if bytesPerPacket <= 0 {
+										bytesPerPacket = 320
+									}
+									concealPCM := g729StreamDec.ConcealPackets(lost, bytesPerPacket)
+									if len(concealPCM) > 0 {
+										if _, writeErr := recordingWriter.Write(concealPCM); writeErr != nil {
+											forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC concealment write failed")
+										} else if metrics.IsMetricsEnabled() {
+											metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+										}
+									}
+								} else {
+									bytesPerPacket := lastDecodedPCMSize
+									if bytesPerPacket <= 0 {
+										bytesPerPacket = PCMBytesPerPacket(codecName, sampleRate)
+									}
+									silenceLen := lost * bytesPerPacket
+									if silenceLen > 0 {
+										silence := make([]byte, silenceLen)
+										if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
+											forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
+										} else if metrics.IsMetricsEnabled() {
+											metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+										}
+									}
+								}
+							}
+						} else if recordingWriter != nil {
+							// Large gap (ringing / hold): insert silence to keep
+							// both legs time-aligned in the combined stereo recording.
+							// Guard against unsigned underflow (timestamp < last)
+							// by requiring tsGap to fall within a plausible range.
+							const minLargeGapSeconds = 3
+							const maxLargeGapSeconds = 120
+							minLargeGap := uint32(sampleRate * minLargeGapSeconds)
+							maxLargeGap := uint32(sampleRate * maxLargeGapSeconds)
+							if tsGap >= minLargeGap && tsGap <= maxLargeGap {
+								gapSamples := int(tsGap - expectedDelta)
+								if gapSamples > 0 {
+									gapDurationMs := (gapSamples * 1000) / sampleRate
+									forwarder.Logger.WithFields(logrus.Fields{
+										"call_uuid":       callUUID,
+										"gap_duration_ms": gapDurationMs,
+										"gap_samples":     gapSamples,
+										"last_seq":        *lastSeq,
+										"current_seq":     seq,
+										"ssrc":            rtpPacket.SSRC,
+									}).Info("Inserting silence for large RTP timestamp gap (hold/ringing)")
+									silence := make([]byte, gapSamples*2)
+									if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
+										forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("DTX gap silence write failed")
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// G.729 is stateful: decoding a reordered packet with stale
+			// predictor state corrupts subsequent frames. Drop it.
+			if isReordered && isG729 {
+				return
+			}
+
+			// ── Decode ──────────────────────────────────────────────────────
 			var pcm []byte
 			var err error
-			if codecName == "G729" || codecName == "G.729" || codecName == "G729A" {
-				pcm, err = DecodeG729WithSSRC(payload, rtpPacket.SSRC)
+			if isG729 {
+				if g729StreamDec == nil {
+					g729StreamDec = NewG729StreamDecoder()
+				}
+				pcm, err = g729StreamDec.Decode(payload, rtpPacket.SSRC)
 			} else {
 				pcm, err = DecodeAudioPayload(payload, codecName)
 			}
@@ -621,64 +954,6 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 			if len(pcm) == 0 {
 				return
-			}
-
-			// Packet loss concealment (PLC): insert silence for missing packets so the
-			// recording stays time-accurate and stereo combine aligns both legs.
-			// Skip PLC when the RTP timestamp gap indicates a DTX silence period
-			// (G.729 Annex B / comfort noise suppression). RTP timestamps reflect the
-			// source audio timeline and are immune to network jitter or PBX buffering.
-			sampleRate := currentSampleRate
-			if sampleRate <= 0 {
-				sampleRate = 8000
-			}
-			isReordered := false
-			// 60ms of audio samples at the current rate; gaps larger than this are DTX
-			dtxTimestampThreshold := uint32(sampleRate * 60 / 1000)
-			if lastSeq != nil {
-				expectedNext := uint16(*lastSeq + 1)
-				seq := rtpPacket.SequenceNumber
-				if seq != expectedNext {
-					// Reordered (late) packet: seq is earlier than lastSeq in the 16-bit window.
-					// uint16(*lastSeq-seq) < 32768 means the packet is in the recent half, not wraparound.
-					if uint16(*lastSeq-seq) < 32768 {
-						isReordered = true
-						// Out-of-order arrival: skip PLC, do not insert silence.
-					} else if hasLastTimestamp {
-						// Use RTP timestamp gap to distinguish real packet loss from DTX.
-						// During DTX the timestamp jumps by many packets' worth; during real
-						// loss consecutive packets arrive with a normal timestamp delta.
-						tsGap := rtpPacket.Timestamp - lastTimestamp
-						if tsGap <= dtxTimestampThreshold && recordingWriter != nil {
-							var lost int
-							if seq > expectedNext {
-								lost = int(seq - expectedNext)
-							} else {
-								// Wraparound
-								lost = int(seq) + (65536 - int(expectedNext))
-							}
-							const maxPLC = 10 // cap at ~200ms at 20ms/packet; enough for transient loss
-							if lost > maxPLC {
-								lost = maxPLC
-							}
-							if lost > 0 {
-								bytesPerPacket := lastDecodedPCMSize
-								if bytesPerPacket <= 0 {
-									bytesPerPacket = PCMBytesPerPacket(codecName, sampleRate)
-								}
-								silenceLen := lost * bytesPerPacket
-								if silenceLen > 0 {
-									silence := make([]byte, silenceLen)
-									if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
-										forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
-									} else if metrics.IsMetricsEnabled() {
-										metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
-									}
-								}
-							}
-						}
-					}
-				}
 			}
 
 			lastDecodedPCMSize = len(pcm)
@@ -897,6 +1172,17 @@ func MonitorRTPTimeout(ctx context.Context, forwarder *RTPForwarder, callUUID st
 			forwarder.Logger.WithField("call_uuid", callUUID).Info("RTP timeout monitor exiting via ctx.Done()")
 			return
 		case <-ticker.C:
+			// During hold, the SBC stops sending RTP. Keep the
+			// forwarder alive so it can resume when the call unholds.
+			forwarder.pauseMutex.RLock()
+			isOnHold := forwarder.TranscriptionPaused
+			forwarder.pauseMutex.RUnlock()
+			if isOnHold {
+				atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
+				timeoutWarningIssued = false
+				continue
+			}
+
 			// Check how long since last RTP packet (lock-free read)
 			lastNano := atomic.LoadInt64(&forwarder.lastRTPNano)
 			lastActivity := time.Unix(0, lastNano)
@@ -924,6 +1210,28 @@ func MonitorRTPTimeout(ctx context.Context, forwarder *RTPForwarder, callUUID st
 				forwarder.remoteMutex.Lock()
 				remoteAddr := forwarder.RemoteRTPAddr
 				forwarder.remoteMutex.Unlock()
+
+				// SIPREC sessions have a clear lifecycle signal (BYE).
+				// The SBC may stop sending RTP during hold/transfer
+				// without signaling via UPDATE, so we keep the forwarder
+				// alive and let the SIP layer handle cleanup. Only log
+				// a warning and reset the timer so we keep monitoring.
+				if forwarder.RecordingSession != nil {
+					if atomic.CompareAndSwapInt32(&forwarder.RTPSuspended, 0, 1) {
+						forwarder.Logger.WithFields(logrus.Fields{
+							"call_uuid":           callUUID,
+							"last_rtp_time":       lastActivity.Format(time.RFC3339),
+							"time_since_last_rtp": timeSinceLastRTP.String(),
+							"timeout_threshold":   forwarder.Timeout.String(),
+							"local_port":          forwarder.LocalPort,
+							"remote_addr":         remoteAddr,
+							"remote_ssrc":         forwarder.RemoteSSRC,
+						}).Warn("RTP timeout on SIPREC forwarder — keeping alive until BYE, SSRC correction blocked (SBC may have stopped RTP without signaling hold)")
+					}
+					atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
+					timeoutWarningIssued = false
+					continue
+				}
 
 				forwarder.Logger.WithFields(logrus.Fields{
 					"call_uuid":           callUUID,

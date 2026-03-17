@@ -2096,6 +2096,18 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 	if sdpData != nil {
 		callState.SDP = sdpData
 		logger.WithField("sdp_size", len(sdpData)).Debug("Updated SDP from SIPREC re-INVITE")
+
+		// SDP renegotiation may change the SSRC; allow forwarders to
+		// accept whatever SSRC arrives next.
+		if len(callState.RTPForwarders) > 0 {
+			for _, fwd := range callState.RTPForwarders {
+				if fwd != nil {
+					fwd.ResetRemoteSSRC()
+				}
+			}
+		} else if callState.RTPForwarder != nil {
+			callState.RTPForwarder.ResetRemoteSSRC()
+		}
 	}
 
 	// Update call state
@@ -2924,15 +2936,78 @@ func (s *CustomSIPServer) handleUpdateMessage(message *SIPMessage) {
 		}
 
 		if isHold {
-			logger.WithField("call_id", message.CallID).Info("Call placed on hold via UPDATE")
-			// Optionally pause recording during hold
-			if callState.RTPForwarder != nil {
-				callState.RTPForwarder.Pause(false, true) // Pause transcription only during hold
+			logger.WithFields(logrus.Fields{
+				"call_id":    message.CallID,
+				"forwarders": len(callState.RTPForwarders),
+			}).Info("Call placed on hold via UPDATE (timeout suspended, SSRC locked)")
+			if len(callState.RTPForwarders) > 0 {
+				for i, fwd := range callState.RTPForwarders {
+					if fwd != nil {
+						fwd.Pause(false, true)
+						logger.WithFields(logrus.Fields{
+							"call_id":    message.CallID,
+							"forwarder":  i,
+							"local_port": fwd.LocalPort,
+							"ssrc":       fwd.RemoteSSRC,
+						}).Debug("Forwarder paused for hold")
+					}
+				}
+			} else if callState.RTPForwarder != nil {
+				callState.RTPForwarder.Pause(false, true)
 			}
 		} else {
-			logger.WithField("call_id", message.CallID).Info("Call resumed from hold via UPDATE")
-			if callState.RTPForwarder != nil {
+			// Check for dead forwarders before resuming
+			deadCount := 0
+			aliveCount := 0
+			if len(callState.RTPForwarders) > 0 {
+				for _, fwd := range callState.RTPForwarders {
+					if fwd == nil {
+						continue
+					}
+					select {
+					case <-fwd.StopChan:
+						deadCount++
+					default:
+						aliveCount++
+					}
+				}
+			}
+			logger.WithFields(logrus.Fields{
+				"call_id":          message.CallID,
+				"forwarders_total": len(callState.RTPForwarders),
+				"forwarders_alive": aliveCount,
+				"forwarders_dead":  deadCount,
+			}).Info("Call resumed from hold via UPDATE")
+			if deadCount > 0 {
+				logger.WithFields(logrus.Fields{
+					"call_id":    message.CallID,
+					"dead_count": deadCount,
+				}).Warn("Dead forwarders detected on resume — audio may be lost for these channels. Forwarders should have been kept alive during hold.")
+			}
+			if len(callState.RTPForwarders) > 0 {
+				for _, fwd := range callState.RTPForwarders {
+					if fwd != nil {
+						fwd.Resume()
+					}
+				}
+			} else if callState.RTPForwarder != nil {
 				callState.RTPForwarder.Resume()
+			}
+		}
+
+		// On resume (not hold), reset the expected SSRC so the forwarder
+		// accepts whatever SSRC the SBC sends after unhold. During hold,
+		// keep the existing SSRC locked to prevent stale traffic from a
+		// reused port being accepted as the legitimate stream.
+		if !isHold {
+			if len(callState.RTPForwarders) > 0 {
+				for _, fwd := range callState.RTPForwarders {
+					if fwd != nil {
+						fwd.ResetRemoteSSRC()
+					}
+				}
+			} else if callState.RTPForwarder != nil {
+				callState.RTPForwarder.ResetRemoteSSRC()
 			}
 		}
 
