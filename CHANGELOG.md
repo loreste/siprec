@@ -19,10 +19,28 @@ All notable changes to IZI SIPREC will be documented in this file.
   - WAV files are now finalized on RTP goroutine exit ensuring playable recordings
   - WAV reader handles unfinalized files by inferring data size from remaining file length
 
+### Added
+- **Buffered STT Pipe**: Replaced unbuffered io.Pipe with buffered pipe (4KB) for STT streaming
+  - Decouples RTP handler from STT backpressure to prevent audio processing stalls
+  - Non-blocking writes prevent RTP packet loss during temporary STT slowdowns
+  - Automatic buffer overflow handling drops oldest data to maintain real-time processing
+
+- **Jitter Buffer**: Added per-leg jitter buffer for RTP packet reordering
+  - Reorders out-of-order packets by sequence number before decoding
+  - Configurable buffer size (default: 5 packets) and max delay (default: 60ms)
+  - Duplicate packet detection and filtering
+  - PLC callback for lost packet notification
+
+- **WAV Start-Time Alignment**: Added wall-clock alignment for multi-leg WAV combining
+  - Records first RTP packet timestamp for each recording leg
+  - `CombineWAVRecordingsAligned()` pads earlier-starting legs with silence
+  - Ensures both channels are wall-clock synchronized in stereo output
+
 ### Technical
 - Track `lastDecodedPCMSize` for accurate PLC silence length calculation
 - DTX detection uses 60ms RTP timestamp threshold (3x normal 20ms packet interval)
 - All changes validated with race detection enabled
+- New test coverage for JitterBuffer and BufferedPipe components
 
 ## [1.1.0] - 2026-03-15
 

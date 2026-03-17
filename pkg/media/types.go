@@ -96,6 +96,12 @@ type RTPForwarder struct {
 
 	rtcpStopChan chan struct{}
 	remoteMutex  sync.Mutex
+
+	// Start-time alignment for WAV combining (Fix G)
+	FirstRTPTimestamp uint32    // RTP timestamp of the first packet
+	FirstRTPWallClock time.Time // Wall-clock time when first RTP packet arrived
+	HasFirstRTP       bool      // Whether we've received the first RTP packet
+	firstRTPMutex     sync.Mutex
 }
 
 // SDPOptions defines options for SDP generation

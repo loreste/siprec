@@ -5,16 +5,36 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
+
+// LegTiming holds timing information for a recording leg
+type LegTiming struct {
+	Path          string    // Path to the WAV file
+	FirstRTPTime  time.Time // Wall-clock time of first RTP packet
+	SampleRate    int       // Sample rate (for calculating padding)
+}
 
 // CombineWAVRecordings merges multiple mono recordings into a single multi-channel WAV.
 // The order of inputPaths determines the channel order in the output file.
 func CombineWAVRecordings(outputPath string, inputPaths []string) error {
-	if len(inputPaths) < 2 {
+	// Convert to LegTiming without alignment info
+	legs := make([]LegTiming, len(inputPaths))
+	for i, path := range inputPaths {
+		legs[i] = LegTiming{Path: path}
+	}
+	return CombineWAVRecordingsAligned(outputPath, legs)
+}
+
+// CombineWAVRecordingsAligned merges multiple mono recordings with start-time alignment.
+// If timing information is provided, it will pad the earlier-starting leg(s) with silence
+// so both channels are wall-clock aligned in the output.
+func CombineWAVRecordingsAligned(outputPath string, legs []LegTiming) error {
+	if len(legs) < 2 {
 		return fmt.Errorf("need at least two recordings to combine")
 	}
 
-	readers := make([]*WAVReader, 0, len(inputPaths))
+	readers := make([]*WAVReader, 0, len(legs))
 	defer func() {
 		for _, r := range readers {
 			if r != nil {
@@ -23,14 +43,14 @@ func CombineWAVRecordings(outputPath string, inputPaths []string) error {
 		}
 	}()
 
-	for _, path := range inputPaths {
-		reader, err := NewWAVReader(path)
+	for _, leg := range legs {
+		reader, err := NewWAVReader(leg.Path)
 		if err != nil {
-			return fmt.Errorf("failed to open %s: %w", path, err)
+			return fmt.Errorf("failed to open %s: %w", leg.Path, err)
 		}
 		if reader.Channels != 1 {
 			reader.Close()
-			return fmt.Errorf("%s is not mono (channels=%d)", path, reader.Channels)
+			return fmt.Errorf("%s is not mono (channels=%d)", leg.Path, reader.Channels)
 		}
 		readers = append(readers, reader)
 	}
@@ -42,7 +62,10 @@ func CombineWAVRecordings(outputPath string, inputPaths []string) error {
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+	// Calculate padding for each leg based on start times (Fix G)
+	padSamples := calculatePadding(legs, sampleRate)
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return err
 	}
 
@@ -61,11 +84,29 @@ func CombineWAVRecordings(outputPath string, inputPaths []string) error {
 	channelCount := len(readers)
 	buffer := make([]byte, chunkSize*channelCount*2)
 
+	// Track how many padding samples remain for each channel
+	remainingPad := make([]int, channelCount)
+	copy(remainingPad, padSamples)
+
 	for {
 		maxSamples := 0
 		channelSamples := make([][]int16, channelCount)
 
 		for i, r := range readers {
+			// If we still have padding to output, create silence samples
+			if remainingPad[i] > 0 {
+				padCount := chunkSize
+				if padCount > remainingPad[i] {
+					padCount = remainingPad[i]
+				}
+				channelSamples[i] = make([]int16, padCount)
+				remainingPad[i] -= padCount
+				if padCount > maxSamples {
+					maxSamples = padCount
+				}
+				continue
+			}
+
 			samples, err := r.ReadSamples(chunkSize)
 			if err != nil && err != io.EOF {
 				return fmt.Errorf("failed to read samples: %w", err)
@@ -107,4 +148,53 @@ func CombineWAVRecordings(outputPath string, inputPaths []string) error {
 	}
 
 	return nil
+}
+
+// calculatePadding determines how many silence samples to prepend to each leg
+// so that all legs are aligned to the same wall-clock start time.
+func calculatePadding(legs []LegTiming, sampleRate int) []int {
+	padSamples := make([]int, len(legs))
+
+	// Check if we have valid timing for all legs
+	hasValidTiming := true
+	for _, leg := range legs {
+		if leg.FirstRTPTime.IsZero() {
+			hasValidTiming = false
+			break
+		}
+	}
+
+	if !hasValidTiming || len(legs) < 2 {
+		return padSamples // No padding needed
+	}
+
+	// Find the latest start time (this leg needs no padding)
+	var latestStart time.Time
+	for _, leg := range legs {
+		if leg.FirstRTPTime.After(latestStart) {
+			latestStart = leg.FirstRTPTime
+		}
+	}
+
+	// Calculate padding for each leg
+	for i, leg := range legs {
+		delta := latestStart.Sub(leg.FirstRTPTime)
+		if delta > 0 {
+			// Calculate samples to pad: delta * sampleRate
+			// delta is in nanoseconds, sampleRate is samples/second
+			padSamples[i] = int(delta.Seconds() * float64(sampleRate))
+		}
+	}
+
+	return padSamples
+}
+
+// GetFirstRTPTiming retrieves the first RTP timing from an RTPForwarder
+func GetFirstRTPTiming(f *RTPForwarder) (time.Time, bool) {
+	if f == nil {
+		return time.Time{}, false
+	}
+	f.firstRTPMutex.Lock()
+	defer f.firstRTPMutex.Unlock()
+	return f.FirstRTPWallClock, f.HasFirstRTP
 }
