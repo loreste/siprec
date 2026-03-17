@@ -55,8 +55,10 @@ Works with any SIPREC-compliant source, including:
 - **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
 - **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
 - **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
+- **Jitter Buffer** – Per-leg RTP packet reordering with configurable buffer size and delay
 - **Packet Loss Concealment** – DTX-aware silence insertion for time-accurate recordings with G.729 Annex B support
 - **G.729 Stability** – Oscillation detection prevents decoder artifacts from corrupting recordings
+- **Start-Time Alignment** – Wall-clock synchronized multi-leg WAV combining for accurate stereo output
 - **Speaker Diarization** – Automatic speaker separation with voice feature extraction, cross-session speaker tracking, and configurable similarity thresholds
 
 ### Speech-to-Text (STT)

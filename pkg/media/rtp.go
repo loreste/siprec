@@ -458,23 +458,28 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		recordingWriter := NewPausableWriter(baseRecordingWriter)
 		forwarder.recordingWriter = recordingWriter
 
+		// Use buffered pipe to decouple RTP handler from STT backpressure (Fix C)
+		// Buffer size: ~80ms of audio at 8kHz 16-bit mono = 1280 bytes
+		// We use 4096 to handle bursts and varying sample rates
 		var (
-			sttPipeReader *io.PipeReader
-			sttPipeWriter *io.PipeWriter
+			sttPipeReader io.ReadCloser
+			sttPipeWriter io.WriteCloser
 		)
 
 		if sttProvider != nil {
-			sttPipeReader, sttPipeWriter = io.Pipe()
+			bufferedReader, bufferedWriter := NewBufferedPipe(4096)
+			sttPipeReader = bufferedReader
+			sttPipeWriter = bufferedWriter
 			transcriptionReader := NewPausableReader(sttPipeReader)
 			forwarder.transcriptionReader = transcriptionReader
 
 			forwarder.Logger.WithField("call_uuid", callUUID).Debug("Starting transcription stream")
 			rtpSpan.AddEvent("stt.dispatch", trace.WithAttributes(attribute.String("stt.vendor", config.DefaultVendor)))
 
-			go func(reader *io.PipeReader, paused *PausableReader) {
+			go func(reader io.ReadCloser, paused *PausableReader) {
 				if err := sttProvider(ctx, "", paused, callUUID); err != nil {
 					forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("STT provider exited early; transcription will be disabled")
-					reader.CloseWithError(err)
+					reader.Close()
 					return
 				}
 				reader.Close()
@@ -519,18 +524,28 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			// Use atomic store for lock-free timestamp update (hot path optimization)
 			atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
 
-			// Log first RTP packet for diagnostics
+			// Log first RTP packet for diagnostics and record start time for WAV alignment (Fix G)
 			if !firstPacketReceived {
 				firstPacketReceived = true
+				// Record first RTP timestamp for leg alignment during WAV combining
+				forwarder.firstRTPMutex.Lock()
+				if !forwarder.HasFirstRTP {
+					forwarder.FirstRTPTimestamp = rtpPacket.Timestamp
+					forwarder.FirstRTPWallClock = arrival
+					forwarder.HasFirstRTP = true
+				}
+				forwarder.firstRTPMutex.Unlock()
+
 				forwarder.Logger.WithFields(logrus.Fields{
-					"call_uuid":    callUUID,
-					"remote_addr":  remoteAddr.String(),
-					"ssrc":         rtpPacket.SSRC,
-					"payload_type": rtpPacket.PayloadType,
-					"sequence":     rtpPacket.SequenceNumber,
-					"timestamp":    rtpPacket.Timestamp,
-					"local_port":   forwarder.LocalPort,
-					"payload_size": len(rtpPacket.Payload),
+					"call_uuid":      callUUID,
+					"remote_addr":    remoteAddr.String(),
+					"ssrc":           rtpPacket.SSRC,
+					"payload_type":   rtpPacket.PayloadType,
+					"sequence":       rtpPacket.SequenceNumber,
+					"timestamp":      rtpPacket.Timestamp,
+					"local_port":     forwarder.LocalPort,
+					"payload_size":   len(rtpPacket.Payload),
+					"first_rtp_time": arrival,
 				}).Info("First RTP packet received successfully")
 			}
 
