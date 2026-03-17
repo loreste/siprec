@@ -4,6 +4,7 @@ This directory contains the current, supported feature set for IZI SIPREC.
 
 ## Contents
 
+- `installation.md` – Complete installation guide for all platforms.
 - `overview.md` – Feature summary and architecture snapshot.
 - `audio-pipeline.md` – RTP audio processing pipeline architecture and fixes.
 - `configuration.md` – Configuration options including YAML/JSON config files and environment variables.
@@ -13,6 +14,7 @@ This directory contains the current, supported feature set for IZI SIPREC.
 - `vendor-integration.md` – Supported SBC vendors (Oracle, Cisco, Avaya, NICE, Genesys, etc.) and metadata extraction.
 - `whisper-setup.md` – Local/remote Whisper installation and configuration.
 - `cluster-configuration.md` – Multi-instance and high-availability deployments.
+- `api.md` – HTTP API reference.
 
 ## Quick Start
 
