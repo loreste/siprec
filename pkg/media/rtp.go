@@ -479,10 +479,12 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			go func(reader io.ReadCloser, paused *PausableReader) {
 				if err := sttProvider(ctx, "", paused, callUUID); err != nil {
 					forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("STT provider exited early; transcription will be disabled")
-					reader.Close()
+					// #nosec G104 -- best-effort cleanup, error logged if provider failed
+					_ = reader.Close()
 					return
 				}
-				reader.Close()
+				// #nosec G104 -- best-effort cleanup on normal exit
+				_ = reader.Close()
 			}(sttPipeReader, transcriptionReader)
 
 			defer func() {
