@@ -2,6 +2,28 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.1.1] - 2026-03-17
+
+### Fixed
+- **G.729 DTX Audio Desync**: Fixed channel audio desync and garbled recordings with G.729 codec
+  - DTX (Discontinuous Transmission) silence periods no longer trigger excessive PLC silence insertion
+  - Uses RTP timestamp gaps to distinguish real packet loss from DTX silence suppression
+  - Reduced maxPLC from 100 packets (2s) to 10 packets (200ms) to prevent recording inflation
+  - Fixed sequence tracking for reordered packets to prevent backwards tracking
+
+- **G.729 Decoder Stability**: Added oscillation detection for unstable synthesis filter
+  - Detects 2kHz square wave artifacts (>50% railed samples with >25% sign changes)
+  - Replaces corrupt decoder output with silence to prevent harsh buzzing/distortion
+
+- **WAV Recording Reliability**: Improved recording file handling
+  - WAV files are now finalized on RTP goroutine exit ensuring playable recordings
+  - WAV reader handles unfinalized files by inferring data size from remaining file length
+
+### Technical
+- Track `lastDecodedPCMSize` for accurate PLC silence length calculation
+- DTX detection uses 60ms RTP timestamp threshold (3x normal 20ms packet interval)
+- All changes validated with race detection enabled
+
 ## [1.1.0] - 2026-03-15
 
 ### Added

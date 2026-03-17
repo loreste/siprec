@@ -15,7 +15,7 @@ The project is designed for high-performance **telecom recording** environments 
 
 This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 1.1.0
+**Version:** 1.1.1
 
 ## Use Cases
 
@@ -55,6 +55,8 @@ Works with any SIPREC-compliant source, including:
 - **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
 - **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
 - **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
+- **Packet Loss Concealment** – DTX-aware silence insertion for time-accurate recordings with G.729 Annex B support
+- **G.729 Stability** – Oscillation detection prevents decoder artifacts from corrupting recordings
 - **Speaker Diarization** – Automatic speaker separation with voice feature extraction, cross-session speaker tracking, and configurable similarity thresholds
 
 ### Speech-to-Text (STT)
@@ -646,6 +648,27 @@ RTP_TIMEOUT=90s
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=30000
 ```
+
+### G.729 Audio Quality Issues
+
+G.729 codec recordings may have specific issues due to the codec's characteristics:
+
+**1. Audio Desync Between Channels**
+
+G.729 Annex B uses DTX (Discontinuous Transmission) which stops sending RTP packets during silence. The server automatically handles this by:
+- Detecting DTX gaps using RTP timestamp analysis (gaps > 60ms)
+- Applying packet loss concealment only for real packet loss (normal 20ms arrival intervals)
+- Capping silence insertion at 200ms to prevent recording inflation
+
+If you still experience desync, check that both call legs are using the same codec and sample rate.
+
+**2. Buzzing or Distorted Audio**
+
+The G.729 decoder's synthesis filter can become unstable after DTX gaps, producing a 2kHz square wave artifact. The server automatically detects this pattern (>50% railed samples with rapid sign changes) and replaces corrupt frames with silence.
+
+**3. Recordings Much Longer Than Expected**
+
+This was caused by excessive PLC silence insertion during DTX periods. Version 1.1.1+ limits PLC to 10 packets (200ms) maximum per gap and skips PLC entirely for DTX silence periods.
 
 ## Performance
 
