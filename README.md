@@ -565,13 +565,14 @@ siprec/
 ## Documentation
 
 - [Configuration Guide](docs/configuration.md)
+- [Audio Pipeline Architecture](docs/audio-pipeline.md) – RTP processing, G.729 decoding, SSRC validation
 - [Speech-to-Text Integration](docs/stt.md)
 - [Real-Time Transcription](docs/realtime-transcription.md)
 - [Vendor Integration Guide](docs/vendor-integration.md) – Oracle, Cisco, Avaya, NICE, Genesys, and more
 - [API Reference](docs/api.md)
 - [Session Management](docs/sessions.md)
-- [End-to-End Feature Guide](docs/end-to-end.md)
 - [Whisper Setup Guide](docs/whisper-setup.md)
+- [Cluster Configuration](docs/cluster-configuration.md)
 - [CHANGELOG](CHANGELOG.md)
 
 ## Troubleshooting
