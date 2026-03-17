@@ -496,6 +496,32 @@ func (p *G729DecoderPool) Cleanup(maxAge time.Duration) {
 	}
 }
 
+// isG729Oscillation detects when the G.729 synthesis filter has gone unstable.
+// The telltale sign is a high-frequency alternating pattern at full amplitude:
+// +32767,+32767,-32768,-32768 repeating (a 2kHz square wave at 8kHz sample rate).
+// Normal speech clipping hits the rail briefly but doesn't oscillate at Nyquist.
+func isG729Oscillation(decoded []int16) bool {
+	const railThreshold int16 = 30000
+	n := len(decoded)
+	if n < 16 {
+		return false
+	}
+
+	railedCount := 0
+	signChanges := 0
+	for i, s := range decoded {
+		if s > railThreshold || s < -railThreshold {
+			railedCount++
+		}
+		if i > 0 && (decoded[i] > 0) != (decoded[i-1] > 0) {
+			signChanges++
+		}
+	}
+
+	// Unstable: >50% of samples railed AND frequent sign alternation (>25%)
+	return railedCount > n/2 && signChanges > n/4
+}
+
 // DecodeG729WithSSRC decodes G.729 payload using a stateful decoder for the given SSRC.
 // This maintains decoder state across packets for proper audio reconstruction.
 func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
@@ -533,7 +559,8 @@ func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
 		frameData := payload[startByte : startByte+10]
 
 		err := decoder.Decode(frameData, decoded)
-		if err != nil {
+		if err != nil || isG729Oscillation(decoded) {
+			// Replace corrupt/unstable output with silence
 			for i := 0; i < 80; i++ {
 				decoded[i] = 0
 			}

@@ -213,6 +213,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			forwarder.Cleanup()
 		}()
 
+		// Finalize WAV before Cleanup so the header is updated.
+		// Ensures recordings are playable if the goroutine exits for any reason.
+		defer func() {
+			if forwarder.WAVWriter != nil {
+				if err := forwarder.WAVWriter.Finalize(); err != nil && forwarder.Logger != nil {
+					forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Warn("Failed to finalize WAV on RTP goroutine exit")
+				}
+			}
+		}()
+
 		var endSessionMetrics func()
 		if metrics.IsMetricsEnabled() {
 			endSessionMetrics = metrics.StartSessionTimer("rtp_forwarding")
@@ -488,7 +498,10 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		sttWriter := sttPipeWriter
 
 		var firstPacketReceived bool
-		var lastSeq *uint16 // for PLC: insert silence when sequence gaps are detected
+		var lastSeq *uint16       // for PLC: insert silence when sequence gaps are detected
+		var lastTimestamp uint32  // RTP timestamp of last processed packet
+		var hasLastTimestamp bool // whether lastTimestamp is valid
+		var lastDecodedPCMSize int // actual PCM bytes produced by last decoded packet (for PLC)
 		decodeAndProcess := func(packet []byte, arrival time.Time, remoteAddr *net.UDPAddr) {
 			if len(packet) == 0 {
 				return
@@ -597,45 +610,63 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 			// Packet loss concealment (PLC): insert silence for missing packets so the
 			// recording stays time-accurate and stereo combine aligns both legs.
+			// Skip PLC when the RTP timestamp gap indicates a DTX silence period
+			// (G.729 Annex B / comfort noise suppression). RTP timestamps reflect the
+			// source audio timeline and are immune to network jitter or PBX buffering.
 			sampleRate := currentSampleRate
 			if sampleRate <= 0 {
 				sampleRate = 8000
 			}
+			isReordered := false
+			// 60ms of audio samples at the current rate; gaps larger than this are DTX
+			dtxTimestampThreshold := uint32(sampleRate * 60 / 1000)
 			if lastSeq != nil {
 				expectedNext := uint16(*lastSeq + 1)
 				seq := rtpPacket.SequenceNumber
 				if seq != expectedNext {
 					// Reordered (late) packet: seq is earlier than lastSeq in the 16-bit window.
 					// uint16(*lastSeq-seq) < 32768 means the packet is in the recent half, not wraparound.
-					if seq <= *lastSeq && uint16(*lastSeq-seq) < 32768 {
+					if uint16(*lastSeq-seq) < 32768 {
+						isReordered = true
 						// Out-of-order arrival: skip PLC, do not insert silence.
-					} else {
-						var lost int
-						if seq > expectedNext {
-							lost = int(seq - expectedNext)
-						} else {
-							// Wraparound
-							lost = int(seq) + (65536 - int(expectedNext))
-						}
-						const maxPLC = 100 // cap at ~2s at 20ms/packet to avoid runaway on bad sequence
-						if lost > maxPLC {
-							lost = maxPLC
-						}
-						if lost > 0 && recordingWriter != nil {
-							bytesPerPacket := PCMBytesPerPacket(codecName, sampleRate)
-							silenceLen := lost * bytesPerPacket
-							if silenceLen > 0 {
-								silence := make([]byte, silenceLen)
-								if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
-									forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
-								} else if metrics.IsMetricsEnabled() {
-									metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+					} else if hasLastTimestamp {
+						// Use RTP timestamp gap to distinguish real packet loss from DTX.
+						// During DTX the timestamp jumps by many packets' worth; during real
+						// loss consecutive packets arrive with a normal timestamp delta.
+						tsGap := rtpPacket.Timestamp - lastTimestamp
+						if tsGap <= dtxTimestampThreshold && recordingWriter != nil {
+							var lost int
+							if seq > expectedNext {
+								lost = int(seq - expectedNext)
+							} else {
+								// Wraparound
+								lost = int(seq) + (65536 - int(expectedNext))
+							}
+							const maxPLC = 10 // cap at ~200ms at 20ms/packet; enough for transient loss
+							if lost > maxPLC {
+								lost = maxPLC
+							}
+							if lost > 0 {
+								bytesPerPacket := lastDecodedPCMSize
+								if bytesPerPacket <= 0 {
+									bytesPerPacket = PCMBytesPerPacket(codecName, sampleRate)
+								}
+								silenceLen := lost * bytesPerPacket
+								if silenceLen > 0 {
+									silence := make([]byte, silenceLen)
+									if _, writeErr := recordingWriter.Write(silence); writeErr != nil {
+										forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("PLC silence write failed")
+									} else if metrics.IsMetricsEnabled() {
+										metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
+									}
 								}
 							}
 						}
 					}
 				}
 			}
+
+			lastDecodedPCMSize = len(pcm)
 
 			recordingPayload, transcriptionPayload, procErr := prepareRecordingAndTranscriptionPayloads(pcm, forwarder, config.AudioProcessing.Enabled, callUUID)
 			if procErr != nil {
@@ -664,8 +695,13 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 				return
 			}
-			seq := rtpPacket.SequenceNumber
-			lastSeq = &seq
+			// Only update sequence/timestamp tracking for non-reordered packets
+			if !isReordered {
+				seq := rtpPacket.SequenceNumber
+				lastSeq = &seq
+				lastTimestamp = rtpPacket.Timestamp
+				hasLastTimestamp = true
+			}
 			if sttWriter != nil && len(transcriptionPayload) > 0 {
 				if _, err := sttWriter.Write(transcriptionPayload); err != nil {
 					if errors.Is(err, io.ErrClosedPipe) {
