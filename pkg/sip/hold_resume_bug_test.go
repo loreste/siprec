@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,14 +75,16 @@ func TestResumeAfterLongHoldRestartsListener(t *testing.T) {
 	// MonitorRTPTimeout has a hardcoded 1s ticker, so we must wait > 1s
 	time.Sleep(1500 * time.Millisecond)
 
-	// Verify forwarder is dead (Conn closed/nil or StopChan closed)
-	// Note: In the real code, Stop() closes the StopChan.
+	// SIPREC forwarders survive RTP timeout — they stay alive until BYE.
+	// Verify the forwarder is still alive but in suspended state.
 	select {
 	case <-forwarder.StopChan:
-		// Expected
+		t.Fatal("SIPREC forwarder should survive RTP timeout, but it died")
 	default:
-		t.Fatal("Forwarder did not timeout as expected")
+		// Expected: forwarder is alive
 	}
+	require.Equal(t, int32(1), atomic.LoadInt32(&forwarder.RTPSuspended),
+		"Forwarder should be in RTP-suspended state after timeout")
 
 	// 4. Send Re-INVITE (Resume)
 	var bodyBuf bytes.Buffer
@@ -145,40 +148,24 @@ func TestResumeAfterLongHoldRestartsListener(t *testing.T) {
 	require.Equal(t, 200, tx.responses[len(tx.responses)-1].StatusCode)
 
 	// CRITICAL CHECK: The current forwarder in callState should be ACTIVE
+	// Since SIPREC forwarders survive timeout, the re-INVITE handler reuses
+	// the existing (alive) forwarder. It should still be open and listening.
 	currentForwarder := callState.RTPForwarder
-
-	// If the bug exists, this might be the OLD dead forwarder, or a new one that isn't started?
-	// The bug is that it reuses the dead forwarder.
 
 	select {
 	case <-currentForwarder.StopChan:
-		t.Fatal("Call state still has a dead/stopped RTP forwarder after Resume re-INVITE")
+		t.Fatal("Call state has a dead forwarder after re-INVITE")
 	default:
 		// Good, it's running
 	}
 
-	// Wait briefly for the RTP goroutine to open the connection
-	// The connection is opened in a separate goroutine started by StartRTPForwarding
-	var connOpen bool
-	for i := 0; i < 50; i++ { // Wait up to 500ms
-		currentForwarder.CleanupMutex.Lock()
-		connOpen = currentForwarder.Conn != nil
-		currentForwarder.CleanupMutex.Unlock()
-		if connOpen {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	currentForwarder.CleanupMutex.Lock()
+	connOpen := currentForwarder.Conn != nil
+	currentForwarder.CleanupMutex.Unlock()
 	require.True(t, connOpen, "RTP Conn should be open")
-	// Verify it's listening on a valid port (might be different or same, but must be active)
 	require.NotZero(t, currentForwarder.LocalPort)
 
-	// If it allocated a new one, the pointer should be different
-	verifyNewForwarder := true // strict mode
-	if verifyNewForwarder && currentForwarder == forwarder {
-		// If pointers are same, check if it was somehow resurrected (unlikely for struct)
-		// or if we failed to replace it.
-		// Since NewRTPForwarder returns a new struct, we expect a replacement.
-		t.Log("Warning: Forwarder struct pointer is identical. Unless we have logic to restart in-place, this is suspicious.")
-	}
+	// The re-INVITE triggers ResetRemoteSSRC which clears the suspended state
+	require.Equal(t, int32(0), atomic.LoadInt32(&currentForwarder.RTPSuspended),
+		"RTPSuspended should be cleared after re-INVITE (SIP signal resets SSRC)")
 }
