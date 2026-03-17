@@ -120,6 +120,18 @@ notes.md
 *.notes
 AGENTS.md
 
+# Internal test results and planning docs
+ENTERPRISE_SCALE_PLAN.md
+LOAD_TEST*.md
+LOGGING_CONFIGURATION.md
+TEST_RESULTS.md
+TESTING_COMPLETE.md
+*_TEST_RESULTS.md
+
+# Test scripts (keep examples in test/)
+test/load_test_results/
+test/*_load_test.sh
+
 # Deployment files with sensitive data
 deploy_enhanced.sh
 manual_deploy.sh
