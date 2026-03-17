@@ -3,7 +3,7 @@
 > Open Source SIPREC Session Recording Server written in Go for VoIP and telecom call recording.
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 [![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
 [![Scalability](https://img.shields.io/badge/Scale-100k%2B%20Concurrent-orange.svg)](docs/cluster-configuration.md)
 
@@ -770,7 +770,7 @@ sipp <server>:5060 -t tn -sf siprec_scenario.xml -l 6000 -m 6000 -r 100 -timeout
 
 ## License
 
-Apache 2.0 – see [LICENSE](LICENSE) for details.
+GPL v3 – see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
