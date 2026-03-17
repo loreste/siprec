@@ -99,6 +99,20 @@ func (wr *WAVReader) parseHeader() error {
 		return err
 	}
 
+	// If the header reported 0 for the data chunk (unfinalized WAV), treat the rest
+	// of the file as PCM so that CombineWAVRecordings can still produce a playable
+	// combined file from such inputs.
+	if wr.dataSize == 0 {
+		info, err := wr.file.Stat()
+		if err != nil {
+			return err
+		}
+		remaining := info.Size() - wr.dataOffset
+		if remaining > 0 {
+			wr.dataSize = remaining
+		}
+	}
+
 	return nil
 }
 
