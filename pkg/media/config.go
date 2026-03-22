@@ -37,6 +37,9 @@ type Config struct {
 	// Audio processing configuration
 	AudioProcessing AudioProcessingConfig
 
+	// Jitter buffer configuration (Fix E)
+	JitterBuffer JitterBufferSettings
+
 	// PII detection configuration
 	PIIAudioEnabled bool
 
@@ -62,4 +65,14 @@ type AudioProcessingConfig struct {
 	// Multi-channel
 	ChannelCount int
 	MixChannels  bool
+}
+
+// JitterBufferSettings holds user-facing jitter buffer settings
+type JitterBufferSettings struct {
+	// Enabled enables jitter buffering for RTP packets
+	Enabled bool
+	// MaxSize is the maximum number of packets to buffer (default: 5)
+	MaxSize int
+	// MaxDelayMs is the maximum reordering delay in milliseconds (default: 60)
+	MaxDelayMs int
 }

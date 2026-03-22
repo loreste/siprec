@@ -163,7 +163,10 @@ func TestCombineRecordingLegsCreatesMergedWav(t *testing.T) {
 		},
 	}
 	callID := "B2B.160.1111.2222"
-	server.combineRecordingLegs(callID, callState, []string{leg0, leg1})
+	server.combineRecordingLegs(callID, callState, []media.LegTiming{
+		{Path: leg0, SampleRate: 8000},
+		{Path: leg1, SampleRate: 8000},
+	})
 
 	expectedName := security.SanitizeCallUUID(callID)
 	expectedPath := filepath.Join(dir, fmt.Sprintf("%s.wav", expectedName))
@@ -229,7 +232,10 @@ func TestCombineRecordingLegsRespectsDisableFlag(t *testing.T) {
 	callState := &CallState{RecordingSession: session}
 
 	callID := "B2B.160.3333.4444"
-	server.combineRecordingLegs(callID, callState, []string{leg0, leg1})
+	server.combineRecordingLegs(callID, callState, []media.LegTiming{
+		{Path: leg0, SampleRate: 8000},
+		{Path: leg1, SampleRate: 8000},
+	})
 
 	expectedName := security.SanitizeCallUUID(callID)
 	expectedPath := filepath.Join(dir, fmt.Sprintf("%s.wav", expectedName))
