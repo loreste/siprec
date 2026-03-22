@@ -3441,27 +3441,50 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		"single_forwarder":  callState.RTPForwarder != nil,
 	}).Debug("Starting forwarder cleanup in finalizeCall")
 
-	recordingPaths := make([]string, 0, len(callState.RTPForwarders))
+	// Collect recording legs with timing info for proper alignment (Fix G)
+	recordingLegs := make([]media.LegTiming, 0, len(callState.RTPForwarders))
 	if len(callState.RTPForwarders) > 0 {
 		s.logger.WithField("call_id", callID).Debug("Cleaning up RTPForwarders array")
 		for _, forwarder := range callState.RTPForwarders {
 			if forwarder == nil {
 				continue
 			}
+			// Capture timing before cleanup
+			if forwarder.RecordingPath != "" {
+				leg := media.LegTiming{Path: forwarder.RecordingPath}
+				if firstTime, ok := media.GetFirstRTPTiming(forwarder); ok {
+					leg.FirstRTPTime = firstTime
+				}
+				_, _, sampleRate, _ := forwarder.GetCodecInfo()
+				if sampleRate > 0 {
+					leg.SampleRate = sampleRate
+				} else {
+					leg.SampleRate = 8000
+				}
+				recordingLegs = append(recordingLegs, leg)
+			}
 			forwarder.Stop()
 			forwarder.Cleanup()
-			if forwarder.RecordingPath != "" {
-				recordingPaths = append(recordingPaths, forwarder.RecordingPath)
-			}
 		}
 		callState.RTPForwarders = nil
 	} else if callState.RTPForwarder != nil {
 		s.logger.WithField("call_id", callID).Debug("Cleaning up single RTPForwarder")
+		// Capture timing before cleanup
+		if callState.RTPForwarder.RecordingPath != "" {
+			leg := media.LegTiming{Path: callState.RTPForwarder.RecordingPath}
+			if firstTime, ok := media.GetFirstRTPTiming(callState.RTPForwarder); ok {
+				leg.FirstRTPTime = firstTime
+			}
+			_, _, sampleRate, _ := callState.RTPForwarder.GetCodecInfo()
+			if sampleRate > 0 {
+				leg.SampleRate = sampleRate
+			} else {
+				leg.SampleRate = 8000
+			}
+			recordingLegs = append(recordingLegs, leg)
+		}
 		callState.RTPForwarder.Stop()
 		callState.RTPForwarder.Cleanup()
-		if callState.RTPForwarder.RecordingPath != "" {
-			recordingPaths = append(recordingPaths, callState.RTPForwarder.RecordingPath)
-		}
 	}
 
 	callState.RTPForwarder = nil
@@ -3479,21 +3502,32 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 			if forwarder == nil {
 				continue
 			}
-			forwarder.Stop()
-			forwarder.Cleanup()
+			// Capture timing before cleanup
 			if forwarder.RecordingPath != "" {
-				// Check if not already in recordingPaths before adding
+				// Check if not already in recordingLegs before adding
 				found := false
-				for _, path := range recordingPaths {
-					if path == forwarder.RecordingPath {
+				for _, leg := range recordingLegs {
+					if leg.Path == forwarder.RecordingPath {
 						found = true
 						break
 					}
 				}
 				if !found {
-					recordingPaths = append(recordingPaths, forwarder.RecordingPath)
+					leg := media.LegTiming{Path: forwarder.RecordingPath}
+					if firstTime, ok := media.GetFirstRTPTiming(forwarder); ok {
+						leg.FirstRTPTime = firstTime
+					}
+					_, _, sampleRate, _ := forwarder.GetCodecInfo()
+					if sampleRate > 0 {
+						leg.SampleRate = sampleRate
+					} else {
+						leg.SampleRate = 8000
+					}
+					recordingLegs = append(recordingLegs, leg)
 				}
 			}
+			forwarder.Stop()
+			forwarder.Cleanup()
 			s.logger.WithFields(logrus.Fields{
 				"call_id":   callID,
 				"stream_id": streamID,
@@ -3504,7 +3538,7 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 
 	callState.PendingAckCSeq = 0
 
-	s.combineRecordingLegs(callID, callState, recordingPaths)
+	s.combineRecordingLegs(callID, callState, recordingLegs)
 
 	// Release allocated port pairs
 	pm := media.GetPortManager()
@@ -3576,8 +3610,8 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	}
 }
 
-func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallState, recordingPaths []string) {
-	if len(recordingPaths) < 2 {
+func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallState, recordingLegs []media.LegTiming) {
+	if len(recordingLegs) < 2 {
 		return
 	}
 	if s.handler == nil || s.handler.Config == nil || s.handler.Config.MediaConfig == nil {
@@ -3593,7 +3627,7 @@ func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallSta
 		outputDir = mediaCfg.RecordingDir
 	}
 	if outputDir == "" {
-		outputDir = filepath.Dir(recordingPaths[0])
+		outputDir = filepath.Dir(recordingLegs[0].Path)
 	}
 
 	baseName := security.SanitizeCallUUID(callID)
@@ -3602,7 +3636,31 @@ func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallSta
 	}
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s.wav", baseName))
 
-	if err := media.CombineWAVRecordings(outputPath, recordingPaths); err != nil {
+	// Log timing info for diagnostics
+	hasValidTiming := true
+	for i, leg := range recordingLegs {
+		if leg.FirstRTPTime.IsZero() {
+			hasValidTiming = false
+		}
+		s.logger.WithFields(logrus.Fields{
+			"call_id":        callID,
+			"leg":            i,
+			"path":           leg.Path,
+			"first_rtp_time": leg.FirstRTPTime,
+			"sample_rate":    leg.SampleRate,
+		}).Debug("Recording leg timing info")
+	}
+	if hasValidTiming && len(recordingLegs) >= 2 {
+		delta := recordingLegs[1].FirstRTPTime.Sub(recordingLegs[0].FirstRTPTime)
+		s.logger.WithFields(logrus.Fields{
+			"call_id":   callID,
+			"delta_ms":  delta.Milliseconds(),
+			"will_align": true,
+		}).Debug("Leg timing delta - will apply alignment padding")
+	}
+
+	// Use aligned combining with timing info (Fix G)
+	if err := media.CombineWAVRecordingsAligned(outputPath, recordingLegs); err != nil {
 		s.logger.WithError(err).WithField("call_id", callID).Warn("Failed to combine SIPREC legs into single recording")
 		return
 	}
@@ -3617,7 +3675,8 @@ func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallSta
 	s.logger.WithFields(logrus.Fields{
 		"call_id": callID,
 		"path":    outputPath,
-		"legs":    len(recordingPaths),
+		"legs":    len(recordingLegs),
+		"aligned": hasValidTiming,
 	}).Info("Combined SIPREC legs into single recording")
 }
 

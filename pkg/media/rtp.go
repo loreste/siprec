@@ -513,6 +513,32 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}
 		}()
 
+		// Jitter buffer for packet reordering (Fix E)
+		// When enabled, packets are buffered and emitted in sequence order
+		// instead of being processed immediately or dropped when out-of-order.
+		var jitterBuffer *JitterBuffer
+		var processingFromBuffer bool // Flag to skip buffer push for already-buffered packets
+		jitterBufferEnabled := config.JitterBuffer.Enabled
+		if jitterBufferEnabled {
+			maxSize := config.JitterBuffer.MaxSize
+			if maxSize <= 0 {
+				maxSize = 5
+			}
+			maxDelay := time.Duration(config.JitterBuffer.MaxDelayMs) * time.Millisecond
+			if maxDelay <= 0 {
+				maxDelay = 60 * time.Millisecond
+			}
+			jitterBuffer = NewJitterBuffer(JitterBufferConfig{
+				MaxSize:  maxSize,
+				MaxDelay: maxDelay,
+			})
+			forwarder.Logger.WithFields(logrus.Fields{
+				"call_uuid":    callUUID,
+				"max_size":     maxSize,
+				"max_delay_ms": maxDelay.Milliseconds(),
+			}).Info("Jitter buffer enabled for RTP stream")
+		}
+
 		var firstPacketReceived bool
 		var ssrcMismatchLogged bool   // rate-limit the mismatch warning to one per stream
 		var ssrcMismatchCount uint64  // total stale packets dropped for this stream
@@ -820,6 +846,18 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				}
 			}
 
+			// ── Jitter Buffer Integration (Fix E) ─────────────────────────────
+			// When jitter buffer is enabled, push validated packets to the buffer
+			// instead of processing immediately. Packets will be popped in
+			// sequence order and processed at the end of each tick.
+			// Skip if we're already processing a packet from the buffer.
+			if jitterBufferEnabled && jitterBuffer != nil && !processingFromBuffer {
+				// Make a copy of the packet for buffering
+				pktCopy := rtpPacket
+				jitterBuffer.Push(&pktCopy, nil, arrival)
+				return // Don't process immediately; will be drained from buffer
+			}
+
 			codecName := currentCodecName
 			if codecName == "" {
 				codecName = "PCMU"
@@ -1120,6 +1158,29 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 
 					decodeAndProcess(processBuffer, arrival, addr)
 					processReturnBuffer()
+				}
+
+				// ── Drain Jitter Buffer (Fix E) ───────────────────────────────
+				// After processing all UDP packets, drain packets from jitter buffer
+				// in sequence order and process them.
+				if jitterBufferEnabled && jitterBuffer != nil {
+					processingFromBuffer = true
+					for {
+						bufferedPkt := jitterBuffer.Pop()
+						if bufferedPkt == nil {
+							break
+						}
+						// Serialize the buffered packet back to bytes for processing
+						rawBytes, err := bufferedPkt.Packet.Marshal()
+						if err != nil {
+							forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Debug("Failed to marshal buffered RTP packet")
+							continue
+						}
+						// Process the buffered packet (SSRC validation was already done)
+						// processingFromBuffer flag prevents re-pushing to buffer
+						decodeAndProcess(rawBytes, bufferedPkt.Arrival, nil)
+					}
+					processingFromBuffer = false
 				}
 			}
 		}
