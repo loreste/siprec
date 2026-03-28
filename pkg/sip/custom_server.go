@@ -686,7 +686,22 @@ func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string)
 	}
 	s.setListenAddress("udp", address)
 	s.logger.WithField("address", address).Info("Custom SIP server listening on UDP via sipgo transaction layer")
-	return s.sipServer.ListenAndServe(ctx, "udp", address)
+
+	// Create UDP listener and wrap with CRLF normalizer to handle
+	// non-compliant devices that send bare \n instead of \r\n (sipgo#292)
+	udpAddr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return fmt.Errorf("failed to resolve UDP address: %w", err)
+	}
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on UDP: %w", err)
+	}
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+	}()
+	return s.sipServer.ServeUDP(&crlfPacketConn{PacketConn: conn})
 }
 
 // ListenAndServeTCP starts TCP listener
@@ -696,7 +711,22 @@ func (s *CustomSIPServer) ListenAndServeTCP(ctx context.Context, address string)
 	}
 	s.setListenAddress("tcp", address)
 	s.logger.WithField("address", address).Info("Custom SIP server listening on TCP via sipgo transaction layer")
-	return s.sipServer.ListenAndServe(ctx, "tcp", address)
+
+	// Create TCP listener and wrap with CRLF normalizer to handle
+	// non-compliant devices that send bare \n instead of \r\n (sipgo#292)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return fmt.Errorf("failed to resolve TCP address: %w", err)
+	}
+	listener, err := net.ListenTCP("tcp", tcpAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on TCP: %w", err)
+	}
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
+	return s.sipServer.ServeTCP(&crlfListener{Listener: listener})
 }
 
 // ListenAndServeTLS starts TLS listener
