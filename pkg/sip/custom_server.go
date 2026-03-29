@@ -699,7 +699,9 @@ func (s *CustomSIPServer) ListenAndServeUDP(ctx context.Context, address string)
 	}
 	go func() {
 		<-ctx.Done()
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			s.logger.WithError(err).Debug("Error closing UDP connection during shutdown")
+		}
 	}()
 	return s.sipServer.ServeUDP(&crlfPacketConn{PacketConn: conn})
 }
@@ -724,7 +726,9 @@ func (s *CustomSIPServer) ListenAndServeTCP(ctx context.Context, address string)
 	}
 	go func() {
 		<-ctx.Done()
-		listener.Close()
+		if err := listener.Close(); err != nil {
+			s.logger.WithError(err).Debug("Error closing TCP listener during shutdown")
+		}
 	}()
 	return s.sipServer.ServeTCP(&crlfListener{Listener: listener})
 }
