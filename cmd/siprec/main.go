@@ -395,8 +395,29 @@ func main() {
 			logger.Info("Alert manager stopped")
 		}
 
-		// Stop cluster orchestrator
+		// Gracefully migrate streams to another node before stopping cluster
 		if clusterOrchestratorLocal != nil {
+			if migrator := clusterOrchestratorLocal.GetStreamMigrator(); migrator != nil {
+				if mgr := clusterOrchestratorLocal.GetManager(); mgr != nil {
+					migrateCtx, migrateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					nodes, err := mgr.ListNodes(migrateCtx)
+					if err == nil {
+						for _, node := range nodes {
+							if node.ID != clusterOrchestratorLocal.GetNodeID() {
+								logger.WithField("target_node", node.ID).Info("Migrating streams to peer node")
+								if migrateErr := clusterOrchestratorLocal.MigrateAllStreams(migrateCtx, node.ID); migrateErr != nil {
+									logger.WithError(migrateErr).Warn("Stream migration failed during shutdown")
+								} else {
+									logger.Info("Stream migration completed")
+								}
+								break
+							}
+						}
+					}
+					migrateCancel()
+				}
+			}
+
 			logger.Debug("Stopping cluster orchestrator...")
 			clusterOrchestratorLocal.Stop()
 			logger.Info("Cluster orchestrator stopped")
@@ -468,6 +489,26 @@ func initialize() error {
 					"stream_migration":     appConfig.Cluster.StreamMigration,
 					"split_brain_detection": appConfig.Cluster.SplitBrainDetection.Enabled,
 				}).Info("Cluster orchestrator initialized")
+
+				// Register stream migration handlers
+				if migrator := clusterOrchestrator.GetStreamMigrator(); migrator != nil {
+					migrator.SetMigrationHandler(func(task *cluster.MigrationTask) error {
+						logger.WithFields(logrus.Fields{
+							"task_id":   task.ID,
+							"call_uuid": task.CallUUID,
+							"source":    task.SourceNodeID,
+						}).Info("Accepting stream migration from peer node")
+						return nil
+					})
+					migrator.SetCompletionHandler(func(task *cluster.MigrationTask) {
+						logger.WithFields(logrus.Fields{
+							"task_id":   task.ID,
+							"call_uuid": task.CallUUID,
+							"status":    string(task.Status),
+						}).Info("Stream migration completed")
+					})
+					logger.Info("Stream migration handlers registered")
+				}
 			}
 		}
 	}
@@ -1351,6 +1392,12 @@ func initialize() error {
 	if appConfig != nil {
 		complianceHandler := http_server.NewComplianceHandler(logger, gdprService, appConfig)
 		complianceHandler.RegisterHandlers(httpServer)
+	}
+
+	// Register cluster admin API if clustering is enabled
+	if clusterOrchestrator != nil {
+		clusterHandler := http_server.NewClusterHandler(logger, clusterOrchestrator)
+		clusterHandler.RegisterHandlers(httpServer)
 	}
 
 	// Initialize WebSocket components

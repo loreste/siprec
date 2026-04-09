@@ -27,6 +27,7 @@ import (
 
 	"siprec-server/pkg/audio"
 	"siprec-server/pkg/cdr"
+	"siprec-server/pkg/cluster"
 	"siprec-server/pkg/correlation"
 	"siprec-server/pkg/media"
 	"siprec-server/pkg/metrics"
@@ -215,6 +216,7 @@ type CallState struct {
 	StreamForwarders  map[string]*media.RTPForwarder
 	AllocatedPortPair *media.PortPair    // Port pair reserved for non-SIPREC calls
 	TraceScope        *tracing.CallScope // Per-call tracing scope
+	ClusterTrace      interface{}        // Distributed cluster trace context
 	OriginalInvite    *SIPMessage        // Stored original INVITE for cancellations
 
 	// Context cancellation for graceful goroutine cleanup
@@ -1104,6 +1106,14 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	// #nosec G118 -- context derives from callScope parent context
 	callCtx, cancelFunc := context.WithCancel(callScope.Context())
 
+	// Start distributed cluster trace if clustering is enabled
+	var clusterTrace *cluster.TraceContext
+	if s.handler != nil {
+		if orch := s.handler.GetClusterOrchestrator(); orch != nil {
+			clusterTrace = orch.StartTrace(callScope.Context(), "sip.invite", message.CallID)
+		}
+	}
+
 	// Create or update call state
 	callState := &CallState{
 		CallID:           message.CallID,
@@ -1115,6 +1125,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		LastActivity:     time.Now(),
 		IsRecording:      true,
 		TraceScope:       callScope,
+		ClusterTrace:     clusterTrace,
 		OriginalInvite:   message,
 		RTPForwarders:    make([]*media.RTPForwarder, 0),
 		StreamForwarders: make(map[string]*media.RTPForwarder),
@@ -1810,6 +1821,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 			streamCallID := fmt.Sprintf("%s_%s", message.CallID, streamID)
 			media.StartRTPForwarding(callCtx, forwarder, streamCallID, mediaConfig, sttProvider)
+			s.registerRTPStreamInCluster(streamCallID, forwarder, message.CallID)
 
 			// Inject per-stream metadata so AMQP consumers can identify participants
 			if s.handler != nil && s.handler.SessionMetadataCallback != nil {
@@ -1876,6 +1888,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 
 		// Start RTP forwarding to create the UDP listener
 		media.StartRTPForwarding(callCtx, forwarder, message.CallID, mediaConfig, sttProvider)
+		s.registerRTPStreamInCluster(message.CallID, forwarder, message.CallID)
 
 		logger.WithFields(logrus.Fields{
 			"rtp_port":  forwarder.LocalPort,
@@ -2299,6 +2312,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 			}
 			streamCallID := fmt.Sprintf("%s_%s", message.CallID, streamID)
 			media.StartRTPForwarding(forwarderCtx, forwarders[idx], streamCallID, mediaConfig, sttProvider)
+			s.registerRTPStreamInCluster(streamCallID, forwarders[idx], message.CallID)
 
 			// Inject per-stream metadata so AMQP consumers can identify participants
 			if s.handler != nil && s.handler.SessionMetadataCallback != nil {
@@ -3419,6 +3433,65 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 	}
 }
 
+// registerRTPStreamInCluster registers an RTP stream with the cluster orchestrator.
+// Runs in a goroutine so it never blocks the RTP pipeline.
+func (s *CustomSIPServer) registerRTPStreamInCluster(callUUID string, forwarder *media.RTPForwarder, sessionID string) {
+	if s.handler == nil {
+		return
+	}
+	orch := s.handler.GetClusterOrchestrator()
+	if orch == nil {
+		return
+	}
+	go func() {
+		state := &cluster.RTPStreamState{
+			CallUUID:         callUUID,
+			SessionID:        sessionID,
+			LocalPort:        forwarder.LocalPort,
+			RTCPPort:         forwarder.RTCPPort,
+			LocalSSRC:        forwarder.LocalSSRC,
+			CodecName:        forwarder.CodecName,
+			CodecPayloadType: forwarder.CodecPayloadType,
+			SampleRate:       forwarder.SampleRate,
+			Channels:         forwarder.Channels,
+			RecordingPath:    forwarder.RecordingPath,
+			RecordingPaused:  forwarder.RecordingPaused,
+			SRTPEnabled:      forwarder.SRTPEnabled,
+			StartTime:        time.Now(),
+		}
+		if err := orch.RegisterRTPStream(state); err != nil {
+			s.logger.WithError(err).WithField("call_uuid", callUUID).Warn("Failed to register RTP stream in cluster")
+		}
+	}()
+}
+
+// unregisterRTPStreamsInCluster unregisters all RTP streams for a call from the cluster.
+// Runs in a goroutine so it never blocks call teardown.
+func (s *CustomSIPServer) unregisterRTPStreamsInCluster(callID string, callState *CallState) {
+	if s.handler == nil {
+		return
+	}
+	orch := s.handler.GetClusterOrchestrator()
+	if orch == nil {
+		return
+	}
+	// Collect all stream IDs before launching goroutine
+	streamIDs := make([]string, 0)
+	for streamID := range callState.StreamForwarders {
+		streamIDs = append(streamIDs, fmt.Sprintf("%s_%s", callID, streamID))
+	}
+	// Also unregister the main call ID (for non-SIPREC single-stream calls)
+	streamIDs = append(streamIDs, callID)
+
+	go func() {
+		for _, id := range streamIDs {
+			if err := orch.UnregisterRTPStream(id); err != nil {
+				s.logger.WithError(err).WithField("call_uuid", id).Debug("Failed to unregister RTP stream from cluster")
+			}
+		}
+	}()
+}
+
 func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reason string) {
 	if callState == nil {
 		return
@@ -3428,6 +3501,19 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	if callState.cancelCtx != nil {
 		callState.cancelCtx()
 		callState.cancelCtx = nil
+	}
+
+	// Unregister RTP streams from cluster before cleanup
+	s.unregisterRTPStreamsInCluster(callID, callState)
+
+	// End distributed cluster trace if active
+	if callState.ClusterTrace != nil {
+		if orch := s.handler.GetClusterOrchestrator(); orch != nil {
+			if traceCtx, ok := callState.ClusterTrace.(*cluster.TraceContext); ok {
+				orch.EndTrace(traceCtx, nil)
+			}
+		}
+		callState.ClusterTrace = nil
 	}
 
 	notifyCtx := context.Background()
