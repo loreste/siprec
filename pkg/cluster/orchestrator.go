@@ -296,6 +296,11 @@ func (o *ClusterOrchestrator) GetStreamMigrator() *StreamMigrationManager {
 	return o.streamMigrator
 }
 
+// GetNodeID returns this node's cluster identifier
+func (o *ClusterOrchestrator) GetNodeID() string {
+	return o.nodeID
+}
+
 // IsLeader returns true if this node is the cluster leader
 func (o *ClusterOrchestrator) IsLeader() bool {
 	if o.manager == nil {
