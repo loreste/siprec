@@ -41,7 +41,9 @@ func (h *ClusterHandler) RegisterHandlers(server *Server) {
 func (h *ClusterHandler) writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		h.logger.WithError(err).Debug("Failed to write JSON response")
+	}
 }
 
 func (h *ClusterHandler) writeError(w http.ResponseWriter, status int, msg string) {
@@ -133,7 +135,9 @@ func (h *ClusterHandler) handleDrain(w http.ResponseWriter, r *http.Request) {
 		TargetNodeID string `json:"target_node_id"`
 	}
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.logger.WithError(err).Debug("Failed to decode drain request body")
+		}
 	}
 
 	if req.TargetNodeID == "" {
