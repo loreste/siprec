@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -189,12 +190,13 @@ type SIPMessage struct {
 	MSCorrelationID  string // Microsoft Correlation ID
 
 	// Avaya specific fields
-	AvayaUCID       string // Avaya Universal Call ID
-	AvayaConfID     string // Avaya Conference ID
-	AvayaStationID  string // Avaya station identifier
-	AvayaAgentID    string // Avaya agent identifier
-	AvayaVDN        string // Avaya Vector Directory Number
-	AvayaSkillGroup string // Avaya skill/hunt group
+	AvayaUCID           string // Avaya Universal Call ID
+	AvayaConfID         string // Avaya Conference ID
+	AvayaConversationID string // Avaya Conversation/Interaction ID for call correlation
+	AvayaStationID      string // Avaya station identifier
+	AvayaAgentID        string // Avaya agent identifier
+	AvayaVDN            string // Avaya Vector Directory Number
+	AvayaSkillGroup     string // Avaya skill/hunt group
 }
 
 // CallState tracks the state of SIP calls
@@ -931,6 +933,11 @@ func (s *CustomSIPServer) handleInviteMessage(message *SIPMessage) {
 	if message.SessionIDHeader != "" {
 		logFields["cisco_session_id"] = message.SessionIDHeader
 	}
+	// Add Avaya Conversation ID if present
+	if message.AvayaConversationID != "" {
+		logFields["avaya_conversation_id"] = message.AvayaConversationID
+	}
+
 	// Add Avaya UCID if present
 	if len(message.UCIDHeaders) > 0 {
 		logFields["ucid"] = strings.Join(message.UCIDHeaders, ";")
@@ -1307,6 +1314,9 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			if message.OracleConversationID != "" {
 				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "oracle_conversation_id").Inc()
 			}
+			if message.AvayaConversationID != "" {
+				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "avaya_conversation_id").Inc()
+			}
 			if len(message.UCIDHeaders) > 0 {
 				metrics.VendorMetadataExtractions.WithLabelValues(vendorType, "ucid").Inc()
 			}
@@ -1473,6 +1483,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 				}
 				if message.AvayaConfID != "" {
 					update.AvayaConfID = &message.AvayaConfID
+					hasUpdates = true
+				}
+				if message.AvayaConversationID != "" {
+					update.AvayaConversationID = &message.AvayaConversationID
 					hasUpdates = true
 				}
 				if message.AvayaStationID != "" {
@@ -5121,9 +5135,14 @@ func (s *CustomSIPServer) detectVendor(message *SIPMessage) string {
 	}
 
 	// Check for vendor-specific headers as fallback
+	// Avaya ASBCE detection: Sigma-UUI-A header, +av.sip.iptolerance in Contact,
+	// or User-to-User with Avaya 04FA prefix
 	if s.getHeaderValue(message, "x-avaya-conf-id") != "" ||
 		s.getHeaderValue(message, "x-avaya-ucid") != "" ||
-		s.getHeaderValue(message, "x-avaya-station-id") != "" {
+		s.getHeaderValue(message, "x-avaya-station-id") != "" ||
+		s.getHeaderValue(message, "sigma-uui-a") != "" ||
+		strings.Contains(s.getHeaderValue(message, "contact"), "av.sip.iptolerance") ||
+		strings.HasPrefix(s.getHeaderValue(message, "user-to-user"), "04FA") {
 		return "avaya"
 	}
 
@@ -5381,6 +5400,24 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 		message.AvayaConfID = value
 	}
 
+	// Handle Avaya Conversation ID - for call correlation across legs
+	conversationHeaders := []string{
+		"x-avaya-interaction-id",
+		"x-avaya-conversation-id",
+		"x-avaya-sm-session-id",
+	}
+	for _, header := range conversationHeaders {
+		if value := s.getHeaderValue(message, header); value != "" {
+			message.AvayaConversationID = value
+			s.logger.WithFields(logrus.Fields{
+				"call_id":         message.CallID,
+				"conversation_id": value,
+				"header":          header,
+			}).Debug("Extracted Avaya Conversation ID")
+			break
+		}
+	}
+
 	if value := s.getHeaderValue(message, "x-avaya-station-id"); value != "" {
 		message.AvayaStationID = value
 	}
@@ -5397,6 +5434,66 @@ func (s *CustomSIPServer) extractAvayaHeaders(message *SIPMessage) {
 		message.AvayaSkillGroup = value
 	} else if value := s.getHeaderValue(message, "x-avaya-skill"); value != "" {
 		message.AvayaSkillGroup = value
+	}
+
+	// Extract Sigma-UUI-A header (Avaya ASBCE call state indicator)
+	if value := s.getHeaderValue(message, "sigma-uui-a"); value != "" {
+		message.VendorHeaders["sigma-uui-a"] = value
+	}
+
+	// Parse Avaya ASBCE User-to-User header for UCID and Conversation ID
+	// Format: 04FA[UCID_bytes]|[ConversationID_UUID]|[AppTag];encoding=hex
+	s.parseAvayaUUI(message)
+}
+
+// parseAvayaUUI extracts UCID and Conversation ID from the Avaya ASBCE
+// User-to-User header. The UUI hex payload has the structure:
+//
+//	[binary header with UCID]|[conversation-id UUID]|[app-tag]
+//
+// The 04FA prefix identifies Avaya-format UUI (protocol discriminator 04,
+// vendor FA = Avaya).
+func (s *CustomSIPServer) parseAvayaUUI(message *SIPMessage) {
+	uui := message.UUIHeader
+	if uui == "" {
+		return
+	}
+
+	// Strip ";encoding=hex" suffix if present
+	if idx := strings.Index(uui, ";"); idx != -1 {
+		uui = uui[:idx]
+	}
+
+	// Must start with 04FA to be Avaya format
+	if !strings.HasPrefix(uui, "04FA") {
+		return
+	}
+
+	// Store raw UCID hex (first 20 hex chars = 10 bytes is the Avaya UCID)
+	if message.AvayaUCID == "" && len(uui) >= 20 {
+		message.AvayaUCID = uui[:20]
+		message.UCIDHeaders = append(message.UCIDHeaders, uui[:20])
+	}
+
+	// Decode hex to find pipe-delimited fields for Conversation ID
+	decoded, err := hex.DecodeString(uui)
+	if err != nil {
+		return
+	}
+
+	// Find pipe-separated sections: [binary]|[conversation-id]|[app-tag]
+	pipeIdx := bytes.IndexByte(decoded, '|')
+	if pipeIdx == -1 {
+		return
+	}
+
+	parts := strings.Split(string(decoded[pipeIdx+1:]), "|")
+	if len(parts) >= 1 && parts[0] != "" && message.AvayaConversationID == "" {
+		message.AvayaConversationID = parts[0]
+		s.logger.WithFields(logrus.Fields{
+			"call_id":         message.CallID,
+			"conversation_id": parts[0],
+		}).Debug("Extracted Avaya Conversation ID from UUI")
 	}
 }
 
@@ -7106,6 +7203,14 @@ func (s *CustomSIPServer) storeUUIAndXHeadersInSession(session *siprec.Recording
 
 	if message.AvayaConfID != "" {
 		session.ExtendedMetadata["sip_avaya_conf_id"] = message.AvayaConfID
+	}
+
+	if message.AvayaConversationID != "" {
+		session.ExtendedMetadata["sip_avaya_conversation_id"] = message.AvayaConversationID
+		s.logger.WithFields(logrus.Fields{
+			"session_id":            session.ID,
+			"avaya_conversation_id": message.AvayaConversationID,
+		}).Debug("Stored Avaya Conversation ID in recording session metadata")
 	}
 
 	if message.AvayaStationID != "" {

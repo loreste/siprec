@@ -223,6 +223,9 @@ func (s callSnapshot) toSessionData(sessionID, nodeID string) *sessions.SessionD
 		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_conf_id"]; ok {
 			sd.AvayaConfID = v
 		}
+		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_conversation_id"]; ok {
+			sd.AvayaConversationID = v
+		}
 		if v, ok := s.Recording.ExtendedMetadata["sip_avaya_station_id"]; ok {
 			sd.AvayaStationID = v
 		}

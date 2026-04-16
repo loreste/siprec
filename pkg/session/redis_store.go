@@ -47,9 +47,10 @@ type SessionData struct {
 	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
 	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
 	// Avaya-specific fields
-	AvayaUCID       string `json:"avaya_ucid,omitempty"`        // Avaya Universal Call ID
-	AvayaConfID     string `json:"avaya_conf_id,omitempty"`     // Avaya Conference ID
-	AvayaStationID  string `json:"avaya_station_id,omitempty"`  // Avaya Station ID
+	AvayaUCID           string `json:"avaya_ucid,omitempty"`            // Avaya Universal Call ID
+	AvayaConfID         string `json:"avaya_conf_id,omitempty"`         // Avaya Conference ID
+	AvayaConversationID string `json:"avaya_conversation_id,omitempty"` // Avaya Conversation/Interaction ID
+	AvayaStationID      string `json:"avaya_station_id,omitempty"`      // Avaya Station ID
 	AvayaAgentID    string `json:"avaya_agent_id,omitempty"`    // Avaya Agent ID
 	AvayaVDN        string `json:"avaya_vdn,omitempty"`         // Avaya Vector Directory Number
 	AvayaSkillGroup string `json:"avaya_skill_group,omitempty"` // Avaya Skill Group
@@ -206,6 +207,10 @@ func (r *RedisSessionStore) Update(sessionID string, updates map[string]interfac
 		case "avaya_ucid":
 			if ucid, ok := value.(string); ok {
 				data.AvayaUCID = ucid
+			}
+		case "avaya_conversation_id":
+			if convID, ok := value.(string); ok {
+				data.AvayaConversationID = convID
 			}
 		case "nice_interaction_id":
 			if interactionID, ok := value.(string); ok {

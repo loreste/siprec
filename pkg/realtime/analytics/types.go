@@ -83,7 +83,8 @@ type AnalyticsSnapshot struct {
 	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
 	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
 	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
-	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
+	AvayaUCID            string `json:"avaya_ucid,omitempty"`              // Avaya Universal Call ID
+	AvayaConversationID  string `json:"avaya_conversation_id,omitempty"`  // Avaya Conversation/Interaction ID
 	NICEInteractionID    string `json:"nice_interaction_id,omitempty"`    // NICE Interaction ID
 	NICESessionID        string `json:"nice_session_id,omitempty"`        // NICE Session ID
 	NICERecordingID      string `json:"nice_recording_id,omitempty"`      // NICE Recording ID

@@ -858,6 +858,9 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 				if v, ok := extMeta["sip_cisco_session_id"]; ok && v != "" {
 					recordingInfo["cisco_session_id"] = v
 				}
+				if v, ok := extMeta["sip_avaya_conversation_id"]; ok && v != "" {
+					recordingInfo["avaya_conversation_id"] = v
+				}
 				if v, ok := extMeta["sip_ucid"]; ok && v != "" {
 					recordingInfo["ucid"] = v
 				}
@@ -917,6 +920,9 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 					}
 					if v, ok := extMeta["sip_cisco_session_id"]; ok && v != "" {
 						recordingInfo["cisco_session_id"] = v
+					}
+					if v, ok := extMeta["sip_avaya_conversation_id"]; ok && v != "" {
+						recordingInfo["avaya_conversation_id"] = v
 					}
 					if v, ok := extMeta["sip_ucid"]; ok && v != "" {
 						recordingInfo["ucid"] = v

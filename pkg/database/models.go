@@ -120,9 +120,10 @@ type CDR struct {
 	NICEAgentID       *string `db:"nice_agent_id" json:"nice_agent_id,omitempty"`
 	NICECallID        *string `db:"nice_call_id" json:"nice_call_id,omitempty"`
 	// Avaya-specific fields
-	AvayaUCID       *string `db:"avaya_ucid" json:"avaya_ucid,omitempty"`
-	AvayaConfID     *string `db:"avaya_conf_id" json:"avaya_conf_id,omitempty"`
-	AvayaStationID  *string `db:"avaya_station_id" json:"avaya_station_id,omitempty"`
+	AvayaUCID           *string `db:"avaya_ucid" json:"avaya_ucid,omitempty"`
+	AvayaConfID         *string `db:"avaya_conf_id" json:"avaya_conf_id,omitempty"`
+	AvayaConversationID *string `db:"avaya_conversation_id" json:"avaya_conversation_id,omitempty"`
+	AvayaStationID      *string `db:"avaya_station_id" json:"avaya_station_id,omitempty"`
 	AvayaAgentID    *string `db:"avaya_agent_id" json:"avaya_agent_id,omitempty"`
 	AvayaVDN        *string `db:"avaya_vdn" json:"avaya_vdn,omitempty"`
 	AvayaSkillGroup *string `db:"avaya_skill_group" json:"avaya_skill_group,omitempty"`
