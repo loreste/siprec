@@ -14,7 +14,9 @@ RUN apk add --no-cache \
     cmake
 
 # Build bcg729 from source for G.729 codec support
-RUN git clone https://gitlab.linphone.org/BC/public/bcg729.git /tmp/bcg729 && \
+# Try GitHub mirror first (more reliable), fall back to upstream GitLab
+RUN (git clone https://github.com/BelledonneCommunications/bcg729.git /tmp/bcg729 || \
+     git clone https://gitlab.linphone.org/BC/public/bcg729.git /tmp/bcg729) && \
     cd /tmp/bcg729 && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr -DENABLE_STATIC=YES -DENABLE_SHARED=YES . && \
     make -j$(nproc) && \
