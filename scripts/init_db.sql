@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS cdrs (
     ucid              VARCHAR(255),
     oracle_ucid       VARCHAR(255),
     conversation_id   VARCHAR(255),
-    cisco_session_id  VARCHAR(255),
+    cisco_session_id         VARCHAR(255),
+    avaya_conversation_id    VARCHAR(255),
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -105,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_cdrs_vendor_type ON cdrs(vendor_type);
 CREATE INDEX IF NOT EXISTS idx_cdrs_ucid ON cdrs(ucid);
 CREATE INDEX IF NOT EXISTS idx_cdrs_oracle_ucid ON cdrs(oracle_ucid);
 CREATE INDEX IF NOT EXISTS idx_cdrs_conversation_id ON cdrs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_cdrs_avaya_conversation_id ON cdrs(avaya_conversation_id);
 
 -- Transcriptions Table
 CREATE TABLE IF NOT EXISTS transcriptions (

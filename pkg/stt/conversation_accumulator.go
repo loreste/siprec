@@ -49,7 +49,8 @@ type ConversationRecord struct {
 	OracleUCID           string `json:"oracle_ucid,omitempty"`            // Oracle SBC Universal Call ID
 	OracleConversationID string `json:"oracle_conversation_id,omitempty"` // Oracle Conversation ID for call correlation
 	CiscoSessionID       string `json:"cisco_session_id,omitempty"`       // Cisco Session-ID header
-	AvayaUCID            string `json:"avaya_ucid,omitempty"`             // Avaya Universal Call ID
+	AvayaUCID            string `json:"avaya_ucid,omitempty"`              // Avaya Universal Call ID
+	AvayaConversationID  string `json:"avaya_conversation_id,omitempty"`  // Avaya Conversation/Interaction ID
 	UCID                 string `json:"ucid,omitempty"`                   // Generic Universal Call ID
 
 	lastActivity time.Time  // Internal tracking, not exported
@@ -465,6 +466,9 @@ func (ca *ConversationAccumulator) SetSessionMetadata(callUUID string, metadata 
 	}
 	if v, ok := metadata["sip_ucid"]; ok && v != "" {
 		record.UCID = v
+	}
+	if v, ok := metadata["sip_avaya_conversation_id"]; ok && v != "" {
+		record.AvayaConversationID = v
 	}
 	// Check for Avaya UCID
 	if record.VendorType == "avaya" && record.UCID != "" && record.AvayaUCID == "" {

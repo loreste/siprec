@@ -273,6 +273,9 @@ func (c *CDRService) UpdateSession(sessionID string, updates CDRUpdate) error {
 	if updates.AvayaConfID != nil {
 		cdr.AvayaConfID = updates.AvayaConfID
 	}
+	if updates.AvayaConversationID != nil {
+		cdr.AvayaConversationID = updates.AvayaConversationID
+	}
 	if updates.AvayaStationID != nil {
 		cdr.AvayaStationID = updates.AvayaStationID
 	}
@@ -727,9 +730,10 @@ type CDRUpdate struct {
 	NICEAgentID       *string // NICE Agent ID
 	NICECallID        *string // NICE Call ID
 	// Avaya-specific fields
-	AvayaUCID       *string // Avaya Universal Call ID
-	AvayaConfID     *string // Avaya Conference ID
-	AvayaStationID  *string // Avaya Station ID
+	AvayaUCID           *string // Avaya Universal Call ID
+	AvayaConfID         *string // Avaya Conference ID
+	AvayaConversationID *string // Avaya Conversation/Interaction ID
+	AvayaStationID      *string // Avaya Station ID
 	AvayaAgentID    *string // Avaya Agent ID
 	AvayaVDN        *string // Avaya Vector Directory Number
 	AvayaSkillGroup *string // Avaya Skill Group
