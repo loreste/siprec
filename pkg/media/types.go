@@ -3,6 +3,7 @@ package media
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -501,6 +502,12 @@ func (f *RTPForwarder) Cleanup() {
 	// Check if already cleaned up
 	if f.isCleanedUp {
 		return
+	}
+
+	// Ensure Logger is non-nil so callers don't need nil checks everywhere
+	if f.Logger == nil {
+		f.Logger = logrus.New()
+		f.Logger.SetOutput(io.Discard)
 	}
 
 	// Mark as cleaned up to prevent duplicate cleanup
