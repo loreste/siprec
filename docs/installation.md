@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers installing IZI SIPREC v1.2.2 on various platforms.
+This guide covers installing IZI SIPREC v1.2.3 on various platforms.
 
 ## System Requirements
 
@@ -324,7 +324,7 @@ resources:
 
 ## Upgrading
 
-### From v1.1.x to v1.2.2
+### From v1.1.x to v1.2.3
 
 1. Stop the service:
    ```bash
@@ -349,7 +349,7 @@ resources:
    sudo systemctl start siprec-server
    ```
 
-No configuration changes are required for v1.2.2. New features (SSRC validation, port cooldown, per-stream G.729 decoder) are enabled automatically.
+No configuration changes are required for v1.2.3. New features (SSRC validation, port cooldown, per-stream G.729 decoder) are enabled automatically.
 
 ## Next Steps
 
