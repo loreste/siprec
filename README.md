@@ -15,7 +15,7 @@ The project is designed for high-performance **telecom recording** environments 
 
 This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
 
-**Version:** 1.2.2
+**Version:** 1.2.3
 
 ## Use Cases
 
