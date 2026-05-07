@@ -263,16 +263,20 @@ func (f *RTPForwarder) GetCodecInfo() (payloadType byte, codecName string, sampl
 // Stop safely stops the RTP forwarder by closing the stop channel
 func (f *RTPForwarder) Stop() {
 	f.stopOnce.Do(func() {
-		f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() called - closing StopChan and connections")
+		if f.Logger != nil {
+			f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() called - closing StopChan and connections")
+		}
 		close(f.StopChan)
 
 		// Also close connections immediately to unblock any pending reads
 		// This ensures goroutines exit quickly instead of waiting for timeouts
 		f.CleanupMutex.Lock()
 		if f.Conn != nil {
-			f.Logger.WithField("call_uuid", f.CallUUID).Info("Closing UDP connection in Stop()")
+			if f.Logger != nil {
+				f.Logger.WithField("call_uuid", f.CallUUID).Info("Closing UDP connection in Stop()")
+			}
 			err := f.Conn.Close()
-			if err != nil {
+			if err != nil && f.Logger != nil {
 				f.Logger.WithError(err).Warn("Error closing UDP connection")
 			}
 		}
@@ -280,7 +284,9 @@ func (f *RTPForwarder) Stop() {
 			f.RTCPConn.Close()
 		}
 		f.CleanupMutex.Unlock()
-		f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() completed")
+		if f.Logger != nil {
+			f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() completed")
+		}
 	})
 }
 
@@ -517,14 +523,18 @@ func (f *RTPForwarder) Cleanup() {
 		// Release port pair (RFC 3550 compliant mode)
 		portPair := &PortPair{RTPPort: f.LocalPort, RTCPPort: f.RTCPPort}
 		pm.ReleasePortPair(portPair)
-		f.Logger.WithFields(logrus.Fields{
-			"rtp_port":  f.LocalPort,
-			"rtcp_port": f.RTCPPort,
-		}).Debug("Released RTP/RTCP port pair during cleanup")
+		if f.Logger != nil {
+			f.Logger.WithFields(logrus.Fields{
+				"rtp_port":  f.LocalPort,
+				"rtcp_port": f.RTCPPort,
+			}).Debug("Released RTP/RTCP port pair during cleanup")
+		}
 	} else {
 		// Release single port (legacy mode)
 		pm.ReleasePort(f.LocalPort)
-		f.Logger.WithField("port", f.LocalPort).Debug("Released RTP port during cleanup")
+		if f.Logger != nil {
+			f.Logger.WithField("port", f.LocalPort).Debug("Released RTP port during cleanup")
+		}
 	}
 
 	// Close UDP connection if open
