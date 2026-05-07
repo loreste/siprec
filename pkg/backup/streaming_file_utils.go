@@ -8,10 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 )
 
 // StreamingFileReader provides memory-efficient file reading with compression and encryption support
@@ -166,59 +163,6 @@ func (sc *streamCipher) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// StreamingDatabaseRestore performs memory-efficient database restoration
-func StreamingDatabaseRestore(backupPath, connectionString string) error {
-	reader, err := NewStreamingFileReader(backupPath)
-	if err != nil {
-		return fmt.Errorf("failed to create streaming reader: %w", err)
-	}
-	defer reader.Close()
-
-	scanner := reader.Scanner()
-
-	// Set larger buffer for better performance
-	buf := make([]byte, 64*1024)   // 64KB buffer
-	scanner.Buffer(buf, 1024*1024) // 1MB max token size
-
-	// Process SQL statements line by line
-	var statement strings.Builder
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-
-		if line == "" || strings.HasPrefix(line, "--") {
-			continue
-		}
-
-		statement.WriteString(line)
-		statement.WriteString(" ")
-
-		// Check if this is the end of a statement
-		if strings.HasSuffix(line, ";") {
-			stmt := statement.String()
-			statement.Reset()
-
-			// Execute the statement (implement actual DB execution here)
-			if err := executeStatement(stmt, connectionString); err != nil {
-				return fmt.Errorf("failed to execute statement: %w", err)
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading backup file: %w", err)
-	}
-
-	return nil
-}
-
-// executeStatement executes a SQL statement (placeholder implementation)
-func executeStatement(statement, connectionString string) error {
-	// This would be implemented with actual database connection and execution
-	// For now, it's a placeholder to demonstrate the streaming approach
-	return nil
-}
-
 // getEncryptionKeyFromEnv gets encryption key from environment
 func getEncryptionKeyFromEnv() ([]byte, error) {
 	keyString := os.Getenv("BACKUP_ENCRYPTION_KEY")
@@ -234,84 +178,3 @@ func getEncryptionKeyFromEnv() ([]byte, error) {
 	return key, nil
 }
 
-// OptimizedBackupCleanup performs memory and CPU efficient backup cleanup
-func OptimizedBackupCleanup(backupDir string, retentionPolicy RetentionPolicy) error {
-	files, err := os.ReadDir(backupDir)
-	if err != nil {
-		return fmt.Errorf("failed to read backup directory: %w", err)
-	}
-
-	// Pre-allocate slice with estimated capacity
-	backupFiles := make([]*BackupFile, 0, len(files))
-
-	// Single pass to filter and create backup file structs
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		name := file.Name()
-		if !isBackupFile(name) {
-			continue
-		}
-
-		info, err := file.Info()
-		if err != nil {
-			continue
-		}
-
-		backupType, date, err := parseBackupFilename(name)
-		if err != nil {
-			continue
-		}
-
-		backupFiles = append(backupFiles, &BackupFile{
-			Path: filepath.Join(backupDir, name),
-			Type: backupType,
-			Date: date,
-			Size: info.Size(),
-		})
-	}
-
-	// Efficient in-place sorting using Go's optimized sort
-	sort.Slice(backupFiles, func(i, j int) bool {
-		if backupFiles[i].Type != backupFiles[j].Type {
-			return backupFiles[i].Type < backupFiles[j].Type
-		}
-		return backupFiles[i].Date.After(backupFiles[j].Date)
-	})
-
-	// Group by type and apply retention policy
-	return applyRetentionPolicy(backupFiles, retentionPolicy)
-}
-
-// Helper functions
-func isBackupFile(filename string) bool {
-	return strings.HasSuffix(filename, ".sql") ||
-		strings.HasSuffix(filename, ".sql.gz") ||
-		strings.HasSuffix(filename, ".sql.gz.enc")
-}
-
-func parseBackupFilename(filename string) (backupType string, date time.Time, err error) {
-	// Expected format: database_type_YYYYMMDD_HHMMSS.sql[.gz][.enc]
-	parts := strings.Split(filename, "_")
-	if len(parts) < 4 {
-		return "", time.Time{}, fmt.Errorf("invalid backup filename format")
-	}
-
-	backupType = parts[1]
-	dateStr := parts[2] + "_" + strings.Split(parts[3], ".")[0]
-
-	date, err = time.Parse("20060102_150405", dateStr)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to parse date: %w", err)
-	}
-
-	return backupType, date, nil
-}
-
-func applyRetentionPolicy(backupFiles []*BackupFile, policy RetentionPolicy) error {
-	// Implement efficient retention policy application
-	// This is a simplified version - implement full logic based on policy
-	return nil
-}

@@ -280,6 +280,10 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				if closeErr := udpConn.Close(); closeErr != nil {
 					forwarder.Logger.WithError(closeErr).Warn("Failed to close UDP connection during cleanup")
 				}
+				// Clear stale Conn reference since we just closed it
+				forwarder.CleanupMutex.Lock()
+				forwarder.Conn = nil
+				forwarder.CleanupMutex.Unlock()
 				if metrics.IsMetricsEnabled() {
 					metrics.RecordRTPDroppedPackets("rtcp_listen_failure", 1)
 				}

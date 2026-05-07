@@ -2,12 +2,8 @@ package backup
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"siprec-server/pkg/security"
 	"github.com/sirupsen/logrus"
@@ -425,86 +421,3 @@ func (cpf *CloudProviderFactory) getCloudflareAPIToken() string {
 	return token
 }
 
-// WaitForHealthCheck waits for a service to become healthy
-func WaitForHealthCheck(ctx context.Context, healthCheckURL string, timeout time.Duration, logger *logrus.Logger) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	logger.WithField("url", healthCheckURL).Info("Waiting for health check to pass")
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("health check timeout after %v", timeout)
-		case <-ticker.C:
-			// Perform health check (implement actual HTTP check)
-			healthy := performHealthCheck(ctx, healthCheckURL)
-			if healthy {
-				logger.Info("Health check passed")
-				return nil
-			}
-			logger.Debug("Health check failed, retrying...")
-		}
-	}
-}
-
-// performHealthCheck performs an actual health check
-func performHealthCheck(ctx context.Context, url string) bool {
-	// Create HTTP client with context
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
-	}
-	
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: false, // Always verify certificates in production
-			},
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  true,
-		},
-	}
-	
-	// Perform health check
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	
-	// Read and discard body to ensure connection can be reused
-	_, _ = io.Copy(io.Discard, resp.Body)
-	
-	// Check if status is 2xx
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-// GetCloudProviderErrorDetails extracts details from cloud provider errors
-func GetCloudProviderErrorDetails(err error) (provider, service, code, message string, ok bool) {
-	if cpErr, ok := err.(*CloudProviderError); ok {
-		return cpErr.Provider, cpErr.Service, cpErr.Code, cpErr.Message, true
-	}
-	return "", "", "", "", false
-}
-
-// IsCloudProviderNotImplementedError checks if error is due to missing SDK
-func IsCloudProviderNotImplementedError(err error) bool {
-	if cpErr, ok := err.(*CloudProviderError); ok {
-		return cpErr.Code == "NOT_IMPLEMENTED"
-	}
-	return false
-}
-
-// IsCloudProviderConfigError checks if error is due to configuration
-func IsCloudProviderConfigError(err error) bool {
-	if cpErr, ok := err.(*CloudProviderError); ok {
-		return cpErr.Code == "CONFIG_ERROR"
-	}
-	return false
-}

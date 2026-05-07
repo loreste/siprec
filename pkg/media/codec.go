@@ -3,11 +3,7 @@ package media
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
-	"os"
-
-	"github.com/sirupsen/logrus"
 )
 
 // CodecInfo represents information about a codec
@@ -78,12 +74,6 @@ func IsOpusCodec(payloadType byte) bool {
 func IsEVSCodec(payloadType byte) bool {
 	codec, exists := SupportedCodecs[payloadType]
 	return exists && (codec.Name == "EVS" || codec.Name == "EVS_WB" || codec.Name == "EVS_SWB")
-}
-
-// IsG729Codec checks if the payload type represents a G.729 codec
-func IsG729Codec(payloadType byte) bool {
-	codec, exists := SupportedCodecs[payloadType]
-	return exists && codec.Name == "G729"
 }
 
 // ProcessAudioPacket extracts and processes audio data based on codec
@@ -457,17 +447,3 @@ func min(a, b int) int {
 	return b
 }
 
-// StartRecording saves the audio stream to a file
-func StartRecording(audioStream io.Reader, filePath string, logger *logrus.Logger, callUUID string) {
-	file, err := os.Create(filePath)
-	if err != nil {
-		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
-		return
-	}
-	defer file.Close()
-
-	_, err = io.Copy(file, audioStream)
-	if err != nil {
-		logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to write audio stream to file")
-	}
-}

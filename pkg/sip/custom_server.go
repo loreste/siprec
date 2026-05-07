@@ -1,7 +1,6 @@
 package sip
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -49,10 +48,6 @@ type CustomSIPServer struct {
 	shutdownCtx  context.Context
 	shutdownFunc context.CancelFunc
 
-	// Connection tracking
-	connections map[string]*SIPConnection
-	connMutex   sync.RWMutex
-
 	// Call state tracking
 	callStates map[string]*CallState
 	callMutex  sync.RWMutex
@@ -70,6 +65,9 @@ type CustomSIPServer struct {
 	ua        *sipgo.UserAgent
 	sipServer *sipgo.Server
 
+	// Timeout handler for stale dialog cleanup
+	timeoutHandler *TimeoutHandler
+
 	// Listener address tracking for building accurate Contact headers
 	listenMu    sync.RWMutex
 	listenHosts map[string]string
@@ -78,13 +76,9 @@ type CustomSIPServer struct {
 
 // SIPConnection represents an active TCP/TLS connection
 type SIPConnection struct {
-	conn         net.Conn
-	reader       *bufio.Reader
-	writer       *bufio.Writer
-	remoteAddr   string
-	transport    string
-	lastActivity time.Time
-	mutex        sync.Mutex
+	conn       net.Conn
+	remoteAddr string
+	transport  string
 }
 
 // SIPMessage represents a parsed SIP message
@@ -224,6 +218,12 @@ type CallState struct {
 	// Context cancellation for graceful goroutine cleanup
 	rtpCtx    context.Context    // Context for all RTP forwarding goroutines
 	cancelCtx context.CancelFunc // Cancel function to stop all RTP forwarding goroutines
+
+	// Tracks pending async cluster registrations so unregister waits for completion
+	clusterRegWg sync.WaitGroup
+
+	// Ensures finalizeCall runs exactly once even if BYE handler and reaper race
+	finalizeOnce sync.Once
 }
 
 type headerEntry struct {
@@ -241,7 +241,6 @@ func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServe
 		handler:      handler,
 		listeners:    make([]net.Listener, 0),
 		tlsListeners: make([]net.Listener, 0),
-		connections:  make(map[string]*SIPConnection),
 		callStates:   make(map[string]*CallState),
 		shutdownCtx:  ctx,
 		shutdownFunc: cancel,
@@ -250,7 +249,9 @@ func NewCustomSIPServer(logger *logrus.Logger, handler *Handler) *CustomSIPServe
 		listenHosts:  make(map[string]string),
 		listenPorts:  make(map[string]int),
 	}
+	server.timeoutHandler = NewTimeoutHandler(DefaultTimeoutConfig(), logger)
 	server.initializeTransactionLayer()
+	server.startDialogReaper()
 	return server
 }
 
@@ -317,6 +318,65 @@ func (s *CustomSIPServer) initializeTransactionLayer() {
 		s.logger.WithField("method", msg.Method).Warn("Received unsupported SIP method")
 		s.sendResponse(msg, 501, "Not Implemented", nil, nil)
 	})
+}
+
+// startDialogReaper launches a background goroutine that periodically scans
+// for stale calls (e.g. stuck in "awaiting_ack" past RFC 3261 Timer B) and
+// calls that exceed maximum session duration. It cleans them up to prevent
+// resource leaks (ports, RTP forwarders, goroutines).
+func (s *CustomSIPServer) startDialogReaper() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-s.shutdownCtx.Done():
+				return
+			case <-ticker.C:
+				s.reapStaleDialogs()
+			}
+		}
+	}()
+}
+
+func (s *CustomSIPServer) reapStaleDialogs() {
+	// Collect stale call IDs under read lock, then clean up outside the lock.
+	type staleCall struct {
+		callID    string
+		callState *CallState
+		reason    string
+	}
+	var stale []staleCall
+
+	s.callMutex.RLock()
+	for callID, cs := range s.callStates {
+		switch {
+		case cs.State == "awaiting_ack" &&
+			time.Since(cs.LastActivity) > s.timeoutHandler.config.InviteTimeout:
+			stale = append(stale, staleCall{callID, cs, "ack_timeout"})
+		case cs.State == "early" &&
+			time.Since(cs.LastActivity) > s.timeoutHandler.config.InviteTimeout:
+			stale = append(stale, staleCall{callID, cs, "early_timeout"})
+		case s.timeoutHandler.IsSessionIdle(cs.LastActivity) &&
+			cs.State != "terminated" && cs.State != "terminating":
+			stale = append(stale, staleCall{callID, cs, "idle_timeout"})
+		case !s.timeoutHandler.ValidateSessionAge(cs.CreatedAt) &&
+			cs.State != "terminated" && cs.State != "terminating":
+			stale = append(stale, staleCall{callID, cs, "max_duration_exceeded"})
+		}
+	}
+	s.callMutex.RUnlock()
+
+	for _, sc := range stale {
+		s.logger.WithFields(logrus.Fields{
+			"call_id":       sc.callID,
+			"state":         sc.callState.State,
+			"last_activity": sc.callState.LastActivity,
+			"reason":        sc.reason,
+		}).Warn("Reaping stale dialog")
+		s.finalizeCall(sc.callID, sc.callState, sc.reason)
+	}
 }
 
 func (s *CustomSIPServer) setListenAddress(transport, address string) {
@@ -649,12 +709,8 @@ func (s *CustomSIPServer) handleTransactionRequest(req *sipparser.Request, tx si
 
 func (s *CustomSIPServer) wrapRequest(req *sipparser.Request, tx sipparser.ServerTransaction) *SIPMessage {
 	connection := &SIPConnection{
-		conn:         nil,
-		reader:       nil,
-		writer:       nil,
-		remoteAddr:   req.Source(),
-		transport:    strings.ToLower(req.Transport()),
-		lastActivity: time.Now(),
+		remoteAddr: req.Source(),
+		transport:  strings.ToLower(req.Transport()),
 	}
 
 	message := newSIPMessageFromSipgo(req, connection)
@@ -1142,9 +1198,11 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	mediaIP := s.resolveMediaIPAddress(message)
 
 	// Store call state
-	s.callMutex.Lock()
-	s.callStates[message.CallID] = callState
-	s.callMutex.Unlock()
+	func() {
+		s.callMutex.Lock()
+		defer s.callMutex.Unlock()
+		s.callStates[message.CallID] = callState
+	}()
 
 	// Send 180 Ringing to establish dialog-state per RFC 3261
 	contactHeader := s.buildContactHeader(message)
@@ -1162,12 +1220,14 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		if success {
 			return
 		}
+		// End trace with the actual error before finalizeCall clears it
 		if callState.TraceScope != nil {
 			callState.TraceScope.End(inviteErr)
+			callState.TraceScope = nil
 		}
-		s.callMutex.Lock()
-		delete(s.callStates, message.CallID)
-		s.callMutex.Unlock()
+		// Full cleanup: cancel RTP context, release ports, stop forwarders,
+		// and remove from callStates map via finalizeCall.
+		s.finalizeCall(message.CallID, callState, "failed")
 	}()
 
 	// Extract SDP from multipart body for SIPREC
@@ -2700,14 +2760,16 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 		return
 	}
 
-	s.callMutex.Lock()
-	if seq != 0 {
-		callState.RemoteCSeq = seq
-	}
-	callState.PendingAckCSeq = 0
-	callState.State = "terminating"
-	callState.LastActivity = time.Now()
-	s.callMutex.Unlock()
+	func() {
+		s.callMutex.Lock()
+		defer s.callMutex.Unlock()
+		if seq != 0 {
+			callState.RemoteCSeq = seq
+		}
+		callState.PendingAckCSeq = 0
+		callState.State = "terminating"
+		callState.LastActivity = time.Now()
+	}()
 
 	// Respond immediately before running cleanup to avoid retransmitted BYEs
 	s.sendResponse(message, 200, "OK", nil, nil)
@@ -2837,34 +2899,31 @@ func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 		logger.WithField("cseq_method", method).Warn("ACK request with mismatched CSeq method")
 	}
 
-	callState := s.getCallState(message.CallID)
-	if callState == nil {
+	// Use a single lock acquisition to avoid TOCTOU race between
+	// getCallState (RLock) and a subsequent Lock.
+	s.callMutex.Lock()
+	callState, exists := s.callStates[message.CallID]
+	if !exists || callState == nil {
+		s.callMutex.Unlock()
 		logger.WithField("call_id", message.CallID).Warn("ACK received without existing dialog state")
 		return
 	}
 
-	s.callMutex.Lock()
-	defer s.callMutex.Unlock()
-
-	currentState, exists := s.callStates[message.CallID]
-	if !exists {
-		logger.WithField("call_id", message.CallID).Warn("ACK received but call state removed")
-		return
-	}
-
-	if currentState.PendingAckCSeq != 0 && seq != 0 && seq != currentState.PendingAckCSeq {
+	if callState.PendingAckCSeq != 0 && seq != 0 && seq != callState.PendingAckCSeq {
 		logger.WithFields(logrus.Fields{
-			"expected_cseq": currentState.PendingAckCSeq,
+			"expected_cseq": callState.PendingAckCSeq,
 			"received_cseq": seq,
 		}).Warn("ACK CSeq does not match pending INVITE transaction")
 	}
 
-	currentState.PendingAckCSeq = 0
+	callState.PendingAckCSeq = 0
 	if seq != 0 {
-		currentState.RemoteCSeq = seq
+		callState.RemoteCSeq = seq
 	}
-	currentState.State = "connected"
-	currentState.LastActivity = time.Now()
+	callState.State = "connected"
+	callState.LastActivity = time.Now()
+	traceScope := callState.TraceScope
+	s.callMutex.Unlock()
 
 	logger.WithFields(logrus.Fields{
 		"call_id": message.CallID,
@@ -2872,9 +2931,9 @@ func (s *CustomSIPServer) handleAckMessage(message *SIPMessage) {
 		"cseq":    seq,
 	}).Info("Call state transitioned to connected after ACK")
 
-	if currentState.TraceScope != nil {
-		currentState.TraceScope.SetAttributes(attribute.String("siprec.state", "connected"))
-		currentState.TraceScope.Span().AddEvent("siprec.ack.received", trace.WithAttributes(
+	if traceScope != nil {
+		traceScope.SetAttributes(attribute.String("siprec.state", "connected"))
+		traceScope.Span().AddEvent("siprec.ack.received", trace.WithAttributes(
 			attribute.Int("sip.cseq", seq),
 		))
 	}
@@ -3217,12 +3276,19 @@ func (s *CustomSIPServer) handleReferMessage(message *SIPMessage) {
 	}
 	s.sendResponse(message, 202, "Accepted", responseHeaders, nil)
 
-	// Send NOTIFY to indicate transfer progress
-	// For SIPREC, we can send a 200 OK NOTIFY to indicate success
-	// (since we're just continuing to record)
+	// Send NOTIFY to indicate transfer progress using the call's RTP context
+	// so the goroutine is cancelled if the call terminates.
+	callCtx := callState.rtpCtx
+	if callCtx == nil {
+		callCtx = s.shutdownCtx
+	}
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		s.sendReferNotify(message, callState, "SIP/2.0 200 OK")
+		select {
+		case <-time.After(100 * time.Millisecond):
+			s.sendReferNotify(message, callState, "SIP/2.0 200 OK")
+		case <-callCtx.Done():
+			return
+		}
 	}()
 }
 
@@ -3275,20 +3341,28 @@ func (s *CustomSIPServer) sendReferNotify(originalRefer *SIPMessage, callState *
 		notifyReq.AppendHeader(sipparser.NewHeader("Content-Length", fmt.Sprintf("%d", len(notifyBody))))
 		notifyReq.SetBody([]byte(notifyBody))
 
+		// Use the call's RTP context so the transaction is cancelled on call teardown
+		txCtx := s.shutdownCtx
+		if callState != nil && callState.rtpCtx != nil {
+			txCtx = callState.rtpCtx
+		}
+
 		// Send the NOTIFY request
-		tx, err := s.ua.TransactionLayer().Request(context.Background(), notifyReq)
+		tx, err := s.ua.TransactionLayer().Request(txCtx, notifyReq)
 		if err != nil {
 			logger.WithError(err).Warn("Failed to send REFER NOTIFY request")
 			return
 		}
 
-		// Wait for response in a goroutine to avoid blocking
+		// Wait for response with call-context cancellation
 		go func() {
 			select {
 			case res := <-tx.Responses():
 				if res != nil {
 					logger.WithField("status", res.StatusCode).Debug("Received response to REFER NOTIFY")
 				}
+			case <-txCtx.Done():
+				logger.Debug("REFER NOTIFY cancelled due to call termination")
 			case <-time.After(5 * time.Second):
 				logger.Debug("Timeout waiting for REFER NOTIFY response")
 			}
@@ -3448,7 +3522,8 @@ func (s *CustomSIPServer) sendResponse(message *SIPMessage, statusCode int, reas
 }
 
 // registerRTPStreamInCluster registers an RTP stream with the cluster orchestrator.
-// Runs in a goroutine so it never blocks the RTP pipeline.
+// Runs in a goroutine so it never blocks the RTP pipeline. The call's clusterRegWg
+// is incremented so that unregisterRTPStreamsInCluster can wait for completion.
 func (s *CustomSIPServer) registerRTPStreamInCluster(callUUID string, forwarder *media.RTPForwarder, sessionID string) {
 	if s.handler == nil {
 		return
@@ -3457,7 +3532,28 @@ func (s *CustomSIPServer) registerRTPStreamInCluster(callUUID string, forwarder 
 	if orch == nil {
 		return
 	}
+
+	// Look up the callState to track the registration goroutine.
+	callState := s.getCallState(sessionID)
+	if callState != nil {
+		callState.clusterRegWg.Add(1)
+	}
+
 	go func() {
+		// Recover from panic so clusterRegWg.Done() always runs and
+		// unregisterRTPStreamsInCluster's Wait() never hangs.
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.WithFields(logrus.Fields{
+					"call_uuid": callUUID,
+					"panic":     r,
+				}).Error("Panic during cluster RTP stream registration")
+			}
+			if callState != nil {
+				callState.clusterRegWg.Done()
+			}
+		}()
+
 		state := &cluster.RTPStreamState{
 			CallUUID:         callUUID,
 			SessionID:        sessionID,
@@ -3480,7 +3576,9 @@ func (s *CustomSIPServer) registerRTPStreamInCluster(callUUID string, forwarder 
 }
 
 // unregisterRTPStreamsInCluster unregisters all RTP streams for a call from the cluster.
-// Runs in a goroutine so it never blocks call teardown.
+// It first waits for any pending registrations to complete (via clusterRegWg) to avoid
+// a race where unregister fires before register finishes, then runs in a goroutine so
+// it never blocks call teardown.
 func (s *CustomSIPServer) unregisterRTPStreamsInCluster(callID string, callState *CallState) {
 	if s.handler == nil {
 		return
@@ -3498,6 +3596,9 @@ func (s *CustomSIPServer) unregisterRTPStreamsInCluster(callID string, callState
 	streamIDs = append(streamIDs, callID)
 
 	go func() {
+		// Wait for all pending cluster registrations to complete before unregistering
+		callState.clusterRegWg.Wait()
+
 		for _, id := range streamIDs {
 			if err := orch.UnregisterRTPStream(id); err != nil {
 				s.logger.WithError(err).WithField("call_uuid", id).Debug("Failed to unregister RTP stream from cluster")
@@ -3511,6 +3612,13 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 		return
 	}
 
+	// Ensure cleanup runs exactly once even if BYE handler and dialog reaper race
+	callState.finalizeOnce.Do(func() {
+		s.doFinalizeCall(callID, callState, reason)
+	})
+}
+
+func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, reason string) {
 	// Cancel RTP forwarding context to stop all goroutines
 	if callState.cancelCtx != nil {
 		callState.cancelCtx()
@@ -3684,9 +3792,11 @@ func (s *CustomSIPServer) finalizeCall(callID string, callState *CallState, reas
 	callState.State = "terminated"
 	callState.LastActivity = time.Now()
 
-	s.callMutex.Lock()
-	delete(s.callStates, callID)
-	s.callMutex.Unlock()
+	func() {
+		s.callMutex.Lock()
+		defer s.callMutex.Unlock()
+		delete(s.callStates, callID)
+	}()
 
 	// Remove from handler.ActiveCalls for pause/resume API support
 	s.removeCallFromActiveList(callID)
@@ -3877,49 +3987,6 @@ func (s *CustomSIPServer) buildNotificationMetadata(session *siprec.RecordingSes
 	}
 
 	return snapshot
-}
-
-func defaultReasonPhrase(status int) string {
-	switch status {
-	case 100:
-		return "Trying"
-	case 180:
-		return "Ringing"
-	case 183:
-		return "Session Progress"
-	case 200:
-		return "OK"
-	case 202:
-		return "Accepted"
-	case 400:
-		return "Bad Request"
-	case 401:
-		return "Unauthorized"
-	case 403:
-		return "Forbidden"
-	case 404:
-		return "Not Found"
-	case 405:
-		return "Method Not Allowed"
-	case 415:
-		return "Unsupported Media Type"
-	case 480:
-		return "Temporarily Unavailable"
-	case 486:
-		return "Busy Here"
-	case 500:
-		return "Server Internal Error"
-	case 501:
-		return "Not Implemented"
-	case 503:
-		return "Service Unavailable"
-	case 504:
-		return "Server Time-out"
-	case 603:
-		return "Decline"
-	default:
-		return "SIP Response"
-	}
 }
 
 func sessionIDFromState(callState *CallState) string {
