@@ -266,7 +266,9 @@ func (f *RTPForwarder) Stop() {
 		if f.Logger != nil {
 			f.Logger.WithField("call_uuid", f.CallUUID).Info("RTPForwarder.Stop() called - closing StopChan and connections")
 		}
-		close(f.StopChan)
+		if f.StopChan != nil {
+			close(f.StopChan)
+		}
 
 		// Also close connections immediately to unblock any pending reads
 		// This ensures goroutines exit quickly instead of waiting for timeouts
