@@ -284,7 +284,9 @@ func (f *RTPForwarder) Stop() {
 			}
 		}
 		if f.RTCPConn != nil {
-			f.RTCPConn.Close()
+			if err := f.RTCPConn.Close(); err != nil && f.Logger != nil {
+				f.Logger.WithError(err).Warn("Error closing RTCP connection")
+			}
 		}
 		f.CleanupMutex.Unlock()
 		if f.Logger != nil {
