@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
+
 	"time"
 
 	"siprec-server/pkg/audio"
@@ -1209,16 +1209,6 @@ func SetUDPSocketBuffers(conn *net.UDPConn, logger *logrus.Logger) {
 		logger.WithField("size_bytes", writeBufferSize).Debug("Set UDP write buffer size")
 	}
 
-	// Use SyscallConn to set options without entering blocking mode
-	rawConn, err := conn.SyscallConn()
-	if err == nil {
-		_ = rawConn.Control(func(fd uintptr) {
-			// #nosec G104 -- best-effort socket options, system defaults apply if these fail
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, readBufferSize)
-			// #nosec G104 -- best-effort socket options, system defaults apply if these fail
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, writeBufferSize)
-		})
-	}
 }
 
 // MonitorRTPTimeout monitors for RTP inactivity and cleans up forwarder
