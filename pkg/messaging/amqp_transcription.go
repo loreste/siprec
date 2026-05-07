@@ -92,7 +92,11 @@ func NewAMQPTranscriptionListener(logger logrus.FieldLogger, client AMQPClientIn
 	}
 
 	// Start health check goroutine
-	go l.healthCheckLoop()
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		l.healthCheckLoop()
+	}()
 
 	logger.WithFields(logrus.Fields{
 		"workers":     amqpWorkerPoolSize,

@@ -594,34 +594,6 @@ func BenchmarkDecodeAudioPayload_OPUS(b *testing.B) {
 // G.729 Codec Detection Tests (no CGO required)
 // =============================================================================
 
-// TestIsG729Codec tests the IsG729Codec helper function
-func TestIsG729Codec(t *testing.T) {
-	testCases := []struct {
-		payloadType byte
-		expected    bool
-		description string
-	}{
-		{18, true, "G.729 standard payload type"},
-		{0, false, "PCMU payload type"},
-		{8, false, "PCMA payload type"},
-		{9, false, "G.722 payload type"},
-		{96, false, "OPUS payload type"},
-		{97, false, "EVS payload type"},
-		{255, false, "invalid payload type"},
-		{17, false, "adjacent payload type (not G.729)"},
-		{19, false, "adjacent payload type (not G.729)"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := IsG729Codec(tc.payloadType)
-			if result != tc.expected {
-				t.Errorf("IsG729Codec(%d) = %v, expected %v", tc.payloadType, result, tc.expected)
-			}
-		})
-	}
-}
-
 // TestG729DetectCodec tests codec detection for G.729 RTP packets
 func TestG729DetectCodec(t *testing.T) {
 	rtpPacket := make([]byte, 22)

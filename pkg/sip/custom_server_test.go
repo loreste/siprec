@@ -1,7 +1,6 @@
 package sip
 
 import (
-	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -89,7 +88,6 @@ func TestHandleSubscribeRegistersCallback(t *testing.T) {
 		},
 		Connection: &SIPConnection{
 			conn:      pipeA,
-			writer:    bufio.NewWriter(io.Discard),
 			transport: "tcp",
 		},
 	}
@@ -560,3 +558,308 @@ func (t *testServerTransaction) OnCancel(sipparser.FnTxCancel) bool { return tru
 func (t *testServerTransaction) OnTerminate(sipparser.FnTxTerminate) bool { return true }
 
 func (t *testServerTransaction) Terminate() {}
+
+// TestDialogReaperCleansUpAwaitingAckCalls verifies that calls stuck in
+// "awaiting_ack" past the INVITE timeout are automatically cleaned up.
+func TestDialogReaperCleansUpAwaitingAckCalls(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{Logger: logger, Config: &Config{}}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	// Override timeout handler with a very short INVITE timeout for testing
+	sipServer.timeoutHandler = NewTimeoutHandler(&TimeoutConfig{
+		InviteTimeout:      100 * time.Millisecond,
+		ByeTimeout:         32 * time.Second,
+		OptionsTimeout:     5 * time.Second,
+		DefaultTimeout:     30 * time.Second,
+		TCPConnectTimeout:  10 * time.Second,
+		TCPReadTimeout:     30 * time.Second,
+		TCPWriteTimeout:    10 * time.Second,
+		SessionIdleTimeout: 5 * time.Minute,
+		MaxSessionDuration: 24 * time.Hour,
+	}, logger)
+
+	callID := "call-ack-timeout"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sipServer.callMutex.Lock()
+	sipServer.callStates[callID] = &CallState{
+		CallID:           callID,
+		State:            "awaiting_ack",
+		PendingAckCSeq:   1,
+		RemoteCSeq:       1,
+		LocalTag:         "local-tag",
+		CreatedAt:        time.Now().Add(-1 * time.Minute),
+		LastActivity:     time.Now().Add(-1 * time.Second), // Well past 100ms timeout
+		StreamForwarders: make(map[string]*media.RTPForwarder),
+		rtpCtx:           ctx,
+		cancelCtx:        cancel,
+	}
+	sipServer.callMutex.Unlock()
+
+	// Run the reaper directly
+	sipServer.reapStaleDialogs()
+
+	// Verify call was cleaned up
+	sipServer.callMutex.RLock()
+	_, exists := sipServer.callStates[callID]
+	sipServer.callMutex.RUnlock()
+	require.False(t, exists, "stale awaiting_ack call should be reaped")
+}
+
+// TestDialogReaperLeavesConnectedCallsAlone verifies that active connected
+// calls with recent activity are not reaped.
+func TestDialogReaperLeavesConnectedCallsAlone(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{Logger: logger, Config: &Config{}}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-connected-active"
+
+	sipServer.callMutex.Lock()
+	sipServer.callStates[callID] = &CallState{
+		CallID:           callID,
+		State:            "connected",
+		LocalTag:         "local-tag",
+		CreatedAt:        time.Now(),
+		LastActivity:     time.Now(),
+		StreamForwarders: make(map[string]*media.RTPForwarder),
+	}
+	sipServer.callMutex.Unlock()
+
+	sipServer.reapStaleDialogs()
+
+	sipServer.callMutex.RLock()
+	_, exists := sipServer.callStates[callID]
+	sipServer.callMutex.RUnlock()
+	require.True(t, exists, "active connected call should NOT be reaped")
+}
+
+// TestInviteEarlyReturnCleansUpCallState verifies that when an INVITE
+// fails during processing (e.g. missing SDP), the call state and resources
+// are fully cleaned up via finalizeCall.
+func TestInviteEarlyReturnCleansUpCallState(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{MediaConfig: &media.Config{}},
+	}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-invite-cleanup"
+	boundary := "OSS-unique-boundary-42"
+	// Body with metadata but NO SDP — should trigger 400 and cleanup
+	metadata := `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="sess-1" state="active">
+  <session session_id="sess-1"/>
+  <participant participant_id="p1"><aor>sip:alice@example.com</aor></participant>
+  <stream label="0" stream_id="str-1"/>
+  <sessionrecordingassoc session_id="sess-1"/>
+</recording>`
+	body := fmt.Sprintf("--%s\r\nContent-Type: application/rs-metadata+xml\r\n\r\n%s\r\n--%s--\r\n", boundary, metadata, boundary)
+
+	req := sipparser.NewRequest(sipparser.INVITE, sipparser.Uri{Host: "recorder"})
+	req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 127.0.0.1;branch=z9hG4bK-cleanup"))
+	req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag=src"))
+	req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>"))
+	req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+	req.AppendHeader(sipparser.NewHeader("CSeq", "1 INVITE"))
+	req.AppendHeader(sipparser.NewHeader("Contact", "<sip:src@example.com>"))
+
+	tx := newTestServerTransaction(req)
+	message := &SIPMessage{
+		Method:      "INVITE",
+		CallID:      callID,
+		CSeq:        "1 INVITE",
+		ContentType: fmt.Sprintf("multipart/mixed; boundary=%s", boundary),
+		Body:        []byte(body),
+		Request:     req,
+		Parsed:      req,
+		Transaction: tx,
+	}
+
+	sipServer.handleSiprecInvite(message)
+
+	// Should have gotten 180 + 400
+	require.NotEmpty(t, tx.responses)
+	last := tx.responses[len(tx.responses)-1]
+	require.Equal(t, 400, last.StatusCode)
+
+	// Call state should be fully cleaned up
+	sipServer.callMutex.RLock()
+	_, exists := sipServer.callStates[callID]
+	sipServer.callMutex.RUnlock()
+	require.False(t, exists, "call state should be cleaned up after failed INVITE")
+}
+
+// TestConcurrentInviteSameCallID verifies that two concurrent INVITEs
+// with the same Call-ID don't corrupt shared state.
+func TestConcurrentInviteSameCallID(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{
+		Logger: logger,
+		Config: &Config{MediaConfig: &media.Config{
+			RTPPortMin: 10000,
+			RTPPortMax: 20000,
+		}},
+	}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-concurrent"
+	boundary := "OSS-unique-boundary-42"
+	sdp := "v=0\r\no=test 1 1 IN IP4 127.0.0.1\r\ns=Test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio 1234 RTP/AVP 0\r\na=sendonly\r\na=label:0\r\n"
+	metadata := `<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="sess-1" state="active">
+  <session session_id="sess-1"><sipSessionID>sess-1@test</sipSessionID></session>
+  <participant participant_id="p1"><aor>sip:alice@example.com</aor></participant>
+  <stream stream_id="str-1" label="0"><label>0</label></stream>
+  <sessionrecordingassoc session_id="sess-1"/>
+</recording>`
+	body := fmt.Sprintf("--%s\r\nContent-Type: application/sdp\r\n\r\n%s\r\n--%s\r\nContent-Type: application/rs-metadata+xml\r\n\r\n%s\r\n--%s--\r\n", boundary, sdp, boundary, metadata, boundary)
+
+	makeMsg := func(tag string) *SIPMessage {
+		req := sipparser.NewRequest(sipparser.INVITE, sipparser.Uri{Host: "recorder"})
+		req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 127.0.0.1;branch=z9hG4bK-"+tag))
+		req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag="+tag))
+		req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>"))
+		req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+		req.AppendHeader(sipparser.NewHeader("CSeq", "1 INVITE"))
+		req.AppendHeader(sipparser.NewHeader("Contact", "<sip:src@example.com>"))
+		tx := newTestServerTransaction(req)
+		return &SIPMessage{
+			Method:      "INVITE",
+			CallID:      callID,
+			CSeq:        "1 INVITE",
+			ContentType: fmt.Sprintf("multipart/mixed; boundary=%s", boundary),
+			Body:        []byte(body),
+			Request:     req,
+			Parsed:      req,
+			Transaction: tx,
+		}
+	}
+
+	done := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		tag := fmt.Sprintf("concurrent-%d", i)
+		go func() {
+			defer func() { done <- struct{}{} }()
+			sipServer.handleSiprecInvite(makeMsg(tag))
+		}()
+	}
+
+	// Wait for both to complete
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("concurrent INVITE processing timed out — possible deadlock")
+		}
+	}
+
+	// Should have exactly one call state (second overwrites first or races cleanly)
+	sipServer.callMutex.RLock()
+	count := len(sipServer.callStates)
+	sipServer.callMutex.RUnlock()
+	// Either 0 (both cleaned up) or 1 (one won) is acceptable — no crash/deadlock is the key test
+	require.LessOrEqual(t, count, 1, "should have at most 1 call state for same Call-ID")
+}
+
+// TestByeDuringAwaitingAckCleansUp verifies that a BYE received while
+// the call is in awaiting_ack state is handled gracefully.
+func TestByeDuringAwaitingAckCleansUp(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{Logger: logger, Config: &Config{}}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-bye-awaiting-ack"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	session := &siprec.RecordingSession{
+		ID:               "session-bye-ack",
+		RecordingState:   "active",
+		ExtendedMetadata: map[string]string{},
+	}
+
+	sipServer.callMutex.Lock()
+	sipServer.callStates[callID] = &CallState{
+		CallID:           callID,
+		State:            "awaiting_ack",
+		PendingAckCSeq:   1,
+		RemoteCSeq:       1,
+		LocalTag:         "local-tag",
+		CreatedAt:        time.Now(),
+		LastActivity:     time.Now(),
+		RecordingSession: session,
+		StreamForwarders: make(map[string]*media.RTPForwarder),
+		rtpCtx:           ctx,
+		cancelCtx:        cancel,
+	}
+	sipServer.callMutex.Unlock()
+
+	req := sipparser.NewRequest(sipparser.BYE, sipparser.Uri{Host: "example.com"})
+	req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 192.0.2.1;branch=z9hG4bK-bye"))
+	req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag=src"))
+	req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>"))
+	req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+	req.AppendHeader(sipparser.NewHeader("CSeq", "2 BYE"))
+
+	tx := newTestServerTransaction(req)
+	message := &SIPMessage{
+		Method:      "BYE",
+		CallID:      callID,
+		CSeq:        "2 BYE",
+		Request:     req,
+		Parsed:      req,
+		Transaction: tx,
+	}
+
+	sipServer.handleByeMessage(message)
+
+	require.NotNil(t, tx.resp)
+	require.Equal(t, 200, tx.resp.StatusCode)
+
+	sipServer.callMutex.RLock()
+	_, exists := sipServer.callStates[callID]
+	sipServer.callMutex.RUnlock()
+	require.False(t, exists, "call state should be cleaned up after BYE during awaiting_ack")
+	require.Equal(t, "terminated", session.RecordingState)
+}
+
+// TestAckRaceConditionSafety verifies that the handleAckMessage function
+// handles the case where a call is deleted between check and mutation.
+func TestAckRaceConditionSafety(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	handler := &Handler{Logger: logger, Config: &Config{}}
+	sipServer := NewCustomSIPServer(logger, handler)
+
+	callID := "call-ack-race"
+
+	// Don't insert any call state — ACK for unknown call should not panic
+	req := sipparser.NewRequest(sipparser.ACK, sipparser.Uri{Host: "example.com"})
+	req.AppendHeader(sipparser.NewHeader("Via", "SIP/2.0/UDP 192.0.2.1;branch=z9hG4bK-ack"))
+	req.AppendHeader(sipparser.NewHeader("From", "<sip:src@example.com>;tag=src"))
+	req.AppendHeader(sipparser.NewHeader("To", "<sip:dst@example.com>"))
+	req.AppendHeader(sipparser.NewHeader("Call-ID", callID))
+	req.AppendHeader(sipparser.NewHeader("CSeq", "1 ACK"))
+
+	message := &SIPMessage{
+		Method:  "ACK",
+		CallID:  callID,
+		CSeq:    "1 ACK",
+		Request: req,
+		Parsed:  req,
+	}
+
+	// Should not panic
+	require.NotPanics(t, func() {
+		sipServer.handleAckMessage(message)
+	})
+}

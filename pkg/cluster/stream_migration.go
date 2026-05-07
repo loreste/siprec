@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -616,18 +615,3 @@ func (m *StreamMigrationManager) WaitForMigrations(ctx context.Context) error {
 	}
 }
 
-// AllocatePortsForMigration allocates RTP/RTCP ports for an incoming migration
-func AllocatePortsForMigration() (rtpPort, rtcpPort int, err error) {
-	// Find available UDP port for RTP
-	rtpListener, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to allocate RTP port: %w", err)
-	}
-	rtpPort = rtpListener.LocalAddr().(*net.UDPAddr).Port
-	rtpListener.Close()
-
-	// Use RTP port + 1 for RTCP (standard convention)
-	rtcpPort = rtpPort + 1
-
-	return rtpPort, rtcpPort, nil
-}

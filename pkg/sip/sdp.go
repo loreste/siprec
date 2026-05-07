@@ -326,10 +326,7 @@ func (h *Handler) generateSDPResponseForForwarders(receivedSDP *sdp.SessionDescr
 	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
-// Helper function to check if a string contains a substring
-func containsString(s, substr string) bool {
-	return strings.Contains(s, substr)
-}
+
 
 // generateSDPAdvanced generates an SDP response based on the provided options
 func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, options *media.SDPOptions) *sdp.SessionDescription {
@@ -729,50 +726,3 @@ func prioritizeCodecs(formats []string) []string {
 	return prioritized
 }
 
-// Helper function to add codec-specific SDP attributes
-func appendCodecAttributes(attributes []sdp.Attribute, formats []string) []sdp.Attribute {
-	// Keep existing attributes that are not related to codecs
-	filteredAttributes := []sdp.Attribute{}
-	for _, attr := range attributes {
-		if !strings.HasPrefix(attr.Key, "rtpmap") && !strings.HasPrefix(attr.Key, "fmtp") {
-			filteredAttributes = append(filteredAttributes, attr)
-		}
-	}
-
-	// Add attributes for prioritized codecs
-	for _, format := range formats {
-		switch format {
-		case "0": // G.711 PCMU
-			filteredAttributes = append(filteredAttributes, sdp.Attribute{
-				Key:   "rtpmap",
-				Value: "0 PCMU/8000",
-			})
-		case "8": // G.711 PCMA
-			filteredAttributes = append(filteredAttributes, sdp.Attribute{
-				Key:   "rtpmap",
-				Value: "8 PCMA/8000",
-			})
-		case "9": // G.722
-			filteredAttributes = append(filteredAttributes, sdp.Attribute{
-				Key:   "rtpmap",
-				Value: "9 G722/8000",
-			})
-		default:
-			// Check if it's a dynamic payload type (96-127) typically used for OPUS
-			if pt, err := strconv.Atoi(format); err == nil && pt >= 96 && pt <= 127 {
-				// Add OPUS rtpmap
-				filteredAttributes = append(filteredAttributes, sdp.Attribute{
-					Key:   "rtpmap",
-					Value: fmt.Sprintf("%s opus/48000/2", format),
-				})
-				// Add OPUS fmtp parameters
-				filteredAttributes = append(filteredAttributes, sdp.Attribute{
-					Key:   "fmtp",
-					Value: fmt.Sprintf("%s maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=64000;stereo=0;useinbandfec=1;usedtx=0", format),
-				})
-			}
-		}
-	}
-
-	return filteredAttributes
-}
