@@ -29,6 +29,7 @@ PROJECT_ID=""
 ZONE="us-central1-a"
 MACHINE_TYPE="e2-standard-2"
 INSTANCE_NAME="siprec-server"
+ALLOWED_SOURCE_RANGES=""  # Required: set to your SBC/proxy CIDR blocks (e.g., "203.0.113.0/24,198.51.100.0/24")
 
 # Functions
 log() { echo -e "${GREEN}[$(date +'%H:%M:%S')] $1${NC}"; }
@@ -57,7 +58,11 @@ get_project_id() {
 # Create firewall rules
 create_firewall_rules() {
     log "Creating firewall rules..."
-    
+
+    if [ -z "$ALLOWED_SOURCE_RANGES" ]; then
+        error "ALLOWED_SOURCE_RANGES is not set. Specify your SBC/proxy CIDR blocks (e.g., ALLOWED_SOURCE_RANGES=\"203.0.113.0/24\")"
+    fi
+
     # Check if firewall rule exists
     if gcloud compute firewall-rules describe siprec-firewall --project="$PROJECT_ID" &>/dev/null; then
         warn "Firewall rule 'siprec-firewall' already exists"
@@ -65,7 +70,7 @@ create_firewall_rules() {
         gcloud compute firewall-rules create siprec-firewall \
             --project="$PROJECT_ID" \
             --allow tcp:22,tcp:80,tcp:443,tcp:5060,tcp:5061,tcp:5062,tcp:8080,udp:5060,udp:5061,udp:16384-32768 \
-            --source-ranges 0.0.0.0/0 \
+            --source-ranges "$ALLOWED_SOURCE_RANGES" \
             --target-tags siprec-server \
             --description "Firewall rules for SIPREC Server"
         log "Firewall rules created"
@@ -90,7 +95,7 @@ apt-get install -y git curl wget
 
 # Clone repository (update with your actual repository)
 cd /opt
-git clone https://github.com/yourusername/siprec.git
+git clone https://github.com/loreste/siprec.git
 cd siprec
 chmod +x deploy_gcp_linux.sh
 

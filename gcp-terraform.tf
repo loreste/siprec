@@ -44,7 +44,18 @@ variable "disk_size" {
 variable "siprec_repo_url" {
   description = "SIPREC Repository URL"
   type        = string
-  default     = "https://github.com/yourusername/siprec.git"
+  default     = "https://github.com/loreste/siprec.git"
+}
+
+variable "allowed_source_ranges" {
+  description = "CIDR ranges allowed to access SIP/RTP ports (restrict to known SBC/proxy IPs in production)"
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = length(var.allowed_source_ranges) > 0
+    error_message = "You must specify allowed_source_ranges with your SBC/proxy CIDR blocks. Using 0.0.0.0/0 is not recommended for production."
+  }
 }
 
 # Provider configuration
@@ -85,7 +96,7 @@ resource "google_compute_firewall" "siprec_firewall" {
     ports    = ["5060", "5061", "16384-32768"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  source_ranges = var.allowed_source_ranges
   target_tags   = ["siprec-server"]
   description   = "Firewall rules for SIPREC Server"
 }

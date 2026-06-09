@@ -16,7 +16,7 @@
 set -e
 
 # Configuration
-REPO_URL="https://github.com/yourusername/siprec.git"  # Update with your repo
+REPO_URL="${REPO_URL:-https://github.com/loreste/siprec.git}"
 BRANCH="main"
 DEPLOY_USER="siprec"
 
