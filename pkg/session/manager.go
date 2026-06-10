@@ -145,16 +145,16 @@ func (sm *SessionManager) CreateSession(sessionID, callID string, metadata map[s
 
 // GetSession retrieves a session
 func (sm *SessionManager) GetSession(sessionID string) (*SessionData, error) {
-	// Check local cache first
-	sm.mutex.RLock()
+	// Check local cache first - use write lock since we modify LastAccessed/AccessCount
+	sm.mutex.Lock()
 	if sessionInfo, exists := sm.activeSessions[sessionID]; exists {
 		sessionInfo.LastAccessed = time.Now()
 		sessionInfo.AccessCount++
 		data := sessionInfo.Data
-		sm.mutex.RUnlock()
+		sm.mutex.Unlock()
 		return data, nil
 	}
-	sm.mutex.RUnlock()
+	sm.mutex.Unlock()
 
 	// Try primary store
 	data, err := sm.store.Get(sessionID)

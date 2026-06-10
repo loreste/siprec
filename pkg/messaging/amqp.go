@@ -548,16 +548,16 @@ func (c *AMQPClient) PublishToDeadLetterQueue(content, callUUID string, metadata
 
 // monitorConnection monitors the AMQP connection and attempts to reconnect if it closes
 func (c *AMQPClient) monitorConnection() {
-	// Set up connection closed notification channel
-	closeChan := make(chan *amqp.Error)
-
-	c.connMutex.RLock()
-	if c.conn != nil {
-		c.conn.NotifyClose(closeChan)
-	}
-	c.connMutex.RUnlock()
-
 	for {
+		// Register close notification on the current connection
+		closeChan := make(chan *amqp.Error, 1)
+
+		c.connMutex.RLock()
+		if c.conn != nil {
+			c.conn.NotifyClose(closeChan)
+		}
+		c.connMutex.RUnlock()
+
 		select {
 		case <-c.stopChan:
 			// Shutting down
@@ -589,6 +589,7 @@ func (c *AMQPClient) monitorConnection() {
 
 				time.Sleep(backoff)
 			}
+			// Loop back to register NotifyClose on the new connection
 		}
 	}
 }

@@ -149,17 +149,23 @@ func (pm *ProcessingManager) IsEnabled() bool {
 
 // SetVADEnabled enables or disables voice activity detection
 func (pm *ProcessingManager) SetVADEnabled(enabled bool) {
-	pm.vad.SetSilenceSuppression(enabled)
+	if pm.vad != nil {
+		pm.vad.SetSilenceSuppression(enabled)
+	}
 }
 
 // SetNoiseReductionEnabled enables or disables noise reduction
 func (pm *ProcessingManager) SetNoiseReductionEnabled(enabled bool) {
-	pm.noiseReducer.SetEnabled(enabled)
+	if pm.noiseReducer != nil {
+		pm.noiseReducer.SetEnabled(enabled)
+	}
 }
 
 // SetChannelMixingEnabled enables or disables channel mixing
 func (pm *ProcessingManager) SetChannelMixingEnabled(enabled bool) {
-	pm.channelMixer.SetMixChannels(enabled)
+	if pm.channelMixer != nil {
+		pm.channelMixer.SetMixChannels(enabled)
+	}
 }
 
 // Reset resets all audio processors
@@ -167,9 +173,15 @@ func (pm *ProcessingManager) Reset() {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	pm.vad.Reset()
-	pm.noiseReducer.Reset()
-	pm.channelMixer.Reset()
+	if pm.vad != nil {
+		pm.vad.Reset()
+	}
+	if pm.noiseReducer != nil {
+		pm.noiseReducer.Reset()
+	}
+	if pm.channelMixer != nil {
+		pm.channelMixer.Reset()
+	}
 }
 
 // Close releases resources
@@ -181,9 +193,15 @@ func (pm *ProcessingManager) Close() error {
 	pm.pipeline.Stop()
 
 	// Close all processors
-	pm.vad.Close()
-	pm.noiseReducer.Close()
-	pm.channelMixer.Close()
+	if pm.vad != nil {
+		pm.vad.Close()
+	}
+	if pm.noiseReducer != nil {
+		pm.noiseReducer.Close()
+	}
+	if pm.channelMixer != nil {
+		pm.channelMixer.Close()
+	}
 
 	return nil
 }

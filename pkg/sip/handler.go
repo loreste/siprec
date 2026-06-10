@@ -780,7 +780,7 @@ func (h *Handler) CleanupActiveCalls() {
 		// Stop RTP forwarding
 		if callData.Forwarder != nil {
 			logger.WithField("call_uuid", callUUID).Debug("Stopping RTP forwarding")
-			close(callData.Forwarder.StopChan)
+			callData.Forwarder.Stop()
 		}
 
 		// Update recording session state if needed

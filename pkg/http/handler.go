@@ -66,10 +66,12 @@ func (h *SessionHandler) handleGetSessions(w http.ResponseWriter, r *http.Reques
 
 	// Return the sessions
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"sessions": sessions,
 		"count":    len(sessions),
-	})
+	}); err != nil {
+		h.logger.WithError(err).Error("Failed to encode sessions response")
+	}
 }
 
 // handleGetSessionByID handles GET requests for a specific session
@@ -83,7 +85,9 @@ func (h *SessionHandler) handleGetSessionByID(w http.ResponseWriter, r *http.Req
 
 	// Return the session
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(session)
+	if err := json.NewEncoder(w).Encode(session); err != nil {
+		h.logger.WithError(err).Error("Failed to encode session response")
+	}
 }
 
 // handleSessionStats handles GET requests for session statistics
@@ -98,5 +102,7 @@ func (h *SessionHandler) handleSessionStats(w http.ResponseWriter, r *http.Reque
 
 	// Return the statistics
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		h.logger.WithError(err).Error("Failed to encode stats response")
+	}
 }

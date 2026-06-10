@@ -184,46 +184,54 @@ func (fs *FileKeyStore) DeleteKey(keyID string) error {
 
 // RotateKey replaces an old key with a new one
 func (fs *FileKeyStore) RotateKey(oldKeyID string, newKey *EncryptionKey) error {
-	fs.mu.Lock()
-	
-	// Mark old key as inactive
-	if oldKey, exists := fs.keys[oldKeyID]; exists {
-		oldKey.Active = false
-
-		// Update the file
-		keyFile := filepath.Join(fs.basePath, fmt.Sprintf("%s.key", oldKeyID))
-		safeKey := &struct {
-			ID        string    `json:"id"`
-			Algorithm string    `json:"algorithm"`
-			CreatedAt time.Time `json:"created_at"`
-			ExpiresAt time.Time `json:"expires_at"`
-			Version   int       `json:"version"`
-			Active    bool      `json:"active"`
-		}{
-			ID:        oldKey.ID,
-			Algorithm: oldKey.Algorithm,
-			CreatedAt: oldKey.CreatedAt,
-			ExpiresAt: oldKey.ExpiresAt,
-			Version:   oldKey.Version,
-			Active:    false,
-		}
-
-		keyData, err := json.MarshalIndent(safeKey, "", "  ")
-		if err != nil {
-			fs.mu.Unlock()
-			return fmt.Errorf("failed to marshal old key metadata: %w", err)
-		}
-
-		if err := os.WriteFile(keyFile, keyData, 0600); err != nil {
-			fs.logger.WithError(err).WithField("key_id", oldKeyID).Warn("Failed to update old key file")
-		}
+	// Deactivate old key under lock, then release before calling StoreKey
+	if err := fs.deactivateKey(oldKeyID); err != nil {
+		return err
 	}
-	
-	// Unlock before calling StoreKey to avoid deadlock
-	fs.mu.Unlock()
 
-	// Store new key
+	// Store new key (acquires its own lock)
 	return fs.StoreKey(newKey)
+}
+
+// deactivateKey marks a key as inactive and persists the change
+func (fs *FileKeyStore) deactivateKey(keyID string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	oldKey, exists := fs.keys[keyID]
+	if !exists {
+		return nil
+	}
+
+	oldKey.Active = false
+
+	keyFile := filepath.Join(fs.basePath, fmt.Sprintf("%s.key", keyID))
+	safeKey := &struct {
+		ID        string    `json:"id"`
+		Algorithm string    `json:"algorithm"`
+		CreatedAt time.Time `json:"created_at"`
+		ExpiresAt time.Time `json:"expires_at"`
+		Version   int       `json:"version"`
+		Active    bool      `json:"active"`
+	}{
+		ID:        oldKey.ID,
+		Algorithm: oldKey.Algorithm,
+		CreatedAt: oldKey.CreatedAt,
+		ExpiresAt: oldKey.ExpiresAt,
+		Version:   oldKey.Version,
+		Active:    false,
+	}
+
+	keyData, err := json.MarshalIndent(safeKey, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal old key metadata: %w", err)
+	}
+
+	if err := os.WriteFile(keyFile, keyData, 0600); err != nil {
+		fs.logger.WithError(err).WithField("key_id", keyID).Warn("Failed to update old key file")
+	}
+
+	return nil
 }
 
 // Private methods

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	mathrand "math/rand"
 	"sync"
 	"time"
 
@@ -594,7 +593,10 @@ func (m *Manager) decryptChaCha20Poly1305(encData *EncryptedData, key *Encryptio
 
 func (m *Manager) generateKeyID(algorithm string) string {
 	timestamp := time.Now().Unix()
-	hashInput := fmt.Sprintf("%s-%d-%d", algorithm, timestamp, mathrand.Int())
+	randomBytes := make([]byte, 16)
+	// #nosec G104 -- rand.Read always returns len(p) and nil error on supported platforms
+	rand.Read(randomBytes)
+	hashInput := fmt.Sprintf("%s-%d-%s", algorithm, timestamp, hex.EncodeToString(randomBytes))
 	hash := sha256.Sum256([]byte(hashInput))
 	return hex.EncodeToString(hash[:16]) // 32 character hex string
 }
