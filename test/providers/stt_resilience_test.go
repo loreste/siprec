@@ -97,20 +97,6 @@ func (p *MockErrorProvider) ConfigureAdvanced(simulateTimeout bool, timeoutAfter
 	p.processingDelay = processingDelay
 }
 
-// GetResourceCleanupStatus returns whether resources were properly cleaned up
-func (p *MockErrorProvider) GetResourceCleanupStatus() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.resourceCleaned
-}
-
-// ResetResourceCleanupStatus resets the resource cleanup status
-func (p *MockErrorProvider) ResetResourceCleanupStatus() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.resourceCleaned = false
-}
-
 // GetConcurrentStreams returns the number of concurrent streams being processed
 func (p *MockErrorProvider) GetConcurrentStreams() int {
 	p.mu.Lock()

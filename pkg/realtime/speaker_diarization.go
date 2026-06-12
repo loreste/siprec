@@ -543,33 +543,3 @@ func (sd *SpeakerDiarizer) Cleanup() {
 
 	sd.logger.Debug("Speaker diarizer cleaned up")
 }
-
-// GetSpeakers returns current speaker profiles
-func (sd *SpeakerDiarizer) GetSpeakers() map[string]*SpeakerProfile {
-	sd.speakersMux.RLock()
-	defer sd.speakersMux.RUnlock()
-
-	// Return a copy to prevent external modification
-	speakers := make(map[string]*SpeakerProfile)
-	for id, profile := range sd.speakers {
-		speakers[id] = profile
-	}
-	return speakers
-}
-
-// GetStats returns diarization statistics
-func (sd *SpeakerDiarizer) GetStats() *DiarizationStats {
-	sd.stats.mutex.RLock()
-	defer sd.stats.mutex.RUnlock()
-
-	statsCopy := &DiarizationStats{
-		TotalSegments:        sd.stats.TotalSegments,
-		SpeakerChanges:       sd.stats.SpeakerChanges,
-		ProcessingTime:       sd.stats.ProcessingTime,
-		FeaturesExtracted:    sd.stats.FeaturesExtracted,
-		IdentificationErrors: sd.stats.IdentificationErrors,
-		MemoryUsage:          sd.stats.MemoryUsage,
-		LastReset:            sd.stats.LastReset,
-	}
-	return statsCopy
-}

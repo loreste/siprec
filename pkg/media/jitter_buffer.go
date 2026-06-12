@@ -11,23 +11,23 @@ import (
 // JitterBuffer reorders RTP packets by sequence number and provides
 // packet loss concealment for missing packets.
 type JitterBuffer struct {
-	mu           sync.Mutex
-	packets      packetHeap
-	maxSize      int           // Maximum packets to buffer
-	maxDelay     time.Duration // Maximum time to wait for reordering
-	lastEmitted  uint16        // Last sequence number emitted
-	hasEmitted   bool          // Whether we've emitted any packet yet
-	sampleRate   int           // Audio sample rate for PLC calculation
-	codecName    string        // Codec name for PLC calculation
-	plcCallback  func(int)     // Callback to insert silence for lost packets
+	mu          sync.Mutex
+	packets     packetHeap
+	maxSize     int           // Maximum packets to buffer
+	maxDelay    time.Duration // Maximum time to wait for reordering
+	lastEmitted uint16        // Last sequence number emitted
+	hasEmitted  bool          // Whether we've emitted any packet yet
+	sampleRate  int           // Audio sample rate for PLC calculation
+	codecName   string        // Codec name for PLC calculation
+	plcCallback func(int)     // Callback to insert silence for lost packets
 }
 
 // BufferedPacket holds an RTP packet with arrival time
 type BufferedPacket struct {
-	Packet    *rtp.Packet
-	Arrival   time.Time
-	PCMData   []byte // Pre-decoded PCM data
-	index     int    // heap index
+	Packet  *rtp.Packet
+	Arrival time.Time
+	PCMData []byte // Pre-decoded PCM data
+	index   int    // heap index
 }
 
 // packetHeap implements heap.Interface for sequence-ordered packets

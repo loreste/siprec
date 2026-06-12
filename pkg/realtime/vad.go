@@ -15,7 +15,6 @@ type VoiceActivityDetector struct {
 	// Detection thresholds
 	energyThreshold       float64
 	zeroCrossingThreshold float64
-	spectralThreshold     float64
 
 	// Timing constraints
 	minSpeechDuration  time.Duration
@@ -71,7 +70,6 @@ func NewVoiceActivityDetector() *VoiceActivityDetector {
 		logger:                logger.WithField("component", "vad"),
 		energyThreshold:       0.005, // Base energy threshold
 		zeroCrossingThreshold: 0.1,   // Zero crossing rate threshold
-		spectralThreshold:     0.3,   // Spectral activity threshold
 		minSpeechDuration:     100 * time.Millisecond,
 		maxSilenceDuration:    500 * time.Millisecond,
 		historySize:           10,    // 10 frame history for smoothing
@@ -437,84 +435,4 @@ func (vad *VoiceActivityDetector) updateState(isActive bool) {
 		vad.stats.SilenceFrames++
 	}
 	vad.stats.mutex.Unlock()
-}
-
-// IsVoiceActive returns current voice activity status
-func (vad *VoiceActivityDetector) IsVoiceActive() bool {
-	vad.mutex.RLock()
-	defer vad.mutex.RUnlock()
-	return vad.isVoiceActive
-}
-
-// GetStats returns VAD statistics
-func (vad *VoiceActivityDetector) GetStats() *VADStats {
-	vad.stats.mutex.RLock()
-	defer vad.stats.mutex.RUnlock()
-
-	statsCopy := &VADStats{
-		TotalFrames:        vad.stats.TotalFrames,
-		VoiceFrames:        vad.stats.VoiceFrames,
-		SilenceFrames:      vad.stats.SilenceFrames,
-		SpeechSegments:     vad.stats.SpeechSegments,
-		TotalSpeechTime:    vad.stats.TotalSpeechTime,
-		AverageSegmentTime: vad.stats.AverageSegmentTime,
-		ProcessingTime:     vad.stats.ProcessingTime,
-		FalsePositives:     vad.stats.FalsePositives,
-		FalseNegatives:     vad.stats.FalseNegatives,
-		LastReset:          vad.stats.LastReset,
-	}
-	return statsCopy
-}
-
-// SetThresholds updates detection thresholds
-func (vad *VoiceActivityDetector) SetThresholds(energy, zcr, spectral float64) {
-	vad.mutex.Lock()
-	defer vad.mutex.Unlock()
-
-	if energy > 0 {
-		vad.energyThreshold = energy
-	}
-	if zcr > 0 {
-		vad.zeroCrossingThreshold = zcr
-	}
-	if spectral > 0 {
-		vad.spectralThreshold = spectral
-	}
-}
-
-// Reset resets the VAD state and statistics
-func (vad *VoiceActivityDetector) Reset() {
-	vad.mutex.Lock()
-	defer vad.mutex.Unlock()
-
-	vad.isVoiceActive = false
-	vad.speechStartTime = time.Time{}
-	vad.lastActivity = time.Time{}
-	vad.silenceStartTime = time.Now()
-
-	// Clear history
-	for i := range vad.energyHistory {
-		vad.energyHistory[i] = 0.0
-	}
-	for i := range vad.zcHistory {
-		vad.zcHistory[i] = 0.0
-	}
-	vad.historyIndex = 0
-
-	// Reset statistics
-	vad.stats.mutex.Lock()
-	vad.stats = &VADStats{LastReset: time.Now()}
-	vad.stats.mutex.Unlock()
-}
-
-// Cleanup performs cleanup operations
-func (vad *VoiceActivityDetector) Cleanup() {
-	vad.mutex.Lock()
-	defer vad.mutex.Unlock()
-
-	// Clear buffers
-	vad.energyHistory = nil
-	vad.zcHistory = nil
-
-	vad.logger.Debug("VAD cleaned up")
 }

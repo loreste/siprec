@@ -1,16 +1,13 @@
 package backup
 
 import (
-	"bufio"
 	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"time"
 )
 
 // ReadBackupFile reads a backup file, handling compression and encryption
@@ -98,66 +95,6 @@ func createDecryptionReader(file *os.File) (io.Reader, error) {
 	}
 
 	return strings.NewReader(string(plaintext)), nil
-}
-
-// NewLineScanner creates a scanner that reads lines from an io.Reader
-func NewLineScanner(reader io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(reader)
-	scanner.Split(bufio.ScanLines)
-	return scanner
-}
-
-// EnsureDirectory ensures a directory exists, creating it if necessary
-func EnsureDirectory(dirPath string) error {
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		err := os.MkdirAll(dirPath, 0755)
-		if err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dirPath, err)
-		}
-	}
-	return nil
-}
-
-// GetFileExtension returns the file extension from a path
-func GetFileExtension(filePath string) string {
-	return strings.ToLower(filepath.Ext(filePath))
-}
-
-// IsCompressed checks if a file is compressed based on its extension
-func IsCompressed(filePath string) bool {
-	ext := GetFileExtension(filePath)
-	return ext == ".gz" || ext == ".bz2" || ext == ".xz" || strings.Contains(filePath, ".gz")
-}
-
-// IsEncrypted checks if a file is encrypted based on its extension
-func IsEncrypted(filePath string) bool {
-	return strings.HasSuffix(filePath, ".enc") || strings.Contains(filePath, ".encrypted")
-}
-
-// GetBackupType extracts backup type from filename
-func GetBackupType(filename string) string {
-	// Expected format: database_type_YYYYMMDD_HHMMSS.sql[.gz][.enc]
-	parts := strings.Split(filename, "_")
-	if len(parts) >= 2 {
-		return parts[1]
-	}
-	return "unknown"
-}
-
-// GenerateBackupFilename generates a standardized backup filename
-func GenerateBackupFilename(database, backupType string, compressed, encrypted bool) string {
-	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s_%s.sql", database, backupType, timestamp)
-
-	if compressed {
-		filename += ".gz"
-	}
-
-	if encrypted {
-		filename += ".enc"
-	}
-
-	return filename
 }
 
 // ValidateBackupFile validates that a backup file exists and is readable

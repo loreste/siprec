@@ -41,27 +41,27 @@ type ConfigResponse struct {
 
 // ValidationResponse represents a configuration validation response
 type ValidationResponse struct {
-	Valid       bool                    `json:"valid"`
-	Errors      []config.ValidationError   `json:"errors,omitempty"`
-	Warnings    []config.ValidationWarning `json:"warnings,omitempty"`
-	Summary     string                  `json:"summary"`
-	Timestamp   time.Time               `json:"timestamp"`
+	Valid     bool                       `json:"valid"`
+	Errors    []config.ValidationError   `json:"errors,omitempty"`
+	Warnings  []config.ValidationWarning `json:"warnings,omitempty"`
+	Summary   string                     `json:"summary"`
+	Timestamp time.Time                  `json:"timestamp"`
 }
 
 // ReloadResponse represents a configuration reload response
 type ReloadResponse struct {
-	Success     bool                   `json:"success"`
-	Event       *config.ReloadEvent    `json:"event,omitempty"`
-	Message     string                 `json:"message"`
-	Timestamp   time.Time              `json:"timestamp"`
+	Success   bool                `json:"success"`
+	Event     *config.ReloadEvent `json:"event,omitempty"`
+	Message   string              `json:"message"`
+	Timestamp time.Time           `json:"timestamp"`
 }
 
 // ReloadStatusResponse represents reload status
 type ReloadStatusResponse struct {
-	Enabled      bool      `json:"enabled"`
-	LastReload   time.Time `json:"last_reload,omitempty"`
-	CurrentConfig string   `json:"current_config_path"`
-	Message      string    `json:"message,omitempty"`
+	Enabled       bool      `json:"enabled"`
+	LastReload    time.Time `json:"last_reload,omitempty"`
+	CurrentConfig string    `json:"current_config_path"`
+	Message       string    `json:"message,omitempty"`
 }
 
 // GetConfigHandler handles configuration retrieval requests
@@ -71,11 +71,11 @@ func (h *ConfigHandlers) GetConfigHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get current configuration
+	// Get current configuration and redact secrets before serializing
 	currentConfig := h.hotReloadManager.GetCurrentConfig()
 
 	response := ConfigResponse{
-		Config:    currentConfig,
+		Config:    redactConfigSecrets(currentConfig),
 		Timestamp: time.Now(),
 		Message:   "Configuration retrieved successfully",
 	}
@@ -96,6 +96,7 @@ func (h *ConfigHandlers) ValidateConfigHandler(w http.ResponseWriter, r *http.Re
 
 	// Parse the configuration from request body
 	var configToValidate config.Config
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&configToValidate); err != nil {
 		h.logger.WithError(err).Error("Failed to decode configuration for validation")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -106,10 +107,22 @@ func (h *ConfigHandlers) ValidateConfigHandler(w http.ResponseWriter, r *http.Re
 	validator := config.NewConfigValidator(h.logger)
 	validationResult := validator.ValidateConfig(&configToValidate)
 
+	// Redact secret values echoed back in validation errors/warnings
+	sanitizedErrors := make([]config.ValidationError, len(validationResult.Errors))
+	for i, validationError := range validationResult.Errors {
+		validationError.Value = redactValidationValue(validationError.Field, validationError.Value)
+		sanitizedErrors[i] = validationError
+	}
+	sanitizedWarnings := make([]config.ValidationWarning, len(validationResult.Warnings))
+	for i, validationWarning := range validationResult.Warnings {
+		validationWarning.Value = redactValidationValue(validationWarning.Field, validationWarning.Value)
+		sanitizedWarnings[i] = validationWarning
+	}
+
 	response := ValidationResponse{
 		Valid:     validationResult.Valid,
-		Errors:    validationResult.Errors,
-		Warnings:  validationResult.Warnings,
+		Errors:    sanitizedErrors,
+		Warnings:  sanitizedWarnings,
 		Summary:   validationResult.Summary,
 		Timestamp: time.Now(),
 	}
@@ -159,7 +172,7 @@ func (h *ConfigHandlers) ReloadConfigHandler(w http.ResponseWriter, r *http.Requ
 
 	response := ReloadResponse{
 		Success:   err == nil && event.Success,
-		Event:     event,
+		Event:     redactReloadEvent(event),
 		Timestamp: time.Now(),
 	}
 
@@ -211,77 +224,4 @@ func (h *ConfigHandlers) ReloadStatusHandler(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
-}
-
-// GetConfigValidationRules returns the validation rules for configuration
-func (h *ConfigHandlers) GetConfigValidationRules() map[string]interface{} {
-	return map[string]interface{}{
-		"sip_ports": map[string]interface{}{
-			"type":        "array",
-			"items":       map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 65535},
-			"minItems":    1,
-			"description": "SIP ports for listening (TCP/UDP)",
-		},
-		"http_port": map[string]interface{}{
-			"type":        "integer",
-			"minimum":     1,
-			"maximum":     65535,
-			"description": "HTTP server port",
-		},
-		"rtp_port_min": map[string]interface{}{
-			"type":        "integer",
-			"minimum":     1024,
-			"maximum":     65535,
-			"description": "Minimum RTP port range",
-		},
-		"rtp_port_max": map[string]interface{}{
-			"type":        "integer",
-			"minimum":     1024,
-			"maximum":     65535,
-			"description": "Maximum RTP port range",
-		},
-		"external_ip": map[string]interface{}{
-			"type":        "string",
-			"pattern":     "^(auto|([0-9]{1,3}\\.){3}[0-9]{1,3})$",
-			"description": "External IP address or 'auto'",
-		},
-		"recording_dir": map[string]interface{}{
-			"type":        "string",
-			"minLength":   1,
-			"description": "Directory for storing recordings",
-		},
-		"stt_vendors": map[string]interface{}{
-			"type":        "array",
-			"items":       map[string]interface{}{"type": "string", "enum": []string{"google", "azure", "aws", "deepgram", "openai", "mock"}},
-			"description": "Supported STT vendors",
-		},
-		"log_level": map[string]interface{}{
-			"type":        "string",
-			"enum":        []string{"trace", "debug", "info", "warn", "error", "fatal", "panic"},
-			"description": "Logging level",
-		},
-		"max_concurrent_calls": map[string]interface{}{
-			"type":        "integer",
-			"minimum":     1,
-			"maximum":     100000,
-			"description": "Maximum number of concurrent calls",
-		},
-	}
-}
-
-// HealthCheckConfig returns configuration system health information
-func (h *ConfigHandlers) HealthCheckConfig() map[string]interface{} {
-	health := map[string]interface{}{
-		"hot_reload_enabled": h.hotReloadManager.IsEnabled(),
-		"status":            "healthy",
-		"message":           "Configuration system operational",
-	}
-
-	// Add more health metrics as needed
-	if !h.hotReloadManager.IsEnabled() {
-		health["status"] = "degraded"
-		health["message"] = "Hot-reload disabled"
-	}
-
-	return health
 }

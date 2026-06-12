@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/otel/trace"
 
 	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/telemetry/tracing"
@@ -46,20 +45,20 @@ type SIPHeadersAudit struct {
 	ContentType string `json:"content_type,omitempty"`
 
 	// Authentication/Authorization headers
-	Authorization     string `json:"authorization,omitempty"`
+	Authorization      string `json:"authorization,omitempty"`
 	ProxyAuthorization string `json:"proxy_authorization,omitempty"`
-	WWWAuthenticate   string `json:"www_authenticate,omitempty"`
+	WWWAuthenticate    string `json:"www_authenticate,omitempty"`
 
 	// Routing headers
 	Route       string `json:"route,omitempty"`
 	RecordRoute string `json:"record_route,omitempty"`
 
 	// Session/Capabilities headers
-	Allow       string `json:"allow,omitempty"`
-	Supported   string `json:"supported,omitempty"`
-	Require     string `json:"require,omitempty"`
-	UserAgent   string `json:"user_agent,omitempty"`
-	Server      string `json:"server,omitempty"`
+	Allow     string `json:"allow,omitempty"`
+	Supported string `json:"supported,omitempty"`
+	Require   string `json:"require,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+	Server    string `json:"server,omitempty"`
 
 	// Media headers
 	ContentLength int    `json:"content_length,omitempty"`
@@ -70,9 +69,9 @@ type SIPHeadersAudit struct {
 	ReasonPhrase string `json:"reason_phrase,omitempty"`
 
 	// Transport info
-	Transport    string `json:"transport,omitempty"`
-	RemoteAddr   string `json:"remote_addr,omitempty"`
-	LocalAddr    string `json:"local_addr,omitempty"`
+	Transport  string `json:"transport,omitempty"`
+	RemoteAddr string `json:"remote_addr,omitempty"`
+	LocalAddr  string `json:"local_addr,omitempty"`
 
 	// Custom/Vendor headers
 	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
@@ -244,29 +243,6 @@ func UsersFromParticipants(participants []siprec.Participant) []string {
 	return users
 }
 
-// MergeDetails merges additional details into an event's detail map.
-func MergeDetails(evt *Event, details map[string]interface{}) {
-	if evt == nil || details == nil {
-		return
-	}
-	if evt.Details == nil {
-		evt.Details = make(map[string]interface{})
-	}
-	for k, v := range details {
-		evt.Details[k] = v
-	}
-}
-
-// SpanContextFields helper extracts trace identifiers from a context.
-func SpanContextFields(ctx context.Context) (traceID, spanID string) {
-	sc := trace.SpanFromContext(ctx).SpanContext()
-	if sc.IsValid() {
-		traceID = sc.TraceID().String()
-		spanID = sc.SpanID().String()
-	}
-	return
-}
-
 // sipHeadersToFields converts SIPHeadersAudit to a map for logging
 func sipHeadersToFields(h *SIPHeadersAudit) map[string]interface{} {
 	fields := make(map[string]interface{})
@@ -398,53 +374,4 @@ func redactAuthHeader(header string) string {
 		return header[:idx] + " [REDACTED]"
 	}
 	return "[REDACTED]"
-}
-
-// NewSIPHeadersAuditFromMap creates SIPHeadersAudit from a header map
-func NewSIPHeadersAuditFromMap(headers map[string][]string, method, requestURI string) *SIPHeadersAudit {
-	h := &SIPHeadersAudit{
-		Method:        method,
-		RequestURI:    requestURI,
-		CustomHeaders: make(map[string]string),
-	}
-
-	getFirst := func(key string) string {
-		if vals, ok := headers[key]; ok && len(vals) > 0 {
-			return vals[0]
-		}
-		return ""
-	}
-
-	h.From = getFirst("From")
-	h.To = getFirst("To")
-	h.CallID = getFirst("Call-ID")
-	h.CSeq = getFirst("CSeq")
-	h.Via = getFirst("Via")
-	h.Contact = getFirst("Contact")
-	h.ContentType = getFirst("Content-Type")
-	h.Authorization = getFirst("Authorization")
-	h.ProxyAuthorization = getFirst("Proxy-Authorization")
-	h.WWWAuthenticate = getFirst("WWW-Authenticate")
-	h.Route = getFirst("Route")
-	h.RecordRoute = getFirst("Record-Route")
-	h.Allow = getFirst("Allow")
-	h.Supported = getFirst("Supported")
-	h.Require = getFirst("Require")
-	h.UserAgent = getFirst("User-Agent")
-	h.Server = getFirst("Server")
-	h.Accept = getFirst("Accept")
-
-	// Capture vendor-specific headers
-	vendorHeaders := []string{
-		"X-Session-ID", "Session-ID", "P-Asserted-Identity",
-		"P-Preferred-Identity", "Remote-Party-ID", "Diversion",
-		"X-UCID", "X-Call-Info", "P-Charging-Vector",
-	}
-	for _, hdr := range vendorHeaders {
-		if val := getFirst(hdr); val != "" {
-			h.CustomHeaders[hdr] = val
-		}
-	}
-
-	return h
 }

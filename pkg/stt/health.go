@@ -19,38 +19,38 @@ type HealthCheckProvider interface {
 
 // ProviderHealth represents the health status of a provider
 type ProviderHealth struct {
-	Name              string
-	Healthy           bool
-	LastCheck         time.Time
-	LastSuccess       time.Time
-	ConsecutiveFails  int
-	ResponseTime      time.Duration
-	ErrorRate         float64
-	SuccessCount      int64
-	FailureCount      int64
-	AverageLatency    time.Duration
-	P95Latency        time.Duration
-	P99Latency        time.Duration
-	LastError         error
+	Name                string
+	Healthy             bool
+	LastCheck           time.Time
+	LastSuccess         time.Time
+	ConsecutiveFails    int
+	ResponseTime        time.Duration
+	ErrorRate           float64
+	SuccessCount        int64
+	FailureCount        int64
+	AverageLatency      time.Duration
+	P95Latency          time.Duration
+	P99Latency          time.Duration
+	LastError           error
 	CircuitBreakerState string
 }
 
 // HealthMonitor monitors provider health
 type HealthMonitor struct {
-	logger           *logrus.Logger
-	providers        map[string]Provider
-	healthStatus     map[string]*ProviderHealth
-	mu               sync.RWMutex
-	checkInterval    time.Duration
+	logger             *logrus.Logger
+	providers          map[string]Provider
+	healthStatus       map[string]*ProviderHealth
+	mu                 sync.RWMutex
+	checkInterval      time.Duration
 	unhealthyThreshold int
-	recoveryThreshold int
-	stopChan         chan struct{}
-	wg               sync.WaitGroup
-	
+	recoveryThreshold  int
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+
 	// Circuit breaker settings
 	circuitBreakerThreshold int
-	circuitBreakerTimeout    time.Duration
-	circuitBreakerStates     map[string]*ProviderCircuitBreaker
+	circuitBreakerTimeout   time.Duration
+	circuitBreakerStates    map[string]*ProviderCircuitBreaker
 }
 
 // ProviderCircuitBreaker implements circuit breaker pattern for providers
@@ -68,18 +68,18 @@ func NewHealthMonitor(logger *logrus.Logger, checkInterval time.Duration) *Healt
 	if checkInterval == 0 {
 		checkInterval = 30 * time.Second
 	}
-	
+
 	return &HealthMonitor{
-		logger:                   logger,
-		providers:                make(map[string]Provider),
-		healthStatus:             make(map[string]*ProviderHealth),
-		checkInterval:            checkInterval,
-		unhealthyThreshold:       3,
-		recoveryThreshold:        2,
-		circuitBreakerThreshold:  5,
-		circuitBreakerTimeout:    60 * time.Second,
-		circuitBreakerStates:     make(map[string]*ProviderCircuitBreaker),
-		stopChan:                 make(chan struct{}),
+		logger:                  logger,
+		providers:               make(map[string]Provider),
+		healthStatus:            make(map[string]*ProviderHealth),
+		checkInterval:           checkInterval,
+		unhealthyThreshold:      3,
+		recoveryThreshold:       2,
+		circuitBreakerThreshold: 5,
+		circuitBreakerTimeout:   60 * time.Second,
+		circuitBreakerStates:    make(map[string]*ProviderCircuitBreaker),
+		stopChan:                make(chan struct{}),
 	}
 }
 
@@ -87,19 +87,19 @@ func NewHealthMonitor(logger *logrus.Logger, checkInterval time.Duration) *Healt
 func (h *HealthMonitor) RegisterProvider(name string, provider Provider) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	h.providers[name] = provider
 	h.healthStatus[name] = &ProviderHealth{
-		Name:         name,
-		Healthy:      true,
-		LastCheck:    time.Now(),
-		LastSuccess:  time.Now(),
+		Name:                name,
+		Healthy:             true,
+		LastCheck:           time.Now(),
+		LastSuccess:         time.Now(),
 		CircuitBreakerState: "closed",
 	}
 	h.circuitBreakerStates[name] = &ProviderCircuitBreaker{
 		state: "closed",
 	}
-	
+
 	h.logger.WithField("provider", name).Info("Provider registered for health monitoring")
 }
 
@@ -120,13 +120,13 @@ func (h *HealthMonitor) Stop() {
 // monitorLoop performs periodic health checks
 func (h *HealthMonitor) monitorLoop() {
 	defer h.wg.Done()
-	
+
 	ticker := time.NewTicker(h.checkInterval)
 	defer ticker.Stop()
-	
+
 	// Initial health check
 	h.checkAllProviders()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -145,7 +145,7 @@ func (h *HealthMonitor) checkAllProviders() {
 		providers[name] = provider
 	}
 	h.mu.RUnlock()
-	
+
 	var wg sync.WaitGroup
 	for name, provider := range providers {
 		wg.Add(1)
@@ -161,10 +161,10 @@ func (h *HealthMonitor) checkAllProviders() {
 func (h *HealthMonitor) checkProvider(name string, provider Provider) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	start := time.Now()
 	var err error
-	
+
 	// Check if provider implements HealthCheckProvider
 	if healthProvider, ok := provider.(HealthCheckProvider); ok {
 		err = healthProvider.HealthCheck(ctx)
@@ -172,12 +172,12 @@ func (h *HealthMonitor) checkProvider(name string, provider Provider) {
 		// Basic connectivity check - try to initialize
 		err = provider.Initialize()
 	}
-	
+
 	responseTime := time.Since(start)
-	
+
 	h.updateHealthStatus(name, err, responseTime)
 	h.updateCircuitBreaker(name, err)
-	
+
 	// Record metrics
 	status := "healthy"
 	if err != nil {
@@ -190,40 +190,40 @@ func (h *HealthMonitor) checkProvider(name string, provider Provider) {
 func (h *HealthMonitor) updateHealthStatus(name string, err error, responseTime time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	
+
 	health, exists := h.healthStatus[name]
 	if !exists {
 		return
 	}
-	
+
 	health.LastCheck = time.Now()
 	health.ResponseTime = responseTime
-	
+
 	// Update latency metrics
 	if health.AverageLatency == 0 {
 		health.AverageLatency = responseTime
 	} else {
 		health.AverageLatency = (health.AverageLatency + responseTime) / 2
 	}
-	
+
 	if responseTime > health.P95Latency {
 		health.P95Latency = responseTime
 	}
 	if responseTime > health.P99Latency {
 		health.P99Latency = responseTime
 	}
-	
+
 	if err != nil {
 		health.ConsecutiveFails++
 		health.FailureCount++
 		health.LastError = err
-		
+
 		if health.ConsecutiveFails >= h.unhealthyThreshold {
 			if health.Healthy {
 				h.logger.WithFields(logrus.Fields{
-					"provider": name,
+					"provider":          name,
 					"consecutive_fails": health.ConsecutiveFails,
-					"error": err.Error(),
+					"error":             err.Error(),
 				}).Error("Provider marked as unhealthy")
 			}
 			health.Healthy = false
@@ -232,7 +232,7 @@ func (h *HealthMonitor) updateHealthStatus(name string, err error, responseTime 
 		health.LastSuccess = time.Now()
 		health.SuccessCount++
 		health.LastError = nil
-		
+
 		if !health.Healthy && health.ConsecutiveFails > 0 {
 			health.ConsecutiveFails--
 			if health.ConsecutiveFails <= h.recoveryThreshold {
@@ -245,7 +245,7 @@ func (h *HealthMonitor) updateHealthStatus(name string, err error, responseTime 
 			health.Healthy = true
 		}
 	}
-	
+
 	// Calculate error rate
 	total := health.SuccessCount + health.FailureCount
 	if total > 0 {
@@ -278,7 +278,7 @@ func (h *HealthMonitor) updateCircuitBreaker(name string, err error) {
 				cb.openedAt = time.Now()
 				newCBState = "open"
 				h.logger.WithFields(logrus.Fields{
-					"provider": name,
+					"provider":      name,
 					"failure_count": cb.failureCount,
 				}).Warn("Circuit breaker opened for provider")
 			}
@@ -325,12 +325,12 @@ func (h *HealthMonitor) updateCircuitBreaker(name string, err error) {
 func (h *HealthMonitor) GetHealthStatus(name string) (*ProviderHealth, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	health, exists := h.healthStatus[name]
 	if !exists {
 		return nil, false
 	}
-	
+
 	// Return a copy to prevent external modifications
 	healthCopy := *health
 	return &healthCopy, true
@@ -340,36 +340,14 @@ func (h *HealthMonitor) GetHealthStatus(name string) (*ProviderHealth, bool) {
 func (h *HealthMonitor) GetAllHealthStatus() map[string]*ProviderHealth {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	
+
 	result := make(map[string]*ProviderHealth)
 	for name, health := range h.healthStatus {
 		healthCopy := *health
 		result[name] = &healthCopy
 	}
-	
-	return result
-}
 
-// IsProviderHealthy checks if a provider is healthy
-func (h *HealthMonitor) IsProviderHealthy(name string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	
-	health, exists := h.healthStatus[name]
-	if !exists {
-		return false
-	}
-	
-	cb, cbExists := h.circuitBreakerStates[name]
-	if !cbExists {
-		return health.Healthy
-	}
-	
-	cb.mu.Lock()
-	circuitOpen := cb.state == "open"
-	cb.mu.Unlock()
-	
-	return health.Healthy && !circuitOpen
+	return result
 }
 
 // GetHealthyProviders returns list of healthy provider names

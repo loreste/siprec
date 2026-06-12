@@ -68,10 +68,10 @@ func (b *PIIAudioTranscriptionBridge) OnTranscription(callUUID string, transcrip
 	forwarder.PIIAudioMarker.MarkPII(piiTypeStr, originalTranscription, transcription, isFinal)
 
 	b.logger.WithFields(logrus.Fields{
-		"call_uuid":   callUUID,
-		"pii_types":   piiTypes,
-		"is_final":    isFinal,
-		"redacted":    transcription != originalTranscription,
+		"call_uuid": callUUID,
+		"pii_types": piiTypes,
+		"is_final":  isFinal,
+		"redacted":  transcription != originalTranscription,
 	}).Debug("PII audio marker updated from transcription")
 }
 

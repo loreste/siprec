@@ -154,7 +154,7 @@ Leg1: [silence]████████████████████
 
 ## Problems Fixed in v1.2.0
 
-The following issues from [voiceip/siprec#11](https://github.com/voiceip/siprec/issues/11) are resolved:
+The following audio pipeline issues are resolved:
 
 | Problem | Description | Fix |
 |---------|-------------|-----|

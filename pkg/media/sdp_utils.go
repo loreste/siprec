@@ -9,24 +9,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ConfigureForwarderFromSDP extracts codec details from the offered SDP and applies them to the RTP forwarder.
-func ConfigureForwarderFromSDP(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, logger *logrus.Logger) {
-	if forwarder == nil || sdpDesc == nil {
-		return
-	}
-
-	applySessionAttributes(forwarder, sdpDesc, logger)
-
-	for _, md := range sdpDesc.MediaDescriptions {
-		if md.MediaName.Media != "audio" {
-			continue
-		}
-
-		applyMediaAttributes(forwarder, md, logger)
-		return
-	}
-}
-
 // ConfigureForwarderForMediaDescription applies SDP attributes from a specific media description.
 func ConfigureForwarderForMediaDescription(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, md *sdp.MediaDescription, logger *logrus.Logger) {
 	if forwarder == nil || sdpDesc == nil || md == nil {

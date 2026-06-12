@@ -439,68 +439,6 @@ func (p *GoogleProviderEnhanced) createStreamingConnection(ctx context.Context, 
 	return conn, nil
 }
 
-// buildRecognitionConfig builds the Google Speech-to-Text recognition configuration
-func (p *GoogleProviderEnhanced) buildRecognitionConfig() *speechpb.RecognitionConfig {
-	config := &speechpb.RecognitionConfig{
-		Encoding:                   p.config.Encoding,
-		SampleRateHertz:            p.config.SampleRateHertz,
-		AudioChannelCount:          p.config.AudioChannelCount,
-		LanguageCode:               p.config.LanguageCode,
-		MaxAlternatives:            p.config.MaxAlternatives,
-		ProfanityFilter:            p.config.EnableProfanityFilter,
-		EnableAutomaticPunctuation: p.config.EnableAutomaticPunctuation,
-		EnableWordTimeOffsets:      p.config.EnableWordTimeOffsets,
-		EnableWordConfidence:       p.config.EnableWordConfidence,
-		// EnableSpokenPunctuation:    p.config.EnableSpokenPunctuation, // Not available in this API version
-		// EnableSpokenEmojis:         p.config.EnableSpokenEmojis, // Not available in this API version
-		Model:       p.config.Model,
-		UseEnhanced: p.config.UseEnhanced,
-	}
-
-	// Alternative languages
-	if len(p.config.AlternativeLanguages) > 0 {
-		config.AlternativeLanguageCodes = p.config.AlternativeLanguages
-	}
-
-	// Speaker diarization
-	if p.config.EnableSpeakerDiarization {
-		config.DiarizationConfig = &speechpb.SpeakerDiarizationConfig{
-			EnableSpeakerDiarization: true,
-			MinSpeakerCount:          p.config.MinSpeakerCount,
-			MaxSpeakerCount:          p.config.MaxSpeakerCount,
-		}
-	}
-
-	// Speech contexts (phrase hints)
-	if len(p.config.PhraseHints) > 0 {
-		config.SpeechContexts = []*speechpb.SpeechContext{
-			{
-				Phrases: p.config.PhraseHints,
-				Boost:   p.config.BoostValue,
-			},
-		}
-	}
-
-	// Speech adaptation
-	if len(p.config.AdaptationPhraseSets) > 0 {
-		config.Adaptation = &speechpb.SpeechAdaptation{
-			PhraseSets: []*speechpb.PhraseSet{},
-		}
-		for _, phraseSet := range p.config.AdaptationPhraseSets {
-			config.Adaptation.PhraseSets = append(config.Adaptation.PhraseSets, &speechpb.PhraseSet{
-				Name: phraseSet,
-			})
-		}
-	}
-
-	// Transcript normalization
-	if p.config.TranscriptNormalization != nil {
-		config.TranscriptNormalization = p.config.TranscriptNormalization
-	}
-
-	return config
-}
-
 // isRetryableError checks if an error is retryable
 func (p *GoogleProviderEnhanced) isRetryableError(err error) bool {
 	if err == nil {
@@ -540,7 +478,7 @@ func (p *GoogleProviderEnhanced) updateMetrics(updater func(*GoogleMetrics)) {
 func (p *GoogleProviderEnhanced) GetMetrics() GoogleMetrics {
 	p.metrics.mutex.RLock()
 	defer p.metrics.mutex.RUnlock()
-	
+
 	// Return a copy without the mutex to avoid copying the lock
 	return GoogleMetrics{
 		TotalRequests:       p.metrics.TotalRequests,

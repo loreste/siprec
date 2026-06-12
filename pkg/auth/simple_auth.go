@@ -36,22 +36,22 @@ type Claims struct {
 
 // SimpleAuthenticator provides simple in-memory authentication
 type SimpleAuthenticator struct {
-	users        map[string]*SimpleUser
-	apiKeys      map[string]*SimpleAPIKey
-	secretKey    []byte
-	issuer       string
-	tokenExpiry  time.Duration
-	logger       *logrus.Logger
-	mutex        sync.RWMutex
+	users       map[string]*SimpleUser
+	apiKeys     map[string]*SimpleAPIKey
+	secretKey   []byte
+	issuer      string
+	tokenExpiry time.Duration
+	logger      *logrus.Logger
+	mutex       sync.RWMutex
 }
 
 // SimpleUser represents a simple user
 type SimpleUser struct {
-	Username       string
-	PasswordHash   string // bcrypt hash of the password
-	Role           string
-	IsActive       bool
-	Permissions    []string
+	Username     string
+	PasswordHash string // bcrypt hash of the password
+	Role         string
+	IsActive     bool
+	Permissions  []string
 }
 
 // SimpleAPIKey represents a simple API key
@@ -87,7 +87,7 @@ func NewSimpleAuthenticator(secretKey, issuer string, tokenExpiry time.Duration,
 		tokenExpiry: tokenExpiry,
 		logger:      logger,
 	}
-	
+
 	logger.Info("Simple authenticator initialized")
 	return auth
 }
@@ -243,7 +243,7 @@ func (s *SimpleAuthenticator) ValidateToken(tokenString string) (*Claims, error)
 // generateToken creates a JWT token for a user
 func (s *SimpleAuthenticator) generateToken(user *SimpleUser) (string, error) {
 	now := time.Now()
-	
+
 	claims := &Claims{
 		UserID:      user.Username,
 		Username:    user.Username,

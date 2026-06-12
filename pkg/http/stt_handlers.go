@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,13 +19,19 @@ import (
 type STTHandlers struct {
 	processor *stt.AsyncSTTProcessor
 	logger    *logrus.Logger
+	// allowedAudioDir is the base directory submitted audio paths must reside
+	// in (typically the recording directory). Empty means job submission is
+	// disabled because no safe base directory is configured.
+	allowedAudioDir string
 }
 
-// NewSTTHandlers creates new STT HTTP handlers
-func NewSTTHandlers(processor *stt.AsyncSTTProcessor, logger *logrus.Logger) *STTHandlers {
+// NewSTTHandlers creates new STT HTTP handlers. allowedAudioDir is the base
+// directory that submitted audio paths are restricted to.
+func NewSTTHandlers(processor *stt.AsyncSTTProcessor, logger *logrus.Logger, allowedAudioDir string) *STTHandlers {
 	return &STTHandlers{
-		processor: processor,
-		logger:    logger,
+		processor:       processor,
+		logger:          logger,
+		allowedAudioDir: allowedAudioDir,
 	}
 }
 
@@ -83,6 +91,7 @@ func (h *STTHandlers) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SubmitJobRequest
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WithError(err).Error("Failed to decode STT job submission request")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -94,6 +103,25 @@ func (h *STTHandlers) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required fields: audio_path, call_uuid", http.StatusBadRequest)
 		return
 	}
+
+	// Fail closed when no allowed audio directory is configured
+	if strings.TrimSpace(h.allowedAudioDir) == "" {
+		h.logger.Error("Rejecting STT job submission: no allowed audio directory is configured (recording directory is empty)")
+		http.Error(w, "STT job submission unavailable: no allowed audio directory configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Validate the audio path against the allowed base directory
+	validatedPath, err := h.validateAudioPath(req.AudioPath)
+	if err != nil {
+		h.logger.WithError(err).WithFields(logrus.Fields{
+			"call_uuid":  req.CallUUID,
+			"audio_path": req.AudioPath,
+		}).Warn("Rejected STT job submission with invalid audio path")
+		http.Error(w, "Invalid audio_path: must resolve to a file inside the configured recording directory", http.StatusBadRequest)
+		return
+	}
+	req.AudioPath = validatedPath
 
 	// Set defaults
 	if req.Provider == "" {
@@ -347,6 +375,7 @@ func (h *STTHandlers) PurgeQueueHandler(w http.ResponseWriter, r *http.Request) 
 		RequestedBy string `json:"requested_by"`
 	}
 
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WithError(err).Warn("Invalid purge queue request payload")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -368,16 +397,25 @@ func (h *STTHandlers) PurgeQueueHandler(w http.ResponseWriter, r *http.Request) 
 		expectedToken = cfg.QueuePurgeToken
 	}
 
-	if expectedToken != "" {
-		provided := extractQueueToken(r)
-		if !secureCompareToken(provided, expectedToken) {
-			h.logger.WithFields(logrus.Fields{
-				"requested_by": req.RequestedBy,
-				"remote_addr":  r.RemoteAddr,
-			}).Warn("Rejected STT queue purge due to invalid token")
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
+	// Fail closed: purging without a configured token would leave the endpoint
+	// unauthenticated, so reject all purge requests until one is set.
+	if expectedToken == "" {
+		h.logger.WithFields(logrus.Fields{
+			"requested_by": req.RequestedBy,
+			"remote_addr":  r.RemoteAddr,
+		}).Error("Rejecting STT queue purge: STT_QUEUE_PURGE_TOKEN is not configured")
+		http.Error(w, "Queue purge unavailable: no purge token configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	provided := extractQueueToken(r)
+	if !secureCompareToken(provided, expectedToken) {
+		h.logger.WithFields(logrus.Fields{
+			"requested_by": req.RequestedBy,
+			"remote_addr":  r.RemoteAddr,
+		}).Warn("Rejected STT queue purge due to invalid token")
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
 	}
 
 	statsBefore, err := h.processor.GetQueueStats()
@@ -419,6 +457,70 @@ func (h *STTHandlers) PurgeQueueHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
+// validateAudioPath cleans and symlink-resolves an audio path submitted via
+// the API and ensures it stays inside the configured allowed directory. It
+// returns the cleaned path on success.
+func (h *STTHandlers) validateAudioPath(audioPath string) (string, error) {
+	baseDir, err := filepath.Abs(filepath.Clean(h.allowedAudioDir))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve allowed audio directory: %w", err)
+	}
+
+	resolvedBase, err := resolveExistingPath(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve allowed audio directory symlinks: %w", err)
+	}
+
+	// Resolve relative submissions against the allowed directory
+	candidate := filepath.Clean(audioPath)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(baseDir, candidate)
+	}
+
+	resolvedCandidate, err := resolveExistingPath(candidate)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve audio path symlinks: %w", err)
+	}
+
+	if !isPathWithin(resolvedBase, resolvedCandidate) {
+		return "", fmt.Errorf("audio path %q resolves outside allowed directory %q", resolvedCandidate, resolvedBase)
+	}
+
+	return candidate, nil
+}
+
+// resolveExistingPath evaluates symlinks on the longest existing prefix of the
+// given cleaned path and re-joins any non-existing remainder, so traversal via
+// symlinks is detected even when the final file does not exist yet.
+func resolveExistingPath(path string) (string, error) {
+	suffix := ""
+	current := filepath.Clean(path)
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return filepath.Join(resolved, suffix), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached the filesystem root without finding an existing prefix
+			return "", err
+		}
+		suffix = filepath.Join(filepath.Base(current), suffix)
+		current = parent
+	}
+}
+
+// isPathWithin reports whether candidate is base itself or a descendant of base.
+func isPathWithin(base, candidate string) bool {
+	if candidate == base {
+		return true
+	}
+	return strings.HasPrefix(candidate, base+string(os.PathSeparator))
+}
+
 func extractQueueToken(r *http.Request) string {
 	token := strings.TrimSpace(r.Header.Get("X-STT-Queue-Token"))
 	if token != "" {
@@ -447,40 +549,4 @@ func secureCompareToken(provided, expected string) bool {
 	}
 
 	return false
-}
-
-// HealthCheckSTT returns STT system health information
-func (h *STTHandlers) HealthCheckSTT() map[string]interface{} {
-	metrics := h.processor.GetMetrics()
-	queueStats, err := h.processor.GetQueueStats()
-
-	health := map[string]interface{}{
-		"active_workers": metrics.ActiveWorkers,
-		"queue_size":     metrics.QueueSize,
-		"jobs_processed": metrics.JobsProcessed,
-		"jobs_failed":    metrics.JobsFailed,
-		"error_rate":     0.0,
-	}
-
-	if err == nil && queueStats != nil {
-		health["error_rate"] = queueStats.ErrorRate
-		health["throughput"] = queueStats.Throughput
-	}
-
-	// Determine health status
-	errorRate := health["error_rate"].(float64)
-	queueSize := metrics.QueueSize
-
-	if errorRate > 50 {
-		health["status"] = "unhealthy"
-		health["message"] = "High error rate"
-	} else if queueSize > 1000 {
-		health["status"] = "degraded"
-		health["message"] = "Queue backlog"
-	} else {
-		health["status"] = "healthy"
-		health["message"] = "Operating normally"
-	}
-
-	return health
 }

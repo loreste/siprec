@@ -75,8 +75,8 @@ type RTPForwarder struct {
 	AudioProcessor interface{} // Audio processing manager (will be *audio.ProcessingManager)
 
 	// Audio format encoding
-	AudioEncoder     *audio.AudioEncoder // Encoder for converting WAV to other formats
-	TargetFormat     string              // Target recording format (wav, mp3, opus, etc.)
+	AudioEncoder *audio.AudioEncoder // Encoder for converting WAV to other formats
+	TargetFormat string              // Target recording format (wav, mp3, opus, etc.)
 
 	// PII audio tracking
 	PIIAudioMarker *PIIAudioMarker // Tracks PII detection events for audio redaction

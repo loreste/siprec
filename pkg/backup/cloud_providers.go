@@ -3,9 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"siprec-server/pkg/security"
 	"github.com/sirupsen/logrus"
 )
 
@@ -21,26 +19,12 @@ func (e *CloudProviderError) Error() string {
 	return fmt.Sprintf("%s %s error [%s]: %s", e.Provider, e.Service, e.Code, e.Message)
 }
 
-// CloudProviderConfig holds configuration for cloud providers
-type CloudProviderConfig struct {
-	AWS   AWSConfig   `json:"aws"`
-	GCP   GCPConfig   `json:"gcp"`
-	Azure AzureConfig `json:"azure"`
-}
-
 // AWSConfig holds AWS-specific configuration
 type AWSConfig struct {
 	Region          string `json:"region"`
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
 	SessionToken    string `json:"session_token,omitempty"`
-}
-
-// GCPConfig holds GCP-specific configuration
-type GCPConfig struct {
-	ProjectID             string `json:"project_id"`
-	ServiceAccountKeyPath string `json:"service_account_key_path"`
-	ServiceAccountKeyJSON string `json:"service_account_key_json"`
 }
 
 // RealAWSLoadBalancerManager implements AWS ELB operations
@@ -131,85 +115,6 @@ func (aws *RealAWSLoadBalancerManager) validateConfig() error {
 	return nil
 }
 
-// RealGCPLoadBalancerManager implements GCP load balancer operations
-type RealGCPLoadBalancerManager struct {
-	config GCPConfig
-	logger *logrus.Logger
-}
-
-// NewRealGCPLoadBalancerManager creates a new GCP load balancer manager
-func NewRealGCPLoadBalancerManager(config GCPConfig, logger *logrus.Logger) *RealGCPLoadBalancerManager {
-	return &RealGCPLoadBalancerManager{
-		config: config,
-		logger: logger,
-	}
-}
-
-// UpdateBackends updates GCP load balancer backend services
-func (gcp *RealGCPLoadBalancerManager) UpdateBackends(ctx context.Context, serviceName string, backends []Backend) error {
-	gcp.logger.WithFields(logrus.Fields{
-		"service":    serviceName,
-		"backends":   len(backends),
-		"project_id": gcp.config.ProjectID,
-	}).Info("Updating GCP Load Balancer backends")
-
-	if err := gcp.validateConfig(); err != nil {
-		return &CloudProviderError{
-			Provider: "GCP",
-			Service:  "Load Balancer",
-			Code:     "CONFIG_ERROR",
-			Message:  err.Error(),
-		}
-	}
-
-	// Implementation would use GCP Compute API:
-	// 1. Create compute service client
-	// 2. Get backend service
-	// 3. Update backend configuration
-	// 4. Apply changes with patch operation
-
-	return &CloudProviderError{
-		Provider: "GCP",
-		Service:  "Load Balancer",
-		Code:     "NOT_IMPLEMENTED",
-		Message:  "GCP Load Balancer integration requires Google Cloud Compute API client (google.golang.org/api/compute/v1)",
-	}
-}
-
-// Failover performs GCP load balancer failover
-func (gcp *RealGCPLoadBalancerManager) Failover(ctx context.Context, serviceName, targetBackend string) error {
-	gcp.logger.WithFields(logrus.Fields{
-		"service": serviceName,
-		"target":  targetBackend,
-	}).Info("Performing GCP Load Balancer failover")
-
-	if err := gcp.validateConfig(); err != nil {
-		return &CloudProviderError{
-			Provider: "GCP",
-			Service:  "Load Balancer",
-			Code:     "CONFIG_ERROR",
-			Message:  err.Error(),
-		}
-	}
-
-	return &CloudProviderError{
-		Provider: "GCP",
-		Service:  "Load Balancer",
-		Code:     "NOT_IMPLEMENTED",
-		Message:  "GCP Load Balancer failover requires implementation with Google Cloud Compute API",
-	}
-}
-
-func (gcp *RealGCPLoadBalancerManager) validateConfig() error {
-	if gcp.config.ProjectID == "" {
-		return fmt.Errorf("GCP project ID is required")
-	}
-	if gcp.config.ServiceAccountKeyPath == "" && gcp.config.ServiceAccountKeyJSON == "" {
-		return fmt.Errorf("GCP service account credentials are required")
-	}
-	return nil
-}
-
 // RealCloudflareManager implements Cloudflare DNS operations
 type RealCloudflareManager struct {
 	apiToken string
@@ -296,6 +201,10 @@ type RealRoute53Manager struct {
 	config AWSConfig
 	zoneID string
 	logger *logrus.Logger
+
+	// WaitForSync makes UpdateRecord block until the change reaches
+	// INSYNC status (verified via GetChange).
+	WaitForSync bool
 }
 
 // NewRealRoute53Manager creates a new Route53 manager
@@ -325,18 +234,16 @@ func (r53 *RealRoute53Manager) UpdateRecord(ctx context.Context, record DNSRecor
 		}
 	}
 
-	// Implementation would use AWS SDK v2 Route53:
-	// 1. Create Route53 client
-	// 2. Prepare change batch
-	// 3. Submit change request
-	// 4. Wait for propagation
-
-	return &CloudProviderError{
-		Provider: "AWS",
-		Service:  "Route53",
-		Code:     "NOT_IMPLEMENTED",
-		Message:  "Route53 DNS integration requires AWS SDK v2 (github.com/aws/aws-sdk-go-v2/service/route53)",
+	if err := r53.upsertRecord(ctx, record); err != nil {
+		return &CloudProviderError{
+			Provider: "AWS",
+			Service:  "Route53",
+			Code:     "UPDATE_FAILED",
+			Message:  err.Error(),
+		}
 	}
+
+	return nil
 }
 
 // GetRecord retrieves a Route53 DNS record
@@ -350,74 +257,28 @@ func (r53 *RealRoute53Manager) GetRecord(ctx context.Context, name, recordType s
 		}
 	}
 
-	return nil, &CloudProviderError{
-		Provider: "AWS",
-		Service:  "Route53",
-		Code:     "NOT_IMPLEMENTED",
-		Message:  "Route53 DNS record retrieval requires AWS SDK v2 implementation",
+	records, err := r53.listRecords(ctx, name, recordType)
+	if err != nil {
+		return nil, &CloudProviderError{
+			Provider: "AWS",
+			Service:  "Route53",
+			Code:     "QUERY_FAILED",
+			Message:  err.Error(),
+		}
 	}
+
+	return records, nil
 }
 
 func (r53 *RealRoute53Manager) validateConfig() error {
-	if r53.config.Region == "" {
-		return fmt.Errorf("AWS region is required for Route53")
-	}
-	if r53.config.AccessKeyID == "" && r53.config.SessionToken == "" {
-		return fmt.Errorf("AWS credentials are required for Route53")
-	}
 	if r53.zoneID == "" {
 		return fmt.Errorf("Route53 hosted zone ID is required")
 	}
+	// Credentials are optional: when no static credentials are configured,
+	// the default AWS credential chain (environment variables, shared
+	// config, instance role) is used.
+	if r53.config.AccessKeyID != "" && r53.config.SecretAccessKey == "" {
+		return fmt.Errorf("AWS secret access key is required when an access key ID is configured")
+	}
 	return nil
 }
-
-// CloudProviderFactory creates cloud provider implementations
-type CloudProviderFactory struct {
-	config CloudProviderConfig
-	logger *logrus.Logger
-}
-
-// NewCloudProviderFactory creates a new cloud provider factory
-func NewCloudProviderFactory(config CloudProviderConfig, logger *logrus.Logger) *CloudProviderFactory {
-	return &CloudProviderFactory{
-		config: config,
-		logger: logger,
-	}
-}
-
-// CreateLoadBalancerManager creates a cloud load balancer manager
-func (cpf *CloudProviderFactory) CreateLoadBalancerManager(provider string) (interface{}, error) {
-	switch strings.ToLower(provider) {
-	case "aws", "aws_elb":
-		return NewRealAWSLoadBalancerManager(cpf.config.AWS, cpf.logger), nil
-	case "gcp", "gcp_lb":
-		return NewRealGCPLoadBalancerManager(cpf.config.GCP, cpf.logger), nil
-	default:
-		return nil, fmt.Errorf("unsupported load balancer provider: %s", provider)
-	}
-}
-
-// CreateDNSManager creates a cloud DNS manager
-func (cpf *CloudProviderFactory) CreateDNSManager(provider, zoneID string) (interface{}, error) {
-	switch strings.ToLower(provider) {
-	case "cloudflare":
-		apiToken := cpf.getCloudflareAPIToken()
-		return NewRealCloudflareManager(apiToken, zoneID, cpf.logger), nil
-	case "route53", "aws_route53":
-		return NewRealRoute53Manager(cpf.config.AWS, zoneID, cpf.logger), nil
-	default:
-		return nil, fmt.Errorf("unsupported DNS provider: %s", provider)
-	}
-}
-
-// Helper methods
-func (cpf *CloudProviderFactory) getCloudflareAPIToken() string {
-	// Retrieve from secure credential provider
-	token, err := security.GetCredential("cloudflare.api_token")
-	if err != nil {
-		cpf.logger.WithError(err).Error("Failed to retrieve Cloudflare API token")
-		return ""
-	}
-	return token
-}
-

@@ -168,7 +168,7 @@ Environment variables can be used standalone or to override configuration file v
 | `PORTS` | Comma-separated list of SIP ports | `5060,5061` |
 | `BEHIND_NAT` | Enable NAT rewriting (Via/Contact) | `false` |
 | `EXTERNAL_IP` | Public IP override or `auto` for STUN | `auto` |
-| `STUN_SERVER` | STUN server used when `EXTERNAL_IP=auto` | `stun:stun.l.google.com:19302` |
+| `STUN_SERVER` | Comma-separated STUN servers (host:port) used when `EXTERNAL_IP=auto` | `stun.l.google.com:19302` |
 
 ### RTP Configuration
 
@@ -470,7 +470,28 @@ See [Speech-to-Text Integration](stt.md) for detailed Whisper configuration incl
 | `HTTP_ENABLED` | Expose health/control endpoints | `true` |
 | `HTTP_PORT` | HTTP listen port | `8080` |
 
-Health (`/healthz`) and readiness (`/readyz`) checks automatically reflect the SIP handler and shared session store.
+Health (`/health`, `/health/live`) and readiness (`/health/ready`) checks automatically reflect the SIP handler and shared session store.
+
+### API Authentication & RBAC
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AUTH_ENABLED` | Enable HTTP API authentication (JWT and API keys) | `false` |
+| `AUTH_JWT_SECRET` | JWT signing secret (required when auth is enabled) | - |
+| `AUTH_ENABLE_API_KEYS` | Allow API key authentication | `true` |
+| `AUTH_RBAC_ENABLED` | Enforce role-based access control on API endpoints (requires `AUTH_ENABLED=true` and database persistence) | `false` |
+
+### Async STT Job Queue
+
+The async STT processor powers the `/api/stt/*` job endpoints (see [API Reference](api.md)).
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `STT_ASYNC_ENABLED` | Enable the async transcription job queue | `true` |
+| `STT_WORKER_COUNT` | Number of transcription workers | `3` |
+| `STT_MAX_RETRIES` | Maximum retries per job | `3` |
+| `STT_RETRY_BACKOFF` | Delay between retries | `30s` |
+| `STT_JOB_TIMEOUT` | Per-job timeout | `300s` |
 
 ### Rate Limiting
 
@@ -788,9 +809,8 @@ AMQP_QUEUE_NAME=transcriptions
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `AMQP_DLQ_ENABLED` | Enable dead letter queue | `false` |
-| `AMQP_DLQ_EXCHANGE` | DLQ exchange name | `siprec.dlx` |
-| `AMQP_DLQ_ROUTING_KEY` | DLQ routing key | `failed` |
+| `AMQP_DLX` | Dead letter exchange name | `siprec.dlx` |
+| `AMQP_DLX_ROUTING_KEY` | Dead letter routing key | `failed` |
 | `AMQP_MESSAGE_TTL` | Message time-to-live | `24h` |
 
 **Production Example:**
@@ -825,13 +845,7 @@ See [Real-time Transcription](realtime-transcription.md) for message formats and
 
 ### Sentiment Analysis
 
-Automatic sentiment analysis on all transcriptions.
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `SENTIMENT_ANALYSIS_ENABLED` | Enable sentiment analysis | `true` |
-| `SENTIMENT_CONTEXT_WINDOW` | Context window for trend analysis | `5` |
-| `SENTIMENT_CACHE_SIZE` | Cache size for results | `1000` |
+Sentiment analysis runs automatically on all transcriptions when the analytics pipeline is enabled (`ANALYTICS_ENABLED=true`). Publishing of sentiment updates to AMQP is controlled by `PUBLISH_SENTIMENT_UPDATES` (default `true`).
 
 **Features:**
 - Lexicon-based scoring (50+ positive/negative words)
@@ -842,13 +856,7 @@ Automatic sentiment analysis on all transcriptions.
 
 ### Keyword Detection
 
-Automatic detection of compliance and security keywords.
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `KEYWORD_DETECTION_ENABLED` | Enable keyword detection | `true` |
-| `KEYWORD_MIN_CONFIDENCE` | Minimum detection confidence | `0.6` |
-| `KEYWORD_FUZZY_MATCH` | Enable fuzzy matching | `true` |
+Keyword detection runs automatically when the analytics pipeline is enabled. Publishing of keyword detections to AMQP is controlled by `PUBLISH_KEYWORD_DETECTIONS` (default `true`).
 
 **Predefined Categories:**
 
@@ -879,12 +887,20 @@ Real-time compliance rule evaluation.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `COMPLIANCE_MONITORING_ENABLED` | Enable compliance monitoring | `true` |
-| `PCI_COMPLIANCE_MODE` | Enable PCI DSS safeguards | `false` |
-| `GDPR_COMPLIANCE_MODE` | Enable GDPR safeguards | `false` |
+| `COMPLIANCE_PCI_ENABLED` | Enable PCI DSS safeguards | `false` |
+| `COMPLIANCE_GDPR_ENABLED` | Enable GDPR safeguards and APIs | `false` |
 
 **GDPR Endpoints:**
 - `POST /api/compliance/gdpr/export` - Export user data
 - `DELETE /api/compliance/gdpr/erase` - Erase user data
 - `GET /api/compliance/status` - Compliance status
 
+
+## Alerting
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ALERTING_ENABLED` | Enable the alert manager | `false` |
+| `ALERTING_EVALUATION_INTERVAL` | Alert rule evaluation interval | `30s` |
+
+Alert notifications can be delivered through email (SMTP), Slack, PagerDuty, and generic webhook channels. The email channel accepts `smtp_host`, `smtp_port`, `username`, `password`, `from`, `to`, and `tls_mode` (`auto`, `implicit`, `starttls`, `none`) settings and reports delivery success/failure metrics.

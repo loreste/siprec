@@ -26,13 +26,13 @@ type ContentEncryptor struct {
 
 // EncryptedContent represents encrypted content with metadata
 type EncryptedContent struct {
-	Version       string `json:"version"`
-	KeyID         string `json:"key_id"`
-	Algorithm     string `json:"algorithm"`
-	EncryptedKey  []byte `json:"encrypted_key"`  // AES key encrypted with RSA
-	Nonce         []byte `json:"nonce"`          // GCM nonce
-	Ciphertext    []byte `json:"ciphertext"`     // AES-GCM encrypted content
-	ContentHash   string `json:"content_hash"`   // SHA-256 of plaintext for integrity
+	Version      string `json:"version"`
+	KeyID        string `json:"key_id"`
+	Algorithm    string `json:"algorithm"`
+	EncryptedKey []byte `json:"encrypted_key"` // AES key encrypted with RSA
+	Nonce        []byte `json:"nonce"`         // GCM nonce
+	Ciphertext   []byte `json:"ciphertext"`    // AES-GCM encrypted content
+	ContentHash  string `json:"content_hash"`  // SHA-256 of plaintext for integrity
 }
 
 // NewContentEncryptor creates a new content encryptor from a PEM-encoded public key file

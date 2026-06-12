@@ -13,9 +13,9 @@ import (
 
 // EnhancedAMQPClient provides advanced AMQP functionality with connection pooling
 type EnhancedAMQPClient struct {
-	logger           *logrus.Logger
-	config           *config.AMQPConfig
-	pool             *AMQPPool
+	logger *logrus.Logger
+	config *config.AMQPConfig
+	pool   *AMQPPool
 	// exchangeManager  *ExchangeManager
 	// queueManager     *QueueManager
 	deadLetterQueue  *DeadLetterQueue
@@ -68,7 +68,7 @@ type AMQPCircuitBreaker struct {
 func (acb *AMQPCircuitBreaker) GetStatus() map[string]interface{} {
 	acb.mutex.RLock()
 	defer acb.mutex.RUnlock()
-	
+
 	return map[string]interface{}{
 		"state":                acb.state.String(),
 		"consecutive_failures": acb.consecutiveFailures,
@@ -79,12 +79,12 @@ func (acb *AMQPCircuitBreaker) GetStatus() map[string]interface{} {
 
 // MetricsCollector collects detailed AMQP metrics
 type MetricsCollector struct {
-	client                  *EnhancedAMQPClient
-	exchangeMetrics         map[string]*ExchangeMetrics
-	queueMetrics           map[string]*QueueMetrics
-	mutex                  sync.RWMutex
-	collectInterval        time.Duration
-	stopChan               chan struct{}
+	client          *EnhancedAMQPClient
+	exchangeMetrics map[string]*ExchangeMetrics
+	queueMetrics    map[string]*QueueMetrics
+	mutex           sync.RWMutex
+	collectInterval time.Duration
+	stopChan        chan struct{}
 }
 
 // ExchangeMetrics holds metrics for an exchange
@@ -113,34 +113,34 @@ func NewEnhancedAMQPClient(logger *logrus.Logger, config *config.AMQPConfig) *En
 			CircuitBreaker: NewCircuitBreaker(logger, DefaultCircuitBreakerConfig()),
 		},
 	}
-	
+
 	// Initialize connection pool
 	client.pool = NewAMQPPool(logger, config)
-	
+
 	// Initialize managers (temporarily disabled due to type conflicts)
 	// client.exchangeManager = &ExchangeManager{
 	//	client:    client,
 	//	exchanges: make(map[string]config.AMQPExchangeConfig),
 	// }
-	
+
 	// client.queueManager = &QueueManager{
 	//	client: client,
 	//	queues: make(map[string]config.AMQPQueueConfig),
 	// }
-	
+
 	client.deadLetterQueue = &DeadLetterQueue{
 		client:       client,
 		exchangeName: config.DeadLetterExchange,
 		queueName:    config.DeadLetterExchange + ".queue",
 		routingKey:   config.DeadLetterRoutingKey,
 	}
-	
+
 	client.retryManager = &RetryManager{
 		client:     client,
 		maxRetries: config.MaxRetries,
 		retryDelay: config.RetryDelay,
 	}
-	
+
 	// Initialize metrics collector if enabled
 	if config.EnableMetrics {
 		client.metricsCollector = &MetricsCollector{
@@ -151,7 +151,7 @@ func NewEnhancedAMQPClient(logger *logrus.Logger, config *config.AMQPConfig) *En
 			stopChan:        make(chan struct{}),
 		}
 	}
-	
+
 	return client
 }
 
@@ -159,61 +159,41 @@ func NewEnhancedAMQPClient(logger *logrus.Logger, config *config.AMQPConfig) *En
 func (c *EnhancedAMQPClient) Connect() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.connected {
 		return nil
 	}
-	
+
 	c.logger.Info("Connecting enhanced AMQP client")
-	
+
 	// Initialize connection pool
 	if err := c.pool.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize connection pool: %w", err)
 	}
-	
+
 	// Set up exchanges (temporarily disabled)
 	// if err := c.setupExchanges(); err != nil {
 	//	return fmt.Errorf("failed to setup exchanges: %w", err)
 	// }
-	
+
 	// Set up queues (temporarily disabled)
 	// if err := c.setupQueues(); err != nil {
 	//	return fmt.Errorf("failed to setup queues: %w", err)
 	// }
-	
+
 	// Initialize dead letter queue
 	if err := c.initializeDeadLetterQueue(); err != nil {
 		c.logger.WithError(err).Warn("Failed to initialize dead letter queue")
 	}
-	
+
 	// Start metrics collection
 	if c.metricsCollector != nil {
 		go c.metricsCollector.start()
 	}
-	
+
 	c.connected = true
 	c.logger.Info("Enhanced AMQP client connected successfully")
-	
-	return nil
-}
 
-// setupExchanges creates and configures exchanges
-func (c *EnhancedAMQPClient) setupExchanges() error {
-	for _, exchangeConfig := range c.config.Exchanges {
-		if err := c.DeclareExchange(exchangeConfig); err != nil {
-			return fmt.Errorf("failed to declare exchange %s: %w", exchangeConfig.Name, err)
-		}
-	}
-	return nil
-}
-
-// setupQueues creates and configures queues
-func (c *EnhancedAMQPClient) setupQueues() error {
-	for _, queueConfig := range c.config.Queues {
-		if err := c.DeclareQueue(queueConfig); err != nil {
-			return fmt.Errorf("failed to declare queue %s: %w", queueConfig.Name, err)
-		}
-	}
 	return nil
 }
 
@@ -224,7 +204,7 @@ func (c *EnhancedAMQPClient) DeclareExchange(exchangeConfig config.AMQPExchangeC
 		return err
 	}
 	defer c.pool.ReturnChannel(ch)
-	
+
 	err = ch.channel.ExchangeDeclare(
 		exchangeConfig.Name,
 		exchangeConfig.Type,
@@ -234,15 +214,15 @@ func (c *EnhancedAMQPClient) DeclareExchange(exchangeConfig config.AMQPExchangeC
 		exchangeConfig.NoWait,
 		amqp.Table(exchangeConfig.Arguments),
 	)
-	
+
 	if err != nil {
 		return err
 	}
-	
+
 	// c.exchangeManager.mutex.Lock()
 	// c.exchangeManager.exchanges[exchangeConfig.Name] = exchangeConfig
 	// c.exchangeManager.mutex.Unlock()
-	
+
 	// Initialize metrics for this exchange
 	if c.metricsCollector != nil {
 		c.metricsCollector.mutex.Lock()
@@ -251,13 +231,13 @@ func (c *EnhancedAMQPClient) DeclareExchange(exchangeConfig config.AMQPExchangeC
 		}
 		c.metricsCollector.mutex.Unlock()
 	}
-	
+
 	c.logger.WithFields(logrus.Fields{
 		"name":    exchangeConfig.Name,
 		"type":    exchangeConfig.Type,
 		"durable": exchangeConfig.Durable,
 	}).Info("Exchange declared")
-	
+
 	return nil
 }
 
@@ -268,7 +248,7 @@ func (c *EnhancedAMQPClient) DeclareQueue(queueConfig config.AMQPQueueConfig) er
 		return err
 	}
 	defer c.pool.ReturnChannel(ch)
-	
+
 	// Declare the queue
 	queue, err := ch.channel.QueueDeclare(
 		queueConfig.Name,
@@ -278,11 +258,11 @@ func (c *EnhancedAMQPClient) DeclareQueue(queueConfig config.AMQPQueueConfig) er
 		queueConfig.NoWait,
 		amqp.Table(queueConfig.Arguments),
 	)
-	
+
 	if err != nil {
 		return err
 	}
-	
+
 	// Create bindings
 	for _, binding := range queueConfig.Bindings {
 		err = ch.channel.QueueBind(
@@ -292,23 +272,23 @@ func (c *EnhancedAMQPClient) DeclareQueue(queueConfig config.AMQPQueueConfig) er
 			binding.NoWait,
 			amqp.Table(binding.Arguments),
 		)
-		
+
 		if err != nil {
-			return fmt.Errorf("failed to bind queue %s to exchange %s: %w", 
+			return fmt.Errorf("failed to bind queue %s to exchange %s: %w",
 				queue.Name, binding.Exchange, err)
 		}
-		
+
 		c.logger.WithFields(logrus.Fields{
 			"queue":       queue.Name,
 			"exchange":    binding.Exchange,
 			"routing_key": binding.RoutingKey,
 		}).Info("Queue binding created")
 	}
-	
+
 	// c.queueManager.mutex.Lock()
 	// c.queueManager.queues[queueConfig.Name] = queueConfig
 	// c.queueManager.mutex.Unlock()
-	
+
 	// Initialize metrics for this queue
 	if c.metricsCollector != nil {
 		c.metricsCollector.mutex.Lock()
@@ -317,13 +297,13 @@ func (c *EnhancedAMQPClient) DeclareQueue(queueConfig config.AMQPQueueConfig) er
 		}
 		c.metricsCollector.mutex.Unlock()
 	}
-	
+
 	c.logger.WithFields(logrus.Fields{
 		"name":     queueConfig.Name,
 		"durable":  queueConfig.Durable,
 		"bindings": len(queueConfig.Bindings),
 	}).Info("Queue declared")
-	
+
 	return nil
 }
 
@@ -333,35 +313,35 @@ func (c *EnhancedAMQPClient) PublishMessage(exchange, routingKey string, message
 	if !c.circuitBreaker.canExecute() {
 		return fmt.Errorf("circuit breaker is open")
 	}
-	
+
 	messageBytes, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
-	
+
 	amqpHeaders := make(amqp.Table)
 	for k, v := range headers {
 		amqpHeaders[k] = v
 	}
-	
+
 	// Use default exchange if not specified
 	if exchange == "" {
 		exchange = c.config.DefaultExchange
 	}
-	
+
 	// Use default routing key if not specified
 	if routingKey == "" {
 		routingKey = c.config.DefaultRoutingKey
 	}
-	
+
 	// Publish with retry logic
 	err = c.retryManager.executeWithRetry(func() error {
 		return c.pool.PublishWithConfirm(exchange, routingKey, messageBytes, amqpHeaders)
 	})
-	
+
 	if err != nil {
 		c.circuitBreaker.recordResult(false, 0)
-		
+
 		// Send to dead letter queue on max retries exceeded
 		if c.deadLetterQueue.initialized {
 			dlqErr := c.sendToDeadLetterQueue(message, headers, err.Error())
@@ -369,17 +349,17 @@ func (c *EnhancedAMQPClient) PublishMessage(exchange, routingKey string, message
 				c.logger.WithError(dlqErr).Error("Failed to send message to dead letter queue")
 			}
 		}
-		
+
 		return err
 	}
-	
+
 	c.circuitBreaker.recordResult(true, 0)
-	
+
 	// Update exchange metrics
 	if c.metricsCollector != nil {
 		c.metricsCollector.updateExchangeMetrics(exchange, true)
 	}
-	
+
 	return nil
 }
 
@@ -392,13 +372,13 @@ func (c *EnhancedAMQPClient) PublishTranscription(transcription, callUUID string
 		Metadata:      metadata,
 		DeadLetter:    false,
 	}
-	
+
 	headers := map[string]interface{}{
 		"message_type": "transcription",
 		"call_uuid":    callUUID,
 		"timestamp":    time.Now().Unix(),
 	}
-	
+
 	return c.PublishMessage("", "", message, headers)
 }
 
@@ -406,17 +386,17 @@ func (c *EnhancedAMQPClient) PublishTranscription(transcription, callUUID string
 func (c *EnhancedAMQPClient) initializeDeadLetterQueue() error {
 	c.deadLetterQueue.mutex.Lock()
 	defer c.deadLetterQueue.mutex.Unlock()
-	
+
 	if c.deadLetterQueue.initialized {
 		return nil
 	}
-	
+
 	ch, err := c.pool.GetChannel()
 	if err != nil {
 		return err
 	}
 	defer c.pool.ReturnChannel(ch)
-	
+
 	// Declare dead letter exchange
 	err = ch.channel.ExchangeDeclare(
 		c.deadLetterQueue.exchangeName,
@@ -430,7 +410,7 @@ func (c *EnhancedAMQPClient) initializeDeadLetterQueue() error {
 	if err != nil {
 		return fmt.Errorf("failed to declare dead letter exchange: %w", err)
 	}
-	
+
 	// Declare dead letter queue
 	_, err = ch.channel.QueueDeclare(
 		c.deadLetterQueue.queueName,
@@ -443,7 +423,7 @@ func (c *EnhancedAMQPClient) initializeDeadLetterQueue() error {
 	if err != nil {
 		return fmt.Errorf("failed to declare dead letter queue: %w", err)
 	}
-	
+
 	// Bind dead letter queue to exchange
 	err = ch.channel.QueueBind(
 		c.deadLetterQueue.queueName,
@@ -455,14 +435,14 @@ func (c *EnhancedAMQPClient) initializeDeadLetterQueue() error {
 	if err != nil {
 		return fmt.Errorf("failed to bind dead letter queue: %w", err)
 	}
-	
+
 	c.deadLetterQueue.initialized = true
-	
+
 	c.logger.WithFields(logrus.Fields{
 		"exchange": c.deadLetterQueue.exchangeName,
 		"queue":    c.deadLetterQueue.queueName,
 	}).Info("Dead letter queue initialized")
-	
+
 	return nil
 }
 
@@ -471,29 +451,29 @@ func (c *EnhancedAMQPClient) sendToDeadLetterQueue(originalMessage interface{}, 
 	if !c.deadLetterQueue.initialized {
 		return fmt.Errorf("dead letter queue not initialized")
 	}
-	
+
 	deadLetterMessage := map[string]interface{}{
 		"original_message": originalMessage,
 		"failure_reason":   reason,
 		"failed_at":        time.Now(),
 		"original_headers": headers,
 	}
-	
+
 	dlqHeaders := map[string]interface{}{
 		"x-death-reason": reason,
 		"x-failed-at":    time.Now().Unix(),
 	}
-	
+
 	messageBytes, err := json.Marshal(deadLetterMessage)
 	if err != nil {
 		return fmt.Errorf("failed to marshal dead letter message: %w", err)
 	}
-	
+
 	amqpHeaders := make(amqp.Table)
 	for k, v := range dlqHeaders {
 		amqpHeaders[k] = v
 	}
-	
+
 	return c.pool.PublishWithConfirm(
 		c.deadLetterQueue.exchangeName,
 		c.deadLetterQueue.routingKey,
@@ -522,7 +502,7 @@ func (c *EnhancedAMQPClient) IsConnected() bool {
 // GetMetrics returns comprehensive metrics
 func (c *EnhancedAMQPClient) GetMetrics() map[string]interface{} {
 	poolMetrics := c.pool.GetMetrics()
-	
+
 	metrics := map[string]interface{}{
 		"pool": map[string]interface{}{
 			"total_connections":  poolMetrics.TotalConnections,
@@ -535,12 +515,12 @@ func (c *EnhancedAMQPClient) GetMetrics() map[string]interface{} {
 		},
 		"circuit_breaker": c.circuitBreaker.GetStatus(),
 	}
-	
+
 	if c.metricsCollector != nil {
 		metrics["exchanges"] = c.metricsCollector.getExchangeMetrics()
 		metrics["queues"] = c.metricsCollector.getQueueMetrics()
 	}
-	
+
 	return metrics
 }
 
@@ -550,17 +530,17 @@ func (c *EnhancedAMQPClient) Disconnect() {
 		c.mutex.Lock()
 		c.connected = false
 		c.mutex.Unlock()
-		
+
 		close(c.shutdownChan)
-		
+
 		if c.metricsCollector != nil {
 			close(c.metricsCollector.stopChan)
 		}
-		
+
 		if c.pool != nil {
 			c.pool.Shutdown()
 		}
-		
+
 		c.logger.Info("Enhanced AMQP client disconnected")
 	})
 }
@@ -568,35 +548,34 @@ func (c *EnhancedAMQPClient) Disconnect() {
 // executeWithRetry executes a function with retry logic
 func (rm *RetryManager) executeWithRetry(fn func() error) error {
 	var lastErr error
-	
+
 	for attempt := 0; attempt <= rm.maxRetries; attempt++ {
 		err := fn()
 		if err == nil {
 			return nil
 		}
-		
+
 		lastErr = err
-		
+
 		if attempt < rm.maxRetries {
 			rm.client.logger.WithFields(logrus.Fields{
 				"attempt": attempt + 1,
 				"max":     rm.maxRetries,
 				"error":   err,
 			}).Warn("Operation failed, retrying")
-			
+
 			time.Sleep(rm.retryDelay)
 		}
 	}
-	
+
 	return fmt.Errorf("operation failed after %d retries: %w", rm.maxRetries, lastErr)
 }
-
 
 // Metrics collector methods
 func (mc *MetricsCollector) start() {
 	ticker := time.NewTicker(mc.collectInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-mc.stopChan:
@@ -615,13 +594,13 @@ func (mc *MetricsCollector) collectMetrics() {
 func (mc *MetricsCollector) updateExchangeMetrics(exchangeName string, success bool) {
 	mc.mutex.Lock()
 	defer mc.mutex.Unlock()
-	
+
 	metrics, exists := mc.exchangeMetrics[exchangeName]
 	if !exists {
 		metrics = &ExchangeMetrics{Name: exchangeName}
 		mc.exchangeMetrics[exchangeName] = metrics
 	}
-	
+
 	if success {
 		metrics.PublishedMessages++
 	} else {
@@ -635,7 +614,7 @@ func (mc *MetricsCollector) updateQueueMetrics() {
 	// For now, we'll just update the timestamp
 	mc.mutex.Lock()
 	defer mc.mutex.Unlock()
-	
+
 	for _, metrics := range mc.queueMetrics {
 		metrics.LastUpdate = time.Now()
 	}
@@ -644,7 +623,7 @@ func (mc *MetricsCollector) updateQueueMetrics() {
 func (mc *MetricsCollector) getExchangeMetrics() map[string]interface{} {
 	mc.mutex.RLock()
 	defer mc.mutex.RUnlock()
-	
+
 	result := make(map[string]interface{})
 	for name, metrics := range mc.exchangeMetrics {
 		result[name] = map[string]interface{}{
@@ -659,7 +638,7 @@ func (mc *MetricsCollector) getExchangeMetrics() map[string]interface{} {
 func (mc *MetricsCollector) getQueueMetrics() map[string]interface{} {
 	mc.mutex.RLock()
 	defer mc.mutex.RUnlock()
-	
+
 	result := make(map[string]interface{})
 	for name, metrics := range mc.queueMetrics {
 		result[name] = map[string]interface{}{

@@ -134,9 +134,9 @@ func (sc *STUNClient) querySTUNServer(ctx context.Context, server string) (strin
 
 // HTTPFallbackClient provides HTTP-based external IP detection as fallback
 type HTTPFallbackClient struct {
-	services []string
-	logger   *logrus.Logger
-	timeout  time.Duration
+	services   []string
+	logger     *logrus.Logger
+	timeout    time.Duration
 	httpClient *http.Client
 }
 

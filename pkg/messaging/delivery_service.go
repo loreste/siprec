@@ -739,7 +739,7 @@ func (d *GuaranteedDeliveryService) cleanupExpiredMessages() {
 func (d *GuaranteedDeliveryService) GetMetrics() DeliveryMetrics {
 	d.metrics.mutex.RLock()
 	defer d.metrics.mutex.RUnlock()
-	
+
 	// Return a copy without the mutex to avoid copying the lock
 	return DeliveryMetrics{
 		TotalMessages:        d.metrics.TotalMessages,
@@ -753,19 +753,4 @@ func (d *GuaranteedDeliveryService) GetMetrics() DeliveryMetrics {
 		LastDeliveryTime:     d.metrics.LastDeliveryTime,
 		ThroughputPerSecond:  d.metrics.ThroughputPerSecond,
 	}
-}
-
-// GetPendingCount returns the current number of pending messages
-func (d *GuaranteedDeliveryService) GetPendingCount() int64 {
-	if d.storage == nil {
-		return 0
-	}
-
-	count, err := d.storage.Count()
-	if err != nil {
-		d.logger.WithError(err).Error("Failed to get pending message count")
-		return 0
-	}
-
-	return int64(count)
 }

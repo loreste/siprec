@@ -100,11 +100,11 @@ func runConfigGenerate(cmd *cobra.Command, args []string) {
 			"timeout":  "30s",
 		},
 		"stt": map[string]interface{}{
-			"enabled":            false,
-			"default_vendor":     "google",
-			"supported_vendors":  []string{"google", "deepgram"},
-			"streaming_enabled":  true,
-			"interim_results":    true,
+			"enabled":           false,
+			"default_vendor":    "google",
+			"supported_vendors": []string{"google", "deepgram"},
+			"streaming_enabled": true,
+			"interim_results":   true,
 		},
 		"storage": map[string]interface{}{
 			"enabled": false,

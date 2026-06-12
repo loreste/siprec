@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func newTestRateLimiter(t *testing.T, client redis.UniversalClient, globalCPS int) *DistributedRateLimiter {
 	t.Helper()
 	logger := logrus.New()

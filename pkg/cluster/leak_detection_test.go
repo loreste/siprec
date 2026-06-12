@@ -281,11 +281,11 @@ func TestDistributedRateLimiter_NoGoroutineLeak(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		mr, client := setupTestRedis(t)
 		limiter := NewDistributedRateLimiter(client, RateLimitConfig{
-			GlobalCallsPerSecond:     100,
-			GlobalCallsPerMinute:     5000,
-			PerIPCallsPerSecond:      10,
-			PerIPCallsPerMinute:      100,
-			BurstAllowance: 1.2,
+			GlobalCallsPerSecond: 100,
+			GlobalCallsPerMinute: 5000,
+			PerIPCallsPerSecond:  10,
+			PerIPCallsPerMinute:  100,
+			BurstAllowance:       1.2,
 		}, leakTestLogger())
 
 		limiter.Start()
@@ -633,11 +633,11 @@ func TestDistributedRateLimiter_ConcurrentAllowCall(t *testing.T) {
 	defer client.Close()
 
 	limiter := NewDistributedRateLimiter(client, RateLimitConfig{
-		GlobalCallsPerSecond:      1000,
-		GlobalCallsPerMinute:      50000,
-		PerIPCallsPerSecond:       100,
-		PerIPCallsPerMinute:       1000,
-		BurstAllowance: 1.2,
+		GlobalCallsPerSecond: 1000,
+		GlobalCallsPerMinute: 50000,
+		PerIPCallsPerSecond:  100,
+		PerIPCallsPerMinute:  1000,
+		BurstAllowance:       1.2,
 	}, leakTestLogger())
 	limiter.Start()
 	defer limiter.Stop()

@@ -17,7 +17,7 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
@@ -57,11 +57,11 @@ func TestPIIDetector(t *testing.T) {
 
 		for _, tc := range testCases {
 			result := detector.DetectAndRedact(tc.input)
-			
+
 			if result.RedactedText != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result.RedactedText)
 			}
-			
+
 			if result.HasPII != tc.hasPII {
 				t.Errorf("Expected HasPII=%v, got %v", tc.hasPII, result.HasPII)
 			}
@@ -74,7 +74,7 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
@@ -104,11 +104,11 @@ func TestPIIDetector(t *testing.T) {
 
 		for _, tc := range testCases {
 			result := detector.DetectAndRedact(tc.input)
-			
+
 			if result.RedactedText != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result.RedactedText)
 			}
-			
+
 			if result.HasPII != tc.hasPII {
 				t.Errorf("Expected HasPII=%v, got %v", tc.hasPII, result.HasPII)
 			}
@@ -121,7 +121,7 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
@@ -147,11 +147,11 @@ func TestPIIDetector(t *testing.T) {
 
 		for _, tc := range testCases {
 			result := detector.DetectAndRedact(tc.input)
-			
+
 			if result.RedactedText != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result.RedactedText)
 			}
-			
+
 			if !result.HasPII {
 				t.Error("Expected to detect PII")
 			}
@@ -164,7 +164,7 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
@@ -186,11 +186,11 @@ func TestPIIDetector(t *testing.T) {
 
 		for _, tc := range testCases {
 			result := detector.DetectAndRedact(tc.input)
-			
+
 			if result.RedactedText != tc.expected {
 				t.Errorf("Expected '%s', got '%s'", tc.expected, result.RedactedText)
 			}
-			
+
 			if !result.HasPII {
 				t.Error("Expected to detect PII")
 			}
@@ -203,7 +203,7 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
@@ -236,14 +236,14 @@ func TestPIIDetector(t *testing.T) {
 			RedactionChar:  "*",
 			PreserveFormat: false,
 		}
-		
+
 		detector, err := NewPIIDetector(logger, config)
 		if err != nil {
 			t.Fatalf("Failed to create PII detector: %v", err)
 		}
 
 		result := detector.DetectAndRedact("SSN: 456-78-9012, Card: 4111-1111-1111-1111")
-		
+
 		expected := "SSN: [SSN-REDACTED], Card: [CARD-REDACTED]"
 		if result.RedactedText != expected {
 			t.Errorf("Expected '%s', got '%s'", expected, result.RedactedText)

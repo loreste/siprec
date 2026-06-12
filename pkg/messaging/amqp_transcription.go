@@ -22,9 +22,9 @@ const (
 	// Publish timeout
 	amqpPublishTimeout = 500 * time.Millisecond
 	// Retry configuration
-	amqpMaxRetries       = 3
-	amqpBaseRetryDelay   = 100 * time.Millisecond
-	amqpMaxRetryDelay    = 2 * time.Second
+	amqpMaxRetries     = 3
+	amqpBaseRetryDelay = 100 * time.Millisecond
+	amqpMaxRetryDelay  = 2 * time.Second
 	// Health check interval
 	amqpHealthCheckInterval = 30 * time.Second
 )
@@ -215,11 +215,11 @@ func (l *AMQPTranscriptionListener) processMessage(msg *transcriptionMessage) {
 				atomic.AddInt64(&l.consecutiveErrors, 1)
 				atomic.StoreInt64(&l.lastErrorTime, time.Now().Unix())
 				l.logger.WithFields(logrus.Fields{
-					"call_uuid":    msg.callUUID,
-					"error":        err.Error(),
-					"attempts":     attempt + 1,
-					"is_final":     msg.isFinal,
-					"message_age":  time.Since(msg.timestamp).String(),
+					"call_uuid":   msg.callUUID,
+					"error":       err.Error(),
+					"attempts":    attempt + 1,
+					"is_final":    msg.isFinal,
+					"message_age": time.Since(msg.timestamp).String(),
 				}).Error("Failed to publish transcription to AMQP after all retries")
 				publishSpan.RecordError(err)
 				publishSpan.SetStatus(codes.Error, err.Error())

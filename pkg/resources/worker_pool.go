@@ -10,9 +10,9 @@ import (
 
 // WorkerPool manages a bounded pool of goroutines for processing work
 type WorkerPool struct {
-	size      int
-	workChan  chan func()
-	logger    *logrus.Entry
+	size     int
+	workChan chan func()
+	logger   *logrus.Entry
 
 	// Tracking
 	activeWorkers int64
@@ -139,11 +139,6 @@ func (wp *WorkerPool) ActiveWorkers() int {
 	return int(atomic.LoadInt64(&wp.activeWorkers))
 }
 
-// PendingWork returns the number of work items waiting in the queue
-func (wp *WorkerPool) PendingWork() int {
-	return len(wp.workChan)
-}
-
 // Stats returns pool statistics
 func (wp *WorkerPool) Stats() (submitted, completed, rejected int64) {
 	return atomic.LoadInt64(&wp.submitted),
@@ -167,20 +162,4 @@ func (wp *WorkerPool) Stop() {
 		"completed": completed,
 		"rejected":  rejected,
 	}).Info("Worker pool stopped")
-}
-
-// Resize adjusts the pool size (adds workers, cannot remove)
-func (wp *WorkerPool) Resize(newSize int) {
-	if newSize <= wp.size {
-		return
-	}
-
-	additionalWorkers := newSize - wp.size
-	for i := 0; i < additionalWorkers; i++ {
-		wp.wg.Add(1)
-		go wp.worker(wp.size + i)
-	}
-	wp.size = newSize
-
-	wp.logger.WithField("new_size", newSize).Info("Worker pool resized")
 }

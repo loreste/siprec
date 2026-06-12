@@ -40,7 +40,7 @@ type SessionManager struct {
 
 // ManagerConfig holds session manager configuration
 type ManagerConfig struct {
-	NodeID           string
+	NodeID            string
 	HeartbeatInterval time.Duration
 	CleanupInterval   time.Duration
 	SessionTimeout    time.Duration
@@ -100,7 +100,7 @@ func (sm *SessionManager) SetBackupStore(backupStore SessionStore) {
 // CreateSession creates a new session
 func (sm *SessionManager) CreateSession(sessionID, callID string, metadata map[string]interface{}) error {
 	now := time.Now()
-	
+
 	sessionData := &SessionData{
 		SessionID:     sessionID,
 		CallID:        callID,
@@ -176,7 +176,7 @@ func (sm *SessionManager) GetSession(sessionID string) (*SessionData, error) {
 		data, backupErr := sm.backupStore.Get(sessionID)
 		if backupErr == nil {
 			sm.logger.WithField("session_id", sessionID).Info("Session recovered from backup store")
-			
+
 			// Restore to primary store
 			if storeErr := sm.store.Store(sessionID, data); storeErr != nil {
 				sm.logger.WithError(storeErr).Warning("Failed to restore session to primary store")
@@ -191,7 +191,7 @@ func (sm *SessionManager) GetSession(sessionID string) (*SessionData, error) {
 				CreatedAt:    data.StartTime,
 			}
 			sm.mutex.Unlock()
-			
+
 			return data, nil
 		}
 	}
@@ -218,7 +218,7 @@ func (sm *SessionManager) UpdateSession(sessionID string, updates map[string]int
 	if sessionInfo, exists := sm.activeSessions[sessionID]; exists {
 		sessionInfo.LastAccessed = time.Now()
 		sessionInfo.AccessCount++
-		
+
 		// Apply updates to cached data
 		for key, value := range updates {
 			switch key {
@@ -316,15 +316,15 @@ func (sm *SessionManager) GetStats() (*ManagerStats, error) {
 	sm.mutex.RUnlock()
 
 	stats := &ManagerStats{
-		NodeID:               sm.nodeID,
-		LocalCachedSessions:  localSessions,
-		StoreStats:           storeStats,
-		HeartbeatInterval:    sm.config.HeartbeatInterval,
-		CleanupInterval:      sm.config.CleanupInterval,
-		SessionTimeout:       sm.config.SessionTimeout,
-		FailoverEnabled:      sm.config.EnableFailover,
-		BackupEnabled:        sm.config.EnableBackup,
-		LastChecked:          time.Now(),
+		NodeID:              sm.nodeID,
+		LocalCachedSessions: localSessions,
+		StoreStats:          storeStats,
+		HeartbeatInterval:   sm.config.HeartbeatInterval,
+		CleanupInterval:     sm.config.CleanupInterval,
+		SessionTimeout:      sm.config.SessionTimeout,
+		FailoverEnabled:     sm.config.EnableFailover,
+		BackupEnabled:       sm.config.EnableBackup,
+		LastChecked:         time.Now(),
 	}
 
 	return stats, nil
@@ -469,13 +469,13 @@ func (sm *SessionManager) performCleanup() {
 
 // ManagerStats contains session manager statistics
 type ManagerStats struct {
-	NodeID               string               `json:"node_id"`
-	LocalCachedSessions  int                  `json:"local_cached_sessions"`
-	StoreStats           *SessionStoreStats   `json:"store_stats"`
-	HeartbeatInterval    time.Duration        `json:"heartbeat_interval"`
-	CleanupInterval      time.Duration        `json:"cleanup_interval"`
-	SessionTimeout       time.Duration        `json:"session_timeout"`
-	FailoverEnabled      bool                 `json:"failover_enabled"`
-	BackupEnabled        bool                 `json:"backup_enabled"`
-	LastChecked          time.Time            `json:"last_checked"`
+	NodeID              string             `json:"node_id"`
+	LocalCachedSessions int                `json:"local_cached_sessions"`
+	StoreStats          *SessionStoreStats `json:"store_stats"`
+	HeartbeatInterval   time.Duration      `json:"heartbeat_interval"`
+	CleanupInterval     time.Duration      `json:"cleanup_interval"`
+	SessionTimeout      time.Duration      `json:"session_timeout"`
+	FailoverEnabled     bool               `json:"failover_enabled"`
+	BackupEnabled       bool               `json:"backup_enabled"`
+	LastChecked         time.Time          `json:"last_checked"`
 }

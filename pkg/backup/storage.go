@@ -40,6 +40,41 @@ type StoredBackup struct {
 	Compressed  bool      `json:"compressed"`
 }
 
+// StorageConfig defines backup storage options
+type StorageConfig struct {
+	Local bool
+	S3    S3Config
+	GCS   GCSConfig
+	Azure AzureConfig
+}
+
+// S3Config for AWS S3 storage
+type S3Config struct {
+	Enabled   bool
+	Bucket    string
+	Region    string
+	AccessKey string
+	SecretKey string
+	Prefix    string
+}
+
+// GCSConfig for Google Cloud Storage
+type GCSConfig struct {
+	Enabled           bool
+	Bucket            string
+	ServiceAccountKey string
+	Prefix            string
+}
+
+// AzureConfig for Azure Blob Storage
+type AzureConfig struct {
+	Enabled   bool
+	Account   string
+	Container string
+	AccessKey string
+	Prefix    string
+}
+
 // MultiBackupStorage manages multiple storage backends
 type MultiBackupStorage struct {
 	storages []BackupStorage

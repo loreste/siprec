@@ -16,12 +16,12 @@ import (
 
 // WarrantVerifier handles verification of lawful intercept warrants
 type WarrantVerifier struct {
-	endpoint  string
-	client    *http.Client
-	logger    *logrus.Entry
-	cache     map[string]*warrantCacheEntry
-	cacheMu   sync.RWMutex
-	cacheTTL  time.Duration
+	endpoint string
+	client   *http.Client
+	logger   *logrus.Entry
+	cache    map[string]*warrantCacheEntry
+	cacheMu  sync.RWMutex
+	cacheTTL time.Duration
 }
 
 type warrantCacheEntry struct {
@@ -40,15 +40,15 @@ type WarrantRequest struct {
 
 // WarrantResponse represents a warrant verification response
 type WarrantResponse struct {
-	Valid       bool      `json:"valid"`
-	WarrantID   string    `json:"warrant_id"`
-	TargetID    string    `json:"target_id"`
-	ExpiresAt   time.Time `json:"expires_at,omitempty"`
-	Scope       []string  `json:"scope,omitempty"`       // audio, metadata, signaling
-	Authority   string    `json:"authority,omitempty"`   // Issuing authority
-	CaseNumber  string    `json:"case_number,omitempty"` // Court case number
-	Error       string    `json:"error,omitempty"`
-	ErrorCode   string    `json:"error_code,omitempty"`
+	Valid      bool      `json:"valid"`
+	WarrantID  string    `json:"warrant_id"`
+	TargetID   string    `json:"target_id"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	Scope      []string  `json:"scope,omitempty"`       // audio, metadata, signaling
+	Authority  string    `json:"authority,omitempty"`   // Issuing authority
+	CaseNumber string    `json:"case_number,omitempty"` // Court case number
+	Error      string    `json:"error,omitempty"`
+	ErrorCode  string    `json:"error_code,omitempty"`
 }
 
 // NewWarrantVerifier creates a new warrant verifier

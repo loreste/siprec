@@ -1,16 +1,20 @@
 package backup
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,383 +28,6 @@ func NewDatabaseOperations(logger *logrus.Logger) *DatabaseOperations {
 	return &DatabaseOperations{
 		logger: logger,
 	}
-}
-
-// CheckMySQLReplication checks MySQL replication status
-func (dbo *DatabaseOperations) CheckMySQLReplication(host string, port int, username, password string) (ReplicationStatus, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", username, password, host, port)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to connect to MySQL: %w", err)
-	}
-	defer db.Close()
-
-	// Check if this is a slave
-	var slaveStatus struct {
-		SlaveIOState        sql.NullString
-		MasterLogFile       sql.NullString
-		ReadMasterLogPos    sql.NullInt64
-		RelayLogFile        sql.NullString
-		RelayLogPos         sql.NullInt64
-		RelayMasterLogFile  sql.NullString
-		SlaveIORunning      sql.NullString
-		SlaveSQLRunning     sql.NullString
-		ReplicateDoDB       sql.NullString
-		ReplicateIgnoreDB   sql.NullString
-		LastErrno           sql.NullInt64
-		LastError           sql.NullString
-		SkipCounter         sql.NullInt64
-		ExecMasterLogPos    sql.NullInt64
-		RelayLogSpace       sql.NullInt64
-		SecondsBehindMaster sql.NullInt64
-	}
-
-	query := `SHOW SLAVE STATUS`
-	row := db.QueryRow(query)
-
-	err = row.Scan(
-		&slaveStatus.SlaveIOState,
-		&slaveStatus.MasterLogFile,
-		&slaveStatus.ReadMasterLogPos,
-		&slaveStatus.RelayLogFile,
-		&slaveStatus.RelayLogPos,
-		&slaveStatus.RelayMasterLogFile,
-		&slaveStatus.SlaveIORunning,
-		&slaveStatus.SlaveSQLRunning,
-		&slaveStatus.ReplicateDoDB,
-		&slaveStatus.ReplicateIgnoreDB,
-		&slaveStatus.LastErrno,
-		&slaveStatus.LastError,
-		&slaveStatus.SkipCounter,
-		&slaveStatus.ExecMasterLogPos,
-		&slaveStatus.RelayLogSpace,
-		&slaveStatus.SecondsBehindMaster,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// Not a slave, check if it's a master
-			return dbo.checkMySQLMasterStatus(db)
-		}
-		return ReplicationStatus{}, fmt.Errorf("failed to get slave status: %w", err)
-	}
-
-	// Parse replication status
-	status := ReplicationStatus{
-		ServiceName:     "mysql",
-		IsReplicating:   slaveStatus.SlaveIORunning.Valid && slaveStatus.SlaveIORunning.String == "Yes",
-		SlaveIORunning:  slaveStatus.SlaveIORunning.Valid && slaveStatus.SlaveIORunning.String == "Yes",
-		SlaveSQLRunning: slaveStatus.SlaveSQLRunning.Valid && slaveStatus.SlaveSQLRunning.String == "Yes",
-	}
-
-	if slaveStatus.SecondsBehindMaster.Valid {
-		status.LagSeconds = float64(slaveStatus.SecondsBehindMaster.Int64)
-	}
-
-	if slaveStatus.LastError.Valid && slaveStatus.LastError.String != "" {
-		status.ReplicationError = slaveStatus.LastError.String
-	}
-
-	// Calculate last replication time
-	if status.LagSeconds > 0 {
-		status.LastReplicationTime = time.Now().Add(-time.Duration(status.LagSeconds) * time.Second)
-	} else {
-		status.LastReplicationTime = time.Now()
-	}
-
-	return status, nil
-}
-
-// checkMySQLMasterStatus checks if this is a MySQL master
-func (dbo *DatabaseOperations) checkMySQLMasterStatus(db *sql.DB) (ReplicationStatus, error) {
-	var binlogFile, binlogPosition string
-
-	err := db.QueryRow("SHOW MASTER STATUS").Scan(&binlogFile, &binlogPosition)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// Neither master nor slave
-			return ReplicationStatus{
-				ServiceName:   "mysql",
-				IsReplicating: false,
-			}, nil
-		}
-		return ReplicationStatus{}, fmt.Errorf("failed to get master status: %w", err)
-	}
-
-	// Check connected slaves
-	rows, err := db.Query("SHOW PROCESSLIST")
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to get process list: %w", err)
-	}
-	defer rows.Close()
-
-	slaveCount := 0
-	for rows.Next() {
-		var id int
-		var user, host, dbName, command, timeStr, state, info sql.NullString
-
-		err := rows.Scan(&id, &user, &host, &dbName, &command, &timeStr, &state, &info)
-		if err != nil {
-			continue
-		}
-
-		if command.Valid && command.String == "Binlog Dump" {
-			slaveCount++
-		}
-	}
-
-	return ReplicationStatus{
-		ServiceName:         "mysql",
-		IsReplicating:       slaveCount > 0,
-		LastReplicationTime: time.Now(),
-		LagSeconds:          0, // Master has no lag
-	}, nil
-}
-
-// PromoteMySQLSlave promotes a MySQL slave to master
-func (dbo *DatabaseOperations) PromoteMySQLSlave(host string, port int, username, password string) error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/", username, password, host, port)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return fmt.Errorf("failed to connect to MySQL: %w", err)
-	}
-	defer db.Close()
-
-	dbo.logger.WithFields(logrus.Fields{
-		"host": host,
-		"port": port,
-	}).Info("Promoting MySQL slave to master")
-
-	// Stop slave
-	if _, err := db.Exec("STOP SLAVE"); err != nil {
-		return fmt.Errorf("failed to stop slave: %w", err)
-	}
-
-	// Reset slave configuration
-	if _, err := db.Exec("RESET SLAVE ALL"); err != nil {
-		return fmt.Errorf("failed to reset slave: %w", err)
-	}
-
-	// Enable binary logging if not already enabled
-	if _, err := db.Exec("SET GLOBAL log_bin = ON"); err != nil {
-		dbo.logger.WithError(err).Warning("Failed to enable binary logging (may already be enabled)")
-	}
-
-	// Reset master to start fresh binary logs
-	if _, err := db.Exec("RESET MASTER"); err != nil {
-		dbo.logger.WithError(err).Warning("Failed to reset master (may not be necessary)")
-	}
-
-	dbo.logger.Info("MySQL slave promoted to master successfully")
-	return nil
-}
-
-// CheckPostgreSQLReplication checks PostgreSQL replication status
-func (dbo *DatabaseOperations) CheckPostgreSQLReplication(host string, port int, username, password, database string) (ReplicationStatus, error) {
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, username, password, database)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-	}
-	defer db.Close()
-
-	// Check if this is a standby
-	var isInRecovery bool
-	err = db.QueryRow("SELECT pg_is_in_recovery()").Scan(&isInRecovery)
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to check recovery status: %w", err)
-	}
-
-	if isInRecovery {
-		return dbo.checkPostgreSQLStandbyStatus(db)
-	} else {
-		return dbo.checkPostgreSQLPrimaryStatus(db)
-	}
-}
-
-// checkPostgreSQLStandbyStatus checks PostgreSQL standby status
-func (dbo *DatabaseOperations) checkPostgreSQLStandbyStatus(db *sql.DB) (ReplicationStatus, error) {
-	var lagBytes sql.NullInt64
-
-	// Get replication lag
-	query := `
-		SELECT 
-			COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()), 0) as lag_bytes,
-			pg_last_xact_replay_timestamp() as last_replay_time
-	`
-
-	var lastReplayTime sql.NullTime
-	err := db.QueryRow(query).Scan(&lagBytes, &lastReplayTime)
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to get standby status: %w", err)
-	}
-
-	status := ReplicationStatus{
-		ServiceName:   "postgresql",
-		IsReplicating: true,
-	}
-
-	if lagBytes.Valid {
-		status.BytesReplicated = lagBytes.Int64
-		// Convert bytes to approximate seconds (rough estimate)
-		status.LagSeconds = float64(lagBytes.Int64) / (1024 * 1024) // Rough conversion
-	}
-
-	if lastReplayTime.Valid {
-		status.LastReplicationTime = lastReplayTime.Time
-	} else {
-		status.LastReplicationTime = time.Now()
-	}
-
-	return status, nil
-}
-
-// checkPostgreSQLPrimaryStatus checks PostgreSQL primary status
-func (dbo *DatabaseOperations) checkPostgreSQLPrimaryStatus(db *sql.DB) (ReplicationStatus, error) {
-	// Check connected standbys
-	query := `
-		SELECT COUNT(*) 
-		FROM pg_stat_replication 
-		WHERE state = 'streaming'
-	`
-
-	var standbyCount int
-	err := db.QueryRow(query).Scan(&standbyCount)
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to get replication status: %w", err)
-	}
-
-	return ReplicationStatus{
-		ServiceName:         "postgresql",
-		IsReplicating:       standbyCount > 0,
-		LastReplicationTime: time.Now(),
-		LagSeconds:          0, // Primary has no lag
-	}, nil
-}
-
-// PromotePostgreSQLStandby promotes a PostgreSQL standby to primary
-func (dbo *DatabaseOperations) PromotePostgreSQLStandby(host string, port int, username, password, database string) error {
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, username, password, database)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-	}
-	defer db.Close()
-
-	dbo.logger.WithFields(logrus.Fields{
-		"host":     host,
-		"port":     port,
-		"database": database,
-	}).Info("Promoting PostgreSQL standby to primary")
-
-	// Promote the standby
-	_, err = db.Exec("SELECT pg_promote()")
-	if err != nil {
-		return fmt.Errorf("failed to promote standby: %w", err)
-	}
-
-	// Wait for promotion to complete
-	maxWait := 30 * time.Second
-	start := time.Now()
-
-	for time.Since(start) < maxWait {
-		var isInRecovery bool
-		err = db.QueryRow("SELECT pg_is_in_recovery()").Scan(&isInRecovery)
-		if err == nil && !isInRecovery {
-			dbo.logger.Info("PostgreSQL standby promoted to primary successfully")
-			return nil
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	return fmt.Errorf("promotion timed out after %v", maxWait)
-}
-
-// CheckRedisReplication checks Redis replication status
-func (dbo *DatabaseOperations) CheckRedisReplication(host string, port int, password string) (ReplicationStatus, error) {
-	addr := fmt.Sprintf("%s:%d", host, port)
-	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-
-	// Get replication info
-	info, err := client.Info(ctx, "replication").Result()
-	if err != nil {
-		return ReplicationStatus{}, fmt.Errorf("failed to get Redis info: %w", err)
-	}
-
-	status := ReplicationStatus{
-		ServiceName:         "redis",
-		LastReplicationTime: time.Now(),
-	}
-
-	lines := strings.Split(info, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "role:") {
-			role := strings.TrimPrefix(line, "role:")
-			status.IsReplicating = role == "slave" || role == "master"
-		} else if strings.HasPrefix(line, "master_repl_offset:") {
-			offsetStr := strings.TrimPrefix(line, "master_repl_offset:")
-			if offset, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
-				status.BytesReplicated = offset
-			}
-		} else if strings.HasPrefix(line, "master_last_io_seconds_ago:") {
-			lagStr := strings.TrimPrefix(line, "master_last_io_seconds_ago:")
-			if lag, err := strconv.ParseFloat(lagStr, 64); err == nil {
-				status.LagSeconds = lag
-				status.LastReplicationTime = time.Now().Add(-time.Duration(lag) * time.Second)
-			}
-		}
-	}
-
-	return status, nil
-}
-
-// PromoteRedisSlave promotes a Redis slave to master
-func (dbo *DatabaseOperations) PromoteRedisSlave(host string, port int, password string) error {
-	addr := fmt.Sprintf("%s:%d", host, port)
-	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-
-	dbo.logger.WithFields(logrus.Fields{
-		"host": host,
-		"port": port,
-	}).Info("Promoting Redis slave to master")
-
-	// Promote slave to master
-	err := client.SlaveOf(ctx, "NO", "ONE").Err()
-	if err != nil {
-		return fmt.Errorf("failed to promote Redis slave: %w", err)
-	}
-
-	// Verify promotion
-	info, err := client.Info(ctx, "replication").Result()
-	if err != nil {
-		return fmt.Errorf("failed to verify promotion: %w", err)
-	}
-
-	if !strings.Contains(info, "role:master") {
-		return fmt.Errorf("promotion verification failed")
-	}
-
-	dbo.logger.Info("Redis slave promoted to master successfully")
-	return nil
 }
 
 // RestoreDatabase restores a database from backup
@@ -456,7 +83,91 @@ func (dbo *DatabaseOperations) restoreMySQL(backupPath, host string, port int, u
 	return nil
 }
 
-// restorePostgreSQL restores a PostgreSQL database from backup
+// postgresRestoreTimeout bounds how long a PostgreSQL restore may run.
+const postgresRestoreTimeout = 30 * time.Minute
+
+// pgCustomDumpMagic is the magic prefix of PostgreSQL custom-format dumps
+// (produced by pg_dump --format=custom, which is how this package creates
+// PostgreSQL backups; see performPostgreSQLBackup).
+var pgCustomDumpMagic = []byte("PGDMP")
+
+// isPGCustomDump reports whether the (decompressed) header bytes identify a
+// PostgreSQL custom-format dump.
+func isPGCustomDump(header []byte) bool {
+	return bytes.HasPrefix(header, pgCustomDumpMagic)
+}
+
+// isGzipData reports whether the header bytes identify gzip-compressed data.
+func isGzipData(header []byte) bool {
+	return len(header) >= 2 && header[0] == 0x1f && header[1] == 0x8b
+}
+
+// backupStream is an io.ReadCloser over a (possibly encrypted and/or
+// gzip-compressed) backup file.
+type backupStream struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (s *backupStream) Close() error {
+	var firstErr error
+	for _, closer := range s.closers {
+		if err := closer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// openBackupStream opens a backup file for streaming, transparently handling
+// encryption (.enc suffix, matching ReadBackupFile) and gzip compression
+// (detected by magic bytes rather than extension).
+func openBackupStream(backupPath string) (io.ReadCloser, error) {
+	file, err := os.Open(backupPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open backup file: %w", err)
+	}
+
+	var reader io.Reader = file
+	if strings.HasSuffix(backupPath, ".enc") {
+		decrypted, err := createDecryptionReader(file)
+		if err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to decrypt backup file: %w", err)
+		}
+		reader = decrypted
+	}
+
+	buffered := bufio.NewReader(reader)
+	header, err := buffered.Peek(2)
+	if err == nil && isGzipData(header) {
+		gzipReader, err := gzip.NewReader(buffered)
+		if err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		return &backupStream{Reader: gzipReader, closers: []io.Closer{gzipReader, file}}, nil
+	}
+
+	return &backupStream{Reader: buffered, closers: []io.Closer{file}}, nil
+}
+
+// truncateString shortens a string for error reporting.
+func truncateString(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "... (truncated)"
+}
+
+// restorePostgreSQL restores a PostgreSQL database from backup.
+//
+// Backups in this package are created with pg_dump (see
+// performPostgreSQLBackup), so restores use the matching client tools:
+// pg_restore for custom-format dumps (detected via the PGDMP magic bytes)
+// and psql for plain SQL dumps. Both read the backup from stdin so that
+// compressed and encrypted backups can be streamed without temp files.
 func (dbo *DatabaseOperations) restorePostgreSQL(backupPath, host string, port int, username, password, database string) error {
 	dbo.logger.WithFields(logrus.Fields{
 		"backup_path": backupPath,
@@ -465,26 +176,72 @@ func (dbo *DatabaseOperations) restorePostgreSQL(backupPath, host string, port i
 		"database":    database,
 	}).Info("Restoring PostgreSQL database")
 
-	// For PostgreSQL, we would typically use pg_restore
-	// This is a simplified implementation
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		host, port, username, password, database)
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %w", err)
-	}
-	defer db.Close()
-
-	// Read backup file
-	backupData, err := ReadBackupFile(backupPath)
-	if err != nil {
-		return fmt.Errorf("failed to read backup file: %w", err)
+	// Validate the backup file exists, is a regular file, and is non-empty.
+	if err := ValidateBackupFile(backupPath); err != nil {
+		return fmt.Errorf("invalid backup file: %w", err)
 	}
 
-	// Execute restoration
-	if _, err := db.Exec(string(backupData)); err != nil {
-		return fmt.Errorf("failed to restore database: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), postgresRestoreTimeout)
+	defer cancel()
+
+	stream, err := openBackupStream(backupPath)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	// Peek the decompressed header to detect the dump format.
+	buffered := bufio.NewReaderSize(stream, 64*1024)
+	header, err := buffered.Peek(len(pgCustomDumpMagic))
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("failed to read backup header: %w", err)
+	}
+
+	connArgs := []string{
+		"--host", host,
+		"--port", strconv.Itoa(port),
+		"--username", username,
+		"--dbname", database,
+		"--no-password",
+	}
+
+	var cmd *exec.Cmd
+	if isPGCustomDump(header) {
+		dbo.logger.Info("Detected PostgreSQL custom-format dump, using pg_restore")
+		args := append([]string{
+			"--clean",
+			"--if-exists",
+			"--no-owner",
+			"--exit-on-error",
+		}, connArgs...)
+		// #nosec G204 -- binary name is hardcoded; args are structured connection parameters
+		cmd = exec.CommandContext(ctx, "pg_restore", args...)
+	} else {
+		dbo.logger.Info("Detected plain SQL dump, using psql")
+		args := append([]string{
+			"--set", "ON_ERROR_STOP=1",
+			"--single-transaction",
+			"--file", "-",
+		}, connArgs...)
+		// #nosec G204 -- binary name is hardcoded; args are structured connection parameters
+		cmd = exec.CommandContext(ctx, "psql", args...)
+	}
+
+	cmd.Stdin = buffered
+	cmd.Env = append(os.Environ(), "PGPASSWORD="+password)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("PostgreSQL restore timed out after %v: %w", postgresRestoreTimeout, err)
+		}
+		return fmt.Errorf("PostgreSQL restore failed: %w; stderr: %s", err, truncateString(stderr.String(), 2000))
+	}
+
+	if stderr.Len() > 0 {
+		dbo.logger.WithField("stderr", truncateString(stderr.String(), 500)).Debug("PostgreSQL restore completed with warnings")
 	}
 
 	dbo.logger.Info("PostgreSQL database restored successfully")

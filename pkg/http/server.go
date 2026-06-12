@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"siprec-server/pkg/errors"
 	"siprec-server/pkg/metrics"
 	"siprec-server/pkg/version"
 
@@ -20,6 +19,16 @@ import (
 )
 
 // Use Config from config.go instead of defining it here
+
+// maxJSONBodyBytes caps the size of JSON request bodies accepted by API
+// handlers to prevent memory exhaustion from oversized payloads.
+const maxJSONBodyBytes = 1 << 20 // 1 MiB
+
+// limitJSONBody wraps the request body with http.MaxBytesReader so oversized
+// payloads abort decoding instead of being buffered in memory.
+func limitJSONBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+}
 
 // MetricsProvider is an interface that exposes metrics for the HTTP server
 type MetricsProvider interface {
@@ -51,6 +60,7 @@ type Server struct {
 	amqpClient            interface{} // Reference to AMQP client
 	analyticsWSHandler    *AnalyticsWebSocketHandler
 	authMiddleware        *AuthMiddleware
+	rbacMiddleware        *RBACMiddleware
 	rateLimitMiddleware   RateLimitMiddleware
 	correlationMiddleware CorrelationMiddleware
 	middlewareMu          sync.RWMutex
@@ -75,6 +85,10 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.middlewareMu.RLock()
 		handler := http.Handler(mux)
+		// Apply RBAC middleware (innermost - runs after auth has resolved the principal)
+		if server.rbacMiddleware != nil {
+			handler = server.rbacMiddleware.Middleware(handler)
+		}
 		// Apply auth middleware (inner layer)
 		if server.authMiddleware != nil {
 			handler = server.authMiddleware.Middleware(handler)
@@ -136,11 +150,18 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	mux.HandleFunc("/status", addServerHeader(server.statusHandler))
 
 	// Create the HTTP server
+	readHeaderTimeout := config.ReadTimeout
+	if readHeaderTimeout <= 0 {
+		// Guard against slowloris-style attacks even when no read timeout is configured
+		readHeaderTimeout = 10 * time.Second
+	}
 	server.httpServer = &http.Server{
-		Addr:         fmt.Sprintf(":%d", config.Port),
-		Handler:      rootHandler,
-		ReadTimeout:  config.ReadTimeout,
-		WriteTimeout: config.WriteTimeout,
+		Addr:              fmt.Sprintf(":%d", config.Port),
+		Handler:           rootHandler,
+		ReadTimeout:       config.ReadTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      config.WriteTimeout,
+		IdleTimeout:       config.IdleTimeout,
 	}
 
 	return server
@@ -151,6 +172,16 @@ func (s *Server) SetAuthMiddleware(middleware *AuthMiddleware) {
 	s.middlewareMu.Lock()
 	s.authMiddleware = middleware
 	s.middlewareMu.Unlock()
+}
+
+// SetRBACMiddleware sets the RBAC enforcement middleware for the server. It is
+// applied after the authentication middleware so the authenticated principal is
+// available for access checks.
+func (s *Server) SetRBACMiddleware(middleware *RBACMiddleware) {
+	s.middlewareMu.Lock()
+	s.rbacMiddleware = middleware
+	s.middlewareMu.Unlock()
+	s.logger.Info("RBAC enforcement middleware configured")
 }
 
 // SetRateLimitMiddleware sets the rate limiting middleware for the server.
@@ -200,16 +231,6 @@ func (s *Server) SetAnalyticsWebSocketHandler(handler *AnalyticsWebSocketHandler
 		s.mux.HandleFunc("/ws/analytics", handler.ServeHTTP)
 		s.logger.Info("Analytics WebSocket endpoint registered at /ws/analytics")
 	}
-}
-
-// GetAnalyticsWebSocketHandler returns the analytics WebSocket handler
-func (s *Server) GetAnalyticsWebSocketHandler() *AnalyticsWebSocketHandler {
-	return s.analyticsWSHandler
-}
-
-// SetAMQPClient sets the AMQP client reference for health checks
-func (s *Server) SetAMQPClient(client interface{}) {
-	s.amqpClient = client
 }
 
 // Start starts the HTTP server in a goroutine
@@ -294,16 +315,16 @@ func (s *Server) validateTLSCertificate(certFile, keyFile string) error {
 	daysUntilExpiry := x509Cert.NotAfter.Sub(now).Hours() / 24
 	if daysUntilExpiry < 30 {
 		s.logger.WithFields(logrus.Fields{
-			"expires_on":       x509Cert.NotAfter,
+			"expires_on":        x509Cert.NotAfter,
 			"days_until_expiry": int(daysUntilExpiry),
 		}).Warn("TLS certificate expires soon")
 	}
 
 	s.logger.WithFields(logrus.Fields{
-		"subject":     x509Cert.Subject.CommonName,
-		"issuer":      x509Cert.Issuer.CommonName,
-		"not_before":  x509Cert.NotBefore,
-		"not_after":   x509Cert.NotAfter,
+		"subject":    x509Cert.Subject.CommonName,
+		"issuer":     x509Cert.Issuer.CommonName,
+		"not_before": x509Cert.NotBefore,
+		"not_after":  x509Cert.NotAfter,
 	}).Info("TLS certificate validated successfully")
 
 	return nil
@@ -378,10 +399,4 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
-}
-
-// ErrorResponse sends a standardized error response
-func (s *Server) ErrorResponse(w http.ResponseWriter, err error) {
-	errors.WriteError(w, err)
-	s.logger.WithError(err).Warn("HTTP error response sent")
 }

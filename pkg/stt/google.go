@@ -90,12 +90,12 @@ func (p *GoogleProvider) Initialize() error {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"language":            p.config.Language,
-		"sample_rate":         p.config.SampleRate,
-		"model":               p.config.Model,
-		"enhanced_models":     p.config.EnhancedModels,
-		"auto_punctuation":    p.config.EnableAutomaticPunctuation,
-		"word_time_offsets":   p.config.EnableWordTimeOffsets,
+		"language":          p.config.Language,
+		"sample_rate":       p.config.SampleRate,
+		"model":             p.config.Model,
+		"enhanced_models":   p.config.EnhancedModels,
+		"auto_punctuation":  p.config.EnableAutomaticPunctuation,
+		"word_time_offsets": p.config.EnableWordTimeOffsets,
 	}).Info("Google Speech-to-Text client initialized successfully")
 	return nil
 }

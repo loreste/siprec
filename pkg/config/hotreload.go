@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,14 +35,14 @@ type ReloadCallback func(oldConfig, newConfig *Config) error
 
 // ReloadEvent represents a configuration reload event
 type ReloadEvent struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	ConfigPath  string                 `json:"config_path"`
-	Success     bool                   `json:"success"`
-	Changes     []ConfigChange         `json:"changes,omitempty"`
-	Errors      []ValidationError      `json:"errors,omitempty"`
-	Warnings    []ValidationWarning    `json:"warnings,omitempty"`
-	ReloadTime  time.Duration          `json:"reload_time"`
-	TriggerType string                 `json:"trigger_type"` // "file", "api", "signal"
+	Timestamp   time.Time           `json:"timestamp"`
+	ConfigPath  string              `json:"config_path"`
+	Success     bool                `json:"success"`
+	Changes     []ConfigChange      `json:"changes,omitempty"`
+	Errors      []ValidationError   `json:"errors,omitempty"`
+	Warnings    []ValidationWarning `json:"warnings,omitempty"`
+	ReloadTime  time.Duration       `json:"reload_time"`
+	TriggerType string              `json:"trigger_type"` // "file", "api", "signal"
 }
 
 // ConfigChange represents a change in configuration
@@ -52,11 +53,10 @@ type ConfigChange struct {
 	Type     string      `json:"type"` // "added", "removed", "modified"
 }
 
-
 // NewHotReloadManager creates a new hot-reload manager
 func NewHotReloadManager(configPath string, config *Config, logger *logrus.Logger) (*HotReloadManager, error) {
 	validator := NewConfigValidator(logger)
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	manager := &HotReloadManager{
@@ -151,7 +151,7 @@ func (h *HotReloadManager) TriggerReload() (*ReloadEvent, error) {
 func (h *HotReloadManager) GetCurrentConfig() *Config {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
-	
+
 	// Return a deep copy to prevent external modifications
 	return h.copyConfig(h.config)
 }
@@ -188,10 +188,10 @@ func (h *HotReloadManager) watchFiles() {
 
 			// Check if this is our config file
 			if event.Name == h.configPath || filepath.Base(event.Name) == filepath.Base(h.configPath) {
-				if event.Op&fsnotify.Write == fsnotify.Write || 
-				   event.Op&fsnotify.Create == fsnotify.Create ||
-				   event.Op&fsnotify.Rename == fsnotify.Rename {
-					
+				if event.Op&fsnotify.Write == fsnotify.Write ||
+					event.Op&fsnotify.Create == fsnotify.Create ||
+					event.Op&fsnotify.Rename == fsnotify.Rename {
+
 					// Debounce rapid file changes
 					select {
 					case h.reloadChan <- true:
@@ -459,34 +459,37 @@ func (h *HotReloadManager) cleanupOldBackups(backupDir string, keepCount int) {
 	}
 }
 
-// copyConfig creates a deep copy of configuration
+// copyConfig creates a deep copy of the configuration via a JSON round-trip.
+//
+// Every field in the Config tree is exported and JSON-serializable (this is
+// enforced by TestCopyConfigDeepCopy), so marshaling and unmarshaling yields
+// a fully independent copy with no aliased slices or maps. time.Duration
+// fields round-trip exactly because encoding/json represents them as int64
+// nanoseconds. Note that values inside map[string]interface{} fields are
+// normalized to JSON-native types (e.g. numbers become float64), matching
+// how those maps are populated when loading config from JSON.
 func (h *HotReloadManager) copyConfig(config *Config) *Config {
-	// This is a simplified copy - in a real implementation you'd use 
-	// reflection or a proper deep copy library
-	newConfig := *config
-
-	// Copy slices
-	if config.Network.Ports != nil {
-		newConfig.Network.Ports = make([]int, len(config.Network.Ports))
-		copy(newConfig.Network.Ports, config.Network.Ports)
+	if config == nil {
+		return nil
 	}
 
-	if config.STT.SupportedVendors != nil {
-		newConfig.STT.SupportedVendors = make([]string, len(config.STT.SupportedVendors))
-		copy(newConfig.STT.SupportedVendors, config.STT.SupportedVendors)
+	data, err := json.Marshal(config)
+	if err != nil {
+		// Should be unreachable: Config contains only JSON-serializable
+		// fields. Fall back to a shallow copy rather than returning nil.
+		h.logger.WithError(err).Error("Failed to marshal configuration for deep copy, falling back to shallow copy")
+		shallow := *config
+		return &shallow
 	}
 
-	if config.STT.SupportedCodecs != nil {
-		newConfig.STT.SupportedCodecs = make([]string, len(config.STT.SupportedCodecs))
-		copy(newConfig.STT.SupportedCodecs, config.STT.SupportedCodecs)
+	newConfig := &Config{}
+	if err := json.Unmarshal(data, newConfig); err != nil {
+		h.logger.WithError(err).Error("Failed to unmarshal configuration for deep copy, falling back to shallow copy")
+		shallow := *config
+		return &shallow
 	}
 
-	if config.Network.STUNServers != nil {
-		newConfig.Network.STUNServers = make([]string, len(config.Network.STUNServers))
-		copy(newConfig.Network.STUNServers, config.Network.STUNServers)
-	}
-
-	return &newConfig
+	return newConfig
 }
 
 // Helper functions for change detection

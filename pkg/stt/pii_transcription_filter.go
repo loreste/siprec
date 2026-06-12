@@ -31,7 +31,7 @@ func NewPIITranscriptionFilter(logger *logrus.Logger, detector *pii.PIIDetector,
 func (f *PIITranscriptionFilter) AddListener(listener TranscriptionListener) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
-	
+
 	f.listeners = append(f.listeners, listener)
 	f.logger.WithField("listener_count", len(f.listeners)).Debug("Added listener to PII filter")
 }
@@ -56,9 +56,9 @@ func (f *PIITranscriptionFilter) OnTranscription(callUUID string, transcription 
 		// Log PII detection results
 		if piiDetected {
 			f.logger.WithFields(logrus.Fields{
-				"call_uuid":      callUUID,
-				"is_final":       isFinal,
-				"pii_matches":    len(result.Matches),
+				"call_uuid":       callUUID,
+				"is_final":        isFinal,
+				"pii_matches":     len(result.Matches),
 				"original_length": len(transcription),
 				"redacted_length": len(processedTranscription),
 			}).Info("PII detected and redacted in transcription")
@@ -120,7 +120,7 @@ func (f *PIITranscriptionFilter) OnTranscription(callUUID string, transcription 
 					}).Error("Recovered from panic in wrapped transcription listener")
 				}
 			}()
-			
+
 			listener.OnTranscription(callUUID, processedTranscription, isFinal, metadataCopy)
 		}()
 	}
@@ -144,7 +144,7 @@ func extractPIITypes(matches []pii.PIIMatch) []string {
 func (f *PIITranscriptionFilter) GetStats() map[string]interface{} {
 	f.mutex.RLock()
 	defer f.mutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
 		"enabled":        f.enabled,
 		"listener_count": len(f.listeners),

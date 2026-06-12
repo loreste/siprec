@@ -238,33 +238,6 @@ func isWebSocketRequest(r *http.Request) bool {
 	return false
 }
 
-// getRolePermissions returns permissions for a role
-func (am *AuthMiddleware) getRolePermissions(role string) []string {
-	switch role {
-	case "admin":
-		return []string{
-			"sessions:read", "sessions:write", "sessions:delete",
-			"cdr:read", "cdr:write", "cdr:export",
-			"users:read", "users:write", "users:delete",
-			"system:read", "system:write", "system:config",
-			"monitoring:read", "monitoring:write",
-		}
-	case "operator":
-		return []string{
-			"sessions:read", "sessions:write",
-			"cdr:read", "cdr:export",
-			"monitoring:read",
-		}
-	case "viewer":
-		return []string{
-			"sessions:read",
-			"cdr:read",
-		}
-	default:
-		return []string{}
-	}
-}
-
 // GetUserFromContext extracts user info from request context
 func GetUserFromContext(ctx context.Context) (*auth.UserInfo, bool) {
 	user, ok := ctx.Value(UserContextKey).(*auth.UserInfo)

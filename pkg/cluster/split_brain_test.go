@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func newTestSplitBrainDetector(t *testing.T, client redis.UniversalClient) *SplitBrainDetector {
 	t.Helper()
 	logger := logrus.New()

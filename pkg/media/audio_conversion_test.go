@@ -10,8 +10,8 @@ import (
 func TestDecodeAudioPayload_PCMU(t *testing.T) {
 	// Test with known μ-law encoded samples
 	testCases := []struct {
-		name     string
-		input    []byte
+		name      string
+		input     []byte
 		codecName string
 	}{
 		{"empty payload", []byte{}, "PCMU"},
@@ -50,8 +50,8 @@ func TestDecodeAudioPayload_PCMU(t *testing.T) {
 // TestDecodeAudioPayload_PCMA tests A-law decoding
 func TestDecodeAudioPayload_PCMA(t *testing.T) {
 	testCases := []struct {
-		name     string
-		input    []byte
+		name      string
+		input     []byte
 		codecName string
 	}{
 		{"empty payload", []byte{}, "PCMA"},
@@ -211,9 +211,9 @@ func TestDecodeAudioPayload_OPUS_EmptyPayload(t *testing.T) {
 // TestDecodeAudioPayload_OPUS_Modes tests different Opus modes
 func TestDecodeAudioPayload_OPUS_Modes(t *testing.T) {
 	testCases := []struct {
-		name   string
-		toc    byte
-		mode   string
+		name string
+		toc  byte
+		mode string
 	}{
 		{"SILK NB 10ms", 0x00, "SILK"},      // config 0
 		{"SILK MB 20ms", 0x29, "SILK"},      // config 5
@@ -257,10 +257,10 @@ func TestMuLawDecoding(t *testing.T) {
 		input    byte
 		expected int16
 	}{
-		{0xFF, 0},       // Positive zero (inverted 0x00)
-		{0x7F, 0},       // Negative zero
-		{0x00, -32124},  // Maximum negative amplitude
-		{0x80, 32124},   // Maximum positive amplitude
+		{0xFF, 0},      // Positive zero (inverted 0x00)
+		{0x7F, 0},      // Negative zero
+		{0x00, -32124}, // Maximum negative amplitude
+		{0x80, 32124},  // Maximum positive amplitude
 	}
 
 	for _, tc := range testCases {
@@ -283,8 +283,8 @@ func TestALawDecoding(t *testing.T) {
 		input    byte
 		expected int16
 	}{
-		{0xD5, 8},    // Positive small value
-		{0x55, -8},   // Negative small value
+		{0xD5, 8},  // Positive small value
+		{0x55, -8}, // Negative small value
 	}
 
 	for _, tc := range testCases {
@@ -354,9 +354,9 @@ func TestOpusParseConfig(t *testing.T) {
 	decoder := &OpusFrameDecoder{sampleRate: 48000, channels: 2}
 
 	testCases := []struct {
-		config         byte
-		expectedMode   string
-		expectedBW     string
+		config       byte
+		expectedMode string
+		expectedBW   string
 	}{
 		{0, "SILK", "NB"},
 		{4, "SILK", "MB"},
@@ -388,12 +388,12 @@ func TestOpusGetFrameSize(t *testing.T) {
 		config     byte
 		expectedMs int
 	}{
-		{0, 10},  // 10ms
-		{1, 20},  // 20ms
-		{2, 40},  // 40ms
-		{3, 60},  // 60ms
-		{4, 10},  // 10ms (wraps)
-		{5, 20},  // 20ms
+		{0, 10}, // 10ms
+		{1, 20}, // 20ms
+		{2, 40}, // 40ms
+		{3, 60}, // 60ms
+		{4, 10}, // 10ms (wraps)
+		{5, 20}, // 20ms
 	}
 
 	for _, tc := range testCases {

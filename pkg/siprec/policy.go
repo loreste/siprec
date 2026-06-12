@@ -25,48 +25,48 @@ const (
 
 // PolicyDecision represents the outcome of policy evaluation
 type PolicyDecision struct {
-	Action       PolicyAction
-	PolicyID     string
-	Reason       string
-	AllowAudio   bool
-	AllowVideo   bool
-	AllowText    bool
+	Action        PolicyAction
+	PolicyID      string
+	Reason        string
+	AllowAudio    bool
+	AllowVideo    bool
+	AllowText     bool
 	RetentionDays int
-	Priority     int
-	Timestamp    time.Time
+	Priority      int
+	Timestamp     time.Time
 }
 
 // PolicyRule defines a recording policy rule
 type PolicyRule struct {
-	ID              string
-	Name            string
-	Priority        int
-	Action          PolicyAction
-	MatchCriteria   PolicyCriteria
-	MediaFilter     MediaFilter
-	RetentionDays   int
-	RequireConsent  bool
-	NotifyOnRecord  bool
-	Enabled         bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID             string
+	Name           string
+	Priority       int
+	Action         PolicyAction
+	MatchCriteria  PolicyCriteria
+	MediaFilter    MediaFilter
+	RetentionDays  int
+	RequireConsent bool
+	NotifyOnRecord bool
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // PolicyCriteria defines matching criteria for a policy
 type PolicyCriteria struct {
 	// Participant matching
-	ParticipantAOR     []string // Match by AOR patterns (supports wildcards)
-	ParticipantRole    []string // Match by role (active, passive, focus)
+	ParticipantAOR  []string // Match by AOR patterns (supports wildcards)
+	ParticipantRole []string // Match by role (active, passive, focus)
 
 	// Session matching
-	SessionType        []string // Match by session type
-	Direction          []string // inbound, outbound, both
+	SessionType []string // Match by session type
+	Direction   []string // inbound, outbound, both
 
 	// Time-based criteria
-	TimeRanges         []TimeRange // Only apply during these time ranges
+	TimeRanges []TimeRange // Only apply during these time ranges
 
 	// Custom metadata matching
-	MetadataPatterns   map[string]string // Key-value patterns to match
+	MetadataPatterns map[string]string // Key-value patterns to match
 }
 
 // MediaFilter defines which media types to record
@@ -88,7 +88,7 @@ type TimeRange struct {
 type PolicyManager struct {
 	mu              sync.RWMutex
 	rules           map[string]*PolicyRule
-	sessionPolicies map[string]*PolicyDecision // sessionID -> decision
+	sessionPolicies map[string]*PolicyDecision             // sessionID -> decision
 	ackStates       map[string]map[string]*PolicyAckStatus // sessionID -> policyID -> status
 	defaultAction   PolicyAction
 }
@@ -169,11 +169,11 @@ func (pm *PolicyManager) EvaluateSession(session *RecordingSession, metadata *RS
 
 	// Build decision from highest priority matching rule
 	decision := &PolicyDecision{
-		Action:      pm.defaultAction,
-		AllowAudio:  true,
-		AllowVideo:  true,
-		AllowText:   true,
-		Timestamp:   time.Now(),
+		Action:     pm.defaultAction,
+		AllowAudio: true,
+		AllowVideo: true,
+		AllowText:  true,
+		Timestamp:  time.Now(),
 	}
 
 	if len(matchingRules) > 0 {

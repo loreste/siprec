@@ -189,8 +189,8 @@ func extractStatusCode(response string) int {
 // buildRTPPacket creates a minimal RTP packet with the given payload type.
 func buildRTPPacket(seq uint16, ts uint32, ssrc uint32, pt byte, payload []byte) []byte {
 	pkt := make([]byte, 12+len(payload))
-	pkt[0] = 0x80         // V=2, no padding, no extension, no CSRC
-	pkt[1] = pt           // payload type, no marker
+	pkt[0] = 0x80 // V=2, no padding, no extension, no CSRC
+	pkt[1] = pt   // payload type, no marker
 	binary.BigEndian.PutUint16(pkt[2:], seq)
 	binary.BigEndian.PutUint32(pkt[4:], ts)
 	binary.BigEndian.PutUint32(pkt[8:], ssrc)

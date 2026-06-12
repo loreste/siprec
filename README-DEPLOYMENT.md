@@ -82,8 +82,8 @@ PORTS=5060,5061
 RTP_PORT_MIN=16384
 RTP_PORT_MAX=32768
 
-# STUN Configuration for NAT Traversal
-STUN_SERVER=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+# STUN Configuration for NAT Traversal (comma-separated host:port list)
+STUN_SERVER=stun.l.google.com:19302,stun1.l.google.com:19302
 
 # HTTP Configuration
 HTTP_ENABLED=true
@@ -251,13 +251,17 @@ sipp -sn uac YOUR_EXTERNAL_IP:5060 -m 10 -r 1
 
 4. **Configuration issues**:
    ```bash
-   /opt/siprec/bin/siprec envcheck
+   # Validate the configuration file with the CLI tool
+   siprecctl config validate /etc/siprec/config.yaml
+
+   # Or review startup logs for configuration warnings
+   journalctl -u siprec-server -n 50 | grep -i config
    ```
 
 5. **NAT Configuration Issues**:
    ```bash
-   # Test NAT configuration
-   ./test_nat_config.sh
+   # Test NAT configuration (from the repository checkout)
+   ./test/scripts/test_nat_config.sh
    
    # Check IP detection
    curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/external-ip
@@ -348,7 +352,7 @@ sysctl -p
 For deployment issues:
 
 1. Check logs: `journalctl -u siprec-server -f`
-2. Verify configuration: `/opt/siprec/bin/siprec envcheck`
+2. Verify configuration: `siprecctl config validate /etc/siprec/config.yaml`
 3. Test connectivity: Network and firewall checks
 4. Review documentation and GitHub issues
 

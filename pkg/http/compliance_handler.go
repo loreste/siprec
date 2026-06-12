@@ -64,6 +64,7 @@ func (h *ComplianceHandler) handleGDPRExport(w http.ResponseWriter, r *http.Requ
 	}
 
 	var payload gdprRequest
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.logger.WithError(err).Warn("Failed to decode GDPR export request")
 		errors.WriteError(w, errors.Wrap(err, "invalid request payload"))
@@ -104,6 +105,7 @@ func (h *ComplianceHandler) handleGDPRErase(w http.ResponseWriter, r *http.Reque
 	}
 
 	var payload gdprRequest
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.logger.WithError(err).Warn("Failed to decode GDPR erase request")
 		errors.WriteError(w, errors.Wrap(err, "invalid request payload"))

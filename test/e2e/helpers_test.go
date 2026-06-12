@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -33,27 +32,4 @@ func dialUDPOrSkip(t *testing.T, network string, laddr, raddr *net.UDPAddr) *net
 	}
 
 	return conn
-}
-
-func tcpListenerOrSkip(t *testing.T, listen func() error) {
-	t.Helper()
-
-	if err := listen(); err != nil {
-		if strings.Contains(err.Error(), "operation not permitted") {
-			t.Skipf("skipping TCP/TLS listener setup: %v", err)
-		}
-		t.Fatalf("listener setup failed: %v", err)
-	}
-}
-
-func skipIfNotPermitted(t *testing.T, err error, msg string, args ...interface{}) {
-	t.Helper()
-	if err == nil {
-		return
-	}
-	if strings.Contains(err.Error(), "operation not permitted") {
-		t.Skipf("skipping due to sandbox restrictions: %v", err)
-	}
-	formatted := fmt.Sprintf(msg, args...)
-	t.Fatalf("%s: %v", formatted, err)
 }

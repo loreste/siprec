@@ -83,12 +83,12 @@ func TestRTPTimeoutBehavior(t *testing.T) {
 
 	// Create a forwarder with a short timeout for testing
 	forwarder := &RTPForwarder{
-		Timeout:      2 * time.Second,
-		lastRTPNano:  time.Now().UnixNano(), // Use atomic timestamp field
-		StopChan:     make(chan struct{}),
-		Logger:       logger,
-		remoteMutex:  sync.Mutex{},
-		RemoteSSRC:   12345,
+		Timeout:     2 * time.Second,
+		lastRTPNano: time.Now().UnixNano(), // Use atomic timestamp field
+		StopChan:    make(chan struct{}),
+		Logger:      logger,
+		remoteMutex: sync.Mutex{},
+		RemoteSSRC:  12345,
 	}
 
 	// Start monitoring in background
@@ -126,13 +126,13 @@ func TestRTPTimeoutWarning(t *testing.T) {
 
 	// Create a forwarder with a short timeout for testing
 	forwarder := &RTPForwarder{
-		Timeout:      4 * time.Second, // Warning at 2 seconds
-		lastRTPNano:  time.Now().UnixNano(), // Use atomic timestamp field
-		StopChan:     make(chan struct{}),
-		Logger:       logger,
-		remoteMutex:  sync.Mutex{},
-		LocalPort:    10000,
-		RemoteSSRC:   12345,
+		Timeout:     4 * time.Second,       // Warning at 2 seconds
+		lastRTPNano: time.Now().UnixNano(), // Use atomic timestamp field
+		StopChan:    make(chan struct{}),
+		Logger:      logger,
+		remoteMutex: sync.Mutex{},
+		LocalPort:   10000,
+		RemoteSSRC:  12345,
 	}
 
 	// Start monitoring

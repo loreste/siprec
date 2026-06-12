@@ -70,9 +70,9 @@ func NewHTTPMiddleware(config *Config, logger *logrus.Logger) *HTTPMiddleware {
 	}
 
 	logger.WithFields(logrus.Fields{
-		"rps":              config.RequestsPerSecond,
-		"burst":            config.BurstSize,
-		"whitelisted_ips":  len(m.whitelistedIPs) + len(m.whitelistedNets),
+		"rps":               config.RequestsPerSecond,
+		"burst":             config.BurstSize,
+		"whitelisted_ips":   len(m.whitelistedIPs) + len(m.whitelistedNets),
 		"whitelisted_paths": len(m.whitelistedPaths),
 	}).Info("HTTP rate limiting middleware initialized")
 

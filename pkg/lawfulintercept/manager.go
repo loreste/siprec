@@ -55,27 +55,27 @@ type Config struct {
 
 // Intercept represents an active lawful intercept
 type Intercept struct {
-	ID              string                 `json:"id"`
-	WarrantID       string                 `json:"warrant_id"`
-	TargetID        string                 `json:"target_id"`
-	TargetType      string                 `json:"target_type"` // phone, uri, ip
-	StartTime       time.Time              `json:"start_time"`
-	EndTime         *time.Time             `json:"end_time,omitempty"`
-	Status          InterceptStatus        `json:"status"`
-	CallsIntercepted int64                 `json:"calls_intercepted"`
-	BytesDelivered  int64                  `json:"bytes_delivered"`
-	Metadata        map[string]interface{} `json:"metadata"`
-	mutex           sync.RWMutex
+	ID               string                 `json:"id"`
+	WarrantID        string                 `json:"warrant_id"`
+	TargetID         string                 `json:"target_id"`
+	TargetType       string                 `json:"target_type"` // phone, uri, ip
+	StartTime        time.Time              `json:"start_time"`
+	EndTime          *time.Time             `json:"end_time,omitempty"`
+	Status           InterceptStatus        `json:"status"`
+	CallsIntercepted int64                  `json:"calls_intercepted"`
+	BytesDelivered   int64                  `json:"bytes_delivered"`
+	Metadata         map[string]interface{} `json:"metadata"`
+	mutex            sync.RWMutex
 }
 
 // InterceptStatus represents the status of an intercept
 type InterceptStatus string
 
 const (
-	InterceptStatusActive    InterceptStatus = "active"
-	InterceptStatusPaused    InterceptStatus = "paused"
-	InterceptStatusExpired   InterceptStatus = "expired"
-	InterceptStatusRevoked   InterceptStatus = "revoked"
+	InterceptStatusActive  InterceptStatus = "active"
+	InterceptStatusPaused  InterceptStatus = "paused"
+	InterceptStatusExpired InterceptStatus = "expired"
+	InterceptStatusRevoked InterceptStatus = "revoked"
 )
 
 // Stats tracks lawful intercept statistics (returned copy, no mutex)
@@ -428,16 +428,16 @@ func (m *Manager) Close() error {
 
 // InterceptedContent represents content to be delivered to LEA
 type InterceptedContent struct {
-	InterceptID   string                 `json:"intercept_id"`
-	WarrantID     string                 `json:"warrant_id"`
-	CallID        string                 `json:"call_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	ContentType   string                 `json:"content_type"` // audio, metadata, signaling
-	Direction     string                 `json:"direction"`    // inbound, outbound
-	SourceURI     string                 `json:"source_uri"`
-	DestinationURI string                `json:"destination_uri"`
-	Duration      time.Duration          `json:"duration,omitempty"`
-	AudioData     []byte                 `json:"audio_data,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
-	Checksum      string                 `json:"checksum"`
+	InterceptID    string                 `json:"intercept_id"`
+	WarrantID      string                 `json:"warrant_id"`
+	CallID         string                 `json:"call_id"`
+	Timestamp      time.Time              `json:"timestamp"`
+	ContentType    string                 `json:"content_type"` // audio, metadata, signaling
+	Direction      string                 `json:"direction"`    // inbound, outbound
+	SourceURI      string                 `json:"source_uri"`
+	DestinationURI string                 `json:"destination_uri"`
+	Duration       time.Duration          `json:"duration,omitempty"`
+	AudioData      []byte                 `json:"audio_data,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	Checksum       string                 `json:"checksum"`
 }

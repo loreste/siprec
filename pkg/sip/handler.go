@@ -497,8 +497,8 @@ func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
 
 		if !h.clusterOrchestrator.AllowCall(ctx, clientIP) {
 			h.Logger.WithFields(logrus.Fields{
-				"client_ip": clientIP,
-				"method":    method,
+				"client_ip":  clientIP,
+				"method":     method,
 				"limit_type": "distributed",
 			}).Warn("SIP request rejected by distributed rate limiter")
 			metrics.RecordSIPRateLimited(method)
@@ -514,8 +514,8 @@ func (h *Handler) CheckSIPRateLimit(clientIP, method string) bool {
 	allowed := h.sipRateLimiter.AllowRequest(clientIP, method)
 	if !allowed {
 		h.Logger.WithFields(logrus.Fields{
-			"client_ip": clientIP,
-			"method":    method,
+			"client_ip":  clientIP,
+			"method":     method,
 			"limit_type": "local",
 		}).Warn("SIP request rate limited")
 		metrics.RecordSIPRateLimited(method)

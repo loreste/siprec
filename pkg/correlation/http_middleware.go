@@ -11,9 +11,9 @@ import (
 
 // HTTPMiddleware adds correlation ID tracking to HTTP requests
 type HTTPMiddleware struct {
-	logger           *logrus.Logger
+	logger            *logrus.Logger
 	generateIfMissing bool
-	logRequests      bool
+	logRequests       bool
 }
 
 // HTTPMiddlewareConfig configures the HTTP correlation middleware

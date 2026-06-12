@@ -3,6 +3,7 @@ package stt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -646,18 +647,96 @@ func (lps *LanguagePersistenceService) calculateDetectionSensitivity(profile *Ca
 	return "medium"
 }
 
-// loadHistoricalPreferences loads historical preferences for a caller
+// loadHistoricalPreferences loads the most recent stored profile for a caller
+// from the configured persistence backend and seeds the new call profile with
+// the previously learned language preferences.
 func (lps *LanguagePersistenceService) loadHistoricalPreferences(profile *CallLanguageProfile, callerID string) {
-	// In a production system, this would load from persistent storage
-	// For now, we'll check if we have any recent profiles for this caller
+	if !lps.persistenceConfig.EnablePersistence {
+		return
+	}
+
+	var historical *CallLanguageProfile
+	var err error
+
+	switch lps.persistenceConfig.PersistenceStorage {
+	case "redis":
+		historical, err = lps.loadCallerProfileRedis(callerID)
+	case "file":
+		historical, err = lps.loadCallerProfileFile(callerID)
+	default:
+		// Memory-only storage: profiles are removed at call end, so there is
+		// no historical data to load.
+		return
+	}
+
+	if err != nil {
+		lps.logger.WithError(err).WithFields(logrus.Fields{
+			"caller_id": callerID,
+			"call_uuid": profile.CallUUID,
+			"storage":   lps.persistenceConfig.PersistenceStorage,
+		}).Warning("Failed to load historical language preferences")
+		return
+	}
+
+	if historical == nil {
+		lps.logger.WithFields(logrus.Fields{
+			"caller_id": callerID,
+			"call_uuid": profile.CallUUID,
+		}).Debug("No historical language preferences found for caller")
+		return
+	}
+
+	lps.applyHistoricalPreferences(profile, historical)
 
 	lps.logger.WithFields(logrus.Fields{
-		"caller_id": callerID,
-		"call_uuid": profile.CallUUID,
-	}).Debug("Loading historical language preferences")
+		"caller_id":           callerID,
+		"call_uuid":           profile.CallUUID,
+		"historical_call":     historical.CallUUID,
+		"preferred_languages": len(profile.PreferredLanguages),
+	}).Info("Loaded historical language preferences for caller")
+}
 
-	// This would be implemented with actual persistence storage
-	// For now, just log the intent
+// applyHistoricalPreferences merges a previously stored profile into a freshly
+// started call profile without overriding explicit user preferences.
+func (lps *LanguagePersistenceService) applyHistoricalPreferences(profile, historical *CallLanguageProfile) {
+	existing := make(map[string]bool, len(profile.PreferredLanguages))
+	for _, pref := range profile.PreferredLanguages {
+		existing[pref.Language] = true
+	}
+
+	for _, pref := range historical.PreferredLanguages {
+		if pref.Language == "" || existing[pref.Language] {
+			continue
+		}
+		learned := pref
+		learned.PreferenceSource = "learned"
+		profile.PreferredLanguages = append(profile.PreferredLanguages, learned)
+		existing[pref.Language] = true
+	}
+
+	if profile.PrimaryLanguage == "" {
+		if historical.PrimaryLanguage != "" {
+			profile.PrimaryLanguage = historical.PrimaryLanguage
+		} else {
+			profile.PrimaryLanguage = historical.SwitchingPattern.DominantLanguage
+		}
+	}
+
+	for _, lang := range historical.SecondaryLanguages {
+		if lang == "" {
+			continue
+		}
+		found := false
+		for _, current := range profile.SecondaryLanguages {
+			if current == lang {
+				found = true
+				break
+			}
+		}
+		if !found {
+			profile.SecondaryLanguages = append(profile.SecondaryLanguages, lang)
+		}
+	}
 }
 
 // EndCallProfile finalizes a call profile and updates global statistics
@@ -689,6 +768,52 @@ func (lps *LanguagePersistenceService) EndCallProfile(callUUID string) {
 	}).Info("Ended language persistence profile")
 
 	delete(lps.callProfiles, callUUID)
+}
+
+// LoadCallProfile returns the language profile for a call. The in-memory
+// cache of active calls is consulted first, followed by the configured
+// persistence backend (Redis or file storage).
+func (lps *LanguagePersistenceService) LoadCallProfile(callUUID string) (*CallLanguageProfile, error) {
+	lps.profileMutex.RLock()
+	profile, exists := lps.callProfiles[callUUID]
+	lps.profileMutex.RUnlock()
+
+	if exists {
+		return profile, nil
+	}
+
+	if !lps.persistenceConfig.EnablePersistence {
+		return nil, fmt.Errorf("language profile for call %s not found", callUUID)
+	}
+
+	var loaded *CallLanguageProfile
+	var err error
+
+	switch lps.persistenceConfig.PersistenceStorage {
+	case "redis":
+		loaded, err = lps.loadProfileRedis(callUUID)
+	case "file":
+		loaded, err = lps.loadProfileFile(callUUID)
+	case "memory", "":
+		// Memory storage only retains active calls, which were checked above.
+	default:
+		return nil, fmt.Errorf("unknown persistence storage type %q", lps.persistenceConfig.PersistenceStorage)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load language profile for call %s: %w", callUUID, err)
+	}
+
+	if loaded == nil {
+		return nil, fmt.Errorf("language profile for call %s not found", callUUID)
+	}
+
+	lps.logger.WithFields(logrus.Fields{
+		"call_uuid": callUUID,
+		"storage":   lps.persistenceConfig.PersistenceStorage,
+	}).Debug("Loaded language profile from persistence backend")
+
+	return loaded, nil
 }
 
 // updateGlobalProfile updates global language usage statistics
@@ -734,7 +859,8 @@ func (lps *LanguagePersistenceService) storeProfile(profile *CallLanguageProfile
 	}
 }
 
-// storeProfileRedis stores profile in Redis (placeholder)
+// storeProfileRedis stores the profile in Redis as JSON with the configured
+// retention TTL and maintains a per-caller index of recent calls.
 func (lps *LanguagePersistenceService) storeProfileRedis(profile *CallLanguageProfile) {
 	if lps.redisClient == nil {
 		lps.logger.WithField("call_uuid", profile.CallUUID).
@@ -786,14 +912,12 @@ func (lps *LanguagePersistenceService) storeProfileRedis(profile *CallLanguagePr
 	}).Debug("Persisted language profile to Redis")
 }
 
-// storeProfileFile stores profile in file (placeholder)
+// storeProfileFile persists a profile as JSON on disk using an atomic
+// temp-file + rename so readers never observe partial writes.
 func (lps *LanguagePersistenceService) storeProfileFile(profile *CallLanguageProfile) {
-	dir := lps.fileDirectory
-	if dir == "" {
-		dir = filepath.Join("data", "language_profiles")
-	}
+	dir := lps.profileDirectory()
 
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		lps.logger.WithError(err).WithField("directory", dir).
 			Error("Failed to ensure language profile directory exists")
 		return
@@ -805,23 +929,216 @@ func (lps *LanguagePersistenceService) storeProfileFile(profile *CallLanguagePro
 			Error("Failed to serialize language profile for file storage")
 		return
 	}
+	data = append(data, '\n')
 
-	filePath := filepath.Join(dir, fmt.Sprintf("%s.json", profile.CallUUID))
+	filePath := filepath.Join(dir, lps.profileFileName(profile.CallUUID))
 
 	lps.fileMutex.Lock()
 	defer lps.fileMutex.Unlock()
 
-	if err := os.WriteFile(filePath, append(data, '\n'), 0o640); err != nil {
+	if err := writeFileAtomic(filePath, data); err != nil {
 		lps.logger.WithError(err).WithField("file", filePath).
 			Error("Failed to write language profile to file")
 		return
 	}
 
+	// Maintain a per-caller copy so historical preferences can be loaded
+	// without scanning the whole directory.
+	if profile.CallerID != "" {
+		callerPath := filepath.Join(dir, lps.callerProfileFileName(profile.CallerID))
+		if err := writeFileAtomic(callerPath, data); err != nil {
+			lps.logger.WithError(err).WithField("file", callerPath).
+				Warning("Failed to write caller-indexed language profile to file")
+		}
+	}
+
 	lps.logger.WithFields(logrus.Fields{
 		"call_uuid": profile.CallUUID,
+		"caller_id": profile.CallerID,
 		"path":      filePath,
 		"storage":   "file",
 	}).Debug("Persisted language profile to file")
+}
+
+// writeFileAtomic writes data to path via a temporary file in the same
+// directory followed by a rename, with 0600 permissions.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary profile file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set profile file permissions: %w", err)
+	}
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write profile data: %w", err)
+	}
+
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to sync profile file: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close temporary profile file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to finalize profile file: %w", err)
+	}
+
+	return nil
+}
+
+// profileDirectory returns the configured file storage directory with a sane default.
+func (lps *LanguagePersistenceService) profileDirectory() string {
+	if lps.fileDirectory != "" {
+		return lps.fileDirectory
+	}
+	return filepath.Join("data", "language_profiles")
+}
+
+// profileFileName returns the sanitized file name for a call profile.
+func (lps *LanguagePersistenceService) profileFileName(callUUID string) string {
+	return sanitizeProfileKey(callUUID) + ".json"
+}
+
+// callerProfileFileName returns the sanitized file name for a caller-indexed profile.
+func (lps *LanguagePersistenceService) callerProfileFileName(callerID string) string {
+	return "caller_" + sanitizeProfileKey(callerID) + ".json"
+}
+
+// sanitizeProfileKey converts an arbitrary profile key (call UUID or caller ID)
+// into a filesystem-safe name: only alphanumerics, '-', '_' and '.' are kept,
+// leading/trailing dots are stripped, and the length is capped.
+func sanitizeProfileKey(key string) string {
+	key = strings.TrimSpace(key)
+
+	var builder strings.Builder
+	builder.Grow(len(key))
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+
+	sanitized := strings.Trim(builder.String(), ".")
+	if len(sanitized) > 128 {
+		sanitized = sanitized[:128]
+	}
+	if sanitized == "" {
+		sanitized = "profile"
+	}
+
+	return sanitized
+}
+
+// loadProfileFile loads a call profile from file storage. It returns
+// (nil, nil) when no profile exists for the call.
+func (lps *LanguagePersistenceService) loadProfileFile(callUUID string) (*CallLanguageProfile, error) {
+	return lps.readProfileFile(lps.profileFileName(callUUID))
+}
+
+// loadCallerProfileFile loads the most recent caller-indexed profile from file
+// storage. It returns (nil, nil) when no profile exists for the caller.
+func (lps *LanguagePersistenceService) loadCallerProfileFile(callerID string) (*CallLanguageProfile, error) {
+	return lps.readProfileFile(lps.callerProfileFileName(callerID))
+}
+
+// readProfileFile reads and decodes a profile JSON file from the configured directory.
+func (lps *LanguagePersistenceService) readProfileFile(fileName string) (*CallLanguageProfile, error) {
+	path := filepath.Join(lps.profileDirectory(), fileName)
+
+	lps.fileMutex.Lock()
+	data, err := os.ReadFile(path) // #nosec G304 -- path is built from a sanitized key within the configured directory
+	lps.fileMutex.Unlock()
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read language profile %s: %w", path, err)
+	}
+
+	var profile CallLanguageProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return nil, fmt.Errorf("failed to decode language profile %s: %w", path, err)
+	}
+
+	return &profile, nil
+}
+
+// loadProfileRedis loads a call profile from Redis. It returns (nil, nil)
+// when no profile exists for the call.
+func (lps *LanguagePersistenceService) loadProfileRedis(callUUID string) (*CallLanguageProfile, error) {
+	if lps.redisClient == nil {
+		return nil, errors.New("redis client is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), lps.redisTimeout)
+	defer cancel()
+
+	data, err := lps.redisClient.Get(ctx, lps.redisProfileKey(callUUID)).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to load language profile for call %s from Redis: %w", callUUID, err)
+	}
+
+	var profile CallLanguageProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return nil, fmt.Errorf("failed to decode language profile for call %s from Redis: %w", callUUID, err)
+	}
+
+	return &profile, nil
+}
+
+// loadCallerProfileRedis loads the most recent profile stored for a caller via
+// the Redis caller index. It returns (nil, nil) when none exists.
+func (lps *LanguagePersistenceService) loadCallerProfileRedis(callerID string) (*CallLanguageProfile, error) {
+	if lps.redisClient == nil {
+		return nil, errors.New("redis client is not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), lps.redisTimeout)
+	defer cancel()
+
+	// Most recent call UUIDs first; profiles may have expired, so check a few.
+	callUUIDs, err := lps.redisClient.ZRevRange(ctx, lps.redisCallerIndexKey(callerID), 0, 4).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to load caller index for %s from Redis: %w", callerID, err)
+	}
+
+	for _, callUUID := range callUUIDs {
+		profile, err := lps.loadProfileRedis(callUUID)
+		if err != nil {
+			return nil, err
+		}
+		if profile != nil {
+			return profile, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func (lps *LanguagePersistenceService) redisProfileKey(callUUID string) string {

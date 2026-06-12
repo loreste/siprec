@@ -20,268 +20,146 @@
 package media
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"net"
-	"strings"
-	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
-// NATMapping represents discovered NAT mapping information
-type NATMapping struct {
-	ExternalIP   string
-	ExternalPort int
-	NATType      string
-	LocalIP      string
-	LocalPort    int
-}
-
-// NATType constants
+// STUN protocol constants (RFC 5389)
 const (
-	NATTypeUnknown        = "unknown"
-	NATTypeOpenInternet   = "open_internet"
-	NATTypeFullCone       = "full_cone"
-	NATTypeRestrictedCone = "restricted_cone"
-	NATTypePortRestricted = "port_restricted"
-	NATTypeSymmetric      = "symmetric"
-	NATTypeBlocked        = "blocked"
+	stunMagicCookie     uint32 = 0x2112A442
+	stunHeaderSize             = 20
+	stunTransactionSize        = 12
+
+	stunTypeBindingRequest uint16 = 0x0001
+	stunTypeBindingSuccess uint16 = 0x0101
+	stunAttrXorMappedAddr  uint16 = 0x0020
+	stunAddressFamilyIPv4  uint8  = 0x01
+	stunAddressFamilyIPv6  uint8  = 0x02
 )
 
-// BasicSTUNDiscovery performs basic STUN discovery to determine external IP
-// This is a simplified STUN implementation for basic NAT detection
-func BasicSTUNDiscovery(stunServers []string, logger *logrus.Logger) (*NATMapping, error) {
-	if len(stunServers) == 0 {
-		return nil, fmt.Errorf("no STUN servers provided")
-	}
+// createSTUNBindingRequest creates a STUN binding request (RFC 5389) with a
+// cryptographically random 96-bit transaction ID. It returns the encoded
+// request and the transaction ID for matching against the response.
+func createSTUNBindingRequest() ([]byte, []byte, error) {
+	stunPacket := make([]byte, stunHeaderSize)
 
-	// Try each STUN server
-	for _, server := range stunServers {
-		mapping, err := stunDiscoveryFromServer(server, logger)
-		if err != nil {
-			logger.WithError(err).WithField("stun_server", server).Warn("STUN discovery failed, trying next server")
-			continue
-		}
-
-		logger.WithFields(logrus.Fields{
-			"stun_server":   server,
-			"external_ip":   mapping.ExternalIP,
-			"external_port": mapping.ExternalPort,
-			"nat_type":      mapping.NATType,
-		}).Info("STUN discovery successful")
-
-		return mapping, nil
-	}
-
-	return nil, fmt.Errorf("STUN discovery failed for all servers")
-}
-
-// stunDiscoveryFromServer performs STUN discovery from a single server
-func stunDiscoveryFromServer(stunServer string, logger *logrus.Logger) (*NATMapping, error) {
-	// Parse STUN server address
-	server := strings.TrimPrefix(stunServer, "stun:")
-	if !strings.Contains(server, ":") {
-		server += ":3478" // Default STUN port
-	}
-
-	// Resolve STUN server address
-	stunAddr, err := net.ResolveUDPAddr("udp", server)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve STUN server %s: %w", server, err)
-	}
-
-	// Create local UDP connection
-	localConn, err := net.DialUDP("udp", nil, stunAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to STUN server %s: %w", server, err)
-	}
-	defer localConn.Close()
-
-	// Set timeout
-	_ = localConn.SetDeadline(time.Now().Add(5 * time.Second))
-
-	// Get local address
-	localAddr := localConn.LocalAddr().(*net.UDPAddr)
-
-	// Create basic STUN binding request
-	stunRequest := createSTUNBindingRequest()
-
-	// Send STUN request
-	_, err = localConn.Write(stunRequest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send STUN request: %w", err)
-	}
-
-	// Read STUN response
-	response := make([]byte, 1024)
-	n, err := localConn.Read(response)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read STUN response: %w", err)
-	}
-
-	// Parse STUN response
-	externalIP, externalPort, err := parseSTUNResponse(response[:n])
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse STUN response: %w", err)
-	}
-
-	// Determine basic NAT type
-	natType := determineBasicNATType(localAddr.IP.String(), localAddr.Port, externalIP, externalPort)
-
-	return &NATMapping{
-		ExternalIP:   externalIP,
-		ExternalPort: externalPort,
-		NATType:      natType,
-		LocalIP:      localAddr.IP.String(),
-		LocalPort:    localAddr.Port,
-	}, nil
-}
-
-// createSTUNBindingRequest creates a basic STUN binding request
-func createSTUNBindingRequest() []byte {
-	// Simple STUN Binding Request (RFC 5389)
 	// Message Type: Binding Request (0x0001)
+	binary.BigEndian.PutUint16(stunPacket[0:2], stunTypeBindingRequest)
+
 	// Message Length: 0 (no attributes)
-	// Magic Cookie: 0x2112A442
-	// Transaction ID: 12 random bytes (simplified to zeros for basic implementation)
-
-	stunPacket := make([]byte, 20)
-
-	// Message Type: Binding Request (0x0001)
-	stunPacket[0] = 0x00
-	stunPacket[1] = 0x01
-
-	// Message Length: 0
-	stunPacket[2] = 0x00
-	stunPacket[3] = 0x00
+	binary.BigEndian.PutUint16(stunPacket[2:4], 0)
 
 	// Magic Cookie: 0x2112A442
-	stunPacket[4] = 0x21
-	stunPacket[5] = 0x12
-	stunPacket[6] = 0xA4
-	stunPacket[7] = 0x42
+	binary.BigEndian.PutUint32(stunPacket[4:8], stunMagicCookie)
 
-	// Transaction ID (12 bytes) - simplified to zeros for basic implementation
-	// In production, this should be random
-	for i := 8; i < 20; i++ {
-		stunPacket[i] = 0x00
+	// Transaction ID: 96 bits of cryptographically random data
+	transactionID := make([]byte, stunTransactionSize)
+	if _, err := rand.Read(transactionID); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate STUN transaction ID: %w", err)
 	}
+	copy(stunPacket[8:stunHeaderSize], transactionID)
 
-	return stunPacket
+	return stunPacket, transactionID, nil
 }
 
-// parseSTUNResponse parses a basic STUN response to extract external IP and port
-func parseSTUNResponse(response []byte) (string, int, error) {
-	if len(response) < 20 {
-		return "", 0, fmt.Errorf("STUN response too short")
+// parseSTUNResponse parses a STUN binding success response, verifies the
+// magic cookie and transaction ID, and extracts the external IP and port
+// from the XOR-MAPPED-ADDRESS attribute (RFC 5389 section 15.2)
+func parseSTUNResponse(response []byte, transactionID []byte) (string, int, error) {
+	if len(response) < stunHeaderSize {
+		return "", 0, fmt.Errorf("STUN response too short: %d bytes", len(response))
 	}
 
 	// Check if it's a Binding Success Response (0x0101)
-	if response[0] != 0x01 || response[1] != 0x01 {
-		return "", 0, fmt.Errorf("not a binding success response")
+	if msgType := binary.BigEndian.Uint16(response[0:2]); msgType != stunTypeBindingSuccess {
+		return "", 0, fmt.Errorf("not a binding success response: type 0x%04x", msgType)
 	}
 
 	// Check magic cookie
-	if response[4] != 0x21 || response[5] != 0x12 || response[6] != 0xA4 || response[7] != 0x42 {
-		return "", 0, fmt.Errorf("invalid magic cookie")
+	if cookie := binary.BigEndian.Uint32(response[4:8]); cookie != stunMagicCookie {
+		return "", 0, fmt.Errorf("invalid magic cookie: 0x%08x", cookie)
 	}
 
-	// Parse attributes (simplified - look for XOR-MAPPED-ADDRESS)
-	offset := 20
-	msgLength := int(response[2])<<8 | int(response[3])
+	// Verify the transaction ID matches the request (RFC 5389 section 7.3.3)
+	if len(transactionID) != stunTransactionSize {
+		return "", 0, fmt.Errorf("invalid transaction ID length: %d", len(transactionID))
+	}
+	if !bytes.Equal(response[8:stunHeaderSize], transactionID) {
+		return "", 0, fmt.Errorf("transaction ID mismatch: response does not match request")
+	}
 
-	for offset < 20+msgLength && offset+4 <= len(response) {
-		// Extract attribute type and length with bounds-safe slice access
-		attrSlice := response[offset : offset+4]
-		attrType := int(attrSlice[0])<<8 | int(attrSlice[1])
-		attrLength := int(attrSlice[2])<<8 | int(attrSlice[3])
+	// Parse attributes, looking for XOR-MAPPED-ADDRESS
+	msgLength := int(binary.BigEndian.Uint16(response[2:4]))
+	end := stunHeaderSize + msgLength
+	if end > len(response) {
+		end = len(response)
+	}
 
-		if attrType == 0x0020 { // XOR-MAPPED-ADDRESS
-			// Need at least 8 bytes for XOR-MAPPED-ADDRESS (family + port + IPv4)
-			if attrLength < 8 || offset+4+attrLength > len(response) {
-				break
-			}
+	offset := stunHeaderSize
+	for offset+4 <= end {
+		attrType := binary.BigEndian.Uint16(response[offset : offset+2])
+		attrLength := int(binary.BigEndian.Uint16(response[offset+2 : offset+4]))
 
-			// Extract attribute data with bounds-safe slice access
-			attrData := response[offset+4 : offset+4+attrLength]
-
-			// Parse XOR-MAPPED-ADDRESS
-			family := attrData[1] // byte 0 is reserved, byte 1 is family
-			if family == 0x01 {   // IPv4
-				// XOR port with magic cookie high 16 bits
-				port := (int(attrData[2])<<8 | int(attrData[3])) ^ 0x2112
-
-				// XOR IP with magic cookie
-				ip := make([]byte, 4)
-				magicCookie := []byte{0x21, 0x12, 0xA4, 0x42}
-				for i := 0; i < 4; i++ {
-					ip[i] = attrData[4+i] ^ magicCookie[i]
-				}
-
-				return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]), port, nil
-			}
+		if offset+4+attrLength > end {
+			break
 		}
 
+		if attrType == stunAttrXorMappedAddr {
+			attrData := response[offset+4 : offset+4+attrLength]
+			return parseXorMappedAddress(attrData, transactionID)
+		}
+
+		// Advance past the attribute value, padded to a 4-byte boundary
 		offset += 4 + attrLength
-		// Pad to 4-byte boundary
-		for offset%4 != 0 {
-			offset++
+		if pad := attrLength % 4; pad != 0 {
+			offset += 4 - pad
 		}
 	}
 
 	return "", 0, fmt.Errorf("XOR-MAPPED-ADDRESS not found in response")
 }
 
-// determineBasicNATType determines basic NAT type based on local and external addresses
-func determineBasicNATType(localIP string, localPort int, externalIP string, externalPort int) string {
-	// Basic NAT type detection
-	if localIP == externalIP {
-		if localPort == externalPort {
-			return NATTypeOpenInternet
+// parseXorMappedAddress decodes an XOR-MAPPED-ADDRESS attribute value.
+// The port is XORed with the most significant 16 bits of the magic cookie.
+// IPv4 addresses are XORed with the magic cookie; IPv6 addresses are XORed
+// with the concatenation of the magic cookie and the transaction ID.
+func parseXorMappedAddress(attrData []byte, transactionID []byte) (string, int, error) {
+	// Family (1 byte after the reserved byte) + port (2 bytes) + address
+	if len(attrData) < 8 {
+		return "", 0, fmt.Errorf("XOR-MAPPED-ADDRESS attribute too short: %d bytes", len(attrData))
+	}
+
+	family := attrData[1]
+	port := int(binary.BigEndian.Uint16(attrData[2:4]) ^ uint16(stunMagicCookie>>16))
+
+	// XOR key: magic cookie followed by the transaction ID (only the first
+	// 4 bytes are used for IPv4)
+	xorKey := make([]byte, 4+stunTransactionSize)
+	binary.BigEndian.PutUint32(xorKey[0:4], stunMagicCookie)
+	copy(xorKey[4:], transactionID)
+
+	switch family {
+	case stunAddressFamilyIPv4:
+		ip := make(net.IP, net.IPv4len)
+		for i := 0; i < net.IPv4len; i++ {
+			ip[i] = attrData[4+i] ^ xorKey[i]
 		}
-		return NATTypeUnknown
+		return ip.String(), port, nil
+
+	case stunAddressFamilyIPv6:
+		if len(attrData) < 4+net.IPv6len {
+			return "", 0, fmt.Errorf("XOR-MAPPED-ADDRESS IPv6 attribute too short: %d bytes", len(attrData))
+		}
+		ip := make(net.IP, net.IPv6len)
+		for i := 0; i < net.IPv6len; i++ {
+			ip[i] = attrData[4+i] ^ xorKey[i]
+		}
+		return ip.String(), port, nil
+
+	default:
+		return "", 0, fmt.Errorf("unsupported address family: 0x%02x", family)
 	}
-
-	// Behind NAT
-	if localPort == externalPort {
-		return NATTypeFullCone
-	}
-
-	// Different ports - could be Port Restricted or Symmetric
-	// More sophisticated testing would be needed to distinguish
-	return NATTypePortRestricted
-}
-
-// ValidateNATConfiguration validates NAT configuration against STUN discovery
-func ValidateNATConfiguration(config *Config, stunServers []string, logger *logrus.Logger) error {
-	if !config.BehindNAT {
-		logger.Info("NAT not configured, skipping STUN validation")
-		return nil
-	}
-
-	logger.Info("Validating NAT configuration with STUN discovery")
-
-	mapping, err := BasicSTUNDiscovery(stunServers, logger)
-	if err != nil {
-		logger.WithError(err).Warn("STUN discovery failed, cannot validate NAT configuration")
-		return nil // Don't fail startup, just warn
-	}
-
-	// Compare discovered external IP with configured external IP
-	if config.ExternalIP != "" && config.ExternalIP != "auto" && config.ExternalIP != mapping.ExternalIP {
-		logger.WithFields(logrus.Fields{
-			"configured_external_ip": config.ExternalIP,
-			"discovered_external_ip": mapping.ExternalIP,
-		}).Warn("Configured external IP differs from STUN discovery")
-	}
-
-	logger.WithFields(logrus.Fields{
-		"external_ip":   mapping.ExternalIP,
-		"external_port": mapping.ExternalPort,
-		"nat_type":      mapping.NATType,
-		"local_ip":      mapping.LocalIP,
-		"local_port":    mapping.LocalPort,
-	}).Info("NAT configuration validated via STUN")
-
-	return nil
 }

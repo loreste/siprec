@@ -43,9 +43,9 @@ type TranscriptionService struct {
 	mutex     sync.RWMutex
 
 	// Async publishing with worker pool
-	eventChan   chan *transcriptionEvent
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
+	eventChan chan *transcriptionEvent
+	stopChan  chan struct{}
+	wg        sync.WaitGroup
 
 	// Object pool for events to reduce GC pressure
 	eventPool sync.Pool

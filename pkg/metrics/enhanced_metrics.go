@@ -638,50 +638,7 @@ func (c *EnhancedMetricsCollector) collectSystemMetrics() {
 	// For production, use libraries like gopsutil
 }
 
-func (c *EnhancedMetricsCollector) Stop() {
-	close(c.stopChan)
-}
-
 // Metric recording functions
-
-func RecordDatabaseQuery(database, operation, table string, duration time.Duration, err error) {
-	if !metricsEnabled {
-		return
-	}
-
-	DatabaseQueryDuration.WithLabelValues(database, operation, table).Observe(duration.Seconds())
-
-	if err != nil {
-		DatabaseQueryErrors.WithLabelValues(database, operation, "query_error").Inc()
-	}
-}
-
-func RecordRedisOperation(instance, operation string, duration time.Duration, err error) {
-	if !metricsEnabled {
-		return
-	}
-
-	status := "success"
-	if err != nil {
-		status = "error"
-		RedisErrors.WithLabelValues(instance, operation, "operation_error").Inc()
-	}
-
-	RedisOperations.WithLabelValues(instance, operation, status).Inc()
-	RedisLatency.WithLabelValues(instance, operation).Observe(duration.Seconds())
-}
-
-func RecordSessionCreated(transport, source string) {
-	if metricsEnabled {
-		SessionsCreated.WithLabelValues(transport, source).Inc()
-	}
-}
-
-func RecordSessionTerminated(transport, reason string) {
-	if metricsEnabled {
-		SessionsTerminated.WithLabelValues(transport, reason).Inc()
-	}
-}
 
 func RecordSessionPaused(pauseType string) {
 	if metricsEnabled {
@@ -692,40 +649,6 @@ func RecordSessionPaused(pauseType string) {
 func RecordSessionResumed() {
 	if metricsEnabled {
 		SessionsResumed.Inc()
-	}
-}
-
-func RecordSessionPauseDuration(pauseType string, duration time.Duration) {
-	if metricsEnabled {
-		SessionPauseDuration.WithLabelValues(pauseType).Observe(duration.Seconds())
-	}
-}
-
-func RecordRecordingStarted(format, quality string) {
-	if metricsEnabled {
-		RecordingsStarted.WithLabelValues(format, quality).Inc()
-	}
-}
-
-func RecordRecordingCompleted(format, status string, size int64, duration time.Duration) {
-	if !metricsEnabled {
-		return
-	}
-
-	RecordingsCompleted.WithLabelValues(format, status).Inc()
-	RecordingSize.WithLabelValues(format, "standard").Observe(float64(size))
-	RecordingDuration.WithLabelValues(format).Observe(duration.Seconds())
-}
-
-func RecordAuthenticationAttempt(authType, status string) {
-	if metricsEnabled {
-		AuthenticationAttempts.WithLabelValues(authType, status).Inc()
-	}
-}
-
-func RecordSecurityEvent(eventType, severity string) {
-	if metricsEnabled {
-		SecurityEvents.WithLabelValues(eventType, severity).Inc()
 	}
 }
 
@@ -742,55 +665,4 @@ func RecordAlertResolution(alertName, resolutionType string, duration time.Durat
 
 	AlertsResolved.WithLabelValues(alertName, resolutionType).Inc()
 	AlertDuration.WithLabelValues(alertName, "resolved").Observe(duration.Seconds())
-}
-
-// Business metrics functions
-
-func UpdateCallVolume(hour, dayOfWeek string, volume float64) {
-	if metricsEnabled {
-		CallVolumeByHour.WithLabelValues(hour, dayOfWeek).Set(volume)
-	}
-}
-
-func UpdatePeakConcurrentCalls(count float64) {
-	if metricsEnabled {
-		PeakConcurrentCalls.Set(count)
-	}
-}
-
-func RecordCallQuality(transport, codec string, score float64) {
-	if metricsEnabled {
-		CallQualityScore.WithLabelValues(transport, codec).Observe(score)
-	}
-}
-
-// Health check for metrics system
-func (c *EnhancedMetricsCollector) IsHealthy() bool {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-	return c.enabled
-}
-
-// Configuration
-func (c *EnhancedMetricsCollector) SetCollectInterval(interval time.Duration) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.collectInterval = interval
-}
-
-func (c *EnhancedMetricsCollector) Enable() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.enabled = true
-}
-
-func (c *EnhancedMetricsCollector) Disable() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.enabled = false
-}
-
-// GetMetricsCollector returns the metrics collector instance
-func GetMetricsCollector() *EnhancedMetricsCollector {
-	return collector
 }

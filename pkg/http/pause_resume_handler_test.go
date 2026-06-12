@@ -16,8 +16,8 @@ import (
 
 // MockPauseResumeService implements PauseResumeService for testing
 type MockPauseResumeService struct {
-	sessions    map[string]*PauseStatus
-	muteStates  map[string]*MuteStatus
+	sessions   map[string]*PauseStatus
+	muteStates map[string]*MuteStatus
 }
 
 func NewMockPauseResumeService() *MockPauseResumeService {
@@ -30,7 +30,7 @@ func NewMockPauseResumeService() *MockPauseResumeService {
 func (m *MockPauseResumeService) PauseSession(sessionID string, pauseRecording, pauseTranscription bool) error {
 	now := time.Now()
 	m.sessions[sessionID] = &PauseStatus{
-		SessionID:            sessionID,
+		SessionID:           sessionID,
 		IsPaused:            pauseRecording || pauseTranscription,
 		RecordingPaused:     pauseRecording,
 		TranscriptionPaused: pauseTranscription,
@@ -170,21 +170,6 @@ func (e *MockError) Error() string {
 	return e.message
 }
 
-// MockServer implements the Server interface for testing
-type MockServer struct {
-	handlers map[string]http.HandlerFunc
-}
-
-func NewMockServer() *MockServer {
-	return &MockServer{
-		handlers: make(map[string]http.HandlerFunc),
-	}
-}
-
-func (m *MockServer) RegisterHandler(path string, handler http.HandlerFunc) {
-	m.handlers[path] = handler
-}
-
 func TestPauseResumeHandler(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel) // Reduce log noise in tests
@@ -277,7 +262,7 @@ func TestPauseResumeHandler(t *testing.T) {
 	t.Run("get pause status endpoint", func(t *testing.T) {
 		mockService := NewMockPauseResumeService()
 		mockService.sessions["test-session"] = &PauseStatus{
-			SessionID:            "test-session",
+			SessionID:           "test-session",
 			IsPaused:            true,
 			RecordingPaused:     true,
 			TranscriptionPaused: false,
@@ -353,6 +338,86 @@ func TestPauseResumeHandler(t *testing.T) {
 
 		if len(statuses) != 2 {
 			t.Fatalf("expected 2 statuses, got %d", len(statuses))
+		}
+	})
+
+	t.Run("authentication fails closed when no API key configured", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+
+		config := &config.PauseResumeConfig{
+			Enabled:     true,
+			RequireAuth: true,
+			APIKey:      "", // Misconfiguration: auth required but no key set
+		}
+
+		handler := NewPauseResumeHandler(logger, config, mockService)
+		authHandler := handler.authMiddleware(handler.handlePauseSession)
+
+		// Request without API key must not be authorized by "" == "" comparison
+		req := httptest.NewRequest("POST", "/api/sessions/test/pause", nil)
+		w := httptest.NewRecorder()
+
+		authHandler(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503, got %d", w.Code)
+		}
+
+		// Request with an explicit empty API key header must also be rejected
+		req = httptest.NewRequest("POST", "/api/sessions/test/pause", nil)
+		req.Header.Set("X-API-Key", "")
+		w = httptest.NewRecorder()
+
+		authHandler(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503, got %d", w.Code)
+		}
+
+		// Even a non-empty key must be rejected while misconfigured
+		req = httptest.NewRequest("POST", "/api/sessions/test/pause", nil)
+		req.Header.Set("X-API-Key", "guessed-key")
+		w = httptest.NewRecorder()
+
+		authHandler(w, req)
+
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503, got %d", w.Code)
+		}
+	})
+
+	t.Run("api key via query parameter is rejected", func(t *testing.T) {
+		mockService := NewMockPauseResumeService()
+		mockService.sessions["test"] = &PauseStatus{SessionID: "test"}
+
+		config := &config.PauseResumeConfig{
+			Enabled:     true,
+			RequireAuth: true,
+			APIKey:      "test-api-key",
+		}
+
+		handler := NewPauseResumeHandler(logger, config, mockService)
+		authHandler := handler.authMiddleware(handler.handlePauseSession)
+
+		// Correct key supplied only as query parameter must be rejected
+		req := httptest.NewRequest("POST", "/api/sessions/test/pause?api_key=test-api-key", nil)
+		w := httptest.NewRecorder()
+
+		authHandler(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 for query parameter API key, got %d", w.Code)
+		}
+
+		// Same key in the header must still be accepted
+		req = httptest.NewRequest("POST", "/api/sessions/test/pause", nil)
+		req.Header.Set("X-API-Key", "test-api-key")
+		w = httptest.NewRecorder()
+
+		authHandler(w, req)
+
+		if w.Code == http.StatusUnauthorized || w.Code == http.StatusServiceUnavailable {
+			t.Fatalf("request with valid API key header should be authorized, got %d", w.Code)
 		}
 	})
 

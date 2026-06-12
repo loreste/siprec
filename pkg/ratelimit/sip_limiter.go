@@ -13,24 +13,24 @@ import (
 type SIPMethod string
 
 const (
-	SIPMethodINVITE  SIPMethod = "INVITE"
-	SIPMethodACK     SIPMethod = "ACK"
-	SIPMethodBYE     SIPMethod = "BYE"
-	SIPMethodCANCEL  SIPMethod = "CANCEL"
-	SIPMethodOPTIONS SIPMethod = "OPTIONS"
+	SIPMethodINVITE   SIPMethod = "INVITE"
+	SIPMethodACK      SIPMethod = "ACK"
+	SIPMethodBYE      SIPMethod = "BYE"
+	SIPMethodCANCEL   SIPMethod = "CANCEL"
+	SIPMethodOPTIONS  SIPMethod = "OPTIONS"
 	SIPMethodREGISTER SIPMethod = "REGISTER"
-	SIPMethodOther   SIPMethod = "OTHER"
+	SIPMethodOther    SIPMethod = "OTHER"
 )
 
 // SIPLimiter provides rate limiting for SIP requests with method-specific limits
 type SIPLimiter struct {
-	inviteLimiter  *Limiter
-	requestLimiter *Limiter
-	config         *Config
-	logger         *logrus.Logger
-	whitelistedIPs map[string]bool
+	inviteLimiter   *Limiter
+	requestLimiter  *Limiter
+	config          *Config
+	logger          *logrus.Logger
+	whitelistedIPs  map[string]bool
 	whitelistedNets []*net.IPNet
-	mu             sync.RWMutex
+	mu              sync.RWMutex
 
 	// Metrics callback
 	metricsCallback func(clientIP string, method SIPMethod, allowed bool)
@@ -67,11 +67,11 @@ func NewSIPLimiter(config *Config, logger *logrus.Logger) *SIPLimiter {
 	}
 
 	logger.WithFields(logrus.Fields{
-		"invite_rps":     config.SIPInvitesPerSecond,
-		"invite_burst":   config.SIPInviteBurst,
-		"request_rps":    config.SIPRequestsPerSecond,
-		"request_burst":  config.SIPRequestBurst,
-		"whitelisted":    len(s.whitelistedIPs) + len(s.whitelistedNets),
+		"invite_rps":    config.SIPInvitesPerSecond,
+		"invite_burst":  config.SIPInviteBurst,
+		"request_rps":   config.SIPRequestsPerSecond,
+		"request_burst": config.SIPRequestBurst,
+		"whitelisted":   len(s.whitelistedIPs) + len(s.whitelistedNets),
 	}).Info("SIP rate limiter initialized")
 
 	return s

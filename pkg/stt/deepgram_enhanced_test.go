@@ -390,11 +390,11 @@ func TestDeepgramProviderEnhanced_WebSocketStreaming(t *testing.T) {
 
 		// Send mock interim result
 		interimResponse := map[string]interface{}{
-			"type":      "Results",
-			"is_final":  false,
-			"duration":  1.0,
-			"start":     0.0,
-			"channel":   json.RawMessage(interimChannelBytes),
+			"type":     "Results",
+			"is_final": false,
+			"duration": 1.0,
+			"start":    0.0,
+			"channel":  json.RawMessage(interimChannelBytes),
 			"metadata": map[string]interface{}{
 				"request_id": "ws-test-123",
 				"model_name": "nova-2",

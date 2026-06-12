@@ -48,7 +48,7 @@ func TestPipelineProcessesEvent(t *testing.T) {
 func TestPipelineHandlesNilEvent(t *testing.T) {
 	pipeline := NewPipeline(logrus.New(), nil)
 	snapshot, err := pipeline.Process(context.Background(), nil)
-	
+
 	if err != nil {
 		t.Fatalf("expected no error for nil event, got: %v", err)
 	}
@@ -60,12 +60,12 @@ func TestPipelineHandlesNilEvent(t *testing.T) {
 func TestPipelineCreatesNewState(t *testing.T) {
 	store := NewMockStateStore()
 	pipeline := NewPipeline(logrus.New(), store)
-	
+
 	event := &TranscriptEvent{
 		CallID: "new-call",
 		Text:   "Hello world",
 	}
-	
+
 	snapshot, err := pipeline.Process(context.Background(), event)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -81,7 +81,7 @@ func TestPipelineCreatesNewState(t *testing.T) {
 func TestPipelineCompleteCall(t *testing.T) {
 	store := NewMockStateStore()
 	pipeline := NewPipeline(logrus.New(), store)
-	
+
 	// Setup initial state
 	state := &State{
 		CallID:       "test-call",
@@ -101,7 +101,7 @@ func TestPipelineCompleteCall(t *testing.T) {
 	if snapshot.QualityScore != 0.85 {
 		t.Fatalf("expected quality score 0.85, got: %f", snapshot.QualityScore)
 	}
-	
+
 	// Verify state was deleted by trying to get it
 	deletedState, err := store.Get("test-call")
 	if err != nil {
@@ -115,14 +115,14 @@ func TestPipelineCompleteCall(t *testing.T) {
 func TestPipelineContinuesOnProcessorError(t *testing.T) {
 	store := NewMockStateStore()
 	logger := logrus.New()
-	
+
 	// Create a processor that fails
 	failingProcessor := &mockProcessor{
 		processFunc: func(ctx context.Context, event *TranscriptEvent, state *State) error {
 			return errors.New("processor error")
 		},
 	}
-	
+
 	// Create a processor that succeeds
 	successProcessor := &mockProcessor{
 		processFunc: func(ctx context.Context, event *TranscriptEvent, state *State) error {
@@ -130,14 +130,14 @@ func TestPipelineContinuesOnProcessorError(t *testing.T) {
 			return nil
 		},
 	}
-	
+
 	pipeline := NewPipeline(logger, store, failingProcessor, successProcessor)
-	
+
 	event := &TranscriptEvent{
 		CallID: "error-test",
 		Text:   "Test",
 	}
-	
+
 	snapshot, err := pipeline.Process(context.Background(), event)
 	if err != nil {
 		t.Fatalf("pipeline should not fail on processor error: %v", err)

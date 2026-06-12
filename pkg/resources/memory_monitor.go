@@ -13,9 +13,9 @@ import (
 
 // MemoryMonitor tracks memory usage and enforces limits
 type MemoryMonitor struct {
-	limitBytes   int64
-	interval     time.Duration
-	logger       *logrus.Entry
+	limitBytes int64
+	interval   time.Duration
+	logger     *logrus.Entry
 
 	// Current state
 	currentBytes int64
@@ -103,11 +103,11 @@ func (mm *MemoryMonitor) check() {
 	warningThreshold := mm.limitBytes * 80 / 100
 	if current > warningThreshold && !isOverLimit {
 		mm.logger.WithFields(logrus.Fields{
-			"current_mb":     current / (1024 * 1024),
-			"limit_mb":       mm.limitBytes / (1024 * 1024),
-			"usage_percent":  float64(current) / float64(mm.limitBytes) * 100,
-			"heap_objects":   memStats.HeapObjects,
-			"gc_cycles":      memStats.NumGC,
+			"current_mb":    current / (1024 * 1024),
+			"limit_mb":      mm.limitBytes / (1024 * 1024),
+			"usage_percent": float64(current) / float64(mm.limitBytes) * 100,
+			"heap_objects":  memStats.HeapObjects,
+			"gc_cycles":     memStats.NumGC,
 		}).Warn("Memory usage approaching limit")
 	}
 
@@ -119,13 +119,13 @@ func (mm *MemoryMonitor) check() {
 
 func (mm *MemoryMonitor) handleOverLimit(current int64, memStats runtime.MemStats) {
 	mm.logger.WithFields(logrus.Fields{
-		"current_mb":    current / (1024 * 1024),
-		"limit_mb":      mm.limitBytes / (1024 * 1024),
-		"heap_alloc":    memStats.HeapAlloc / (1024 * 1024),
-		"heap_sys":      memStats.HeapSys / (1024 * 1024),
-		"heap_objects":  memStats.HeapObjects,
-		"stack_sys":     memStats.StackSys / (1024 * 1024),
-		"gc_cycles":     memStats.NumGC,
+		"current_mb":   current / (1024 * 1024),
+		"limit_mb":     mm.limitBytes / (1024 * 1024),
+		"heap_alloc":   memStats.HeapAlloc / (1024 * 1024),
+		"heap_sys":     memStats.HeapSys / (1024 * 1024),
+		"heap_objects": memStats.HeapObjects,
+		"stack_sys":    memStats.StackSys / (1024 * 1024),
+		"gc_cycles":    memStats.NumGC,
 	}).Error("Memory limit exceeded")
 
 	// Force garbage collection
@@ -162,32 +162,9 @@ func (mm *MemoryMonitor) CurrentUsage() int64 {
 	return atomic.LoadInt64(&mm.currentBytes)
 }
 
-// CurrentUsageMB returns current memory usage in megabytes
-func (mm *MemoryMonitor) CurrentUsageMB() int64 {
-	return atomic.LoadInt64(&mm.currentBytes) / (1024 * 1024)
-}
-
-// LimitMB returns the memory limit in megabytes
-func (mm *MemoryMonitor) LimitMB() int64 {
-	return mm.limitBytes / (1024 * 1024)
-}
-
-// UsagePercent returns current usage as a percentage
-func (mm *MemoryMonitor) UsagePercent() float64 {
-	current := atomic.LoadInt64(&mm.currentBytes)
-	return float64(current) / float64(mm.limitBytes) * 100
-}
-
 // SetCallback sets the callback function for memory updates
 func (mm *MemoryMonitor) SetCallback(cb func(used, limit int64)) {
 	mm.callback = cb
-}
-
-// ForceGC triggers garbage collection
-func (mm *MemoryMonitor) ForceGC() {
-	runtime.GC()
-	debug.FreeOSMemory()
-	mm.check()
 }
 
 // Stop stops the memory monitor
@@ -203,20 +180,20 @@ func (mm *MemoryMonitor) GetDetailedStats() map[string]interface{} {
 	runtime.ReadMemStats(&memStats)
 
 	return map[string]interface{}{
-		"alloc_mb":         memStats.Alloc / (1024 * 1024),
-		"total_alloc_mb":   memStats.TotalAlloc / (1024 * 1024),
-		"sys_mb":           memStats.Sys / (1024 * 1024),
-		"heap_alloc_mb":    memStats.HeapAlloc / (1024 * 1024),
-		"heap_sys_mb":      memStats.HeapSys / (1024 * 1024),
-		"heap_idle_mb":     memStats.HeapIdle / (1024 * 1024),
-		"heap_inuse_mb":    memStats.HeapInuse / (1024 * 1024),
-		"heap_released_mb": memStats.HeapReleased / (1024 * 1024),
-		"heap_objects":     memStats.HeapObjects,
-		"stack_inuse_mb":   memStats.StackInuse / (1024 * 1024),
-		"stack_sys_mb":     memStats.StackSys / (1024 * 1024),
-		"gc_cycles":        memStats.NumGC,
+		"alloc_mb":          memStats.Alloc / (1024 * 1024),
+		"total_alloc_mb":    memStats.TotalAlloc / (1024 * 1024),
+		"sys_mb":            memStats.Sys / (1024 * 1024),
+		"heap_alloc_mb":     memStats.HeapAlloc / (1024 * 1024),
+		"heap_sys_mb":       memStats.HeapSys / (1024 * 1024),
+		"heap_idle_mb":      memStats.HeapIdle / (1024 * 1024),
+		"heap_inuse_mb":     memStats.HeapInuse / (1024 * 1024),
+		"heap_released_mb":  memStats.HeapReleased / (1024 * 1024),
+		"heap_objects":      memStats.HeapObjects,
+		"stack_inuse_mb":    memStats.StackInuse / (1024 * 1024),
+		"stack_sys_mb":      memStats.StackSys / (1024 * 1024),
+		"gc_cycles":         memStats.NumGC,
 		"gc_pause_total_ms": memStats.PauseTotalNs / 1000000,
-		"limit_mb":         mm.limitBytes / (1024 * 1024),
-		"over_limit":       atomic.LoadInt32(&mm.isOverLimit) == 1,
+		"limit_mb":          mm.limitBytes / (1024 * 1024),
+		"over_limit":        atomic.LoadInt32(&mm.isOverLimit) == 1,
 	}
 }

@@ -1,8 +1,6 @@
 # Production SIPREC Server Configuration Guide
 
-**Server:** siprec.izitechnologies.com (192.227.78.73)
-**Ports:** 5060 (TCP), 5061 (TLS)
-**Status:** Production Ready ✅
+This guide walks through configuring Oracle SBC and Avaya Session Manager to deliver SIPREC recordings to a production SIPREC server. Replace `siprec.example.com` and `<your-server-ip>` with your server's hostname and IP address. The examples assume SIP on port 5060 (TCP) and 5061 (TLS).
 
 ---
 
@@ -14,7 +12,7 @@ Configure Oracle Session Border Controller to send SIPREC recordings to your ser
 ### Prerequisites
 - Oracle SBC 8.x or 9.x
 - Administrative access to Oracle SBC
-- Network connectivity from Oracle SBC to 192.227.78.73
+- Network connectivity from Oracle SBC to <your-server-ip>
 
 ### Step 1: Create SIP Interface for SIPREC
 
@@ -35,7 +33,7 @@ Navigate to: **Configuration > Media Manager > Realm**
 
 ```
 Identifier: SIPREC-REALM
-Address Prefix: 192.227.78.0
+Address Prefix: <your-network>
 Network Interfaces: Select your outbound interface
 ```
 
@@ -46,8 +44,8 @@ Click **Apply**
 Navigate to: **Configuration > Session Router > Session Agent**
 
 ```
-Hostname: siprec.izitechnologies.com
-IP Address: 192.227.78.73
+Hostname: siprec.example.com
+IP Address: <your-server-ip>
 Port: 5060
 Transport Method: StaticTCP
 Allow Next Hop Routing: enabled
@@ -72,7 +70,7 @@ Navigate to: **Configuration > Session Router > SIP Recording**
 ```
 State: enabled
 Mode: SIPREC
-Recording Server: 192.227.78.73:5060
+Recording Server: <your-server-ip>:5060
 Transport: TCP
 Streams: separate (for 3-stream configuration)
 Include Metadata: enabled
@@ -107,7 +105,7 @@ From Address: *
 To Address: *
 Source Realm: your-realm
 Action: SIPREC-RECORD
-Next Hop: 192.227.78.73:5060
+Next Hop: <your-server-ip>:5060
 ```
 
 **Recording Triggers:**
@@ -157,11 +155,11 @@ Ensure SIPREC sessions support:
 
 2. **Make a Test Call:**
    - Place a call through the Oracle SBC
-   - Verify SIPREC INVITE is sent to 192.227.78.73
+   - Verify SIPREC INVITE is sent to <your-server-ip>
 
 3. **Verify on SIPREC Server:**
    ```bash
-   ssh ubuntu@siprec.izitechnologies.com
+   ssh ubuntu@siprec.example.com
    sudo journalctl -u siprec -f
    ```
 
@@ -194,8 +192,8 @@ sudo netstat -tlnp | grep 5060
 sudo ufw status | grep 5060
 
 # Test connectivity from Oracle SBC
-ping 192.227.78.73
-telnet 192.227.78.73 5060
+ping <your-server-ip>
+telnet <your-server-ip> 5060
 ```
 
 **Issue: INVITE sent but no response**
@@ -222,7 +220,7 @@ Configure Avaya Session Manager (Aura) to send SIPREC recordings.
 ### Prerequisites
 - Avaya Aura Session Manager 7.x or 8.x
 - System Manager access
-- Network connectivity to 192.227.78.73
+- Network connectivity to <your-server-ip>
 
 ### Step 1: Add SIPREC Server as SIP Entity
 
@@ -232,7 +230,7 @@ Click **New**
 
 ```
 Name: SIPREC-Server
-FQDN or IP Address: siprec.izitechnologies.com
+FQDN or IP Address: siprec.example.com
 Type: Recording Server
 Port: 5060
 Transport: TCP
@@ -369,7 +367,7 @@ Apply to Recording Profile.
 
 3. **Verify on SIPREC Server:**
    ```bash
-   ssh ubuntu@siprec.izitechnologies.com
+   ssh ubuntu@siprec.example.com
    sudo journalctl -u siprec -f | grep -i avaya
    ```
 
@@ -393,8 +391,8 @@ Apply to Recording Profile.
 **Issue: SIP Entity shows "Offline"**
 
 Check:
-1. Network connectivity: `ping 192.227.78.73`
-2. Port open: `telnet 192.227.78.73 5060`
+1. Network connectivity: `ping <your-server-ip>`
+2. Port open: `telnet <your-server-ip> 5060`
 3. Entity Link configured correctly
 4. Firewall rules on both sides
 
@@ -419,7 +417,7 @@ Solution:
 
 ### Firewall Rules Required
 
-**On SIPREC Server (192.227.78.73):**
+**On SIPREC Server (<your-server-ip>):**
 
 ```bash
 # Allow SIP TCP from Oracle SBC network
@@ -437,28 +435,28 @@ sudo ufw allow from <oracle-sbc-ip> to any port 10000:20000 proto udp comment 'O
 sudo ufw allow from <avaya-sm-ip> to any port 10000:20000 proto udp comment 'Avaya RTP'
 ```
 
-**Example with your IPs:**
+**Example:**
 ```bash
-# Home office IP
-sudo ufw allow from 104.203.204.52 to any port 5060 proto tcp
-sudo ufw allow from 104.203.204.52 to any port 5061 proto tcp
-sudo ufw allow from 104.203.204.52 to any port 10000:20000 proto udp
+# Trusted management or SBC source IP
+sudo ufw allow from <trusted-source-ip> to any port 5060 proto tcp
+sudo ufw allow from <trusted-source-ip> to any port 5061 proto tcp
+sudo ufw allow from <trusted-source-ip> to any port 10000:20000 proto udp
 
 # Local network
-sudo ufw allow from 192.227.78.0/24 to any port 5060 proto tcp
-sudo ufw allow from 192.227.78.0/24 to any port 5061 proto tcp
-sudo ufw allow from 192.227.78.0/24 to any port 10000:20000 proto udp
+sudo ufw allow from <your-network>/24 to any port 5060 proto tcp
+sudo ufw allow from <your-network>/24 to any port 5061 proto tcp
+sudo ufw allow from <your-network>/24 to any port 10000:20000 proto udp
 ```
 
 ### DNS Configuration (Optional but Recommended)
 
 If using DNS name instead of IP:
 
-1. Ensure `siprec.izitechnologies.com` resolves correctly
+1. Ensure `siprec.example.com` resolves correctly
 2. Add SRV records for redundancy (optional):
    ```
-   _sip._tcp.siprec.izitechnologies.com. 3600 IN SRV 10 10 5060 siprec.izitechnologies.com.
-   _sips._tcp.siprec.izitechnologies.com. 3600 IN SRV 10 10 5061 siprec.izitechnologies.com.
+   _sip._tcp.siprec.example.com. 3600 IN SRV 10 10 5060 siprec.example.com.
+   _sips._tcp.siprec.example.com. 3600 IN SRV 10 10 5061 siprec.example.com.
    ```
 
 ---
@@ -490,12 +488,16 @@ Transport: TLS
 Certificate: Select Avaya certificate
 ```
 
-### SIPREC Server Already Configured
+### SIPREC Server TLS Setup
 
-Your server already has Let's Encrypt certificates:
-- Valid until: 2026-04-30
-- Automatic renewal enabled
-- TLS listening on port 5061 ✅
+On the SIPREC server, provision a certificate (for example with Let's Encrypt/certbot), enable automatic renewal, and configure TLS:
+
+```bash
+ENABLE_TLS=true
+TLS_PORT=5061
+TLS_CERT_PATH=/etc/letsencrypt/live/siprec.example.com/fullchain.pem
+TLS_KEY_PATH=/etc/letsencrypt/live/siprec.example.com/privkey.pem
+```
 
 ---
 
@@ -699,21 +701,18 @@ curl -s https://localhost:8080/health -k | jq '.system'
 | 250 | 16 | 32 GB | 125 MB/s | 500 Mbps |
 | 500 | 32 | 64 GB | 250 MB/s | 1 Gbps |
 
-**Current Server:** 8 CPU cores, likely handles 100-150 concurrent calls comfortably.
+As a reference point, an 8-core server typically handles 100-150 concurrent recorded calls comfortably.
 
 ---
 
 ## Summary
 
-Your SIPREC server is **production ready** for both Oracle and Avaya!
+Once the steps above are complete, the server supports:
 
-**Key Points:**
-- ✅ 3-stream configuration working
-- ✅ Oracle vendor detection active
-- ✅ Avaya vendor detection active
-- ✅ TLS certificates configured
-- ✅ Automatic renewal enabled
-- ✅ Health monitoring available
+- 3-stream (ingress/egress/mixed) recording configurations
+- Oracle and Avaya vendor detection and metadata extraction
+- TLS-secured SIP signaling
+- Health monitoring via the HTTP API
 
 **Next Steps:**
 1. Apply configurations to Oracle SBC and/or Avaya SM
@@ -721,5 +720,3 @@ Your SIPREC server is **production ready** for both Oracle and Avaya!
 3. Verify recordings and metadata
 4. Enable for production traffic
 5. Monitor and maintain
-
-**Configuration Complete!** 🎉

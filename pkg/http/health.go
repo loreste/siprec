@@ -9,7 +9,6 @@ import (
 
 	"siprec-server/pkg/core"
 	"siprec-server/pkg/media"
-	"siprec-server/pkg/siprec"
 	"siprec-server/pkg/version"
 
 	"github.com/sirupsen/logrus"
@@ -79,19 +78,17 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check session storage
-	sessionMgr := siprec.GetGlobalSessionManager()
-	if sessionMgr != nil {
-		activeSessions := sessionMgr.GetActiveSessionCount()
+	// Check session tracking via the SIP handler's live call registry
+	if s.metricsProvider != nil {
 		health.Checks["sessions"] = CheckResult{
 			Status:  "healthy",
-			Message: "Session storage operational",
+			Message: "Session tracking operational",
 		}
-		health.System.ActiveCalls = activeSessions
+		health.System.ActiveCalls = s.metricsProvider.GetActiveCallCount()
 	} else {
 		health.Checks["sessions"] = CheckResult{
 			Status:  "unhealthy",
-			Message: "Session manager not available",
+			Message: "Session tracking not available",
 		}
 		health.Status = "unhealthy"
 	}
@@ -124,7 +121,7 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}()
-			
+
 			// Type assert to messaging.AMQPClientInterface
 			if amqpClient, ok := s.amqpClient.(interface{ IsConnected() bool }); ok {
 				if amqpClient.IsConnected() {
@@ -147,9 +144,9 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	// Check Redis session store if available
-	if redisSessionMgr := getRedisSessionManager(); redisSessionMgr != nil {
-		if err := redisSessionMgr.Health(); err != nil {
+	// Check Redis session store if registered
+	if redisChecker := getRedisHealthChecker(); redisChecker != nil {
+		if err := redisChecker.Health(); err != nil {
 			health.Checks["redis"] = CheckResult{
 				Status:  "degraded",
 				Message: fmt.Sprintf("Redis session store unhealthy: %v", err),
@@ -160,11 +157,16 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 				Message: "Redis session store operational",
 			}
 		}
+	} else {
+		health.Checks["redis"] = CheckResult{
+			Status:  "not_configured",
+			Message: "Redis session store not configured",
+		}
 	}
 
-	// Check database connectivity if available
-	if dbHealth := getDatabaseHealth(); dbHealth != nil {
-		if err := dbHealth.Health(); err != nil {
+	// Check database connectivity if registered
+	if dbChecker := getDatabaseHealthChecker(); dbChecker != nil {
+		if err := dbChecker.Health(); err != nil {
 			health.Checks["database"] = CheckResult{
 				Status:  "degraded",
 				Message: fmt.Sprintf("Database unhealthy: %v", err),
@@ -174,6 +176,11 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 				Status:  "healthy",
 				Message: "Database operational",
 			}
+		}
+	} else {
+		health.Checks["database"] = CheckResult{
+			Status:  "not_configured",
+			Message: "Database persistence not configured",
 		}
 	}
 
@@ -194,18 +201,23 @@ func (s *Server) HealthHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check encryption services
-	if encryptionHealth := getEncryptionHealth(); encryptionHealth != nil {
-		if encryptionHealth.Healthy {
+	// Check encryption services if registered
+	if encryptionChecker := getEncryptionHealthChecker(); encryptionChecker != nil {
+		if err := encryptionChecker.Health(); err != nil {
+			health.Checks["encryption"] = CheckResult{
+				Status:  "degraded",
+				Message: fmt.Sprintf("Encryption services unhealthy: %v", err),
+			}
+		} else {
 			health.Checks["encryption"] = CheckResult{
 				Status:  "healthy",
 				Message: "Encryption services operational",
 			}
-		} else {
-			health.Checks["encryption"] = CheckResult{
-				Status:  "degraded",
-				Message: fmt.Sprintf("Encryption services unhealthy: %s", encryptionHealth.Error),
-			}
+		}
+	} else {
+		health.Checks["encryption"] = CheckResult{
+			Status:  "not_configured",
+			Message: "Encryption services not configured",
 		}
 	}
 
@@ -285,8 +297,7 @@ func (s *Server) ReadinessHandler(w http.ResponseWriter, r *http.Request) {
 		ready = false
 	}
 
-	sessionMgr := siprec.GetGlobalSessionManager()
-	if sessionMgr == nil {
+	if s.metricsProvider == nil {
 		ready = false
 	}
 
@@ -309,20 +320,6 @@ type ComponentHealth struct {
 
 // STTProviderStatus represents STT provider health
 type STTProviderStatus map[string]ComponentHealth
-
-// getRedisSessionManager returns the Redis session manager if available
-func getRedisSessionManager() interface{ Health() error } {
-	// For now, we don't have a global Redis client getter
-	// This would be implemented when Redis integration is added
-	return nil
-}
-
-// getDatabaseHealth returns the database health checker if available
-func getDatabaseHealth() interface{ Health() error } {
-	// For now, we don't have a global database repository getter
-	// This would be implemented when database integration is added
-	return nil
-}
 
 // getSTTProviderHealth returns health status for all STT providers
 func getSTTProviderHealth() STTProviderStatus {
@@ -351,48 +348,41 @@ func getSTTProviderHealth() STTProviderStatus {
 	return status
 }
 
-// getEncryptionHealth returns encryption service health status
-func getEncryptionHealth() *ComponentHealth {
-	// For now, we don't have a global encryption manager getter
-	// This would be implemented when encryption integration is added
-	return nil
-}
-
 // getAsyncSTTHealth returns async STT system health status
 func getAsyncSTTHealth() map[string]map[string]interface{} {
 	registry := core.GetServiceRegistry()
 	processor := registry.GetAsyncSTTProcessor()
-	
+
 	if processor == nil {
 		return nil
 	}
 
 	health := make(map[string]map[string]interface{})
-	
+
 	// Get metrics from the processor
 	metrics := processor.GetMetrics()
-	
+
 	// Overall async STT health
 	health["async_processor"] = map[string]interface{}{
-		"status": "healthy",
-		"message": fmt.Sprintf("Processing %d jobs with %d workers", metrics.QueueSize, metrics.ActiveWorkers),
+		"status":         "healthy",
+		"message":        fmt.Sprintf("Processing %d jobs with %d workers", metrics.QueueSize, metrics.ActiveWorkers),
 		"active_workers": metrics.ActiveWorkers,
-		"queue_size": metrics.QueueSize,
+		"queue_size":     metrics.QueueSize,
 		"jobs_processed": metrics.JobsProcessed,
-		"jobs_failed": metrics.JobsFailed,
+		"jobs_failed":    metrics.JobsFailed,
 	}
-	
+
 	// Check queue health
 	queueStats, err := processor.GetQueueStats()
 	if err != nil {
 		health["queue"] = map[string]interface{}{
-			"status": "degraded",
+			"status":  "degraded",
 			"message": fmt.Sprintf("Failed to get queue stats: %v", err),
 		}
 	} else {
 		queueStatus := "healthy"
 		message := "Queue operating normally"
-		
+
 		// Check for high error rate
 		if queueStats.ErrorRate > 50 {
 			queueStatus = "unhealthy"
@@ -401,17 +391,17 @@ func getAsyncSTTHealth() map[string]map[string]interface{} {
 			queueStatus = "degraded"
 			message = fmt.Sprintf("Queue backlog: %d pending jobs", queueStats.PendingJobs)
 		}
-		
+
 		health["queue"] = map[string]interface{}{
-			"status": queueStatus,
-			"message": message,
-			"pending_jobs": queueStats.PendingJobs,
+			"status":          queueStatus,
+			"message":         message,
+			"pending_jobs":    queueStats.PendingJobs,
 			"processing_jobs": queueStats.ProcessingJobs,
-			"error_rate": queueStats.ErrorRate,
-			"throughput": queueStats.Throughput,
+			"error_rate":      queueStats.ErrorRate,
+			"throughput":      queueStats.Throughput,
 		}
 	}
-	
+
 	return health
 }
 
@@ -419,15 +409,15 @@ func getAsyncSTTHealth() map[string]map[string]interface{} {
 func getConfigSystemHealth() map[string]interface{} {
 	registry := core.GetServiceRegistry()
 	hotReloadManager := registry.GetHotReloadManager()
-	
+
 	if hotReloadManager == nil {
 		return nil
 	}
-	
+
 	health := map[string]interface{}{
 		"hot_reload_enabled": hotReloadManager.IsEnabled(),
 	}
-	
+
 	if hotReloadManager.IsEnabled() {
 		health["status"] = "healthy"
 		health["message"] = "Configuration hot-reload is active and monitoring changes"
@@ -435,6 +425,6 @@ func getConfigSystemHealth() map[string]interface{} {
 		health["status"] = "degraded"
 		health["message"] = "Configuration hot-reload is disabled"
 	}
-	
+
 	return health
 }

@@ -12,7 +12,7 @@ import (
 func TestAudioEnhancer_NewAudioEnhancer(t *testing.T) {
 	logger := logrus.New()
 	config := DefaultAudioEnhancementConfig()
-	
+
 	enhancer := NewAudioEnhancer(logger, config)
 	assert.NotNil(t, enhancer)
 	assert.Equal(t, config, enhancer.config)
@@ -33,9 +33,9 @@ func TestAudioEnhancer_ProcessAudio(t *testing.T) {
 			Threshold: -20,
 		},
 	}
-	
+
 	enhancer := NewAudioEnhancer(logger, config)
-	
+
 	// Create test audio with varying amplitude
 	samples := make([]float64, 1024)
 	for i := range samples {
@@ -43,13 +43,13 @@ func TestAudioEnhancer_ProcessAudio(t *testing.T) {
 		amplitude := 0.1 + 0.8*float64(i)/float64(len(samples))
 		samples[i] = amplitude * math.Sin(2*math.Pi*440*float64(i)/8000)
 	}
-	
+
 	ctx := context.Background()
 	processed, err := enhancer.ProcessAudio(ctx, samples)
 	assert.NoError(t, err)
 	assert.NotNil(t, processed)
 	assert.Len(t, processed, len(samples))
-	
+
 	// Check that processing was applied
 	different := false
 	for i := range samples {
@@ -67,15 +67,15 @@ func TestAudioEnhancer_ProcessBasic(t *testing.T) {
 	config.AGC.Enabled = true
 	config.EchoCancellation.Enabled = false // Disable echo cancellation for basic test
 	config.Compression.Enabled = true
-	
+
 	enhancer := NewAudioEnhancer(logger, config)
-	
+
 	// Create test signal
 	samples := make([]float64, 1024)
 	for i := range samples {
 		samples[i] = 0.5 * math.Sin(2*math.Pi*440*float64(i)/8000)
 	}
-	
+
 	ctx := context.Background()
 	processed, err := enhancer.ProcessAudio(ctx, samples)
 	assert.NoError(t, err)
@@ -99,9 +99,9 @@ func TestAudioEnhancer_AllFeaturesEnabled(t *testing.T) {
 			Threshold: -20,
 		},
 	}
-	
+
 	enhancer := NewAudioEnhancer(logger, config)
-	
+
 	// Complex test signal
 	samples := make([]float64, 1024)
 	for i := range samples {
@@ -112,13 +112,13 @@ func TestAudioEnhancer_AllFeaturesEnabled(t *testing.T) {
 		high := amplitude * 0.3 * math.Sin(2*math.Pi*3000*float64(i)/8000)
 		samples[i] = low + mid + high
 	}
-	
+
 	ctx := context.Background()
 	processed, err := enhancer.ProcessAudio(ctx, samples)
 	assert.NoError(t, err)
 	assert.NotNil(t, processed)
 	assert.Len(t, processed, len(samples))
-	
+
 	// All enhancements should be applied
 	assert.NotEqual(t, samples, processed)
 }
@@ -126,17 +126,17 @@ func TestAudioEnhancer_AllFeaturesEnabled(t *testing.T) {
 func BenchmarkAudioEnhancer_ProcessAudio(b *testing.B) {
 	logger := logrus.New()
 	config := &AudioEnhancementConfig{
-		AGC: AGCConfig{Enabled: true},
+		AGC:              AGCConfig{Enabled: true},
 		EchoCancellation: EchoCancellationConfig{Enabled: true},
-		Compression: CompressionConfig{Enabled: true},
+		Compression:      CompressionConfig{Enabled: true},
 	}
-	
+
 	enhancer := NewAudioEnhancer(logger, config)
 	samples := make([]float64, 1024)
 	for i := range samples {
-		samples[i] = math.Sin(2*math.Pi*1000*float64(i)/8000)
+		samples[i] = math.Sin(2 * math.Pi * 1000 * float64(i) / 8000)
 	}
-	
+
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

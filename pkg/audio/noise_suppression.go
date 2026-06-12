@@ -77,12 +77,12 @@ type NoiseSuppressor struct {
 	windowFunction []float64
 
 	// FFT components (simplified - in production use a proper FFT library)
-	fftSize     int
-	fftReal     []float64
-	fftImag     []float64
-	magnitude   []float64
-	phase       []float64
-	smoothing   []float64
+	fftSize   int
+	fftReal   []float64
+	fftImag   []float64
+	magnitude []float64
+	phase     []float64
+	smoothing []float64
 
 	// Voice Activity Detection
 	vadState      bool
@@ -90,11 +90,11 @@ type NoiseSuppressor struct {
 	energyHistory []float64
 
 	// Metrics
-	totalFrames     uint64
+	totalFrames      uint64
 	suppressedFrames uint64
-	voiceFrames     uint64
-	noiseLevel      float64
-	signalLevel     float64
+	voiceFrames      uint64
+	noiseLevel       float64
+	signalLevel      float64
 }
 
 // NewNoiseSuppressor creates a new noise suppressor
@@ -263,7 +263,7 @@ func (ns *NoiseSuppressor) detectVoiceActivity(magnitude []float64) bool {
 // spectralSubtraction applies spectral subtraction for noise suppression
 func (ns *NoiseSuppressor) spectralSubtraction(magnitude []float64, isVoice bool) []float64 {
 	result := make([]float64, len(magnitude))
-	
+
 	suppressionFactor := ns.config.SpectralSubtractionFactor
 	if isVoice {
 		// Reduce suppression for voice frames
@@ -273,7 +273,7 @@ func (ns *NoiseSuppressor) spectralSubtraction(magnitude []float64, isVoice bool
 	for i := range magnitude {
 		// Subtract noise profile
 		cleaned := magnitude[i] - suppressionFactor*ns.noiseProfile[i]
-		
+
 		// Apply noise floor
 		if cleaned < ns.noiseFloor {
 			cleaned = ns.noiseFloor
@@ -281,7 +281,7 @@ func (ns *NoiseSuppressor) spectralSubtraction(magnitude []float64, isVoice bool
 
 		// Apply suppression level
 		result[i] = magnitude[i]*(1-ns.config.SuppressionLevel) + cleaned*ns.config.SuppressionLevel
-		
+
 		// Ensure non-negative
 		if result[i] < 0 {
 			result[i] = ns.noiseFloor
@@ -294,7 +294,7 @@ func (ns *NoiseSuppressor) spectralSubtraction(magnitude []float64, isVoice bool
 // applySpectralSmoothing applies smoothing to reduce musical noise
 func (ns *NoiseSuppressor) applySpectralSmoothing(magnitude []float64) []float64 {
 	result := make([]float64, len(magnitude))
-	
+
 	// Temporal smoothing
 	alpha := 0.7
 	for i := range magnitude {
@@ -334,7 +334,7 @@ func (ns *NoiseSuppressor) applyHighPassFilter(samples []float64) []float64 {
 	// Simple first-order high-pass filter
 	result := make([]float64, len(samples))
 	alpha := ns.config.HighPassCutoff / (ns.config.HighPassCutoff + 8000.0) // Assuming 8kHz sample rate
-	
+
 	for i := range samples {
 		if i == 0 {
 			result[i] = samples[i]

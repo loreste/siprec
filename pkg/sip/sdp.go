@@ -3,7 +3,6 @@ package sip
 import (
 	"encoding/base64"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -14,102 +13,6 @@ import (
 	"github.com/pion/sdp/v3"
 	"github.com/sirupsen/logrus"
 )
-
-// ValidateSDP performs validation on SDP content
-func ValidateSDP(sdpData []byte) error {
-	if len(sdpData) == 0 {
-		return errors.New("empty SDP content")
-	}
-
-	// Parse the SDP to validate it
-	parsedSDP, err := ParseSDPTolerant(sdpData, nil)
-	if err != nil {
-		return errors.Wrap(err, "invalid SDP format")
-	}
-
-	// Validate required fields
-	if parsedSDP.Origin.Username == "" {
-		return errors.New("missing origin username in SDP")
-	}
-
-	if parsedSDP.Origin.SessionID == 0 {
-		return errors.New("missing session ID in SDP")
-	}
-
-	if parsedSDP.SessionName == "" {
-		return errors.New("missing session name in SDP")
-	}
-
-	// Validate media sections
-	if len(parsedSDP.MediaDescriptions) == 0 {
-		return errors.New("SDP contains no media sections")
-	}
-
-	// Validate at least one audio section exists
-	hasAudio := false
-	for _, md := range parsedSDP.MediaDescriptions {
-		if md.MediaName.Media == "audio" {
-			hasAudio = true
-
-			// Validate port structure (in newer pion/sdp versions this is a struct)
-			// Access as Port.Value or first make sure it's not nil
-			portValue := 0
-			if md.MediaName.Port.Value > 0 {
-				portValue = md.MediaName.Port.Value
-			}
-
-			if portValue == 0 {
-				return errors.New("audio section has port 0")
-			}
-
-			// Validate formats
-			if len(md.MediaName.Formats) == 0 {
-				return errors.New("audio section has no codecs specified")
-			}
-
-			// Ensure dynamic payload types advertise rtpmap per RFC 3551 §3
-			missingRTPMap := make(map[string]struct{})
-			for _, format := range md.MediaName.Formats {
-				fmtID := strings.TrimSpace(format)
-				if fmtID == "" {
-					continue
-				}
-				pt, err := strconv.Atoi(fmtID)
-				if err != nil || pt >= 96 {
-					missingRTPMap[fmtID] = struct{}{}
-				}
-			}
-			if len(missingRTPMap) > 0 {
-				for _, attr := range md.Attributes {
-					if attr.Key != "rtpmap" {
-						continue
-					}
-					fields := strings.Fields(attr.Value)
-					if len(fields) == 0 {
-						continue
-					}
-					fmtID := strings.TrimSpace(fields[0])
-					delete(missingRTPMap, fmtID)
-				}
-				if len(missingRTPMap) > 0 {
-					missing := make([]string, 0, len(missingRTPMap))
-					for fmtID := range missingRTPMap {
-						missing = append(missing, fmtID)
-					}
-					return errors.New(fmt.Sprintf("audio section missing rtpmap for payload(s): %s", strings.Join(missing, ", ")))
-				}
-			}
-
-			break
-		}
-	}
-
-	if !hasAudio {
-		return errors.New("SDP contains no audio section")
-	}
-
-	return nil
-}
 
 // ParseSDPTolerant attempts to parse an SDP payload while tolerating
 // non-compliant attributes that frequently appear in vendor implementations.
@@ -197,37 +100,6 @@ func isValidSDPAttributeKey(key string) bool {
 	}
 
 	return true
-}
-
-// generateSDP creates an SDP description based on options
-// This is a legacy function that delegates to generateSDPAdvanced for consistency
-func (h *Handler) generateSDP(receivedSDP *sdp.SessionDescription, options *media.SDPOptions) *sdp.SessionDescription {
-	return h.generateSDPAdvanced(receivedSDP, options)
-}
-
-// generateSDPResponse generates an SDP response for the initial INVITE
-// This is a wrapper around the central generateSDP function
-func (h *Handler) generateSDPResponse(receivedSDP *sdp.SessionDescription, ipToUse string) *sdp.SessionDescription {
-	options := &media.SDPOptions{
-		IPAddress:  ipToUse,
-		BehindNAT:  h.Config.MediaConfig.BehindNAT,
-		InternalIP: h.Config.MediaConfig.InternalIP,
-		ExternalIP: h.Config.MediaConfig.ExternalIP,
-		IncludeICE: true,
-		RTPPort:    0, // Will use dynamic ports
-		EnableSRTP: h.Config.MediaConfig.EnableSRTP,
-	}
-
-	// Add SRTP information if SRTP is enabled
-	if h.Config.MediaConfig.EnableSRTP {
-		options.SRTPKeyInfo = &media.SRTPKeyInfo{
-			Profile:     "AES_CM_128_HMAC_SHA1_80",
-			KeyLifetime: 2147483647, // 2^31 per RFC 3711
-			// Note: actual keys will be populated by the caller
-		}
-	}
-
-	return h.generateSDPAdvanced(receivedSDP, options)
 }
 
 // generateSDPResponseWithPort generates an SDP response with a specific port (for re-INVITEs)
@@ -325,8 +197,6 @@ func (h *Handler) generateSDPResponseForForwarders(receivedSDP *sdp.SessionDescr
 
 	return h.generateSDPAdvanced(receivedSDP, options)
 }
-
-
 
 // generateSDPAdvanced generates an SDP response based on the provided options
 func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, options *media.SDPOptions) *sdp.SessionDescription {
@@ -725,4 +595,3 @@ func prioritizeCodecs(formats []string) []string {
 
 	return prioritized
 }
-

@@ -195,23 +195,3 @@ func (w *BufferedPipeWriter) Buffered() int {
 
 // ErrBufferOverflow is returned when data is dropped due to buffer overflow
 var ErrBufferOverflow = errors.New("buffer overflow: data dropped")
-
-// bufferedPipeReaderAdapter adapts BufferedPipeReader to io.PipeReader interface
-type bufferedPipeReaderAdapter struct {
-	*BufferedPipeReader
-}
-
-// CloseWithError implements the io.PipeReader interface
-func (a *bufferedPipeReaderAdapter) CloseWithError(err error) error {
-	return a.BufferedPipeReader.CloseWithError(err)
-}
-
-// bufferedPipeWriterAdapter adapts BufferedPipeWriter to io.PipeWriter interface
-type bufferedPipeWriterAdapter struct {
-	*BufferedPipeWriter
-}
-
-// CloseWithError implements the io.PipeWriter interface
-func (a *bufferedPipeWriterAdapter) CloseWithError(err error) error {
-	return a.BufferedPipeWriter.CloseWithError(err)
-}

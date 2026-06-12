@@ -26,7 +26,6 @@ type AmazonTranscribeProvider struct {
 	mutex            sync.RWMutex
 }
 
-
 // NewAmazonTranscribeProvider creates a new Amazon Transcribe provider
 func NewAmazonTranscribeProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.AmazonSTTConfig) *AmazonTranscribeProvider {
 	return &AmazonTranscribeProvider{
@@ -93,13 +92,13 @@ func (p *AmazonTranscribeProvider) Initialize() error {
 	p.client = transcribestreaming.NewFromConfig(cfg)
 
 	p.logger.WithFields(logrus.Fields{
-		"region":      region,
-		"language":    p.config.Language,
+		"region":       region,
+		"language":     p.config.Language,
 		"media_format": p.config.MediaFormat,
-		"sample_rate": p.config.SampleRate,
-		"vocabulary":  p.config.VocabularyName,
-		"channel_id":  p.config.EnableChannelIdentification,
-		"speaker_id":  p.config.EnableSpeakerIdentification,
+		"sample_rate":  p.config.SampleRate,
+		"vocabulary":   p.config.VocabularyName,
+		"channel_id":   p.config.EnableChannelIdentification,
+		"speaker_id":   p.config.EnableSpeakerIdentification,
 	}).Info("Amazon Transcribe provider initialized successfully")
 
 	return nil
@@ -360,7 +359,7 @@ func (p *AmazonTranscribeProvider) processTranscriptEvent(event types.Transcript
 			p.callbackMutex.RLock()
 			callback := p.callback
 			p.callbackMutex.RUnlock()
-			
+
 			if callback != nil {
 				callback(callUUID, transcript, isFinal, metadata)
 			}
@@ -379,8 +378,8 @@ func (p *AmazonTranscribeProvider) UpdateConfig(cfg *config.AmazonSTTConfig) {
 	defer p.mutex.Unlock()
 	p.config = cfg
 	p.logger.WithFields(logrus.Fields{
-		"language":    cfg.Language,
-		"sample_rate": cfg.SampleRate,
+		"language":     cfg.Language,
+		"sample_rate":  cfg.SampleRate,
 		"media_format": cfg.MediaFormat,
 	}).Info("Updated Amazon Transcribe configuration")
 }

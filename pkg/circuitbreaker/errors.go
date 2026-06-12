@@ -32,11 +32,3 @@ func IsCircuitBreakerError(err error) bool {
 	_, ok := err.(*CircuitBreakerError)
 	return ok
 }
-
-// IsCircuitBreakerOpenError checks if an error is specifically a circuit breaker open error
-func IsCircuitBreakerOpenError(err error) bool {
-	if cbErr, ok := err.(*CircuitBreakerError); ok {
-		return cbErr.State == StateOpen
-	}
-	return false
-}

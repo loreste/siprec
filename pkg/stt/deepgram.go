@@ -278,10 +278,10 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 	// Extract transcription if available and process it
 	p.logger.WithFields(logrus.Fields{
-		"channels_count":     len(deepgramResp.Results.Channels),
-		"call_uuid":          callUUID,
-		"request_id":         deepgramResp.RequestID,
-		"duration":           deepgramResp.Metadata.Duration,
+		"channels_count": len(deepgramResp.Results.Channels),
+		"call_uuid":      callUUID,
+		"request_id":     deepgramResp.RequestID,
+		"duration":       deepgramResp.Metadata.Duration,
 	}).Info("Deepgram response received")
 
 	if len(deepgramResp.Results.Channels) > 0 && len(deepgramResp.Results.Channels[0].Alternatives) > 0 {
@@ -289,10 +289,10 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 		transcript := alternative.Transcript
 
 		p.logger.WithFields(logrus.Fields{
-			"transcript":   transcript,
-			"confidence":   alternative.Confidence,
-			"words_count":  len(alternative.Words),
-			"call_uuid":    callUUID,
+			"transcript":  transcript,
+			"confidence":  alternative.Confidence,
+			"words_count": len(alternative.Words),
+			"call_uuid":   callUUID,
 		}).Info("Extracted transcript from Deepgram response")
 
 		if transcript != "" {

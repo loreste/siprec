@@ -26,7 +26,7 @@ func encryptWithKey(key, plaintext []byte) ([]byte, error) {
 	}
 
 	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
-	
+
 	// Prepend nonce to ciphertext
 	result := make([]byte, len(nonce)+len(ciphertext))
 	copy(result, nonce)
@@ -60,11 +60,4 @@ func decryptWithKey(key, ciphertext []byte) ([]byte, error) {
 	}
 
 	return plaintext, nil
-}
-
-// SecureZeroMemory securely zeros memory
-func SecureZeroMemory(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

@@ -2,6 +2,31 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [Unreleased]
+
+### Security
+- **Removed Committed Encryption Key**: Deleted an encryption key file that had been committed to the repository
+- **Hardened .gitignore**: Keys, certificates, local environment files, and build artifacts are now excluded from version control
+
+### Added
+- **Async STT Job API**: Queued transcription jobs exposed via `/api/stt/submit`, `/api/stt/jobs`, `/api/stt/jobs/{id}`, `/api/stt/stats`, `/api/stt/metrics`, and `/api/stt/queue/purge`
+- **Configuration API**: Hot-reload management endpoints at `/api/config`, `/api/config/validate`, `/api/config/reload`, and `/api/config/reload/status`
+- **RBAC Enforcement**: Optional role-based access control for HTTP API endpoints, enabled via `AUTH_RBAC_ENABLED=true` (requires authentication and database persistence)
+- **SMTP Email Alerting**: The alerting email channel now delivers real SMTP mail with `auto`, `implicit` (SMTPS), `starttls`, and `none` TLS modes
+- **Alert Delivery Metrics**: Notification channels report real delivery success/failure metrics
+- **Encryption Key Backup/Restore**: Encryption keys can be exported to and restored from password-protected backups
+- **AWS Secrets Manager Lookup**: Provider credentials can be resolved from AWS Secrets Manager
+- **DNS & Load Balancer Failover**: Route 53 and GCP DNS failover plus GCP load balancer failover support in the backup/disaster-recovery subsystem
+- **Database Restore**: Disaster-recovery database restore now uses `pg_restore` for PostgreSQL dump archives
+
+### Fixed
+- **STUN Client RFC 5389 Compliance**: External IP discovery now builds and parses STUN messages per RFC 5389
+- **Hot-Reload Deep Copy**: Configuration hot-reload performs a proper deep copy of the active configuration, preventing shared-state mutation between reloads
+
+### Removed
+- Roughly 850 dead/unused functions across the codebase
+- Stale test reports, planning notes, ad-hoc test scripts, and scenario files from the repository root
+
 ## [1.2.0] - 2026-03-17
 
 ### Added

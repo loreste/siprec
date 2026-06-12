@@ -108,11 +108,13 @@ Works with any SIPREC-compliant source, including:
 
 ### Operational Features
 - **Pause/Resume API** – Control recording and transcription mid-call via REST API
+- **Async STT Job API** – Submit, track, and manage queued transcription jobs via `/api/stt/*`
 - **Health & Readiness** – Kubernetes-compatible health probes
 - **Graceful Shutdown** – Proper cleanup of active sessions and connections
-- **Hot-Reload Configuration** – Dynamic configuration updates without restart
+- **Hot-Reload Configuration** – Dynamic configuration updates without restart, managed via `/api/config` endpoints
 - **Call Detail Records** – Comprehensive CDR generation and storage
-- **Multi-Channel Alerting** – Email, Slack, webhook notifications
+- **Multi-Channel Alerting** – Email (SMTP), Slack, PagerDuty, and webhook notifications with delivery metrics
+- **Role-Based Access Control** – Optional RBAC enforcement for API endpoints (`AUTH_RBAC_ENABLED`)
 - **Centralized Warnings** – System-wide warning collection and deduplication
 
 ## Quick Start
@@ -134,7 +136,7 @@ go build -o siprec ./cmd/siprec
 ### Docker Deployment
 
 ```bash
-# Using docker-compose with RabbitMQ, Redis, and PostgreSQL
+# Using docker-compose with RabbitMQ (docker-compose.dev.yml adds Redis)
 docker-compose up -d
 
 # Or standalone container
@@ -259,7 +261,8 @@ export REDIS_PASSWORD=your-password
 | Variable | Description | Default |
 | --- | --- | --- |
 | `DEFAULT_SPEECH_VENDOR` | Default STT provider | `google` |
-| `STT_SUPPORTED_VENDORS` | Comma-separated list of vendors | `google,deepgram` |
+| `SUPPORTED_VENDORS` | Comma-separated list of vendors | `google,deepgram,elevenlabs,speechmatics,openai` |
+| `STT_ASYNC_ENABLED` | Enable the async STT job queue and `/api/stt/*` API | `true` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google credentials | - |
 | `DEEPGRAM_API_KEY` | Deepgram API key | - |
 | `AZURE_SPEECH_KEY` | Azure Speech key | - |
@@ -270,25 +273,36 @@ export REDIS_PASSWORD=your-password
 | Variable | Description | Default |
 | --- | --- | --- |
 | `ENABLE_TLS` | Enable TLS for SIP | `false` |
-| `TLS_CERT_FILE` | Path to TLS certificate | - |
-| `TLS_KEY_FILE` | Path to TLS private key | - |
+| `TLS_CERT_PATH` | Path to TLS certificate | - |
+| `TLS_KEY_PATH` | Path to TLS private key | - |
 | `ENABLE_RECORDING_ENCRYPTION` | Encrypt recordings | `false` |
 | `ENCRYPTION_ALGORITHM` | Encryption algorithm | `aes-256-gcm` |
 | `PII_DETECTION_ENABLED` | Enable PII detection | `false` |
 | `PII_ENABLED_TYPES` | Comma-separated types | `ssn,credit_card,phone,email` |
-| `PCI_COMPLIANCE_MODE` | Enable PCI DSS mode | `false` |
+| `COMPLIANCE_PCI_ENABLED` | Enable PCI DSS mode | `false` |
+
+### Authentication & RBAC
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `AUTH_ENABLED` | Enable HTTP API authentication (JWT/API keys) | `false` |
+| `AUTH_JWT_SECRET` | JWT signing secret (required when auth is enabled) | - |
+| `AUTH_ENABLE_API_KEYS` | Allow API key authentication | `true` |
+| `AUTH_RBAC_ENABLED` | Enforce role-based access control on API endpoints (requires `AUTH_ENABLED=true` and database persistence) | `false` |
 
 ### Storage
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `STORAGE_ENABLED` | Enable cloud storage | `false` |
-| `S3_ENABLED` | Enable S3 upload | `false` |
-| `S3_BUCKET` | S3 bucket name | - |
-| `GCS_ENABLED` | Enable GCS upload | `false` |
-| `GCS_BUCKET` | GCS bucket name | - |
-| `AZURE_STORAGE_ENABLED` | Enable Azure upload | `false` |
-| `AZURE_STORAGE_ACCOUNT` | Azure storage account | - |
+| `RECORDING_STORAGE_ENABLED` | Enable cloud storage upload | `false` |
+| `RECORDING_STORAGE_KEEP_LOCAL` | Keep local copies after upload | `true` |
+| `RECORDING_STORAGE_S3_ENABLED` | Enable S3 upload | `false` |
+| `RECORDING_STORAGE_S3_BUCKET` | S3 bucket name | - |
+| `RECORDING_STORAGE_GCS_ENABLED` | Enable GCS upload | `false` |
+| `RECORDING_STORAGE_GCS_BUCKET` | GCS bucket name | - |
+| `RECORDING_STORAGE_AZURE_ENABLED` | Enable Azure Blob upload | `false` |
+| `RECORDING_STORAGE_AZURE_ACCOUNT` | Azure storage account | - |
+| `RECORDING_STORAGE_AZURE_CONTAINER` | Azure blob container | - |
 
 ### Messaging
 
@@ -304,12 +318,12 @@ export REDIS_PASSWORD=your-password
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `DATABASE_ENABLED` | Enable MySQL persistence | `false` |
-| `MYSQL_HOST` | MySQL host | `localhost` |
-| `MYSQL_PORT` | MySQL port | `3306` |
-| `MYSQL_DATABASE` | Database name | `siprec` |
-| `MYSQL_USER` | Database user | - |
-| `MYSQL_PASSWORD` | Database password | - |
+| `DATABASE_ENABLED` | Enable MySQL persistence (requires `mysql` build tag) | `false` |
+| `DB_HOST` | MySQL host | `localhost` |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_NAME` | Database name | `siprec` |
+| `DB_USERNAME` | Database user | `siprec` |
+| `DB_PASSWORD` | Database password | - |
 
 ### Enterprise Scaling
 
@@ -353,7 +367,27 @@ export REDIS_PASSWORD=your-password
 | --- | --- | --- |
 | `ANALYTICS_ENABLED` | Enable analytics pipeline | `false` |
 | `ELASTICSEARCH_ADDRESSES` | Elasticsearch endpoints | - |
-| `ELASTICSEARCH_INDEX` | Index for analytics | `siprec-analytics` |
+| `ELASTICSEARCH_INDEX` | Index for analytics | `call-analytics` |
+
+### Alerting
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ALERTING_ENABLED` | Enable the alert manager | `false` |
+| `ALERTING_EVALUATION_INTERVAL` | Alert rule evaluation interval | `30s` |
+
+Notifications can be delivered through email (SMTP), Slack, PagerDuty, and generic webhook channels. The email channel sends real SMTP mail and accepts the following channel settings:
+
+| Setting | Description |
+| --- | --- |
+| `smtp_host` | SMTP server hostname (required) |
+| `smtp_port` | SMTP server port (default `587`) |
+| `username` / `password` | SMTP authentication credentials (optional) |
+| `from` | Sender address (required) |
+| `to` | Recipient address or list of addresses (required) |
+| `tls_mode` | `auto` (default), `implicit` (SMTPS/465), `starttls`, or `none` |
+| `insecure_skip_verify` | Skip TLS certificate verification (not recommended) |
+| `timeout_seconds` | SMTP dial/send timeout (default `30`) |
 
 #### Enabling Sentiment & Analytics
 
@@ -389,7 +423,7 @@ Once enabled, each transcription chunk carries a sentiment payload computed by t
 
 ### Real-Time Transcription
 
-- `GET /ws` – WebSocket endpoint for live transcription streaming
+- `GET /ws/transcriptions` – WebSocket endpoint for live transcription streaming
 - `GET /ws/analytics` – WebSocket endpoint for real-time analytics
 
 #### Failure Handling
@@ -404,24 +438,47 @@ Once enabled, each transcription chunk carries a sentiment payload computed by t
 - No extra flags are required—channel counts are learned from the SDP offer—just ensure the upstream recorder advertises the desired `/2` channel count so the SIPREC server keeps both legs in one file.
 - If the SRC sends **separate** audio streams (most SIPREC implementations), enable `RECORDING_COMBINE_LEGS=true` (default) to automatically merge all legs into `<Call-ID>.wav` with each leg occupying its own channel. Individual leg files remain on disk for debugging.
 
-### Pause/Resume Control
+### Pause/Resume & Mute Control
 
-- `POST /api/pause/:callUUID` – Pause recording/transcription for specific call
-- `POST /api/resume/:callUUID` – Resume recording/transcription
-- `POST /api/pause/all` – Pause all active sessions
-- `POST /api/resume/all` – Resume all paused sessions
-- `GET /api/status/:callUUID` – Get pause/resume status
+- `POST /api/sessions/{id}/pause` – Pause recording/transcription for a session
+- `POST /api/sessions/{id}/resume` – Resume recording/transcription
+- `GET /api/sessions/{id}/pause-status` – Get pause status for a session
+- `POST /api/sessions/pause-all` – Pause all active sessions
+- `POST /api/sessions/resume-all` – Resume all paused sessions
+- `GET /api/sessions/pause-status` – Get pause status for all sessions
+- `POST /api/sessions/{id}/mute` / `POST /api/sessions/{id}/unmute` – Mute or unmute a session
+- `GET /api/sessions/{id}/mute-status` – Get mute status
 
 ### Session Management
 
-- `GET /api/sessions` – List all active sessions
-- `GET /api/sessions/:id` – Get session details
-- `DELETE /api/sessions/:id` – Terminate session
+- `GET /api/sessions` – List all active sessions (use `?id=<session-id>` for a single session)
+- `GET /api/sessions/stats` – Session statistics
+
+### Async STT Job API
+
+Available when the async STT processor is enabled (`STT_ASYNC_ENABLED=true`, the default):
+
+- `POST /api/stt/submit` – Submit an audio file for asynchronous transcription
+- `GET /api/stt/jobs` – List transcription jobs
+- `GET /api/stt/jobs/{id}` – Get job status and result
+- `GET /api/stt/stats` – Queue and worker statistics
+- `GET /api/stt/metrics` – Job processing metrics
+- `POST /api/stt/queue/purge` – Purge queued jobs
+
+### Configuration API
+
+Available when configuration hot-reload is active (`hot_reload.enabled`, the default):
+
+- `GET /api/config` – View the running configuration (enable authentication before exposing this endpoint)
+- `POST /api/config/validate` – Validate a candidate configuration
+- `POST /api/config/reload` – Trigger a configuration reload
+- `GET /api/config/reload/status` – Hot-reload status and history
 
 ### GDPR Compliance
 
-- `POST /api/compliance/export` – Export user data
-- `POST /api/compliance/erase` – Erase user data (removes local `.wav/.siprec` artifacts and every uploaded copy recorded in the `.locations` manifest)
+- `GET /api/compliance/status` – Compliance feature status
+- `POST /api/compliance/gdpr/export` – Export user data
+- `DELETE /api/compliance/gdpr/erase` – Erase user data (removes local `.wav/.siprec` artifacts and every uploaded copy recorded in the `.locations` manifest)
 
 Every recording that is uploaded to remote storage now has a sidecar `<recording>.locations` file listing the exact URLs that were written (e.g., `s3://bucket/prefix/file.siprec`). The GDPR erase workflow reads that manifest, issues deletes against each backend, and then removes both the manifest and the encrypted object so that nothing remains online.
 
@@ -534,8 +591,11 @@ siprec/
 │   ├── cdr/             # Call Detail Records
 │   ├── circuitbreaker/  # Circuit breaker for STT resilience
 │   ├── cli/             # CLI tool implementation
+│   ├── cluster/         # Redis-backed clustering and failover
 │   ├── compliance/      # PCI DSS and GDPR tools
 │   ├── config/          # Configuration management
+│   ├── core/            # Shared service registry
+│   ├── correlation/     # Request correlation ID tracking
 │   ├── database/        # MySQL/MariaDB integration
 │   ├── elasticsearch/   # Analytics persistence
 │   ├── encryption/      # End-to-end encryption
@@ -547,6 +607,7 @@ siprec/
 │   ├── metrics/         # Prometheus metrics
 │   ├── performance/     # Performance monitoring
 │   ├── pii/             # PII detection and redaction
+│   ├── ratelimit/       # HTTP and SIP rate limiting
 │   ├── realtime/        # Real-time analytics pipeline
 │   ├── resources/       # Resource management and limits
 │   ├── security/        # Security and audit logging
@@ -734,7 +795,7 @@ For deployments requiring 100,000+ concurrent recordings:
 ```bash
 # Enable horizontal scaling with Redis session sharing
 HORIZONTAL_SCALING=true
-REDIS_URL=redis://cluster:6379
+REDIS_ADDRESS=cluster:6379
 NODE_ID=node-1
 
 # Resource configuration per node
@@ -754,9 +815,11 @@ MAX_MEMORY_MB=16384
 
 For load testing with SIPp, use TCP with `tn` mode (one socket per call) for best reliability:
 
+Ready-made SIPp scenarios are available in [`test/sipp/`](test/sipp/).
+
 ```bash
 # 6000 concurrent calls, 5-minute duration, 100 calls/sec ramp-up
-sipp <server>:5060 -t tn -sf siprec_scenario.xml -l 6000 -m 6000 -r 100 -timeout 600
+sipp <server>:5060 -t tn -sf test/sipp/siprec_load_test.xml -l 6000 -m 6000 -r 100 -timeout 600
 ```
 
 **Note:** On macOS, the standard TCP mode (`-t t1`) may fail with "Address already in use" errors. Use `-t tn` instead for reliable TCP testing.

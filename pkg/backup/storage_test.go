@@ -235,9 +235,9 @@ func TestMultiBackupStorageDelete_DifferentSchemes(t *testing.T) {
 	}
 
 	tests := []struct {
-		path             string
-		expectCalls      string
-		expectNoCalls    []string
+		path          string
+		expectCalls   string
+		expectNoCalls []string
 	}{
 		{
 			path:          "s3://bucket/file.siprec",

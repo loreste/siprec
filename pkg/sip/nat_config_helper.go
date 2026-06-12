@@ -50,10 +50,3 @@ func NewNATConfigFromMediaConfig(mediaConfig *media.Config, sipPorts []int) *NAT
 
 	return natConfig
 }
-
-// UpdateNATConfigWithExternalIP updates the NAT config with a detected external IP
-func UpdateNATConfigWithExternalIP(config *NATConfig, externalIP string) {
-	if config != nil && externalIP != "" {
-		config.ExternalIP = externalIP
-	}
-}

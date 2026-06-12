@@ -22,19 +22,19 @@ const (
 
 // TraceContext holds distributed tracing context
 type TraceContext struct {
-	TraceID    string `json:"trace_id"`
-	SpanID     string `json:"span_id"`
-	ParentID   string `json:"parent_id,omitempty"`
-	NodeID     string `json:"node_id"`
-	CallUUID   string `json:"call_uuid,omitempty"`
-	Operation  string `json:"operation"`
-	StartTime  int64  `json:"start_time_ns"`
-	EndTime    int64  `json:"end_time_ns,omitempty"`
-	Duration   int64  `json:"duration_ns,omitempty"`
-	Status     string `json:"status"` // "active", "completed", "error"
-	Error      string `json:"error,omitempty"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Logs       []TraceLog        `json:"logs,omitempty"`
+	TraceID   string            `json:"trace_id"`
+	SpanID    string            `json:"span_id"`
+	ParentID  string            `json:"parent_id,omitempty"`
+	NodeID    string            `json:"node_id"`
+	CallUUID  string            `json:"call_uuid,omitempty"`
+	Operation string            `json:"operation"`
+	StartTime int64             `json:"start_time_ns"`
+	EndTime   int64             `json:"end_time_ns,omitempty"`
+	Duration  int64             `json:"duration_ns,omitempty"`
+	Status    string            `json:"status"` // "active", "completed", "error"
+	Error     string            `json:"error,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	Logs      []TraceLog        `json:"logs,omitempty"`
 }
 
 // TraceLog represents a log entry within a span
@@ -180,10 +180,10 @@ func (t *DistributedTracer) ContinueTrace(ctx context.Context, traceID, parentSp
 	t.saveTrace(span)
 
 	t.logger.WithFields(logrus.Fields{
-		"trace_id":   traceID,
-		"span_id":    spanID,
-		"parent_id":  parentSpanID,
-		"operation":  operation,
+		"trace_id":  traceID,
+		"span_id":   spanID,
+		"parent_id": parentSpanID,
+		"operation": operation,
 	}).Debug("Continuing trace from another node")
 
 	return span
@@ -485,9 +485,9 @@ func (t *DistributedTracer) GetStats() map[string]interface{} {
 	keys, _ := t.redis.Keys(ctx, pattern).Result()
 
 	return map[string]interface{}{
-		"active_spans":  activeCount,
-		"total_traces":  len(keys),
-		"node_id":       t.nodeID,
+		"active_spans": activeCount,
+		"total_traces": len(keys),
+		"node_id":      t.nodeID,
 	}
 }
 

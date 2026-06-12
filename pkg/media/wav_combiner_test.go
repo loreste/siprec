@@ -128,12 +128,12 @@ func TestCombineWAVRecordingsAligned(t *testing.T) {
 	// Sample 3: leg0=200, leg1=0
 	// etc.
 	expected := []int16{
-		0, 1000,      // leg0 padded, leg1 starts
-		0, 2000,      // leg0 padded, leg1 sample 2
-		100, 0,       // leg0 starts, leg1 ends
-		200, 0,       // leg0 sample 2
-		300, 0,       // leg0 sample 3
-		400, 0,       // leg0 sample 4
+		0, 1000, // leg0 padded, leg1 starts
+		0, 2000, // leg0 padded, leg1 sample 2
+		100, 0, // leg0 starts, leg1 ends
+		200, 0, // leg0 sample 2
+		300, 0, // leg0 sample 3
+		400, 0, // leg0 sample 4
 	}
 
 	if len(samples) != len(expected) {

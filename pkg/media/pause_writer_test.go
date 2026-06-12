@@ -12,10 +12,10 @@ func TestPausableWriter(t *testing.T) {
 	t.Run("writes when not paused", func(t *testing.T) {
 		buf := &bytes.Buffer{}
 		pw := NewPausableWriter(buf)
-		
+
 		data := []byte("test data")
 		n, err := pw.Write(data)
-		
+
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -30,13 +30,13 @@ func TestPausableWriter(t *testing.T) {
 	t.Run("drops data when paused", func(t *testing.T) {
 		buf := &bytes.Buffer{}
 		pw := NewPausableWriter(buf)
-		
+
 		// Pause the writer
 		pw.Pause()
-		
+
 		data := []byte("test data")
 		n, err := pw.Write(data)
-		
+
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestPausableWriter(t *testing.T) {
 		// Resume and write again
 		pw.Resume()
 		_, _ = pw.Write([]byte("after resume"))
-		
+
 		expected := "before pause after resume"
 		if buf.String() != expected {
 			t.Fatalf("expected '%s', got '%s'", expected, buf.String())
@@ -72,9 +72,9 @@ func TestPausableWriter(t *testing.T) {
 	t.Run("concurrent pause/resume safety", func(t *testing.T) {
 		buf := &bytes.Buffer{}
 		pw := NewPausableWriter(buf)
-		
+
 		var wg sync.WaitGroup
-		
+
 		// Writer goroutine
 		wg.Add(1)
 		go func() {
@@ -84,7 +84,7 @@ func TestPausableWriter(t *testing.T) {
 				time.Sleep(time.Microsecond)
 			}
 		}()
-		
+
 		// Pause/resume goroutine
 		wg.Add(1)
 		go func() {
@@ -96,9 +96,9 @@ func TestPausableWriter(t *testing.T) {
 				time.Sleep(time.Microsecond)
 			}
 		}()
-		
+
 		wg.Wait()
-		
+
 		// Just check that we didn't panic
 		if !pw.IsPaused() && buf.Len() == 0 {
 			t.Fatal("expected some data to be written")
@@ -110,10 +110,10 @@ func TestPausableReader(t *testing.T) {
 	t.Run("reads when not paused", func(t *testing.T) {
 		source := bytes.NewReader([]byte("test data"))
 		pr := NewPausableReader(source)
-		
+
 		buf := make([]byte, 9)
 		n, err := pr.Read(buf)
-		
+
 		if err != nil && err != io.EOF {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -128,10 +128,10 @@ func TestPausableReader(t *testing.T) {
 	t.Run("blocks when paused", func(t *testing.T) {
 		source := bytes.NewReader([]byte("test data"))
 		pr := NewPausableReader(source)
-		
+
 		// Pause the reader
 		pr.Pause()
-		
+
 		// Try to read in a goroutine
 		done := make(chan bool)
 		go func() {
@@ -139,7 +139,7 @@ func TestPausableReader(t *testing.T) {
 			_, _ = pr.Read(buf)
 			done <- true
 		}()
-		
+
 		// Should timeout waiting for read
 		select {
 		case <-done:
@@ -147,7 +147,7 @@ func TestPausableReader(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 			// Expected - read is blocked
 		}
-		
+
 		// Resume and check that read completes
 		pr.Resume()
 		select {
@@ -161,9 +161,9 @@ func TestPausableReader(t *testing.T) {
 	t.Run("concurrent operations", func(t *testing.T) {
 		source := bytes.NewReader(make([]byte, 1000))
 		pr := NewPausableReader(source)
-		
+
 		var wg sync.WaitGroup
-		
+
 		// Reader goroutine
 		wg.Add(1)
 		go func() {
@@ -173,7 +173,7 @@ func TestPausableReader(t *testing.T) {
 				_, _ = pr.Read(buf)
 			}
 		}()
-		
+
 		// Pause/resume goroutine
 		wg.Add(1)
 		go func() {
@@ -185,14 +185,14 @@ func TestPausableReader(t *testing.T) {
 				time.Sleep(time.Microsecond * 10)
 			}
 		}()
-		
+
 		// Use a timeout to ensure test doesn't hang
 		done := make(chan bool)
 		go func() {
 			wg.Wait()
 			done <- true
 		}()
-		
+
 		select {
 		case <-done:
 			// Test completed successfully

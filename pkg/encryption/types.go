@@ -21,6 +21,10 @@ type EncryptionConfig struct {
 	KeyBackupEnabled    bool          `json:"key_backup_enabled" mapstructure:"key_backup_enabled"`
 	BackupPassword      string        `json:"backup_password" mapstructure:"backup_password"`
 
+	// Directory where encrypted key backups are written.
+	// Defaults to <MasterKeyPath>/backups when empty.
+	KeyBackupDir string `json:"key_backup_dir" mapstructure:"key_backup_dir"`
+
 	// Security parameters
 	KeySize          int `json:"key_size" mapstructure:"key_size"`                   // 256 for AES-256
 	NonceSize        int `json:"nonce_size" mapstructure:"nonce_size"`               // 12 for GCM, 24 for ChaCha20

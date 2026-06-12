@@ -3,11 +3,13 @@ package stt
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,19 +21,20 @@ import (
 
 // AsyncSTTProcessor handles asynchronous STT processing with queueing
 type AsyncSTTProcessor struct {
-	queue           STTQueue
-	providerManager *ProviderManager
-	logger          *logrus.Logger
-	config          *AsyncSTTConfig
-	workers         []*STTWorker
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	metrics         *AsyncSTTMetrics
-	callbacks       []JobCallback
-	callbacksMutex  sync.RWMutex // Dedicated mutex for callbacks slice
-	started         bool
-	mutex           sync.RWMutex
+	queue            STTQueue
+	providerManager  *ProviderManager
+	transcriptionSvc *TranscriptionService
+	logger           *logrus.Logger
+	config           *AsyncSTTConfig
+	workers          []*STTWorker
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	metrics          *AsyncSTTMetrics
+	callbacks        []JobCallback
+	callbacksMutex   sync.RWMutex // Dedicated mutex for callbacks slice
+	started          bool
+	mutex            sync.RWMutex
 }
 
 // AsyncSTTConfig holds configuration for async STT processing
@@ -126,6 +129,22 @@ func NewAsyncSTTProcessor(providerManager *ProviderManager, logger *logrus.Logge
 	}
 
 	return processor
+}
+
+// SetTranscriptionService wires the shared transcription service used by the
+// registered STT providers so the async processor can capture their streaming
+// results. It must be the same instance the providers publish to.
+func (p *AsyncSTTProcessor) SetTranscriptionService(svc *TranscriptionService) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.transcriptionSvc = svc
+}
+
+// getTranscriptionService returns the configured transcription service, if any.
+func (p *AsyncSTTProcessor) getTranscriptionService() *TranscriptionService {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.transcriptionSvc
 }
 
 // Start starts the async STT processor
@@ -347,13 +366,6 @@ func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
 	return metricsCopy
 }
 
-// AddCallback adds a job completion callback in a thread-safe manner
-func (p *AsyncSTTProcessor) AddCallback(callback JobCallback) {
-	p.callbacksMutex.Lock()
-	defer p.callbacksMutex.Unlock()
-	p.callbacks = append(p.callbacks, callback)
-}
-
 // runWorker runs a single STT worker with optimized polling and idle timeout
 func (p *AsyncSTTProcessor) runWorker(worker *STTWorker) {
 	defer p.wg.Done()
@@ -484,12 +496,30 @@ func (p *AsyncSTTProcessor) processJob(worker *STTWorker, job *STTJob) {
 	}).Info("STT job completed successfully")
 }
 
-// executeSTTJob executes the actual STT processing
+// Transcription flush tuning: providers publish results asynchronously through
+// the transcription service worker pool, so after StreamToText returns we wait
+// briefly for the in-flight events of this call to be delivered.
+const (
+	transcriptionFlushTimeout  = 3 * time.Second
+	transcriptionFlushInterval = 25 * time.Millisecond
+	transcriptionFlushGrace    = 100 * time.Millisecond
+)
+
+// executeSTTJob executes the actual STT processing and captures the real
+// transcription emitted by the provider for the job's call UUID.
 func (p *AsyncSTTProcessor) executeSTTJob(ctx context.Context, job *STTJob) (*TranscriptionResult, error) {
 	// Get the STT provider
 	provider, exists := p.providerManager.GetProvider(job.Provider)
 	if !exists {
 		return nil, fmt.Errorf("STT provider %s not found", job.Provider)
+	}
+
+	// Providers emit transcription segments through the shared transcription
+	// service; without it we cannot capture results, so fail the job instead
+	// of fabricating a successful transcription.
+	svc := p.getTranscriptionService()
+	if svc == nil {
+		return nil, fmt.Errorf("transcription service not configured on async STT processor; cannot capture results for job %s", job.ID)
 	}
 
 	// Open audio file
@@ -505,6 +535,12 @@ func (p *AsyncSTTProcessor) executeSTTJob(ctx context.Context, job *STTJob) (*Tr
 		return nil, fmt.Errorf("failed to get audio file info: %w", err)
 	}
 
+	// Register a collector that captures the final transcript segments the
+	// provider publishes for this call while it streams.
+	collector := newTranscriptionCollector(job.CallUUID)
+	svc.AddListener(collector)
+	defer svc.RemoveListener(collector)
+
 	// Create a buffered, context-aware reader for efficiency
 	bufferedReader := bufio.NewReaderSize(audioFile, 64*1024) // 64KB buffer for efficient reading
 	audioReader := &contextReader{
@@ -512,25 +548,234 @@ func (p *AsyncSTTProcessor) executeSTTJob(ctx context.Context, job *STTJob) (*Tr
 		ctx:    ctx,
 	}
 
-	// Process STT (this is a simplified version - in reality you'd need to adapt existing providers)
-	err = provider.StreamToText(ctx, audioReader, job.CallUUID)
-	if err != nil {
-		return nil, fmt.Errorf("STT provider failed: %w", err)
+	// Stream the audio to the provider; results arrive via the collector.
+	if err := provider.StreamToText(ctx, audioReader, job.CallUUID); err != nil {
+		return nil, fmt.Errorf("STT provider %s failed for job %s: %w", job.Provider, job.ID, err)
 	}
 
-	// For now, create a mock result since the existing providers don't return structured results
-	// In a real implementation, you'd modify the providers to return TranscriptionResult
-	result := &TranscriptionResult{
-		Text:       "Mock transcription result",
-		Confidence: 0.95,
-		Language:   job.Language,
-		Duration:   time.Duration(fileInfo.Size()/16000) * time.Second, // Estimate based on 16kHz
-		WordCount:  10,                                                 // Mock word count
-		Provider:   job.Provider,
-		ModelUsed:  "enhanced",
+	// Wait for asynchronously published transcription events to be delivered
+	// before assembling the final result.
+	p.waitForTranscriptionFlush(ctx, svc)
+
+	result := collector.buildResult(job, fileInfo.Size())
+	if result.Text == "" {
+		p.logger.WithFields(logrus.Fields{
+			"job_id":    job.ID,
+			"call_uuid": job.CallUUID,
+			"provider":  job.Provider,
+		}).Warning("STT provider completed without producing any final transcription segments")
 	}
 
 	return result, nil
+}
+
+// waitForTranscriptionFlush waits until the transcription service event queue
+// has drained (plus a short grace period for in-flight worker deliveries) or
+// the flush timeout/context expires.
+func (p *AsyncSTTProcessor) waitForTranscriptionFlush(ctx context.Context, svc *TranscriptionService) {
+	deadline := time.Now().Add(transcriptionFlushTimeout)
+
+	for time.Now().Before(deadline) {
+		if svc.GetQueueLength() == 0 {
+			// Give in-flight worker deliveries a brief moment to complete.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(transcriptionFlushGrace):
+			}
+			if svc.GetQueueLength() == 0 {
+				return
+			}
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(transcriptionFlushInterval):
+		}
+	}
+}
+
+// capturedSegment holds one final transcription segment captured for a job.
+type capturedSegment struct {
+	text          string
+	confidence    float64
+	hasConfidence bool
+	wordCount     int
+	language      string
+	duration      time.Duration
+	model         string
+	timestamp     time.Time
+}
+
+// transcriptionCollector implements TranscriptionListener and accumulates the
+// final transcription segments published for a single call UUID.
+type transcriptionCollector struct {
+	callUUID string
+	mutex    sync.Mutex
+	segments []capturedSegment
+}
+
+// newTranscriptionCollector creates a collector for the given call UUID.
+func newTranscriptionCollector(callUUID string) *transcriptionCollector {
+	return &transcriptionCollector{
+		callUUID: callUUID,
+	}
+}
+
+// OnTranscription implements the TranscriptionListener interface.
+func (c *transcriptionCollector) OnTranscription(callUUID string, transcription string, isFinal bool, metadata map[string]interface{}) {
+	if callUUID != c.callUUID || !isFinal {
+		return
+	}
+
+	text := strings.TrimSpace(transcription)
+	if text == "" {
+		return
+	}
+
+	segment := capturedSegment{
+		text:      text,
+		timestamp: time.Now(),
+	}
+
+	if metadata != nil {
+		if confidence, ok := numericMetadataValue(metadata["confidence"]); ok {
+			segment.confidence = confidence
+			segment.hasConfidence = true
+		}
+		if wordCount, ok := numericMetadataValue(metadata["word_count"]); ok {
+			segment.wordCount = int(wordCount)
+		}
+		if language, ok := metadata["language"].(string); ok {
+			segment.language = language
+		}
+		if duration, ok := durationMetadataValue(metadata["duration"]); ok {
+			segment.duration = duration
+		}
+		if model, ok := metadata["model"].(string); ok {
+			segment.model = model
+		}
+	}
+
+	c.mutex.Lock()
+	c.segments = append(c.segments, segment)
+	c.mutex.Unlock()
+}
+
+// buildResult assembles the final TranscriptionResult from the captured
+// segments. Duration falls back to an estimate from the audio size (16-bit,
+// 16kHz mono PCM) when providers did not report segment durations.
+func (c *transcriptionCollector) buildResult(job *STTJob, audioBytes int64) *TranscriptionResult {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	texts := make([]string, 0, len(c.segments))
+	segments := make([]TranscriptionSegment, 0, len(c.segments))
+
+	var confidenceSum float64
+	confidenceCount := 0
+	var totalDuration time.Duration
+	language := job.Language
+	model := ""
+
+	for i, segment := range c.segments {
+		texts = append(texts, segment.text)
+
+		segmentLanguage := segment.language
+		if segmentLanguage == "" {
+			segmentLanguage = job.Language
+		}
+
+		segmentWordCount := segment.wordCount
+		if segmentWordCount == 0 {
+			segmentWordCount = len(strings.Fields(segment.text))
+		}
+
+		segments = append(segments, TranscriptionSegment{
+			Timestamp:  segment.timestamp,
+			Text:       segment.text,
+			Language:   segmentLanguage,
+			Confidence: segment.confidence,
+			WordCount:  segmentWordCount,
+			Duration:   segment.duration,
+			SegmentID:  fmt.Sprintf("%s-%d", job.ID, i),
+			Provider:   job.Provider,
+			IsFinal:    true,
+		})
+
+		if segment.hasConfidence {
+			confidenceSum += segment.confidence
+			confidenceCount++
+		}
+		totalDuration += segment.duration
+		if segment.language != "" {
+			language = segment.language
+		}
+		if segment.model != "" {
+			model = segment.model
+		}
+	}
+
+	confidence := 0.0
+	if confidenceCount > 0 {
+		confidence = confidenceSum / float64(confidenceCount)
+	}
+
+	duration := totalDuration
+	if duration == 0 && audioBytes > 0 {
+		// Estimate from 16-bit, 16kHz mono PCM (32000 bytes per second),
+		// matching the assumption used for cost estimation.
+		duration = time.Duration(float64(audioBytes) / 32000.0 * float64(time.Second))
+	}
+
+	fullText := strings.Join(texts, " ")
+
+	return &TranscriptionResult{
+		Text:       fullText,
+		Confidence: confidence,
+		Language:   language,
+		Duration:   duration,
+		WordCount:  len(strings.Fields(fullText)),
+		Segments:   segments,
+		Provider:   job.Provider,
+		ModelUsed:  model,
+	}
+}
+
+// numericMetadataValue extracts a float64 from the loosely typed metadata
+// values emitted by the various STT providers.
+func numericMetadataValue(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// durationMetadataValue extracts a duration from metadata; providers report
+// either a time.Duration or a numeric value in seconds.
+func durationMetadataValue(value interface{}) (time.Duration, bool) {
+	if d, ok := value.(time.Duration); ok {
+		return d, true
+	}
+	if f, ok := numericMetadataValue(value); ok && f > 0 {
+		return time.Duration(f * float64(time.Second)), true
+	}
+	return 0, false
 }
 
 // handleJobFailure handles job processing failures

@@ -124,9 +124,9 @@ type CDR struct {
 	AvayaConfID         *string `db:"avaya_conf_id" json:"avaya_conf_id,omitempty"`
 	AvayaConversationID *string `db:"avaya_conversation_id" json:"avaya_conversation_id,omitempty"`
 	AvayaStationID      *string `db:"avaya_station_id" json:"avaya_station_id,omitempty"`
-	AvayaAgentID    *string `db:"avaya_agent_id" json:"avaya_agent_id,omitempty"`
-	AvayaVDN        *string `db:"avaya_vdn" json:"avaya_vdn,omitempty"`
-	AvayaSkillGroup *string `db:"avaya_skill_group" json:"avaya_skill_group,omitempty"`
+	AvayaAgentID        *string `db:"avaya_agent_id" json:"avaya_agent_id,omitempty"`
+	AvayaVDN            *string `db:"avaya_vdn" json:"avaya_vdn,omitempty"`
+	AvayaSkillGroup     *string `db:"avaya_skill_group" json:"avaya_skill_group,omitempty"`
 	// AudioCodes-specific fields
 	AudioCodesSessionID *string `db:"audiocodes_session_id" json:"audiocodes_session_id,omitempty"`
 	AudioCodesCallID    *string `db:"audiocodes_call_id" json:"audiocodes_call_id,omitempty"`
@@ -143,11 +143,11 @@ type CDR struct {
 	HuaweiCallID    *string `db:"huawei_call_id" json:"huawei_call_id,omitempty"`
 	HuaweiTrunkID   *string `db:"huawei_trunk_id" json:"huawei_trunk_id,omitempty"`
 	// Microsoft Teams/Skype for Business/Lync-specific fields
-	MSConversationID *string `db:"ms_conversation_id" json:"ms_conversation_id,omitempty"`
-	MSCallID         *string `db:"ms_call_id" json:"ms_call_id,omitempty"`
-	MSCorrelationID  *string `db:"ms_correlation_id" json:"ms_correlation_id,omitempty"`
-	CreatedAt       time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt             time.Time  `db:"updated_at" json:"updated_at"`
+	MSConversationID *string   `db:"ms_conversation_id" json:"ms_conversation_id,omitempty"`
+	MSCallID         *string   `db:"ms_call_id" json:"ms_call_id,omitempty"`
+	MSCorrelationID  *string   `db:"ms_correlation_id" json:"ms_correlation_id,omitempty"`
+	CreatedAt        time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // Event represents system events for auditing

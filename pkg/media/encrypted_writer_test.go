@@ -10,25 +10,6 @@ import (
 	"siprec-server/pkg/audio"
 )
 
-// Mock encrypted recording manager for testing
-type mockEncryptedRecordingManager struct {
-	writeAudioCalls []writeAudioCall
-	writeError      error
-}
-
-type writeAudioCall struct {
-	sessionID string
-	data      []byte
-}
-
-func (m *mockEncryptedRecordingManager) WriteAudio(sessionID string, audioData []byte) error {
-	m.writeAudioCalls = append(m.writeAudioCalls, writeAudioCall{
-		sessionID: sessionID,
-		data:      audioData,
-	})
-	return m.writeError
-}
-
 func TestEncryptedRecordingWriter_Write_InitializationError(t *testing.T) {
 	writer := &encryptedRecordingWriter{
 		manager:   nil,
@@ -122,8 +103,8 @@ func TestEncryptedRecordingWriter_ValidationOrder(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name: "Valid manager pointer, empty session",
-			manager: (*audio.EncryptedRecordingManager)(nil), // Type-correct nil pointer
+			name:      "Valid manager pointer, empty session",
+			manager:   (*audio.EncryptedRecordingManager)(nil), // Type-correct nil pointer
 			sessionID: "",
 			wantError: true,
 		},

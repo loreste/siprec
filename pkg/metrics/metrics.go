@@ -1,20 +1,18 @@
 package metrics
 
 import (
-	"net/http"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	registry           *prometheus.Registry
-	registryOnce       sync.Once
-	defaultMetricsPath = "/metrics"
-	metricsEnabled     = true
+	registry       *prometheus.Registry
+	registryOnce   sync.Once
+	metricsEnabled = true
 
 	// RTP metrics
 	RTPPacketsReceived prometheus.Counter
@@ -31,15 +29,15 @@ var (
 	SIPSessionEstablishTime *prometheus.HistogramVec
 
 	// IP Access Control metrics
-	SIPIPAccessBlocked  *prometheus.CounterVec
-	SIPIPAccessAllowed  *prometheus.CounterVec
-	SIPAuthFailures     *prometheus.CounterVec
+	SIPIPAccessBlocked *prometheus.CounterVec
+	SIPIPAccessAllowed *prometheus.CounterVec
+	SIPAuthFailures    *prometheus.CounterVec
 
 	// Rate limiting metrics
-	RateLimitRequestsTotal  *prometheus.CounterVec
-	RateLimitBlockedTotal   *prometheus.CounterVec
-	RateLimitCurrentBucket  prometheus.Gauge
-	SIPRateLimitedTotal     *prometheus.CounterVec
+	RateLimitRequestsTotal *prometheus.CounterVec
+	RateLimitBlockedTotal  *prometheus.CounterVec
+	RateLimitCurrentBucket prometheus.Gauge
+	SIPRateLimitedTotal    *prometheus.CounterVec
 
 	// SRTP metrics
 	SRTPEncryptionErrors *prometheus.CounterVec
@@ -82,28 +80,28 @@ var (
 	WhisperOutputFormatCounter *prometheus.CounterVec
 
 	// High-concurrency transcription metrics
-	TranscriptionServicePublished    prometheus.Counter
-	TranscriptionServiceDropped      prometheus.Counter
-	TranscriptionServiceQueueLength  prometheus.Gauge
-	TranscriptionServiceHighWater    prometheus.Gauge
+	TranscriptionServicePublished   prometheus.Counter
+	TranscriptionServiceDropped     prometheus.Counter
+	TranscriptionServiceQueueLength prometheus.Gauge
+	TranscriptionServiceHighWater   prometheus.Gauge
 
-	LiveTranscriptionTotal           *prometheus.CounterVec
-	ConversationAccumulatorActive    prometheus.Gauge
-	ConversationAccumulatorTotal     prometheus.Counter
-	ConversationSegmentsTotal        prometheus.Counter
+	LiveTranscriptionTotal        *prometheus.CounterVec
+	ConversationAccumulatorActive prometheus.Gauge
+	ConversationAccumulatorTotal  prometheus.Counter
+	ConversationSegmentsTotal     prometheus.Counter
 
-	AMQPListenerPublished            prometheus.Counter
-	AMQPListenerFailed               prometheus.Counter
-	AMQPListenerDropped              prometheus.Counter
-	AMQPListenerTimeouts             prometheus.Counter
-	AMQPListenerQueueLength          prometheus.Gauge
-	AMQPListenerHighWater            prometheus.Gauge
+	AMQPListenerPublished   prometheus.Counter
+	AMQPListenerFailed      prometheus.Counter
+	AMQPListenerDropped     prometheus.Counter
+	AMQPListenerTimeouts    prometheus.Counter
+	AMQPListenerQueueLength prometheus.Gauge
+	AMQPListenerHighWater   prometheus.Gauge
 
 	// Vendor-specific session metrics
-	VendorSessionsActive        *prometheus.GaugeVec
-	VendorSessionsTotal         *prometheus.CounterVec
-	VendorMetadataExtractions   *prometheus.CounterVec
-	VendorHeaderParseErrors     *prometheus.CounterVec
+	VendorSessionsActive      *prometheus.GaugeVec
+	VendorSessionsTotal       *prometheus.CounterVec
+	VendorMetadataExtractions *prometheus.CounterVec
+	VendorHeaderParseErrors   *prometheus.CounterVec
 )
 
 // Init initializes all metrics and registers them with Prometheus
@@ -695,9 +693,41 @@ func GetRegistry() *prometheus.Registry {
 	return registry
 }
 
-// SetMetricsPath sets the HTTP path for metrics endpoint
-func SetMetricsPath(path string) {
-	defaultMetricsPath = path
+// GatherMetricValue gathers the current value of a metric by name from the
+// given gatherer, summing across all label combinations. Only counters,
+// gauges, and untyped metrics are supported.
+func GatherMetricValue(gatherer prometheus.Gatherer, name string) (float64, error) {
+	if gatherer == nil {
+		return 0, fmt.Errorf("nil gatherer")
+	}
+
+	families, err := gatherer.Gather()
+	if err != nil {
+		return 0, fmt.Errorf("failed to gather metrics: %w", err)
+	}
+
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+
+		sum := 0.0
+		for _, m := range family.GetMetric() {
+			switch {
+			case m.GetGauge() != nil:
+				sum += m.GetGauge().GetValue()
+			case m.GetCounter() != nil:
+				sum += m.GetCounter().GetValue()
+			case m.GetUntyped() != nil:
+				sum += m.GetUntyped().GetValue()
+			default:
+				return 0, fmt.Errorf("metric %q has unsupported type %s", name, family.GetType().String())
+			}
+		}
+		return sum, nil
+	}
+
+	return 0, fmt.Errorf("metric %q not found in registry", name)
 }
 
 // EnableMetrics enables or disables metrics collection
@@ -708,88 +738,6 @@ func EnableMetrics(enabled bool) {
 // IsMetricsEnabled returns whether metrics are enabled
 func IsMetricsEnabled() bool {
 	return metricsEnabled
-}
-
-// RegisterHandler registers the metrics HTTP handler
-func RegisterHandler(mux *http.ServeMux) {
-	if metricsEnabled {
-		handler := promhttp.HandlerFor(
-			registry,
-			promhttp.HandlerOpts{
-				EnableOpenMetrics: true,
-				Registry:          registry,
-			},
-		)
-		mux.Handle(defaultMetricsPath, handler)
-	}
-}
-
-// StartMetrics initializes the metrics service
-func StartMetrics(logger *logrus.Logger, metricsEnabled bool) {
-	if !metricsEnabled {
-		EnableMetrics(false)
-		logger.Info("Metrics collection is disabled")
-		return
-	}
-
-	Init(logger)
-	EnableMetrics(true)
-	logger.WithField("metrics_path", defaultMetricsPath).Info("Metrics endpoint initialized")
-
-	// Start a background goroutine to update resource metrics
-	go updateResourceMetrics(logger)
-}
-
-// updateResourceMetrics updates resource usage metrics periodically
-func updateResourceMetrics(_ *logrus.Logger) {
-	// Update resource metrics every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		// These would be implemented elsewhere and referenced here
-		// Just placeholder examples to show the concept
-		bufferCount := getBufferCount()
-		portsCount := getPortsInUse()
-		activeCallCount := getActiveCalls()
-
-		MemoryBuffersActive.Set(float64(bufferCount))
-		PortsInUse.Set(float64(portsCount))
-		ActiveCalls.Set(float64(activeCallCount))
-	}
-}
-
-// Example helper functions for metrics updates
-func getBufferCount() int {
-	// This would be implemented to check buffer pool stats
-	return 0
-}
-
-func getPortsInUse() int {
-	// This would get the actual port usage from the port manager
-	return 0
-}
-
-func getActiveCalls() int {
-	// This would get the actual active call count
-	return 0
-}
-
-// RecordSIPRequest records a SIP request
-func RecordSIPRequest(method, status string) {
-	if metricsEnabled {
-		SIPRequestsTotal.WithLabelValues(method, status).Inc()
-	}
-}
-
-// RecordSIPResponse records a SIP response
-func RecordSIPResponse(statusCode int, statusClass string) {
-	if metricsEnabled {
-		SIPResponsesTotal.WithLabelValues(
-			string(rune(statusCode)),
-			statusClass,
-		).Inc()
-	}
 }
 
 // RecordRTPPacket records metrics for an RTP packet
@@ -847,24 +795,6 @@ func ObserveSTTLatency(vendor string) func() {
 	}
 }
 
-// RecordAMQPPublish records metrics for an AMQP publish
-func RecordAMQPPublish(queue, status string) {
-	if metricsEnabled {
-		AMQPPublishedMessages.WithLabelValues(queue, status).Inc()
-	}
-}
-
-// SetAMQPConnectionStatus sets the AMQP connection status
-func SetAMQPConnectionStatus(connected bool) {
-	if metricsEnabled {
-		if connected {
-			AMQPConnectionStatus.Set(1)
-		} else {
-			AMQPConnectionStatus.Set(0)
-		}
-	}
-}
-
 // RecordSRTPEncryptionErrors records SRTP encryption errors
 func RecordSRTPEncryptionErrors(errorType string, count float64) {
 	if metricsEnabled {
@@ -905,11 +835,6 @@ func StartSessionTimer(sessionType string) func() {
 	}
 }
 
-// SetMetricsEnabled enables or disables metrics collection
-func SetMetricsEnabled(enabled bool) {
-	metricsEnabled = enabled
-}
-
 // RecordAudioProcessingError records audio processing errors
 func RecordAudioProcessingError(errorType string, count float64) {
 	if metricsEnabled {
@@ -926,27 +851,6 @@ func RecordProviderHealth(provider, status string, responseTimeMs int64) {
 		}
 		ProviderHealthStatus.WithLabelValues(provider).Set(healthValue)
 		ProviderHealthCheckTime.WithLabelValues(provider).Observe(float64(responseTimeMs) / 1000.0)
-	}
-}
-
-// SetProviderScore sets the provider selection score
-func SetProviderScore(provider string, score float64) {
-	if metricsEnabled {
-		ProviderSelectionScore.WithLabelValues(provider).Set(score)
-	}
-}
-
-// SetCircuitBreakerStatus sets the circuit breaker status
-func SetCircuitBreakerStatus(provider, state string) {
-	if metricsEnabled {
-		value := 0.0
-		switch state {
-		case "open":
-			value = 1.0
-		case "half-open":
-			value = 2.0
-		}
-		ProviderCircuitBreaker.WithLabelValues(provider).Set(value)
 	}
 }
 
@@ -1012,107 +916,9 @@ func RecordSIPAuthFailure(reason string) {
 	}
 }
 
-// RecordRateLimitRequest records a rate-limited request (allowed or blocked)
-func RecordRateLimitRequest(path, status string) {
-	if metricsEnabled {
-		RateLimitRequestsTotal.WithLabelValues(path, status).Inc()
-	}
-}
-
-// RecordRateLimitBlocked records a blocked request due to rate limiting
-func RecordRateLimitBlocked(path string) {
-	if metricsEnabled {
-		RateLimitBlockedTotal.WithLabelValues(path).Inc()
-	}
-}
-
-// UpdateRateLimitBucket updates the aggregate token count across all rate limit buckets
-func UpdateRateLimitBucket(tokens float64) {
-	if metricsEnabled {
-		RateLimitCurrentBucket.Set(tokens)
-	}
-}
-
 // RecordSIPRateLimited records a SIP request blocked by rate limiting
 func RecordSIPRateLimited(method string) {
 	if metricsEnabled {
 		SIPRateLimitedTotal.WithLabelValues(method).Inc()
-	}
-}
-
-// UpdateTranscriptionServiceMetrics updates transcription service metrics
-func UpdateTranscriptionServiceMetrics(published, dropped, highWater int64, queueLength int) {
-	if metricsEnabled {
-		TranscriptionServicePublished.Add(float64(published))
-		TranscriptionServiceDropped.Add(float64(dropped))
-		TranscriptionServiceHighWater.Set(float64(highWater))
-		TranscriptionServiceQueueLength.Set(float64(queueLength))
-	}
-}
-
-// RecordLiveTranscription records a live transcription event
-func RecordLiveTranscription(provider string, isFinal bool) {
-	if metricsEnabled {
-		transcriptionType := "partial"
-		if isFinal {
-			transcriptionType = "final"
-		}
-		LiveTranscriptionTotal.WithLabelValues(provider, transcriptionType).Inc()
-	}
-}
-
-// UpdateConversationAccumulatorMetrics updates conversation accumulator metrics
-func UpdateConversationAccumulatorMetrics(active, total, segments int64) {
-	if metricsEnabled {
-		ConversationAccumulatorActive.Set(float64(active))
-		ConversationAccumulatorTotal.Add(float64(total))
-		ConversationSegmentsTotal.Add(float64(segments))
-	}
-}
-
-// SetConversationAccumulatorActive sets the active conversations count
-func SetConversationAccumulatorActive(active int64) {
-	if metricsEnabled {
-		ConversationAccumulatorActive.Set(float64(active))
-	}
-}
-
-// UpdateAMQPListenerMetrics updates AMQP listener metrics
-func UpdateAMQPListenerMetrics(published, failed, dropped, timeouts, highWater int64, queueLength int) {
-	if metricsEnabled {
-		AMQPListenerPublished.Add(float64(published))
-		AMQPListenerFailed.Add(float64(failed))
-		AMQPListenerDropped.Add(float64(dropped))
-		AMQPListenerTimeouts.Add(float64(timeouts))
-		AMQPListenerHighWater.Set(float64(highWater))
-		AMQPListenerQueueLength.Set(float64(queueLength))
-	}
-}
-
-// RecordAMQPListenerPublish increments the AMQP listener published counter
-func RecordAMQPListenerPublish() {
-	if metricsEnabled {
-		AMQPListenerPublished.Inc()
-	}
-}
-
-// RecordAMQPListenerFailure increments the AMQP listener failure counter
-func RecordAMQPListenerFailure() {
-	if metricsEnabled {
-		AMQPListenerFailed.Inc()
-	}
-}
-
-// RecordAMQPListenerDrop increments the AMQP listener dropped counter
-func RecordAMQPListenerDrop() {
-	if metricsEnabled {
-		AMQPListenerDropped.Inc()
-	}
-}
-
-// RecordAMQPListenerTimeout increments the AMQP listener timeout counter
-func RecordAMQPListenerTimeout() {
-	if metricsEnabled {
-		AMQPListenerTimeouts.Inc()
 	}
 }

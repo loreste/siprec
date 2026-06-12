@@ -41,7 +41,7 @@ func (pw *PausableWriter) Write(p []byte) (n int, err error) {
 func (pw *PausableWriter) Pause() {
 	pw.pauseMu.Lock()
 	defer pw.pauseMu.Unlock()
-	
+
 	if !pw.paused {
 		pw.paused = true
 		if pw.onPause != nil {
@@ -54,7 +54,7 @@ func (pw *PausableWriter) Pause() {
 func (pw *PausableWriter) Resume() {
 	pw.pauseMu.Lock()
 	defer pw.pauseMu.Unlock()
-	
+
 	if pw.paused {
 		pw.paused = false
 		if pw.onResume != nil {
@@ -125,7 +125,7 @@ func (pr *PausableReader) Read(p []byte) (n int, err error) {
 func (pr *PausableReader) Pause() {
 	pr.pauseMu.Lock()
 	defer pr.pauseMu.Unlock()
-	
+
 	if !pr.paused {
 		pr.paused = true
 		// Signal pause (non-blocking)
@@ -140,7 +140,7 @@ func (pr *PausableReader) Pause() {
 func (pr *PausableReader) Resume() {
 	pr.pauseMu.Lock()
 	defer pr.pauseMu.Unlock()
-	
+
 	if pr.paused {
 		pr.paused = false
 		// Signal resume (non-blocking)

@@ -10,9 +10,9 @@ import (
 
 // LegTiming holds timing information for a recording leg
 type LegTiming struct {
-	Path          string    // Path to the WAV file
-	FirstRTPTime  time.Time // Wall-clock time of first RTP packet
-	SampleRate    int       // Sample rate (for calculating padding)
+	Path         string    // Path to the WAV file
+	FirstRTPTime time.Time // Wall-clock time of first RTP packet
+	SampleRate   int       // Sample rate (for calculating padding)
 }
 
 // CombineWAVRecordings merges multiple mono recordings into a single multi-channel WAV.

@@ -7,11 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/kms"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,131 +15,12 @@ import (
 type KMSProvider interface {
 	// GenerateDataKey generates a new data encryption key
 	GenerateDataKey(ctx context.Context) ([]byte, []byte, error)
-	
+
 	// DecryptDataKey decrypts an encrypted data key
 	DecryptDataKey(ctx context.Context, encryptedKey []byte) ([]byte, error)
-	
+
 	// RotateMasterKey rotates the master key
 	RotateMasterKey(ctx context.Context) error
-}
-
-// AWSKMSProvider implements KMSProvider using AWS KMS
-type AWSKMSProvider struct {
-	client    *kms.KMS
-	keyID     string
-	logger    *logrus.Logger
-	cache     *keyCache
-}
-
-// keyCache caches decrypted keys for performance
-type keyCache struct {
-	keys map[string]cacheEntry
-	mu   sync.RWMutex
-}
-
-type cacheEntry struct {
-	key       []byte
-	expiresAt time.Time
-}
-
-// NewAWSKMSProvider creates a new AWS KMS provider
-func NewAWSKMSProvider(keyID string, logger *logrus.Logger) (*AWSKMSProvider, error) {
-	sess, err := session.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS session: %w", err)
-	}
-
-	return &AWSKMSProvider{
-		client: kms.New(sess),
-		keyID:  keyID,
-		logger: logger,
-		cache: &keyCache{
-			keys: make(map[string]cacheEntry),
-		},
-	}, nil
-}
-
-// GenerateDataKey generates a new data encryption key using AWS KMS
-func (p *AWSKMSProvider) GenerateDataKey(ctx context.Context) ([]byte, []byte, error) {
-	input := &kms.GenerateDataKeyInput{
-		KeyId:   aws.String(p.keyID),
-		KeySpec: aws.String(kms.DataKeySpecAes256),
-	}
-
-	result, err := p.client.GenerateDataKeyWithContext(ctx, input)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate data key: %w", err)
-	}
-
-	return result.Plaintext, result.CiphertextBlob, nil
-}
-
-// DecryptDataKey decrypts an encrypted data key using AWS KMS
-func (p *AWSKMSProvider) DecryptDataKey(ctx context.Context, encryptedKey []byte) ([]byte, error) {
-	// Check cache first
-	cacheKey := base64.StdEncoding.EncodeToString(encryptedKey)
-	
-	p.cache.mu.RLock()
-	if entry, ok := p.cache.keys[cacheKey]; ok && entry.expiresAt.After(time.Now()) {
-		p.cache.mu.RUnlock()
-		return entry.key, nil
-	}
-	p.cache.mu.RUnlock()
-
-	// Decrypt using KMS
-	input := &kms.DecryptInput{
-		CiphertextBlob: encryptedKey,
-	}
-
-	result, err := p.client.DecryptWithContext(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data key: %w", err)
-	}
-
-	// Cache the result
-	p.cache.mu.Lock()
-	p.cache.keys[cacheKey] = cacheEntry{
-		key:       result.Plaintext,
-		expiresAt: time.Now().Add(5 * time.Minute),
-	}
-	p.cache.mu.Unlock()
-
-	// Schedule cleanup
-	go p.cleanupExpiredKeys()
-
-	return result.Plaintext, nil
-}
-
-// RotateMasterKey initiates master key rotation in AWS KMS
-func (p *AWSKMSProvider) RotateMasterKey(ctx context.Context) error {
-	input := &kms.EnableKeyRotationInput{
-		KeyId: aws.String(p.keyID),
-	}
-
-	_, err := p.client.EnableKeyRotationWithContext(ctx, input)
-	if err != nil {
-		return fmt.Errorf("failed to enable key rotation: %w", err)
-	}
-
-	p.logger.Info("Master key rotation enabled in AWS KMS")
-	return nil
-}
-
-// cleanupExpiredKeys removes expired keys from cache
-func (p *AWSKMSProvider) cleanupExpiredKeys() {
-	p.cache.mu.Lock()
-	defer p.cache.mu.Unlock()
-
-	now := time.Now()
-	for key, entry := range p.cache.keys {
-		if entry.expiresAt.Before(now) {
-			// Clear key from memory before deletion
-			for i := range entry.key {
-				entry.key[i] = 0
-			}
-			delete(p.cache.keys, key)
-		}
-	}
 }
 
 // LocalKMSProvider implements KMSProvider using local secure storage
@@ -269,30 +146,4 @@ func (p *LocalKMSProvider) RotateMasterKey(ctx context.Context) error {
 
 	p.logger.Info("Master key rotated successfully")
 	return nil
-}
-
-// CreateKMSProvider creates the appropriate KMS provider based on configuration
-func CreateKMSProvider(config *KMSConfig, logger *logrus.Logger) (KMSProvider, error) {
-	switch config.Provider {
-	case "aws":
-		if config.AWSKeyID == "" {
-			return nil, fmt.Errorf("AWS KMS key ID is required")
-		}
-		return NewAWSKMSProvider(config.AWSKeyID, logger)
-	
-	case "local":
-		return NewLocalKMSProvider(config.LocalKeyPath, logger)
-	
-	default:
-		return nil, fmt.Errorf("unsupported KMS provider: %s", config.Provider)
-	}
-}
-
-// KMSConfig holds KMS configuration
-type KMSConfig struct {
-	Provider     string // "aws", "gcp", "azure", "local"
-	AWSKeyID     string // AWS KMS key ID
-	GCPKeyName   string // GCP KMS key name
-	AzureKeyURL  string // Azure Key Vault key URL
-	LocalKeyPath string // Local master key path
 }

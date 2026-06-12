@@ -78,19 +78,6 @@ func NewAMQPClient(logger *logrus.Logger, config AMQPConfig) *AMQPClient {
 	}
 }
 
-// NewAMQPClientLegacy creates a new AMQP client (legacy constructor for backward compatibility)
-func NewAMQPClientLegacy(logger *logrus.Logger, url, queueName string) *AMQPClient {
-	config := AMQPConfig{
-		URL:          url,
-		QueueName:    queueName,
-		ExchangeName: "",
-		RoutingKey:   queueName,
-		Durable:      true,
-		AutoDelete:   false,
-	}
-	return NewAMQPClient(logger, config)
-}
-
 // Connect establishes a connection to the AMQP server
 func (c *AMQPClient) Connect() error {
 	c.connMutex.Lock()

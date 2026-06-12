@@ -10,11 +10,11 @@ import (
 
 // LanguageTransitionSmoother handles smooth transitions between languages
 type LanguageTransitionSmoother struct {
-	logger               *logrus.Logger
-	transitionBuffers    map[string]*TransitionBuffer
-	bufferMutex          sync.RWMutex
-	smoothingConfig      TransitionSmoothingConfig
-	blendingRules        map[string]BlendingRule
+	logger            *logrus.Logger
+	transitionBuffers map[string]*TransitionBuffer
+	bufferMutex       sync.RWMutex
+	smoothingConfig   TransitionSmoothingConfig
+	blendingRules     map[string]BlendingRule
 }
 
 // TransitionBuffer holds transcription segments during language transitions
@@ -35,54 +35,54 @@ type TransitionBuffer struct {
 
 // TranscriptionSegment represents a segment of transcribed text
 type TranscriptionSegment struct {
-	Timestamp     time.Time             `json:"timestamp"`
-	Text          string                `json:"text"`
-	Language      string                `json:"language"`
-	Confidence    float64               `json:"confidence"`
-	WordCount     int                   `json:"word_count"`
-	Duration      time.Duration         `json:"duration"`
-	SegmentID     string                `json:"segment_id"`
-	Provider      string                `json:"provider"`
-	IsFinal       bool                  `json:"is_final"`
-	Alternatives  []LanguageAlternative `json:"alternatives,omitempty"`
+	Timestamp    time.Time             `json:"timestamp"`
+	Text         string                `json:"text"`
+	Language     string                `json:"language"`
+	Confidence   float64               `json:"confidence"`
+	WordCount    int                   `json:"word_count"`
+	Duration     time.Duration         `json:"duration"`
+	SegmentID    string                `json:"segment_id"`
+	Provider     string                `json:"provider"`
+	IsFinal      bool                  `json:"is_final"`
+	Alternatives []LanguageAlternative `json:"alternatives,omitempty"`
 }
 
 // TransitionSmoothingConfig configures language transition behavior
 type TransitionSmoothingConfig struct {
 	// Buffer configuration
-	BufferSize              int           // Number of segments to buffer
-	TransitionWindowSize    int           // Size of transition window
-	PreTransitionBuffer     int           // Segments to keep before transition
-	PostTransitionBuffer    int           // Segments to keep after transition
-	
+	BufferSize           int // Number of segments to buffer
+	TransitionWindowSize int // Size of transition window
+	PreTransitionBuffer  int // Segments to keep before transition
+	PostTransitionBuffer int // Segments to keep after transition
+
 	// Timing configuration
-	TransitionTimeout       time.Duration // Max time for transition
-	BlendingDuration        time.Duration // Duration for blending
-	StabilizationPeriod     time.Duration // Time to wait for stabilization
-	
+	TransitionTimeout   time.Duration // Max time for transition
+	BlendingDuration    time.Duration // Duration for blending
+	StabilizationPeriod time.Duration // Time to wait for stabilization
+
 	// Quality thresholds
-	MinConfidenceForBlend   float64       // Minimum confidence for blending
-	SimilarityThreshold     float64       // Threshold for text similarity
-	ConsistencyRequirement  float64       // Required consistency for smooth transition
-	
+	MinConfidenceForBlend  float64 // Minimum confidence for blending
+	SimilarityThreshold    float64 // Threshold for text similarity
+	ConsistencyRequirement float64 // Required consistency for smooth transition
+
 	// Blending parameters
-	EnableSemanticBlending  bool          // Enable semantic-aware blending
-	BlendingFactor          float64       // Factor for blending weights
-	OverlapTolerance        float64       // Tolerance for overlapping content
-	
+	EnableSemanticBlending bool    // Enable semantic-aware blending
+	BlendingFactor         float64 // Factor for blending weights
+	OverlapTolerance       float64 // Tolerance for overlapping content
+
 	// Quality assurance
-	EnableQualityFiltering  bool          // Filter low-quality transitions
-	RequireContextualMatch  bool          // Require contextual matching
+	EnableQualityFiltering bool // Filter low-quality transitions
+	RequireContextualMatch bool // Require contextual matching
 }
 
 // BlendingRule defines how to blend transitions between specific language pairs
 type BlendingRule struct {
 	SourceLanguage      string
 	TargetLanguage      string
-	BlendingStrategy    string    // "overlap", "concatenate", "replace", "hybrid"
-	ConfidenceWeighting float64   // Weight for confidence-based blending
-	ContextualWeight    float64   // Weight for contextual matching
-	SemanticWeight      float64   // Weight for semantic similarity
+	BlendingStrategy    string  // "overlap", "concatenate", "replace", "hybrid"
+	ConfidenceWeighting float64 // Weight for confidence-based blending
+	ContextualWeight    float64 // Weight for contextual matching
+	SemanticWeight      float64 // Weight for semantic similarity
 	CustomBlendFunc     func(pre, post []TranscriptionSegment) []TranscriptionSegment
 }
 
@@ -92,28 +92,28 @@ func NewLanguageTransitionSmoother(logger *logrus.Logger) *LanguageTransitionSmo
 		logger:            logger,
 		transitionBuffers: make(map[string]*TransitionBuffer),
 		smoothingConfig: TransitionSmoothingConfig{
-			BufferSize:              10,
-			TransitionWindowSize:    5,
-			PreTransitionBuffer:     3,
-			PostTransitionBuffer:    3,
-			TransitionTimeout:       30 * time.Second,
-			BlendingDuration:        10 * time.Second,
-			StabilizationPeriod:     5 * time.Second,
-			MinConfidenceForBlend:   0.7,
-			SimilarityThreshold:     0.8,
-			ConsistencyRequirement:  0.6,
-			EnableSemanticBlending:  true,
-			BlendingFactor:          0.3,
-			OverlapTolerance:        0.2,
-			EnableQualityFiltering:  true,
-			RequireContextualMatch:  false,
+			BufferSize:             10,
+			TransitionWindowSize:   5,
+			PreTransitionBuffer:    3,
+			PostTransitionBuffer:   3,
+			TransitionTimeout:      30 * time.Second,
+			BlendingDuration:       10 * time.Second,
+			StabilizationPeriod:    5 * time.Second,
+			MinConfidenceForBlend:  0.7,
+			SimilarityThreshold:    0.8,
+			ConsistencyRequirement: 0.6,
+			EnableSemanticBlending: true,
+			BlendingFactor:         0.3,
+			OverlapTolerance:       0.2,
+			EnableQualityFiltering: true,
+			RequireContextualMatch: false,
 		},
 		blendingRules: make(map[string]BlendingRule),
 	}
-	
+
 	// Initialize default blending rules
 	smoother.initializeBlendingRules()
-	
+
 	return smoother
 }
 
@@ -121,28 +121,28 @@ func NewLanguageTransitionSmoother(logger *logrus.Logger) *LanguageTransitionSmo
 func (lts *LanguageTransitionSmoother) StartTransition(callUUID, sourceLanguage, targetLanguage string) {
 	lts.bufferMutex.Lock()
 	defer lts.bufferMutex.Unlock()
-	
+
 	buffer, exists := lts.transitionBuffers[callUUID]
 	if !exists {
 		buffer = &TransitionBuffer{
-			CallUUID:            callUUID,
-			PreTransitionSegs:   make([]TranscriptionSegment, 0),
-			TransitionSegs:      make([]TranscriptionSegment, 0),
-			PostTransitionSegs:  make([]TranscriptionSegment, 0),
-			BufferSize:          lts.smoothingConfig.BufferSize,
+			CallUUID:           callUUID,
+			PreTransitionSegs:  make([]TranscriptionSegment, 0),
+			TransitionSegs:     make([]TranscriptionSegment, 0),
+			PostTransitionSegs: make([]TranscriptionSegment, 0),
+			BufferSize:         lts.smoothingConfig.BufferSize,
 		}
 		lts.transitionBuffers[callUUID] = buffer
 	}
-	
+
 	buffer.Mutex.Lock()
 	defer buffer.Mutex.Unlock()
-	
+
 	buffer.TransitionStartTime = time.Now()
 	buffer.SourceLanguage = sourceLanguage
 	buffer.TargetLanguage = targetLanguage
 	buffer.BlendingActive = true
 	buffer.LastUpdate = time.Now()
-	
+
 	lts.logger.WithFields(logrus.Fields{
 		"call_uuid":       callUUID,
 		"source_language": sourceLanguage,
@@ -155,44 +155,44 @@ func (lts *LanguageTransitionSmoother) AddTranscriptionSegment(callUUID string, 
 	lts.bufferMutex.RLock()
 	buffer, exists := lts.transitionBuffers[callUUID]
 	lts.bufferMutex.RUnlock()
-	
+
 	if !exists {
 		// No active transition, return segment as-is
 		return &segment
 	}
-	
+
 	buffer.Mutex.Lock()
 	defer buffer.Mutex.Unlock()
-	
+
 	buffer.LastUpdate = time.Now()
-	
+
 	// Determine which phase of transition we're in
 	timeSinceTransition := time.Since(buffer.TransitionStartTime)
-	
+
 	if timeSinceTransition < lts.smoothingConfig.BlendingDuration {
 		// We're in the blending phase
 		buffer.TransitionSegs = append(buffer.TransitionSegs, segment)
-		
+
 		// Limit buffer size
 		if len(buffer.TransitionSegs) > lts.smoothingConfig.TransitionWindowSize {
 			buffer.TransitionSegs = buffer.TransitionSegs[1:]
 		}
-		
+
 		// Attempt to create blended segment
 		blendedSegment := lts.createBlendedSegment(buffer, segment)
 		return blendedSegment
-		
+
 	} else if timeSinceTransition < lts.smoothingConfig.BlendingDuration+lts.smoothingConfig.StabilizationPeriod {
 		// We're in the stabilization phase
 		buffer.PostTransitionSegs = append(buffer.PostTransitionSegs, segment)
-		
+
 		// Check if we should finalize the transition
 		if lts.isTransitionStable(buffer) {
 			lts.finalizeTransition(callUUID, buffer)
 		}
-		
+
 		return &segment
-		
+
 	} else {
 		// Transition timeout, finalize immediately
 		lts.finalizeTransition(callUUID, buffer)
@@ -205,7 +205,7 @@ func (lts *LanguageTransitionSmoother) createBlendedSegment(buffer *TransitionBu
 	// Get the appropriate blending rule
 	ruleKey := buffer.SourceLanguage + "->" + buffer.TargetLanguage
 	blendingRule, exists := lts.blendingRules[ruleKey]
-	
+
 	if !exists {
 		// Use default blending strategy
 		blendingRule = BlendingRule{
@@ -217,7 +217,7 @@ func (lts *LanguageTransitionSmoother) createBlendedSegment(buffer *TransitionBu
 			SemanticWeight:      0.3,
 		}
 	}
-	
+
 	// Apply blending strategy
 	switch blendingRule.BlendingStrategy {
 	case "overlap":
@@ -240,11 +240,11 @@ func (lts *LanguageTransitionSmoother) blendWithHybridStrategy(buffer *Transitio
 	if len(recentSegments) == 0 {
 		return &current
 	}
-	
+
 	// Calculate blending weights based on confidence, language consistency, and semantic coherence
 	sourceWeight := lts.calculateSourceWeight(recentSegments, buffer.SourceLanguage, rule)
 	targetWeight := lts.calculateTargetWeight(current, buffer.TargetLanguage, rule)
-	
+
 	// Create blended segment
 	blendedSegment := TranscriptionSegment{
 		Timestamp:  current.Timestamp,
@@ -255,21 +255,21 @@ func (lts *LanguageTransitionSmoother) blendWithHybridStrategy(buffer *Transitio
 		SegmentID:  current.SegmentID,
 		Duration:   current.Duration,
 	}
-	
+
 	// Blend text content based on strategy
 	blendedSegment.Text = lts.blendTextContent(recentSegments, current, sourceWeight, targetWeight, rule)
 	blendedSegment.WordCount = len(strings.Fields(blendedSegment.Text))
-	
+
 	lts.logger.WithFields(logrus.Fields{
-		"call_uuid":       buffer.CallUUID,
-		"source_weight":   sourceWeight,
-		"target_weight":   targetWeight,
-		"blended_lang":    blendedSegment.Language,
-		"blended_conf":    blendedSegment.Confidence,
-		"original_text":   current.Text,
-		"blended_text":    blendedSegment.Text,
+		"call_uuid":     buffer.CallUUID,
+		"source_weight": sourceWeight,
+		"target_weight": targetWeight,
+		"blended_lang":  blendedSegment.Language,
+		"blended_conf":  blendedSegment.Confidence,
+		"original_text": current.Text,
+		"blended_text":  blendedSegment.Text,
 	}).Debug("Created hybrid blended segment")
-	
+
 	return &blendedSegment
 }
 
@@ -278,30 +278,30 @@ func (lts *LanguageTransitionSmoother) calculateSourceWeight(segments []Transcri
 	if len(segments) == 0 {
 		return 0.0
 	}
-	
+
 	// Calculate average confidence for source language segments
 	sourceConfidence := 0.0
 	sourceCount := 0
-	
+
 	for _, seg := range segments {
 		if seg.Language == sourceLanguage {
 			sourceConfidence += seg.Confidence
 			sourceCount++
 		}
 	}
-	
+
 	if sourceCount == 0 {
 		return 0.0
 	}
-	
+
 	avgSourceConfidence := sourceConfidence / float64(sourceCount)
-	
+
 	// Apply time decay (recent segments have more weight)
 	timeDecay := lts.calculateTimeDecay(segments)
-	
+
 	// Combine factors
 	sourceWeight := avgSourceConfidence * rule.ConfidenceWeighting * timeDecay
-	
+
 	return sourceWeight
 }
 
@@ -310,15 +310,15 @@ func (lts *LanguageTransitionSmoother) calculateTargetWeight(current Transcripti
 	if current.Language != targetLanguage {
 		return 0.0
 	}
-	
+
 	// Base weight on current segment confidence
 	targetWeight := current.Confidence * rule.ConfidenceWeighting
-	
+
 	// Boost weight if this is a strong detection
 	if current.Confidence > 0.9 {
 		targetWeight *= 1.2
 	}
-	
+
 	return targetWeight
 }
 
@@ -327,24 +327,24 @@ func (lts *LanguageTransitionSmoother) calculateTimeDecay(segments []Transcripti
 	if len(segments) == 0 {
 		return 1.0
 	}
-	
+
 	// More recent segments have higher weight
 	now := time.Now()
 	totalWeight := 0.0
 	weightedSum := 0.0
-	
+
 	for i, seg := range segments {
 		timeDiff := now.Sub(seg.Timestamp).Seconds()
 		weight := 1.0 / (1.0 + timeDiff*0.1) // Exponential decay
-		
+
 		totalWeight += weight
 		weightedSum += weight * float64(len(segments)-i) // Recent segments get higher position weight
 	}
-	
+
 	if totalWeight == 0 {
 		return 1.0
 	}
-	
+
 	return weightedSum / totalWeight / float64(len(segments))
 }
 
@@ -352,7 +352,7 @@ func (lts *LanguageTransitionSmoother) calculateTimeDecay(segments []Transcripti
 func (lts *LanguageTransitionSmoother) selectOptimalLanguage(sourceWeight, targetWeight float64, sourceLanguage, targetLanguage string) string {
 	// Use confidence-based selection with hysteresis to prevent oscillation
 	hysteresisThreshold := 0.1
-	
+
 	if targetWeight > sourceWeight+hysteresisThreshold {
 		return targetLanguage
 	} else if sourceWeight > targetWeight+hysteresisThreshold {
@@ -370,7 +370,7 @@ func (lts *LanguageTransitionSmoother) calculateBlendedConfidence(recent []Trans
 	if totalWeight == 0 {
 		return current.Confidence
 	}
-	
+
 	// Calculate source confidence
 	sourceConfidence := 0.0
 	if len(recent) > 0 {
@@ -379,10 +379,10 @@ func (lts *LanguageTransitionSmoother) calculateBlendedConfidence(recent []Trans
 		}
 		sourceConfidence /= float64(len(recent))
 	}
-	
+
 	// Blend confidences
 	blendedConfidence := (sourceConfidence*sourceWeight + current.Confidence*targetWeight) / totalWeight
-	
+
 	// Apply smoothing factor
 	smoothingFactor := 0.8 // Slightly conservative
 	return blendedConfidence * smoothingFactor
@@ -394,12 +394,12 @@ func (lts *LanguageTransitionSmoother) blendTextContent(recent []TranscriptionSe
 	if targetWeight > sourceWeight {
 		return current.Text
 	}
-	
+
 	// If source weight is higher, try to find the most confident recent segment
 	if len(recent) == 0 {
 		return current.Text
 	}
-	
+
 	// Find the best recent segment
 	bestRecent := recent[0]
 	for _, seg := range recent {
@@ -407,13 +407,13 @@ func (lts *LanguageTransitionSmoother) blendTextContent(recent []TranscriptionSe
 			bestRecent = seg
 		}
 	}
-	
+
 	// Use the best segment's text if it's significantly better
 	confidenceDiff := bestRecent.Confidence - current.Confidence
 	if confidenceDiff > 0.2 {
 		return bestRecent.Text
 	}
-	
+
 	// Otherwise, use current segment
 	return current.Text
 }
@@ -423,28 +423,28 @@ func (lts *LanguageTransitionSmoother) isTransitionStable(buffer *TransitionBuff
 	if len(buffer.PostTransitionSegs) < 2 {
 		return false
 	}
-	
+
 	// Check if recent segments are consistent in language and confidence
 	recentSegs := buffer.PostTransitionSegs
 	if len(recentSegs) > 3 {
 		recentSegs = recentSegs[len(recentSegs)-3:] // Last 3 segments
 	}
-	
+
 	// Check language consistency
 	targetLanguage := buffer.TargetLanguage
 	consistentCount := 0
 	totalConfidence := 0.0
-	
+
 	for _, seg := range recentSegs {
 		if seg.Language == targetLanguage {
 			consistentCount++
 		}
 		totalConfidence += seg.Confidence
 	}
-	
+
 	consistency := float64(consistentCount) / float64(len(recentSegs))
 	avgConfidence := totalConfidence / float64(len(recentSegs))
-	
+
 	// Require high consistency and confidence for stability
 	return consistency >= lts.smoothingConfig.ConsistencyRequirement && avgConfidence >= lts.smoothingConfig.MinConfidenceForBlend
 }
@@ -453,9 +453,9 @@ func (lts *LanguageTransitionSmoother) isTransitionStable(buffer *TransitionBuff
 func (lts *LanguageTransitionSmoother) finalizeTransition(callUUID string, buffer *TransitionBuffer) {
 	buffer.TransitionEndTime = time.Now()
 	buffer.BlendingActive = false
-	
+
 	transitionDuration := buffer.TransitionEndTime.Sub(buffer.TransitionStartTime)
-	
+
 	lts.logger.WithFields(logrus.Fields{
 		"call_uuid":           callUUID,
 		"source_language":     buffer.SourceLanguage,
@@ -464,7 +464,7 @@ func (lts *LanguageTransitionSmoother) finalizeTransition(callUUID string, buffe
 		"segments_processed":  len(buffer.TransitionSegs),
 		"post_segments":       len(buffer.PostTransitionSegs),
 	}).Info("Finalized language transition")
-	
+
 	// Clean up the buffer
 	lts.bufferMutex.Lock()
 	delete(lts.transitionBuffers, callUUID)
@@ -482,7 +482,7 @@ func (lts *LanguageTransitionSmoother) initializeBlendingRules() {
 		ContextualWeight:    0.3,
 		SemanticWeight:      0.3,
 	}
-	
+
 	// Spanish-English blending
 	lts.blendingRules["es-ES->en-US"] = BlendingRule{
 		SourceLanguage:      "es-ES",
@@ -492,7 +492,7 @@ func (lts *LanguageTransitionSmoother) initializeBlendingRules() {
 		ContextualWeight:    0.3,
 		SemanticWeight:      0.3,
 	}
-	
+
 	// French-English blending
 	lts.blendingRules["fr-FR->en-US"] = BlendingRule{
 		SourceLanguage:      "fr-FR",
@@ -502,7 +502,7 @@ func (lts *LanguageTransitionSmoother) initializeBlendingRules() {
 		ContextualWeight:    0.3,
 		SemanticWeight:      0.2,
 	}
-	
+
 	// Add more language pairs as needed
 	// ...
 }
@@ -529,14 +529,14 @@ func (lts *LanguageTransitionSmoother) blendWithReplacement(buffer *TransitionBu
 func (lts *LanguageTransitionSmoother) EndCallSession(callUUID string) {
 	lts.bufferMutex.Lock()
 	defer lts.bufferMutex.Unlock()
-	
+
 	if buffer, exists := lts.transitionBuffers[callUUID]; exists {
 		lts.logger.WithFields(logrus.Fields{
-			"call_uuid":          callUUID,
-			"active_transition":  buffer.BlendingActive,
-			"segments_buffered":  len(buffer.TransitionSegs),
+			"call_uuid":         callUUID,
+			"active_transition": buffer.BlendingActive,
+			"segments_buffered": len(buffer.TransitionSegs),
 		}).Debug("Cleaning up transition buffer for ended call")
-		
+
 		delete(lts.transitionBuffers, callUUID)
 	}
 }

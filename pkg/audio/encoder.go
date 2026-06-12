@@ -27,14 +27,14 @@ const (
 
 // EncoderConfig holds encoding configuration
 type EncoderConfig struct {
-	Format      AudioFormat
-	SampleRate  int
-	Channels    int
-	BitRate     int  // kbps for lossy formats
-	Quality     int  // 1-10 for VBR encoding
-	UseFFmpeg   bool // Use FFmpeg for encoding (required for MP3, Opus, MP4)
-	FFmpegPath  string
-	TempDir     string
+	Format     AudioFormat
+	SampleRate int
+	Channels   int
+	BitRate    int  // kbps for lossy formats
+	Quality    int  // 1-10 for VBR encoding
+	UseFFmpeg  bool // Use FFmpeg for encoding (required for MP3, Opus, MP4)
+	FFmpegPath string
+	TempDir    string
 }
 
 // DefaultEncoderConfig returns default encoding configuration
@@ -186,7 +186,7 @@ func (e *AudioEncoder) encodeWithFFmpeg(inputPath, outputPath string) error {
 // createStreamEncoder creates a piped FFmpeg encoder for streaming
 func (e *AudioEncoder) createStreamEncoder(output io.WriteCloser) (io.WriteCloser, error) {
 	args := []string{
-		"-f", "wav",  // Input format
+		"-f", "wav", // Input format
 		"-i", "pipe:0", // Read from stdin
 		"-y",
 	}
@@ -350,108 +350,4 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(destFile, sourceFile)
 	return err
-}
-
-// BatchEncoder handles batch encoding of multiple files
-type BatchEncoder struct {
-	encoder    *AudioEncoder
-	logger     *logrus.Logger
-	workers    int
-	inputDir   string
-	outputDir  string
-	deleteOriginal bool
-}
-
-// NewBatchEncoder creates a new batch encoder
-func NewBatchEncoder(encoder *AudioEncoder, workers int, logger *logrus.Logger) *BatchEncoder {
-	if workers <= 0 {
-		workers = 4
-	}
-	return &BatchEncoder{
-		encoder: encoder,
-		logger:  logger,
-		workers: workers,
-	}
-}
-
-// EncodeDirectory encodes all WAV files in a directory
-func (b *BatchEncoder) EncodeDirectory(inputDir, outputDir string, deleteOriginal bool) error {
-	b.inputDir = inputDir
-	b.outputDir = outputDir
-	b.deleteOriginal = deleteOriginal
-
-	// Create output directory if needed
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Find all WAV files
-	files, err := filepath.Glob(filepath.Join(inputDir, "*.wav"))
-	if err != nil {
-		return err
-	}
-
-	// Process files with worker pool
-	jobs := make(chan string, len(files))
-	results := make(chan error, len(files))
-
-	// Start workers
-	var wg sync.WaitGroup
-	for i := 0; i < b.workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for inputFile := range jobs {
-				baseName := filepath.Base(inputFile)
-				ext := filepath.Ext(baseName)
-				outputFile := filepath.Join(outputDir, strings.TrimSuffix(baseName, ext)+b.encoder.GetFileExtension())
-
-				if err := b.encoder.EncodeFile(inputFile, outputFile); err != nil {
-					results <- err
-					continue
-				}
-
-				if deleteOriginal {
-					os.Remove(inputFile)
-				}
-
-				results <- nil
-			}
-		}()
-	}
-
-	// Send jobs
-	go func() {
-		for _, file := range files {
-			jobs <- file
-		}
-		close(jobs)
-	}()
-
-	// Wait for completion
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	var errors []error
-	for err := range results {
-		if err != nil {
-			errors = append(errors, err)
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("batch encoding completed with %d errors", len(errors))
-	}
-
-	b.logger.WithFields(logrus.Fields{
-		"input_dir":  inputDir,
-		"output_dir": outputDir,
-		"files":      len(files),
-		"format":     b.encoder.config.Format,
-	}).Info("Batch encoding completed")
-
-	return nil
 }

@@ -154,13 +154,13 @@ func DefaultAudioEnhancementConfig() *AudioEnhancementConfig {
 			ResidualSuppression: 0.5,
 		},
 		Compression: CompressionConfig{
-			Enabled:    false,
-			Threshold:  -20.0,
-			Ratio:      4.0,
-			Knee:       2.0,
-			AttackTime: 5.0,
+			Enabled:     false,
+			Threshold:   -20.0,
+			Ratio:       4.0,
+			Knee:        2.0,
+			AttackTime:  5.0,
 			ReleaseTime: 50.0,
-			MakeupGain: 0.0,
+			MakeupGain:  0.0,
 		},
 		Equalizer: EqualizerConfig{
 			Enabled: true,
@@ -335,7 +335,7 @@ func (agc *AutomaticGainControl) Process(samples []float64) ([]float64, float64)
 	}
 
 	output := make([]float64, len(samples))
-	
+
 	for i, sample := range samples {
 		// Update envelope follower
 		absSample := math.Abs(sample)
@@ -385,10 +385,10 @@ func (agc *AutomaticGainControl) ApplyNoiseGate(samples []float64) []float64 {
 	defer agc.mu.Unlock()
 
 	output := make([]float64, len(samples))
-	
+
 	for i, sample := range samples {
 		level := math.Abs(sample)
-		
+
 		if level < agc.gateThreshold {
 			// Below threshold - apply gate
 			if agc.holdCounter > 0 {
@@ -415,18 +415,18 @@ type EchoCanceller struct {
 	// Adaptive filter coefficients
 	filterCoeffs []float64
 	filterBuffer []float64
-	
+
 	// Reference signal buffer (far-end)
 	referenceBuffer []float64
-	
+
 	// Error signal for adaptation
 	errorSignal []float64
-	
+
 	// Double-talk detector
 	nearEndPower float64
 	farEndPower  float64
 	doubleTalk   bool
-	
+
 	// Metrics
 	echoReduction float64
 }
@@ -454,34 +454,34 @@ func (ec *EchoCanceller) Process(samples []float64) []float64 {
 	}
 
 	output := make([]float64, len(samples))
-	
+
 	for i, sample := range samples {
 		// Update reference buffer (simulated far-end signal)
 		ec.updateReferenceBuffer(sample)
-		
+
 		// Estimate echo using adaptive filter
 		echoEstimate := ec.estimateEcho()
-		
+
 		// Subtract estimated echo
 		errorSignal := sample - echoEstimate
-		
+
 		// Detect double-talk
 		ec.detectDoubleTalk(sample, echoEstimate)
-		
+
 		// Update filter coefficients (if not double-talk)
 		if !ec.doubleTalk {
 			ec.updateFilterCoefficients(errorSignal)
 		}
-		
+
 		// Apply nonlinear processing
 		processed := ec.applyNonlinearProcessing(errorSignal)
-		
+
 		// Add comfort noise
 		processed = ec.addComfortNoise(processed)
-		
+
 		// Apply residual echo suppression
 		output[i] = ec.suppressResidualEcho(processed, echoEstimate)
-		
+
 		// Update metrics
 		ec.updateMetrics(sample, output[i])
 	}
@@ -516,7 +516,7 @@ func (ec *EchoCanceller) detectDoubleTalk(nearEnd, farEnd float64) {
 	alpha := 0.99
 	ec.nearEndPower = alpha*ec.nearEndPower + (1-alpha)*nearEnd*nearEnd
 	ec.farEndPower = alpha*ec.farEndPower + (1-alpha)*farEnd*farEnd
-	
+
 	// Detect double-talk
 	if ec.farEndPower > 0 {
 		ratio := ec.nearEndPower / ec.farEndPower
@@ -533,10 +533,10 @@ func (ec *EchoCanceller) updateFilterCoefficients(error float64) {
 	for _, ref := range ec.referenceBuffer {
 		power += ref * ref
 	}
-	
+
 	if power > 0.001 {
 		stepSize := ec.config.AdaptationRate / (power + 0.001)
-		
+
 		// Update coefficients
 		for j := 0; j < len(ec.filterCoeffs); j++ {
 			if j < len(ec.referenceBuffer) {
@@ -549,12 +549,12 @@ func (ec *EchoCanceller) updateFilterCoefficients(error float64) {
 // applyNonlinearProcessing applies NLP to remove residual echo
 func (ec *EchoCanceller) applyNonlinearProcessing(signal float64) float64 {
 	threshold := 0.01 * ec.config.NonlinearProcessing
-	
+
 	if math.Abs(signal) < threshold {
 		// Suppress small signals (likely residual echo)
 		return signal * 0.1
 	}
-	
+
 	return signal
 }
 
@@ -590,16 +590,16 @@ func (ec *EchoCanceller) GetReduction() float64 {
 
 // DynamicRangeCompressor implements audio compression
 type DynamicRangeCompressor struct {
-	config      *CompressionConfig
-	envelope    float64
-	attackCoeff float64
+	config       *CompressionConfig
+	envelope     float64
+	attackCoeff  float64
 	releaseCoeff float64
 }
 
 // NewDynamicRangeCompressor creates a new compressor
 func NewDynamicRangeCompressor(config *CompressionConfig) *DynamicRangeCompressor {
 	sampleRate := 8000.0
-	
+
 	return &DynamicRangeCompressor{
 		config:       config,
 		attackCoeff:  1.0 - math.Exp(-1.0/(config.AttackTime*sampleRate/1000.0)),
@@ -615,7 +615,7 @@ func (drc *DynamicRangeCompressor) Process(samples []float64) ([]float64, float6
 
 	output := make([]float64, len(samples))
 	avgGain := 0.0
-	
+
 	for i, sample := range samples {
 		// Update envelope
 		level := math.Abs(sample)
@@ -624,32 +624,32 @@ func (drc *DynamicRangeCompressor) Process(samples []float64) ([]float64, float6
 		} else {
 			drc.envelope += drc.releaseCoeff * (level - drc.envelope)
 		}
-		
+
 		// Calculate gain reduction
 		gainReduction := 1.0
 		levelDb := linearToDb(drc.envelope)
-		
+
 		if levelDb > drc.config.Threshold {
 			// Apply compression
 			excess := levelDb - drc.config.Threshold
-			
+
 			// Apply soft knee
 			if excess < drc.config.Knee {
-				ratio := 1.0 + (drc.config.Ratio-1.0) * (excess/drc.config.Knee) * (excess/drc.config.Knee)
+				ratio := 1.0 + (drc.config.Ratio-1.0)*(excess/drc.config.Knee)*(excess/drc.config.Knee)
 				excess = excess / ratio
 			} else {
 				excess = excess / drc.config.Ratio
 			}
-			
+
 			gainReduction = dbToLinear(-excess)
 		}
-		
+
 		// Apply gain reduction and makeup gain
 		gain := gainReduction * dbToLinear(drc.config.MakeupGain)
 		output[i] = sample * gain
 		avgGain += gain
 	}
-	
+
 	return output, avgGain / float64(len(samples))
 }
 
@@ -665,12 +665,12 @@ func NewParametricEqualizer(config *EqualizerConfig) *ParametricEqualizer {
 		config: config,
 		bands:  make([]*BiquadFilter, len(config.Bands)),
 	}
-	
+
 	// Create biquad filters for each band
 	for i, band := range config.Bands {
 		eq.bands[i] = NewBiquadFilter(band.Frequency, band.Gain, band.Q, 8000.0)
 	}
-	
+
 	return eq
 }
 
@@ -682,7 +682,7 @@ func (eq *ParametricEqualizer) Process(samples []float64) []float64 {
 
 	output := make([]float64, len(samples))
 	copy(output, samples)
-	
+
 	// Apply pre-amplification
 	if eq.config.PreAmp != 0 {
 		preAmpGain := dbToLinear(eq.config.PreAmp)
@@ -690,12 +690,12 @@ func (eq *ParametricEqualizer) Process(samples []float64) []float64 {
 			output[i] *= preAmpGain
 		}
 	}
-	
+
 	// Apply each band
 	for _, band := range eq.bands {
 		output = band.Process(output)
 	}
-	
+
 	return output
 }
 
@@ -712,7 +712,7 @@ func NewBiquadFilter(frequency, gain, q, sampleRate float64) *BiquadFilter {
 	omega := 2.0 * math.Pi * frequency / sampleRate
 	alpha := math.Sin(omega) / (2.0 * q)
 	A := math.Sqrt(dbToLinear(gain))
-	
+
 	// Peaking EQ coefficients
 	b0 := 1.0 + alpha*A
 	b1 := -2.0 * math.Cos(omega)
@@ -720,7 +720,7 @@ func NewBiquadFilter(frequency, gain, q, sampleRate float64) *BiquadFilter {
 	a0 := 1.0 + alpha/A
 	a1 := -2.0 * math.Cos(omega)
 	a2 := 1.0 - alpha/A
-	
+
 	// Normalize
 	return &BiquadFilter{
 		a0: b0 / a0,
@@ -734,20 +734,20 @@ func NewBiquadFilter(frequency, gain, q, sampleRate float64) *BiquadFilter {
 // Process applies the biquad filter
 func (bf *BiquadFilter) Process(samples []float64) []float64 {
 	output := make([]float64, len(samples))
-	
+
 	for i, x0 := range samples {
 		// Direct Form II
 		y0 := bf.a0*x0 + bf.a1*bf.x1 + bf.a2*bf.x2 - bf.b1*bf.y1 - bf.b2*bf.y2
-		
+
 		// Update delay lines
 		bf.x2 = bf.x1
 		bf.x1 = x0
 		bf.y2 = bf.y1
 		bf.y1 = y0
-		
+
 		output[i] = y0
 	}
-	
+
 	return output
 }
 
@@ -765,7 +765,7 @@ func NewDeEsser(config *DeEsserConfig) *DeEsser {
 	centerFreq := (config.FrequencyMin + config.FrequencyMax) / 2
 	bandwidth := config.FrequencyMax - config.FrequencyMin
 	q := centerFreq / bandwidth
-	
+
 	return &DeEsser{
 		config:       config,
 		detector:     NewBiquadFilter(centerFreq, 0, q, 8000.0),
@@ -783,7 +783,7 @@ func (de *DeEsser) Process(samples []float64) []float64 {
 	// Detect sibilance
 	detected := de.detector.Process(samples)
 	output := make([]float64, len(samples))
-	
+
 	for i := range samples {
 		// Update envelope of detected signal
 		level := math.Abs(detected[i])
@@ -792,19 +792,19 @@ func (de *DeEsser) Process(samples []float64) []float64 {
 		} else {
 			de.envelope = de.releaseCoeff*de.envelope + (1-de.releaseCoeff)*level
 		}
-		
+
 		// Calculate reduction
 		reduction := 1.0
 		if linearToDb(de.envelope) > de.config.Threshold {
 			reduction = 1.0 - de.config.Reduction
 		}
-		
+
 		// Apply reduction only to high frequencies
 		highFreq := detected[i]
 		lowFreq := samples[i] - highFreq
 		output[i] = lowFreq + highFreq*reduction
 	}
-	
+
 	return output
 }
 

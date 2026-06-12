@@ -14,6 +14,22 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// LoadBalancerConfig for load balancer integration
+type LoadBalancerConfig struct {
+	Type     string // haproxy, nginx, aws_elb, gcp_lb
+	Endpoint string
+	Username string
+	Password string
+	APIKey   string
+
+	// GCP-specific settings (used when Type == "gcp_lb")
+	GCPProject               string // GCP project ID (required for gcp_lb)
+	GCPRegion                string // Region for regional backend services; empty means global
+	GCPBackendService        string // Backend service name; falls back to the service name passed at call time
+	GCPServiceAccountKeyPath string // Optional service account key file; empty means Application Default Credentials
+	GCPServiceAccountKeyJSON string // Optional inline service account key JSON
+}
+
 // LoadBalancerManager manages load balancer configurations for failover
 type LoadBalancerManager struct {
 	config LoadBalancerConfig
@@ -488,125 +504,4 @@ func (lbm *LoadBalancerManager) getAWSELBStatus(ctx context.Context, serviceName
 	}
 }
 
-// GCP Load Balancer Implementation
-
-func (lbm *LoadBalancerManager) updateGCPLBBackends(ctx context.Context, serviceName string, backends []Backend) error {
-	// GCP Load Balancer API calls would go here
-	// This would require GCP SDK integration
-	lbm.logger.WithFields(logrus.Fields{
-		"service":  serviceName,
-		"backends": len(backends),
-	}).Info("GCP Load Balancer backend update (placeholder)")
-
-	return fmt.Errorf("GCP Load Balancer integration requires GCP SDK - not implemented in this placeholder")
-}
-
-func (lbm *LoadBalancerManager) gcpLBFailover(ctx context.Context, serviceName, backendName string) error {
-	lbm.logger.WithFields(logrus.Fields{
-		"service": serviceName,
-		"backend": backendName,
-	}).Info("GCP Load Balancer failover (placeholder)")
-
-	return fmt.Errorf("GCP Load Balancer integration requires GCP SDK - not implemented in this placeholder")
-}
-
-func (lbm *LoadBalancerManager) getGCPLBStatus(ctx context.Context, serviceName string) ([]Backend, error) {
-	return nil, fmt.Errorf("GCP Load Balancer integration requires GCP SDK - not implemented in this placeholder")
-}
-
-// DrainBackend drains traffic from a backend gracefully
-func (lbm *LoadBalancerManager) DrainBackend(ctx context.Context, serviceName, backendName string) error {
-	lbm.logger.WithFields(logrus.Fields{
-		"service": serviceName,
-		"backend": backendName,
-	}).Info("Draining backend traffic")
-
-	switch lbm.config.Type {
-	case "haproxy":
-		return lbm.haproxyServerAction(ctx, fmt.Sprintf("%s/stats", lbm.config.Endpoint), serviceName, backendName, "drain")
-	case "nginx":
-		// For nginx, gradually reduce weight
-		return lbm.nginxGradualDrain(ctx, serviceName, backendName)
-	default:
-		return fmt.Errorf("drain not implemented for load balancer type: %s", lbm.config.Type)
-	}
-}
-
-func (lbm *LoadBalancerManager) nginxGradualDrain(ctx context.Context, serviceName, backendName string) error {
-	// Gradually reduce weight to drain connections
-	weights := []int{75, 50, 25, 10, 0}
-
-	for _, weight := range weights {
-		servers, err := lbm.getNginxUpstreamServers(ctx, serviceName)
-		if err != nil {
-			return err
-		}
-
-		for _, server := range servers {
-			if strings.Contains(server.Server, backendName) {
-				updateURL := fmt.Sprintf("%s/api/6/http/upstreams/%s/servers/%d", lbm.config.Endpoint, serviceName, server.ID)
-				updateData := map[string]interface{}{
-					"weight": weight,
-				}
-
-				err := lbm.nginxAPIRequest(ctx, "PATCH", updateURL, updateData)
-				if err != nil {
-					return err
-				}
-
-				lbm.logger.WithFields(logrus.Fields{
-					"service": serviceName,
-					"backend": backendName,
-					"weight":  weight,
-				}).Debug("Updated backend weight during drain")
-
-				// Wait between weight reductions
-				time.Sleep(5 * time.Second)
-				break
-			}
-		}
-	}
-
-	return nil
-}
-
-// TestLoadBalancer tests connectivity to the load balancer
-func (lbm *LoadBalancerManager) TestLoadBalancer(ctx context.Context) error {
-	lbm.logger.WithField("endpoint", lbm.config.Endpoint).Info("Testing load balancer connectivity")
-
-	var testURL string
-	switch lbm.config.Type {
-	case "haproxy":
-		testURL = fmt.Sprintf("%s/stats", lbm.config.Endpoint)
-	case "nginx":
-		testURL = fmt.Sprintf("%s/api/6/nginx", lbm.config.Endpoint)
-	default:
-		testURL = lbm.config.Endpoint
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create test request: %w", err)
-	}
-
-	if lbm.config.Username != "" && lbm.config.Password != "" {
-		req.SetBasicAuth(lbm.config.Username, lbm.config.Password)
-	}
-
-	if lbm.config.APIKey != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", lbm.config.APIKey))
-	}
-
-	resp, err := lbm.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("load balancer connectivity test failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("load balancer test returned status %d", resp.StatusCode)
-	}
-
-	lbm.logger.Info("Load balancer connectivity test passed")
-	return nil
-}
+// GCP Load Balancer implementation lives in gcp_loadbalancer.go.

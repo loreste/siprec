@@ -12,20 +12,20 @@ import (
 )
 
 const (
-	splitBrainKeyPrefix   = "siprec:splitbrain:"
-	quorumCheckKey        = "siprec:quorum:check"
-	networkPartitionKey   = "siprec:partition:detected"
+	splitBrainKeyPrefix     = "siprec:splitbrain:"
+	quorumCheckKey          = "siprec:quorum:check"
+	networkPartitionKey     = "siprec:partition:detected"
 	splitBrainCheckInterval = 5 * time.Second
 )
 
 // SplitBrainDetector detects and handles network partitions
 type SplitBrainDetector struct {
-	redis       redis.UniversalClient
-	logger      *logrus.Logger
-	nodeID      string
-	config      SplitBrainConfig
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
+	redis    redis.UniversalClient
+	logger   *logrus.Logger
+	nodeID   string
+	config   SplitBrainConfig
+	stopChan chan struct{}
+	wg       sync.WaitGroup
 
 	// State
 	stateMu           sync.RWMutex
@@ -93,9 +93,9 @@ func (s *SplitBrainDetector) Start(ctx context.Context) error {
 	go s.detectionLoop(ctx)
 
 	s.logger.WithFields(logrus.Fields{
-		"min_quorum":   s.config.MinQuorum,
+		"min_quorum":     s.config.MinQuorum,
 		"check_interval": s.config.CheckInterval,
-		"action":       s.config.PartitionAction,
+		"action":         s.config.PartitionAction,
 	}).Info("Split-brain detector started")
 
 	return nil
@@ -202,8 +202,8 @@ func (s *SplitBrainDetector) detectionLoop(ctx context.Context) {
 					inGracePeriod = true
 					partitionStartTime = time.Now()
 					s.logger.WithFields(logrus.Fields{
-						"reachable": len(reachable),
-						"total":     total,
+						"reachable":  len(reachable),
+						"total":      total,
 						"min_quorum": s.config.MinQuorum,
 					}).Warn("Potential network partition detected, starting grace period")
 				} else if time.Since(partitionStartTime) > s.config.GracePeriod {
@@ -271,7 +271,7 @@ func (s *SplitBrainDetector) handlePartition(detected bool, reachableNodes []str
 	if detected {
 		s.logger.WithFields(logrus.Fields{
 			"reachable_nodes": reachableNodes,
-			"action":         s.config.PartitionAction,
+			"action":          s.config.PartitionAction,
 		}).Error("Network partition confirmed")
 
 		// Store partition event

@@ -327,7 +327,7 @@ func (d *G722Decoder) decodeHigherSubBand(ihigh int) int {
 
 	// Block 1H: Inverse adaptive quantizer
 	wd1 := g722HigherIH[ihigh]
-	wd2 := g722LowerILB[band.nb & 0x1F]
+	wd2 := g722LowerILB[band.nb&0x1F]
 	dhigh := (wd1 * wd2) >> 15
 
 	// Block 2H: Compute reconstructed signal
@@ -431,8 +431,8 @@ type OpusFrameDecoder struct {
 	sampleRate int
 	channels   int
 	// SILK state
-	silkLPCState  [16]float64
-	silkPrevGain  float64
+	silkLPCState [16]float64
+	silkPrevGain float64
 	// CELT state
 	celtPrevSamples []float64
 	// Common state
@@ -859,7 +859,7 @@ func (d *OpusFrameDecoder) generateComfortNoise(samples, channels int) []float64
 	pcm := make([]float64, samples*channels)
 	for i := range pcm {
 		// Low amplitude noise
-		pcm[i] = (float64((i*1103515245+12345)&0x7FFF) / 32768.0 - 0.5) * 0.01
+		pcm[i] = (float64((i*1103515245+12345)&0x7FFF)/32768.0 - 0.5) * 0.01
 	}
 	return pcm
 }

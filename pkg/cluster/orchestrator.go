@@ -13,10 +13,10 @@ import (
 
 // ClusterOrchestrator coordinates all cluster components
 type ClusterOrchestrator struct {
-	config  *config.ClusterConfig
-	logger  *logrus.Logger
-	nodeID  string
-	mu      sync.RWMutex
+	config *config.ClusterConfig
+	logger *logrus.Logger
+	nodeID string
+	mu     sync.RWMutex
 
 	// Core components
 	redisClient redis.UniversalClient
@@ -211,29 +211,29 @@ func (o *ClusterOrchestrator) initRedisClient() (redis.UniversalClient, error) {
 
 	// Build RedisClusterConfig from app config
 	clusterConfig := RedisClusterConfig{
-		Address:            redisCfg.Address,
-		Password:           redisCfg.Password,
-		Database:           redisCfg.Database,
-		SentinelAddresses:  redisCfg.SentinelAddresses,
-		SentinelMasterName: redisCfg.SentinelMasterName,
-		SentinelPassword:   redisCfg.SentinelPassword,
-		ClusterAddresses:   redisCfg.ClusterAddresses,
-		PoolSize:           redisCfg.PoolSize,
-		MinIdleConns:       redisCfg.MinIdleConns,
-		DialTimeout:        redisCfg.DialTimeout,
-		ReadTimeout:        redisCfg.ReadTimeout,
-		WriteTimeout:       redisCfg.WriteTimeout,
-		PoolTimeout:        redisCfg.PoolTimeout,
-		MaxRetries:         redisCfg.MaxRetries,
-		MinRetryBackoff:    redisCfg.MinRetryBackoff,
-		MaxRetryBackoff:    redisCfg.MaxRetryBackoff,
-		TLSEnabled:         redisCfg.TLSEnabled,
-		TLSCertFile:        redisCfg.TLSCertFile,
-		TLSKeyFile:         redisCfg.TLSKeyFile,
-		TLSCAFile:          redisCfg.TLSCAFile,
+		Address:               redisCfg.Address,
+		Password:              redisCfg.Password,
+		Database:              redisCfg.Database,
+		SentinelAddresses:     redisCfg.SentinelAddresses,
+		SentinelMasterName:    redisCfg.SentinelMasterName,
+		SentinelPassword:      redisCfg.SentinelPassword,
+		ClusterAddresses:      redisCfg.ClusterAddresses,
+		PoolSize:              redisCfg.PoolSize,
+		MinIdleConns:          redisCfg.MinIdleConns,
+		DialTimeout:           redisCfg.DialTimeout,
+		ReadTimeout:           redisCfg.ReadTimeout,
+		WriteTimeout:          redisCfg.WriteTimeout,
+		PoolTimeout:           redisCfg.PoolTimeout,
+		MaxRetries:            redisCfg.MaxRetries,
+		MinRetryBackoff:       redisCfg.MinRetryBackoff,
+		MaxRetryBackoff:       redisCfg.MaxRetryBackoff,
+		TLSEnabled:            redisCfg.TLSEnabled,
+		TLSCertFile:           redisCfg.TLSCertFile,
+		TLSKeyFile:            redisCfg.TLSKeyFile,
+		TLSCAFile:             redisCfg.TLSCAFile,
 		TLSInsecureSkipVerify: redisCfg.TLSInsecureSkipVerify,
-		RouteByLatency:     redisCfg.RouteByLatency,
-		RouteRandomly:      redisCfg.RouteRandomly,
+		RouteByLatency:        redisCfg.RouteByLatency,
+		RouteRandomly:         redisCfg.RouteRandomly,
 	}
 
 	// Set the mode

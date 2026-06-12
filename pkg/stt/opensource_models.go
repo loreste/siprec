@@ -22,12 +22,12 @@ import (
 type OpenSourceModelType string
 
 const (
-	ModelGraniteSpeech    OpenSourceModelType = "granite-speech"
-	ModelCanaryQwen       OpenSourceModelType = "canary-qwen"
-	ModelParakeetTDT      OpenSourceModelType = "parakeet-tdt"
-	ModelWhisperTurbo     OpenSourceModelType = "whisper-turbo"
-	ModelKyutaiMoshi      OpenSourceModelType = "kyutai-moshi"
-	ModelCustom           OpenSourceModelType = "custom"
+	ModelGraniteSpeech OpenSourceModelType = "granite-speech"
+	ModelCanaryQwen    OpenSourceModelType = "canary-qwen"
+	ModelParakeetTDT   OpenSourceModelType = "parakeet-tdt"
+	ModelWhisperTurbo  OpenSourceModelType = "whisper-turbo"
+	ModelKyutaiMoshi   OpenSourceModelType = "kyutai-moshi"
+	ModelCustom        OpenSourceModelType = "custom"
 )
 
 // InferenceBackend defines the inference backend type
@@ -46,9 +46,9 @@ const (
 // OpenSourceModelConfig holds configuration for open-source STT models
 type OpenSourceModelConfig struct {
 	// Model identification
-	ModelType   OpenSourceModelType `json:"model_type"`
-	ModelName   string              `json:"model_name"`
-	ModelPath   string              `json:"model_path"`   // Local path or HuggingFace model ID
+	ModelType OpenSourceModelType `json:"model_type"`
+	ModelName string              `json:"model_name"`
+	ModelPath string              `json:"model_path"` // Local path or HuggingFace model ID
 
 	// Inference backend
 	Backend            InferenceBackend `json:"backend"`
@@ -61,28 +61,28 @@ type OpenSourceModelConfig struct {
 	MultilingualWebSocketURL string `json:"multilingual_websocket_url"` // e.g., ws://host:port/ws/multilingual
 
 	// Authentication (optional for some backends)
-	APIKey      string              `json:"api_key"`
-	AuthHeader  string              `json:"auth_header"`  // Custom auth header name
+	APIKey     string `json:"api_key"`
+	AuthHeader string `json:"auth_header"` // Custom auth header name
 
 	// Audio configuration
-	SampleRate  int                 `json:"sample_rate"`
-	Encoding    string              `json:"encoding"`     // pcm, wav, flac, mp3
-	Channels    int                 `json:"channels"`
-	Language    string              `json:"language"`
+	SampleRate int    `json:"sample_rate"`
+	Encoding   string `json:"encoding"` // pcm, wav, flac, mp3
+	Channels   int    `json:"channels"`
+	Language   string `json:"language"`
 
 	// Model-specific options
-	Options     map[string]interface{} `json:"options"`
+	Options map[string]interface{} `json:"options"`
 
 	// Performance
-	Timeout         time.Duration `json:"timeout"`
-	MaxRetries      int           `json:"max_retries"`
-	BatchSize       int           `json:"batch_size"`
-	UseGPU          bool          `json:"use_gpu"`
-	DeviceID        int           `json:"device_id"`
+	Timeout    time.Duration `json:"timeout"`
+	MaxRetries int           `json:"max_retries"`
+	BatchSize  int           `json:"batch_size"`
+	UseGPU     bool          `json:"use_gpu"`
+	DeviceID   int           `json:"device_id"`
 
 	// CLI-specific (for local execution)
-	ExecutablePath  string        `json:"executable_path"`
-	ExtraArgs       []string      `json:"extra_args"`
+	ExecutablePath string   `json:"executable_path"`
+	ExtraArgs      []string `json:"extra_args"`
 
 	// Streaming
 	EnableStreaming bool          `json:"enable_streaming"`
@@ -105,19 +105,19 @@ type OpenSourceModelProvider struct {
 	httpClient       *http.Client
 
 	// WebSocket connections for streaming
-	connections     map[string]*websocket.Conn
-	connectionsMu   sync.RWMutex
+	connections   map[string]*websocket.Conn
+	connectionsMu sync.RWMutex
 
 	// Language state tracking per call (for multilingual mode)
-	languageStates  map[string]*LanguageState
+	languageStates   map[string]*LanguageState
 	languageStatesMu sync.RWMutex
 
 	// Callback for results
-	callback        func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
-	callbackMu      sync.RWMutex
+	callback   func(callUUID, transcription string, isFinal bool, metadata map[string]interface{})
+	callbackMu sync.RWMutex
 
-	initialized     bool
-	initMu          sync.RWMutex
+	initialized bool
+	initMu      sync.RWMutex
 }
 
 // NewOpenSourceModelProvider creates a new open-source model provider
@@ -242,9 +242,9 @@ func (p *OpenSourceModelProvider) testConnection() error {
 // StreamToText transcribes audio using the configured backend
 func (p *OpenSourceModelProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
 	logger := p.logger.WithFields(logrus.Fields{
-		"call_uuid":   callUUID,
-		"model_type":  p.config.ModelType,
-		"backend":     p.config.Backend,
+		"call_uuid":  callUUID,
+		"model_type": p.config.ModelType,
+		"backend":    p.config.Backend,
 	})
 
 	logger.Debug("Starting transcription")

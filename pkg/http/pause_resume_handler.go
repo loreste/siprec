@@ -1,6 +1,7 @@
 package http
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -59,12 +60,12 @@ type PauseStatus struct {
 
 // MuteStatus represents the mute state of a session
 type MuteStatus struct {
-	SessionID      string        `json:"session_id"`
-	IsMuted        bool          `json:"is_muted"`
-	InboundMuted   bool          `json:"inbound_muted"`   // Caller audio muted
-	OutboundMuted  bool          `json:"outbound_muted"`  // Agent/TTS audio muted
-	MutedAt        *time.Time    `json:"muted_at,omitempty"`
-	MuteDuration   time.Duration `json:"mute_duration,omitempty"`
+	SessionID     string        `json:"session_id"`
+	IsMuted       bool          `json:"is_muted"`
+	InboundMuted  bool          `json:"inbound_muted"`  // Caller audio muted
+	OutboundMuted bool          `json:"outbound_muted"` // Agent/TTS audio muted
+	MutedAt       *time.Time    `json:"muted_at,omitempty"`
+	MuteDuration  time.Duration `json:"mute_duration,omitempty"`
 }
 
 // PauseResumeHandler handles pause/resume API requests
@@ -115,18 +116,24 @@ func (h *PauseResumeHandler) RegisterHandlers(server *Server) {
 func (h *PauseResumeHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.config.RequireAuth {
-			apiKey := r.Header.Get("X-API-Key")
-			if apiKey == "" {
-				apiKey = r.URL.Query().Get("api_key")
+			// Fail closed: authentication is required but no API key is configured,
+			// so no request can ever be legitimately authorized.
+			if h.config.APIKey == "" {
+				h.logger.Error("Pause/Resume API misconfiguration: RequireAuth is enabled but no API key is configured, rejecting request")
+				writeJSONError(w, errors.New("pause/resume API unavailable: authentication required but no API key is configured"), http.StatusServiceUnavailable)
+				return
 			}
-			
-			if apiKey != h.config.APIKey {
+
+			// API key is accepted via header only, never via URL query parameters
+			apiKey := r.Header.Get("X-API-Key")
+
+			if subtle.ConstantTimeCompare([]byte(apiKey), []byte(h.config.APIKey)) != 1 {
 				h.logger.Warn("Unauthorized pause/resume API request")
 				writeJSONError(w, errors.New("unauthorized"), http.StatusUnauthorized)
 				return
 			}
 		}
-		
+
 		next(w, r)
 	}
 }
@@ -150,7 +157,8 @@ func (h *PauseResumeHandler) handlePauseSession(w http.ResponseWriter, r *http.R
 		PauseRecording     *bool `json:"pause_recording,omitempty"`
 		PauseTranscription *bool `json:"pause_transcription,omitempty"`
 	}
-	
+
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// If no body, use defaults from config
 		req.PauseRecording = &h.config.PauseRecording
@@ -162,7 +170,7 @@ func (h *PauseResumeHandler) handlePauseSession(w http.ResponseWriter, r *http.R
 	if req.PauseRecording != nil {
 		pauseRecording = *req.PauseRecording
 	}
-	
+
 	pauseTranscription := h.config.PauseTranscription
 	if req.PauseTranscription != nil {
 		pauseTranscription = *req.PauseTranscription
@@ -195,7 +203,7 @@ func (h *PauseResumeHandler) handlePauseSession(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSONResponse(w, status, http.StatusOK)
-	
+
 	h.logger.WithFields(logrus.Fields{
 		"session_id":          sessionID,
 		"pause_recording":     pauseRecording,
@@ -238,7 +246,7 @@ func (h *PauseResumeHandler) handleResumeSession(w http.ResponseWriter, r *http.
 	}
 
 	writeJSONResponse(w, status, http.StatusOK)
-	
+
 	h.logger.WithField("session_id", sessionID).Info("Session resumed")
 }
 
@@ -279,7 +287,8 @@ func (h *PauseResumeHandler) handlePauseAll(w http.ResponseWriter, r *http.Reque
 		PauseRecording     *bool `json:"pause_recording,omitempty"`
 		PauseTranscription *bool `json:"pause_transcription,omitempty"`
 	}
-	
+
+	limitJSONBody(w, r)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// If no body, use defaults from config
 		req.PauseRecording = &h.config.PauseRecording
@@ -291,7 +300,7 @@ func (h *PauseResumeHandler) handlePauseAll(w http.ResponseWriter, r *http.Reque
 	if req.PauseRecording != nil {
 		pauseRecording = *req.PauseRecording
 	}
-	
+
 	pauseTranscription := h.config.PauseTranscription
 	if req.PauseTranscription != nil {
 		pauseTranscription = *req.PauseTranscription
@@ -326,10 +335,10 @@ func (h *PauseResumeHandler) handlePauseAll(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSONResponse(w, map[string]interface{}{
-		"message": "All sessions paused",
+		"message":  "All sessions paused",
 		"statuses": statuses,
 	}, http.StatusOK)
-	
+
 	h.logger.WithFields(logrus.Fields{
 		"pause_recording":     pauseRecording,
 		"pause_transcription": pauseTranscription,
@@ -367,10 +376,10 @@ func (h *PauseResumeHandler) handleResumeAll(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSONResponse(w, map[string]interface{}{
-		"message": "All sessions resumed",
+		"message":  "All sessions resumed",
 		"statuses": statuses,
 	}, http.StatusOK)
-	
+
 	h.logger.WithField("session_count", len(statuses)).Info("All sessions resumed")
 }
 
@@ -414,6 +423,7 @@ func (h *PauseResumeHandler) handleMuteSession(w http.ResponseWriter, r *http.Re
 
 	// Default to muting both if no body provided
 	if r.Body != nil && r.ContentLength > 0 {
+		limitJSONBody(w, r)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, errors.NewInvalidInput("invalid request body: "+err.Error()), http.StatusBadRequest)
 			return
@@ -470,6 +480,7 @@ func (h *PauseResumeHandler) handleUnmuteSession(w http.ResponseWriter, r *http.
 
 	// Default to unmuting both if no body provided
 	if r.Body != nil && r.ContentLength > 0 {
+		limitJSONBody(w, r)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, errors.NewInvalidInput("invalid request body: "+err.Error()), http.StatusBadRequest)
 			return
@@ -498,9 +509,9 @@ func (h *PauseResumeHandler) handleUnmuteSession(w http.ResponseWriter, r *http.
 	writeJSONResponse(w, status, http.StatusOK)
 
 	h.logger.WithFields(logrus.Fields{
-		"session_id":       sessionID,
-		"unmute_inbound":   req.UnmuteInbound,
-		"unmute_outbound":  req.UnmuteOutbound,
+		"session_id":      sessionID,
+		"unmute_inbound":  req.UnmuteInbound,
+		"unmute_outbound": req.UnmuteOutbound,
 	}).Info("Session unmuted")
 }
 

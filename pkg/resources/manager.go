@@ -13,13 +13,13 @@ import (
 
 // Manager handles resource limits and monitoring for the SIPREC server
 type Manager struct {
-	config  Config
-	logger  *logrus.Entry
+	config Config
+	logger *logrus.Entry
 
 	// Resource tracking
-	activeCalls    int64
-	activeStreams  int64
-	memoryUsedMB   int64
+	activeCalls   int64
+	activeStreams int64
+	memoryUsedMB  int64
 
 	// Components
 	workerPool    *WorkerPool
@@ -55,9 +55,9 @@ type Stats struct {
 	MemoryLimitMB    int     `json:"memory_limit_mb"`
 	WorkerPoolActive int     `json:"worker_pool_active"`
 	WorkerPoolSize   int     `json:"worker_pool_size"`
-	CallCapacity     float64 `json:"call_capacity"`     // 0.0-1.0
-	StreamCapacity   float64 `json:"stream_capacity"`   // 0.0-1.0
-	MemoryCapacity   float64 `json:"memory_capacity"`   // 0.0-1.0
+	CallCapacity     float64 `json:"call_capacity"`   // 0.0-1.0
+	StreamCapacity   float64 `json:"stream_capacity"` // 0.0-1.0
+	MemoryCapacity   float64 `json:"memory_capacity"` // 0.0-1.0
 	NodeID           string  `json:"node_id,omitempty"`
 }
 
@@ -191,42 +191,9 @@ func (m *Manager) ReleaseRTPStream() {
 	m.rtpLimiter.Release()
 }
 
-// GetActiveStreams returns the current number of active RTP streams
-func (m *Manager) GetActiveStreams() int64 {
-	return m.rtpLimiter.ActiveCount()
-}
-
-// SubmitWork submits work to the worker pool
-func (m *Manager) SubmitWork(work func()) bool {
-	return m.workerPool.Submit(work)
-}
-
 // SubmitWorkBlocking submits work and blocks until accepted
 func (m *Manager) SubmitWorkBlocking(work func()) bool {
 	return m.workerPool.SubmitBlocking(work)
-}
-
-// SubmitWorkWithTimeout submits work with a timeout
-func (m *Manager) SubmitWorkWithTimeout(work func(), timeout time.Duration) bool {
-	return m.workerPool.SubmitWithTimeout(work, timeout)
-}
-
-// CheckMemory returns true if memory is within limits
-func (m *Manager) CheckMemory() bool {
-	if m.memoryMonitor == nil {
-		return true
-	}
-	return m.memoryMonitor.CheckWithinLimit()
-}
-
-// GetMemoryUsage returns current memory usage in bytes
-func (m *Manager) GetMemoryUsage() int64 {
-	if m.memoryMonitor == nil {
-		var memStats runtime.MemStats
-		runtime.ReadMemStats(&memStats)
-		return int64(memStats.Alloc)
-	}
-	return m.memoryMonitor.CurrentUsage()
 }
 
 // GetStats returns current resource statistics

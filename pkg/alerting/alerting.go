@@ -300,18 +300,6 @@ func (am *AlertManager) createChannel(config ChannelConfig) NotificationChannel 
 	}
 }
 
-// GetActiveAlerts returns all active alerts
-func (am *AlertManager) GetActiveAlerts() map[string]*ActiveAlert {
-	am.mutex.RLock()
-	defer am.mutex.RUnlock()
-
-	alerts := make(map[string]*ActiveAlert)
-	for k, v := range am.activeAlerts {
-		alerts[k] = v
-	}
-	return alerts
-}
-
 // Stop stops the alert manager
 func (am *AlertManager) Stop() {
 	am.cancel()
@@ -509,55 +497,7 @@ func (p *PagerDutyChannel) IsEnabled() bool {
 	return p.enabled
 }
 
-// Email Channel Implementation
-
-type EmailChannel struct {
-	name     string
-	smtpHost string
-	smtpPort int
-	username string
-	password string
-	from     string
-	to       []string
-	enabled  bool
-	logger   *logrus.Logger
-}
-
-func NewEmailChannel(config ChannelConfig, logger *logrus.Logger) *EmailChannel {
-	smtpHost, _ := config.Settings["smtp_host"].(string)
-	smtpPort, _ := config.Settings["smtp_port"].(int)
-	username, _ := config.Settings["username"].(string)
-	password, _ := config.Settings["password"].(string)
-	from, _ := config.Settings["from"].(string)
-	to, _ := config.Settings["to"].([]string)
-
-	return &EmailChannel{
-		name:     config.Name,
-		smtpHost: smtpHost,
-		smtpPort: smtpPort,
-		username: username,
-		password: password,
-		from:     from,
-		to:       to,
-		enabled:  config.Enabled,
-		logger:   logger,
-	}
-}
-
-func (e *EmailChannel) Send(alert *ActiveAlert) error {
-	// Email implementation would go here
-	// For brevity, this is a placeholder
-	e.logger.WithField("alert", alert.Rule.Name).Info("Email notification sent (simulated)")
-	return nil
-}
-
-func (e *EmailChannel) GetName() string {
-	return e.name
-}
-
-func (e *EmailChannel) IsEnabled() bool {
-	return e.enabled
-}
+// Email Channel Implementation lives in email.go
 
 // Webhook Channel Implementation
 

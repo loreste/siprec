@@ -177,11 +177,6 @@ func DefaultStreamingConfig() *StreamingConfig {
 	}
 }
 
-// NewStreamingTranscriber creates a new streaming transcriber
-func NewStreamingTranscriber(sessionID, callID string, config *StreamingConfig, logger *logrus.Logger) *StreamingTranscriber {
-	return NewStreamingTranscriberWithAMQP(sessionID, callID, config, logger, nil)
-}
-
 // NewStreamingTranscriberWithAMQP creates a new streaming transcriber with AMQP publisher
 func NewStreamingTranscriberWithAMQP(sessionID, callID string, config *StreamingConfig, logger *logrus.Logger, amqpPublisher AMQPPublisher) *StreamingTranscriber {
 	if config == nil {
@@ -300,38 +295,6 @@ func (st *StreamingTranscriber) Stop() error {
 	st.logger.WithField("duration", duration).Info("Streaming transcription session ended")
 
 	return nil
-}
-
-// Subscribe adds a subscriber to receive transcription events
-func (st *StreamingTranscriber) Subscribe(subscriberID string, bufferSize int) (<-chan TranscriptionEvent, error) {
-	st.subscribersMux.Lock()
-	defer st.subscribersMux.Unlock()
-
-	if _, exists := st.subscribers[subscriberID]; exists {
-		return nil, fmt.Errorf("subscriber %s already exists", subscriberID)
-	}
-
-	// Create buffered channel for subscriber
-	eventChan := make(chan TranscriptionEvent, bufferSize)
-	st.subscribers[subscriberID] = eventChan
-
-	st.logger.WithField("subscriber_id", subscriberID).Debug("New subscriber added")
-	return eventChan, nil
-}
-
-// Unsubscribe removes a subscriber
-func (st *StreamingTranscriber) Unsubscribe(subscriberID string) error {
-	st.subscribersMux.Lock()
-	defer st.subscribersMux.Unlock()
-
-	if ch, exists := st.subscribers[subscriberID]; exists {
-		close(ch)
-		delete(st.subscribers, subscriberID)
-		st.logger.WithField("subscriber_id", subscriberID).Debug("Subscriber removed")
-		return nil
-	}
-
-	return fmt.Errorf("subscriber %s not found", subscriberID)
 }
 
 // ProcessAudio processes incoming audio data for real-time transcription
@@ -607,34 +570,4 @@ func (st *StreamingTranscriber) cleanup() {
 
 	// Force garbage collection if memory usage is high
 	st.resourceMonitor.OptimizeMemory()
-}
-
-// GetMetrics returns current streaming metrics
-func (st *StreamingTranscriber) GetMetrics() *StreamingMetrics {
-	return st.metrics
-}
-
-// IsActive returns whether the transcription session is active
-func (st *StreamingTranscriber) IsActive() bool {
-	st.activeMux.RLock()
-	defer st.activeMux.RUnlock()
-	return st.isActive
-}
-
-// GetSessionInfo returns session information
-func (st *StreamingTranscriber) GetSessionInfo() map[string]interface{} {
-	st.activeMux.RLock()
-	defer st.activeMux.RUnlock()
-
-	return map[string]interface{}{
-		"session_id":    st.sessionID,
-		"call_id":       st.callID,
-		"is_active":     st.isActive,
-		"start_time":    st.startTime,
-		"duration":      time.Since(st.startTime).Seconds(),
-		"last_activity": st.lastActivity,
-		"subscribers":   len(st.subscribers),
-		"config":        st.config,
-		"metrics":       st.metrics.GetStats(),
-	}
 }

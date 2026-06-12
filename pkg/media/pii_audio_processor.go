@@ -260,7 +260,7 @@ func (p *PIIAudioProcessor) generateTone(buffer []byte) {
 // generateNoise generates low-level white noise
 func (p *PIIAudioProcessor) generateNoise(buffer []byte) {
 	// Simple LFSR-based noise generation
-	lfsr := uint16(0xACE1) // Seed
+	lfsr := uint16(0xACE1)   // Seed
 	amplitude := int16(4096) // Low amplitude noise
 
 	numSamples := len(buffer) / p.bytesPerSample
@@ -327,38 +327,14 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// ProcessRecordingWithMetadata applies PII redaction using marker metadata
-func (p *PIIAudioProcessor) ProcessRecordingWithMetadata(metadata *PIIAudioMarkerMetadata) error {
-	if metadata == nil || len(metadata.Markers) == 0 {
-		return nil
-	}
-
-	// Convert markers to redaction intervals
-	intervals := make([]RedactionInterval, 0, len(metadata.Markers))
-	var startTime time.Time
-	for i, marker := range metadata.Markers {
-		if i == 0 {
-			startTime = marker.StartTime
-		}
-		intervals = append(intervals, RedactionInterval{
-			StartOffset: marker.StartTime.Sub(startTime),
-			EndOffset:   marker.EndTime.Sub(startTime),
-			PIIType:     marker.PIIType,
-			Reason:      "PII detected in transcription",
-		})
-	}
-
-	return p.ProcessRecordingInPlace(metadata.RecordingPath, intervals)
-}
-
 // GenerateRedactionReport creates a summary report of redactions applied
 func (p *PIIAudioProcessor) GenerateRedactionReport(intervals []RedactionInterval) *PIIRedactionReport {
 	if len(intervals) == 0 {
 		return &PIIRedactionReport{
-			TotalIntervals:  0,
-			TotalDuration:   0,
-			TypeCounts:      make(map[string]int),
-			ProcessedAt:     time.Now(),
+			TotalIntervals: 0,
+			TotalDuration:  0,
+			TypeCounts:     make(map[string]int),
+			ProcessedAt:    time.Now(),
 		}
 	}
 
@@ -373,21 +349,21 @@ func (p *PIIAudioProcessor) GenerateRedactionReport(intervals []RedactionInterva
 	}
 
 	return &PIIRedactionReport{
-		TotalIntervals:  len(merged),
-		TotalDuration:   totalDuration,
-		TypeCounts:      typeCounts,
-		RedactionType:   string(p.redactionType),
-		ProcessedAt:     time.Now(),
+		TotalIntervals: len(merged),
+		TotalDuration:  totalDuration,
+		TypeCounts:     typeCounts,
+		RedactionType:  string(p.redactionType),
+		ProcessedAt:    time.Now(),
 	}
 }
 
 // PIIRedactionReport contains statistics about audio redaction
 type PIIRedactionReport struct {
-	TotalIntervals int               `json:"total_intervals"`
-	TotalDuration  time.Duration     `json:"total_duration"`
-	TypeCounts     map[string]int    `json:"type_counts"`
-	RedactionType  string            `json:"redaction_type"`
-	ProcessedAt    time.Time         `json:"processed_at"`
+	TotalIntervals int            `json:"total_intervals"`
+	TotalDuration  time.Duration  `json:"total_duration"`
+	TypeCounts     map[string]int `json:"type_counts"`
+	RedactionType  string         `json:"redaction_type"`
+	ProcessedAt    time.Time      `json:"processed_at"`
 }
 
 // SaveRedactionMetadata saves redaction metadata to a JSON sidecar file

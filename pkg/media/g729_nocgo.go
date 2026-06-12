@@ -34,11 +34,6 @@ func (d *G729StreamDecoder) Close() {
 	d.active = false
 }
 
-// DecodeG729WithSSRC returns an error because G.729 requires CGO.
-func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
-	return nil, fmt.Errorf("G.729 decoding requires CGO (build with CGO_ENABLED=1)")
-}
-
 // decodeG729Packet returns an error because G.729 requires CGO.
 func decodeG729Packet(payload []byte) ([]byte, error) {
 	return nil, fmt.Errorf("G.729 decoding requires CGO (build with CGO_ENABLED=1)")

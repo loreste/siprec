@@ -3,15 +3,28 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	// maxInboundMessageSize is the maximum size of an incoming WebSocket message in bytes
+	maxInboundMessageSize = 1024
+
+	// maxProtocolViolations is the number of malformed messages tolerated before closing the connection
+	maxProtocolViolations = 3
+
+	// maxCallUUIDLength is the maximum accepted length of a call UUID in client messages
+	maxCallUUIDLength = 128
 )
 
 // TranscriptionMessage represents a real-time transcription update
@@ -21,6 +34,20 @@ type TranscriptionMessage struct {
 	IsFinal       bool                   `json:"is_final"`
 	Timestamp     time.Time              `json:"timestamp"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ClientMessage is the JSON protocol for messages sent by WebSocket clients.
+// Supported types: "subscribe", "unsubscribe" (both require call_uuid) and "ping".
+type ClientMessage struct {
+	Type     string `json:"type"`
+	CallUUID string `json:"call_uuid,omitempty"`
+}
+
+// ServerMessage is the JSON protocol for control responses sent to WebSocket clients.
+type ServerMessage struct {
+	Type     string `json:"type"`
+	CallUUID string `json:"call_uuid,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Client represents a connected WebSocket client
@@ -102,15 +129,7 @@ func (h *TranscriptionHub) Run(ctx context.Context) {
 				close(client.send)
 
 				// Remove from call subscribers if needed
-				if client.callUUID != "" {
-					if subscribers, exists := h.callSubscribers[client.callUUID]; exists {
-						delete(subscribers, client)
-						// Clean up empty subscriber maps
-						if len(subscribers) == 0 {
-							delete(h.callSubscribers, client.callUUID)
-						}
-					}
-				}
+				h.removeSubscriptionLocked(client)
 
 				h.logger.Info("Client disconnected from WebSocket")
 			}
@@ -281,24 +300,118 @@ func (c *Client) readPump() {
 	}()
 
 	// Set read limits and timeouts
-	c.conn.SetReadLimit(512)
+	c.conn.SetReadLimit(maxInboundMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
+	violations := 0
 	for {
 		// Read message from client
-		_, _, err := c.conn.ReadMessage()
+		messageType, payload, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				c.logger.WithError(err).Error("WebSocket unexpected close error")
 			}
 			break
 		}
-		// We don't process incoming messages for now, just maintain the connection
+
+		if err := c.handleInboundMessage(messageType, payload); err != nil {
+			violations++
+			c.logger.WithError(err).WithFields(logrus.Fields{
+				"violations":     violations,
+				"max_violations": maxProtocolViolations,
+			}).Warning("Malformed WebSocket message received")
+
+			if violations >= maxProtocolViolations {
+				c.logger.Warning("Closing WebSocket connection after repeated malformed messages")
+				c.conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many malformed messages"),
+					time.Now().Add(time.Second),
+				)
+				break
+			}
+		}
 	}
+}
+
+// handleInboundMessage validates and dispatches a single message received from a client.
+// It returns an error when the message is malformed or uses an unknown type so the
+// caller can count protocol violations.
+func (c *Client) handleInboundMessage(messageType int, payload []byte) error {
+	if messageType != websocket.TextMessage {
+		return fmt.Errorf("unsupported WebSocket message type: %d", messageType)
+	}
+
+	var msg ClientMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return fmt.Errorf("invalid JSON message: %w", err)
+	}
+
+	switch msg.Type {
+	case "ping":
+		c.enqueueControlMessage(&ServerMessage{Type: "pong"})
+		return nil
+
+	case "subscribe":
+		if err := validateCallUUID(msg.CallUUID); err != nil {
+			c.enqueueControlMessage(&ServerMessage{Type: "error", Error: err.Error()})
+			return fmt.Errorf("invalid subscribe request: %w", err)
+		}
+		c.hub.SubscribeToCall(c, msg.CallUUID)
+		c.enqueueControlMessage(&ServerMessage{Type: "subscribed", CallUUID: msg.CallUUID})
+		return nil
+
+	case "unsubscribe":
+		if err := validateCallUUID(msg.CallUUID); err != nil {
+			c.enqueueControlMessage(&ServerMessage{Type: "error", Error: err.Error()})
+			return fmt.Errorf("invalid unsubscribe request: %w", err)
+		}
+		c.hub.UnsubscribeFromCall(c, msg.CallUUID)
+		c.enqueueControlMessage(&ServerMessage{Type: "unsubscribed", CallUUID: msg.CallUUID})
+		return nil
+
+	case "":
+		return fmt.Errorf("message missing required \"type\" field")
+
+	default:
+		return fmt.Errorf("unknown message type: %q", msg.Type)
+	}
+}
+
+// enqueueControlMessage queues a control response for delivery to the client.
+// Messages are dropped (with a log entry) if the client send buffer is full.
+func (c *Client) enqueueControlMessage(msg *ServerMessage) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		c.logger.WithError(err).Error("Failed to marshal WebSocket control message")
+		return
+	}
+
+	select {
+	case c.send <- data:
+	default:
+		c.logger.WithField("type", msg.Type).Warning("Client send buffer full, dropping control message")
+	}
+}
+
+// validateCallUUID validates a call UUID supplied by a client
+func validateCallUUID(callUUID string) error {
+	if callUUID == "" {
+		return fmt.Errorf("call_uuid is required")
+	}
+	if len(callUUID) > maxCallUUIDLength {
+		return fmt.Errorf("call_uuid exceeds maximum length of %d", maxCallUUIDLength)
+	}
+	if strings.IndexFunc(callUUID, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}) >= 0 {
+		return fmt.Errorf("call_uuid contains invalid characters")
+	}
+	return nil
 }
 
 // IsRunning returns true if the hub is running
@@ -369,12 +482,59 @@ func (h *TranscriptionHub) removeClient(client *Client) {
 	delete(h.clients, client)
 	close(client.send)
 
-	if client.callUUID != "" {
-		if subscribers, exists := h.callSubscribers[client.callUUID]; exists {
-			delete(subscribers, client)
-			if len(subscribers) == 0 {
-				delete(h.callSubscribers, client.callUUID)
-			}
+	h.removeSubscriptionLocked(client)
+}
+
+// SubscribeToCall subscribes a client to transcription updates for a specific call.
+// A client can be subscribed to one call at a time; subscribing replaces any
+// previous subscription.
+func (h *TranscriptionHub) SubscribeToCall(client *Client, callUUID string) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	if client.callUUID == callUUID {
+		return
+	}
+
+	// Replace any existing subscription
+	h.removeSubscriptionLocked(client)
+	client.callUUID = callUUID
+
+	if _, exists := h.callSubscribers[callUUID]; !exists {
+		h.callSubscribers[callUUID] = make(map[*Client]bool)
+	}
+	h.callSubscribers[callUUID][client] = true
+
+	h.logger.WithField("call_uuid", callUUID).Info("Client subscribed to specific call")
+}
+
+// UnsubscribeFromCall removes a client's subscription to a specific call. The client
+// reverts to receiving broadcast transcriptions for all calls.
+func (h *TranscriptionHub) UnsubscribeFromCall(client *Client, callUUID string) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	if client.callUUID != callUUID {
+		return
+	}
+
+	h.removeSubscriptionLocked(client)
+	client.callUUID = ""
+
+	h.logger.WithField("call_uuid", callUUID).Info("Client unsubscribed from specific call")
+}
+
+// removeSubscriptionLocked removes the client from the call subscriber index.
+// The hub mutex must be held by the caller.
+func (h *TranscriptionHub) removeSubscriptionLocked(client *Client) {
+	if client.callUUID == "" {
+		return
+	}
+
+	if subscribers, exists := h.callSubscribers[client.callUUID]; exists {
+		delete(subscribers, client)
+		if len(subscribers) == 0 {
+			delete(h.callSubscribers, client.callUUID)
 		}
 	}
 }

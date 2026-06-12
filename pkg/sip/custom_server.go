@@ -897,50 +897,6 @@ func newSIPMessageFromSipgo(msg sipparser.Message, conn *SIPConnection) *SIPMess
 	return out
 }
 
-// processSIPMessage processes a parsed SIP message
-func (s *CustomSIPServer) processSIPMessage(message *SIPMessage) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.WithFields(logrus.Fields{
-				"panic":   r,
-				"method":  message.Method,
-				"call_id": message.CallID,
-			}).Error("Recovered from panic in SIP message processor")
-		}
-	}()
-
-	logger := s.logger.WithFields(logrus.Fields{
-		"method":       message.Method,
-		"request_uri":  message.RequestURI,
-		"transport":    message.Connection.transport,
-		"remote_addr":  message.Connection.remoteAddr,
-		"message_size": len(message.RawMessage),
-	})
-
-	logger.Debug("Processing SIP message")
-
-	// Handle different SIP methods
-	switch strings.ToUpper(message.Method) {
-	case "OPTIONS":
-		s.handleOptionsMessage(message)
-	case "INVITE":
-		s.handleInviteMessage(message)
-	case "BYE":
-		s.handleByeMessage(message)
-	case "ACK":
-		s.handleAckMessage(message)
-	case "CANCEL":
-		s.handleCancelMessage(message)
-	case "PRACK":
-		s.handlePrackMessage(message)
-	case "SUBSCRIBE":
-		s.handleSubscribeMessage(message)
-	default:
-		logger.WithField("method", message.Method).Warn("Unsupported SIP method")
-		s.sendResponse(message, 501, "Not Implemented", nil, nil)
-	}
-}
-
 // handleOptionsMessage handles OPTIONS requests
 func (s *CustomSIPServer) handleOptionsMessage(message *SIPMessage) {
 	logger := s.logger.WithField("method", "OPTIONS")
@@ -3897,8 +3853,8 @@ func (s *CustomSIPServer) combineRecordingLegs(callID string, callState *CallSta
 	if hasValidTiming && len(recordingLegs) >= 2 {
 		delta := recordingLegs[1].FirstRTPTime.Sub(recordingLegs[0].FirstRTPTime)
 		s.logger.WithFields(logrus.Fields{
-			"call_id":   callID,
-			"delta_ms":  delta.Milliseconds(),
+			"call_id":    callID,
+			"delta_ms":   delta.Milliseconds(),
 			"will_align": true,
 		}).Debug("Leg timing delta - will apply alignment padding")
 	}
@@ -4009,33 +3965,6 @@ func (s *CustomSIPServer) getHeader(message *SIPMessage, name string) string {
 	return s.getHeaderValue(message, name)
 }
 
-// contains checks if a slice contains a string
-// extractTag extracts tag parameter from SIP header
-func extractTag(header string) string {
-	// Look for ;tag=value
-	parts := strings.Split(header, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(strings.ToLower(part), "tag=") {
-			return part[4:] // Remove "tag="
-		}
-	}
-	return ""
-}
-
-// extractBranch extracts branch parameter from Via header
-func extractBranch(header string) string {
-	// Look for ;branch=value
-	parts := strings.Split(header, ";")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(strings.ToLower(part), "branch=") {
-			return part[7:] // Remove "branch="
-		}
-	}
-	return ""
-}
-
 // extractCSeqNumber extracts sequence number from CSeq header
 func extractCSeqNumber(cseq string) int {
 	parts := strings.Fields(cseq)
@@ -4065,47 +3994,6 @@ func parseCSeq(cseq string) (int, string) {
 	}
 
 	return number, method
-}
-
-// ensureHeaderHasTag guarantees that the SIP header contains a local tag parameter
-func ensureHeaderHasTag(headerValue, tag string) string {
-	if tag == "" {
-		return headerValue
-	}
-
-	if strings.Contains(strings.ToLower(headerValue), "tag=") {
-		return headerValue
-	}
-
-	if strings.Contains(headerValue, ">") {
-		parts := strings.SplitN(headerValue, ">", 2)
-		suffix := ""
-		if len(parts) > 1 {
-			suffix = strings.TrimLeft(parts[1], " ")
-			if strings.HasPrefix(suffix, ";") {
-				suffix = suffix[1:]
-			}
-			if suffix != "" {
-				suffix = ";" + suffix
-			}
-		}
-		return fmt.Sprintf("%s>;tag=%s%s", parts[0], tag, suffix)
-	}
-
-	trimmed := strings.TrimSpace(headerValue)
-	if trimmed == "" {
-		return fmt.Sprintf(";tag=%s", tag)
-	}
-
-	if strings.HasSuffix(trimmed, ";") {
-		return fmt.Sprintf("%s tag=%s", headerValue, tag)
-	}
-
-	if strings.Contains(trimmed, ";") {
-		return fmt.Sprintf("%s;tag=%s", trimmed, tag)
-	}
-
-	return fmt.Sprintf("%s;tag=%s", headerValue, tag)
 }
 
 // generateTag generates a random tag for SIP headers
@@ -4982,17 +4870,6 @@ a=recvonly
 	return []byte(sdp)
 }
 
-// updateCallState updates an existing call state
-func (s *CustomSIPServer) updateCallState(callID string, state string) {
-	s.callMutex.Lock()
-	defer s.callMutex.Unlock()
-
-	if callState, exists := s.callStates[callID]; exists {
-		callState.State = state
-		callState.LastActivity = time.Now()
-	}
-}
-
 // getCallState retrieves call state for a call ID
 func (s *CustomSIPServer) getCallState(callID string) *CallState {
 	s.callMutex.RLock()
@@ -5066,44 +4943,6 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 
 	s.logger.Info("Custom SIP server shutdown completed")
 	return nil
-}
-
-// udpConn wraps UDP connection for interface compatibility
-type udpConn struct {
-	conn *net.UDPConn
-	addr *net.UDPAddr
-}
-
-func (u *udpConn) Read(b []byte) (n int, err error) {
-	return u.conn.Read(b)
-}
-
-func (u *udpConn) Write(b []byte) (n int, err error) {
-	return u.conn.WriteToUDP(b, u.addr)
-}
-
-func (u *udpConn) Close() error {
-	return nil // Don't close the main UDP socket
-}
-
-func (u *udpConn) LocalAddr() net.Addr {
-	return u.conn.LocalAddr()
-}
-
-func (u *udpConn) RemoteAddr() net.Addr {
-	return u.addr
-}
-
-func (u *udpConn) SetDeadline(t time.Time) error {
-	return u.conn.SetDeadline(t)
-}
-
-func (u *udpConn) SetReadDeadline(t time.Time) error {
-	return u.conn.SetReadDeadline(t)
-}
-
-func (u *udpConn) SetWriteDeadline(t time.Time) error {
-	return u.conn.SetWriteDeadline(t)
 }
 
 // extractVendorInformation detects and extracts vendor-specific headers for enterprise compatibility

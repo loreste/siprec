@@ -79,13 +79,13 @@ func (m *mockAMQPClient) Disconnect() {
 // --------------------------------------------------------------------------
 
 type mockSTTProvider struct {
-	name         string
-	initErr      error
-	streamErr    error
-	streamDelay  time.Duration
-	streamCount  atomic.Int64
-	callback     stt.TranscriptionCallback
-	callbackMu   sync.Mutex
+	name        string
+	initErr     error
+	streamErr   error
+	streamDelay time.Duration
+	streamCount atomic.Int64
+	callback    stt.TranscriptionCallback
+	callbackMu  sync.Mutex
 }
 
 func (p *mockSTTProvider) Initialize() error { return p.initErr }

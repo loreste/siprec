@@ -23,53 +23,53 @@ type DistributedRateLimiter struct {
 	wg       sync.WaitGroup
 
 	// Local metrics
-	metrics     *rateLimitMetrics
-	metricsMu   sync.RWMutex
+	metrics   *rateLimitMetrics
+	metricsMu sync.RWMutex
 }
 
 // RateLimitConfig holds rate limiter configuration
 type RateLimitConfig struct {
 	// Global limits (across all nodes)
-	GlobalCallsPerSecond    int `json:"global_calls_per_second" default:"1000"`
-	GlobalCallsPerMinute    int `json:"global_calls_per_minute" default:"50000"`
-	GlobalBytesPerSecond    int64 `json:"global_bytes_per_second" default:"104857600"` // 100MB/s
+	GlobalCallsPerSecond int   `json:"global_calls_per_second" default:"1000"`
+	GlobalCallsPerMinute int   `json:"global_calls_per_minute" default:"50000"`
+	GlobalBytesPerSecond int64 `json:"global_bytes_per_second" default:"104857600"` // 100MB/s
 
 	// Per-IP limits
-	PerIPCallsPerSecond     int `json:"per_ip_calls_per_second" default:"10"`
-	PerIPCallsPerMinute     int `json:"per_ip_calls_per_minute" default:"100"`
+	PerIPCallsPerSecond int `json:"per_ip_calls_per_second" default:"10"`
+	PerIPCallsPerMinute int `json:"per_ip_calls_per_minute" default:"100"`
 
 	// Per-user limits (if authentication is used)
-	PerUserCallsPerSecond   int `json:"per_user_calls_per_second" default:"50"`
-	PerUserCallsPerMinute   int `json:"per_user_calls_per_minute" default:"500"`
+	PerUserCallsPerSecond int `json:"per_user_calls_per_second" default:"50"`
+	PerUserCallsPerMinute int `json:"per_user_calls_per_minute" default:"500"`
 
 	// Burst allowance (percentage above limit for short bursts)
-	BurstAllowance          float64 `json:"burst_allowance" default:"1.2"` // 20% burst
+	BurstAllowance float64 `json:"burst_allowance" default:"1.2"` // 20% burst
 
 	// Window sizes
-	ShortWindow             time.Duration `json:"short_window" default:"1s"`
-	LongWindow              time.Duration `json:"long_window" default:"1m"`
+	ShortWindow time.Duration `json:"short_window" default:"1s"`
+	LongWindow  time.Duration `json:"long_window" default:"1m"`
 
 	// Cleanup interval for expired keys
-	CleanupInterval         time.Duration `json:"cleanup_interval" default:"5m"`
+	CleanupInterval time.Duration `json:"cleanup_interval" default:"5m"`
 }
 
 type rateLimitMetrics struct {
-	TotalRequests     int64
-	AllowedRequests   int64
-	RejectedRequests  int64
-	GlobalLimitHits   int64
-	PerIPLimitHits    int64
-	PerUserLimitHits  int64
+	TotalRequests    int64
+	AllowedRequests  int64
+	RejectedRequests int64
+	GlobalLimitHits  int64
+	PerIPLimitHits   int64
+	PerUserLimitHits int64
 }
 
 // RateLimitResult contains the result of a rate limit check
 type RateLimitResult struct {
-	Allowed       bool          `json:"allowed"`
-	Remaining     int64         `json:"remaining"`
-	Limit         int64         `json:"limit"`
-	ResetIn       time.Duration `json:"reset_in"`
-	LimitType     string        `json:"limit_type,omitempty"` // "global", "ip", "user"
-	RetryAfter    time.Duration `json:"retry_after,omitempty"`
+	Allowed    bool          `json:"allowed"`
+	Remaining  int64         `json:"remaining"`
+	Limit      int64         `json:"limit"`
+	ResetIn    time.Duration `json:"reset_in"`
+	LimitType  string        `json:"limit_type,omitempty"` // "global", "ip", "user"
+	RetryAfter time.Duration `json:"retry_after,omitempty"`
 }
 
 // NewDistributedRateLimiter creates a new distributed rate limiter
@@ -341,11 +341,11 @@ func (r *DistributedRateLimiter) GetMetrics() map[string]interface{} {
 	defer r.metricsMu.RUnlock()
 
 	return map[string]interface{}{
-		"total_requests":     r.metrics.TotalRequests,
-		"allowed_requests":   r.metrics.AllowedRequests,
-		"rejected_requests":  r.metrics.RejectedRequests,
-		"global_limit_hits":  r.metrics.GlobalLimitHits,
-		"per_ip_limit_hits":  r.metrics.PerIPLimitHits,
+		"total_requests":      r.metrics.TotalRequests,
+		"allowed_requests":    r.metrics.AllowedRequests,
+		"rejected_requests":   r.metrics.RejectedRequests,
+		"global_limit_hits":   r.metrics.GlobalLimitHits,
+		"per_ip_limit_hits":   r.metrics.PerIPLimitHits,
 		"per_user_limit_hits": r.metrics.PerUserLimitHits,
 	}
 }
@@ -376,8 +376,8 @@ func (r *DistributedRateLimiter) GetCurrentUsage(ctx context.Context) (*RateLimi
 	}
 
 	usage.Limits = RateLimitLimits{
-		GlobalCallsPerSecond: int64(r.config.GlobalCallsPerSecond),
-		PerIPCallsPerSecond:  int64(r.config.PerIPCallsPerSecond),
+		GlobalCallsPerSecond:  int64(r.config.GlobalCallsPerSecond),
+		PerIPCallsPerSecond:   int64(r.config.PerIPCallsPerSecond),
 		PerUserCallsPerSecond: int64(r.config.PerUserCallsPerSecond),
 	}
 

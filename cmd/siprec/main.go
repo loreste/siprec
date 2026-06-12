@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -87,6 +88,8 @@ var (
 	perfMonitor         *performance.PerformanceMonitor
 	authenticator       *auth.SimpleAuthenticator
 	alertManager        *alerting.AlertManager
+	asyncSTTProcessor   *stt.AsyncSTTProcessor
+	hotReloadManager    *config.HotReloadManager
 	registry            *core.ServiceRegistry
 
 	// Cluster orchestrator for distributed features
@@ -286,6 +289,8 @@ func main() {
 		dbConnLocal := dbConn
 		perfMonitorLocal := perfMonitor
 		alertManagerLocal := alertManager
+		asyncSTTProcessorLocal := asyncSTTProcessor
+		hotReloadManagerLocal := hotReloadManager
 		clusterOrchestratorLocal := clusterOrchestrator
 		globalsMutex.RUnlock()
 
@@ -381,6 +386,26 @@ func main() {
 			logger.Info("All components shut down successfully")
 		}
 
+		// Stop configuration hot-reload watcher
+		if hotReloadManagerLocal != nil {
+			logger.Debug("Stopping configuration hot-reload manager...")
+			if err := hotReloadManagerLocal.Stop(); err != nil {
+				logger.WithError(err).Warn("Failed to stop configuration hot-reload manager cleanly")
+			} else {
+				logger.Info("Configuration hot-reload manager stopped")
+			}
+		}
+
+		// Stop async STT processor
+		if asyncSTTProcessorLocal != nil {
+			logger.Debug("Stopping async STT processor...")
+			if err := asyncSTTProcessorLocal.Stop(); err != nil {
+				logger.WithError(err).Warn("Failed to stop async STT processor cleanly")
+			} else {
+				logger.Info("Async STT processor stopped")
+			}
+		}
+
 		// Stop performance monitor
 		if perfMonitorLocal != nil {
 			logger.Debug("Stopping performance monitor...")
@@ -450,6 +475,24 @@ func initialize() error {
 	// Initialize service registry
 	registry = core.GetServiceRegistry()
 
+	// Start configuration hot-reload when enabled and a config file is in use
+	if appConfig.HotReload.Enabled {
+		if configFile := config.FindConfigFile(); configFile != "" {
+			hotReloadManager, err = config.NewHotReloadManager(configFile, appConfig, logger)
+			if err != nil {
+				logger.WithError(err).Warn("Failed to initialize configuration hot-reload")
+			} else if err = hotReloadManager.Start(); err != nil {
+				logger.WithError(err).Warn("Failed to start configuration hot-reload")
+				hotReloadManager = nil
+			} else {
+				registry.SetHotReloadManager(hotReloadManager)
+				logger.WithField("config_file", configFile).Info("Configuration hot-reload enabled")
+			}
+		} else {
+			logger.Debug("Hot-reload enabled but no config file in use; skipping file watcher")
+		}
+	}
+
 	// Convert to legacy config for backward compatibility
 	legacyConfig = appConfig.ToLegacyConfig(logger)
 
@@ -481,13 +524,13 @@ func initialize() error {
 				clusterOrchestrator = nil
 			} else {
 				logger.WithFields(logrus.Fields{
-					"node_id":              appConfig.Cluster.NodeID,
-					"redis_mode":           appConfig.Cluster.Redis.Mode,
-					"rtp_state_replication": appConfig.Cluster.RTPStateReplication,
+					"node_id":                   appConfig.Cluster.NodeID,
+					"redis_mode":                appConfig.Cluster.Redis.Mode,
+					"rtp_state_replication":     appConfig.Cluster.RTPStateReplication,
 					"distributed_rate_limiting": appConfig.Cluster.DistributedRateLimiting,
-					"distributed_tracing":  appConfig.Cluster.DistributedTracing,
-					"stream_migration":     appConfig.Cluster.StreamMigration,
-					"split_brain_detection": appConfig.Cluster.SplitBrainDetection.Enabled,
+					"distributed_tracing":       appConfig.Cluster.DistributedTracing,
+					"stream_migration":          appConfig.Cluster.StreamMigration,
+					"split_brain_detection":     appConfig.Cluster.SplitBrainDetection.Enabled,
 				}).Info("Cluster orchestrator initialized")
 
 				// Register stream migration handlers
@@ -1014,7 +1057,7 @@ func initialize() error {
 					logger.WithError(err).Warn("Failed to register Deepgram provider")
 				} else {
 					logger.WithFields(logrus.Fields{
-						"provider":     "deepgram",
+						"provider":      "deepgram",
 						"use_websocket": appConfig.STT.Deepgram.UseWebSocket,
 					}).Info("Registered Deepgram provider with live transcription")
 				}
@@ -1145,6 +1188,51 @@ func initialize() error {
 		default:
 			logger.WithField("vendor", vendor).Warn("Unknown STT vendor in configuration")
 		}
+	}
+
+	// Initialize the async STT processor for queued transcription jobs
+	if appConfig.AsyncSTT.Enabled {
+		asyncCfg := stt.DefaultAsyncSTTConfig()
+		if appConfig.AsyncSTT.WorkerCount > 0 {
+			asyncCfg.WorkerCount = appConfig.AsyncSTT.WorkerCount
+		}
+		if appConfig.AsyncSTT.MaxRetries > 0 {
+			asyncCfg.MaxRetries = appConfig.AsyncSTT.MaxRetries
+		}
+		if appConfig.AsyncSTT.RetryBackoff > 0 {
+			asyncCfg.RetryBackoff = appConfig.AsyncSTT.RetryBackoff
+		}
+		if appConfig.AsyncSTT.JobTimeout > 0 {
+			asyncCfg.JobTimeout = appConfig.AsyncSTT.JobTimeout
+		}
+		if appConfig.AsyncSTT.QueueBufferSize > 0 {
+			asyncCfg.QueueBufferSize = appConfig.AsyncSTT.QueueBufferSize
+		}
+		if appConfig.AsyncSTT.BatchSize > 0 {
+			asyncCfg.BatchSize = appConfig.AsyncSTT.BatchSize
+		}
+		if appConfig.AsyncSTT.BatchTimeout > 0 {
+			asyncCfg.BatchTimeout = appConfig.AsyncSTT.BatchTimeout
+		}
+		if appConfig.AsyncSTT.MaxConcurrentJobs > 0 {
+			asyncCfg.MaxConcurrentJobs = appConfig.AsyncSTT.MaxConcurrentJobs
+		}
+		if appConfig.AsyncSTT.CleanupInterval > 0 {
+			asyncCfg.CleanupInterval = appConfig.AsyncSTT.CleanupInterval
+		}
+		if appConfig.AsyncSTT.JobRetentionTime > 0 {
+			asyncCfg.JobRetentionTime = appConfig.AsyncSTT.JobRetentionTime
+		}
+		asyncCfg.EnablePrioritization = appConfig.AsyncSTT.EnablePrioritization
+		asyncCfg.EnableCostTracking = appConfig.AsyncSTT.EnableCostTracking
+
+		asyncSTTProcessor = stt.NewAsyncSTTProcessor(sttManager, logger, asyncCfg)
+		asyncSTTProcessor.SetTranscriptionService(transcriptionSvc)
+		if err := asyncSTTProcessor.Start(); err != nil {
+			return fmt.Errorf("failed to start async STT processor: %w", err)
+		}
+		registry.SetAsyncSTTProcessor(asyncSTTProcessor)
+		logger.WithField("worker_count", asyncCfg.WorkerCount).Info("Async STT processor started")
 	}
 
 	// Initialize the RTP port manager
@@ -1340,6 +1428,35 @@ func initialize() error {
 	sipAdapter := http_server.NewSIPHandlerAdapter(logger, sipHandler)
 	httpServer = http_server.NewServer(logger, httpServerConfig, sipAdapter)
 
+	// Register component health checkers for the /health endpoint
+	if dbConn != nil {
+		http_server.RegisterDatabaseHealthChecker(dbConn)
+		logger.Info("Database health checker registered")
+	}
+	if encryptionManager != nil && encryptionManager.IsEncryptionEnabled() {
+		encMgr := encryptionManager
+		encAlgorithm := appConfig.Encryption.Algorithm
+		http_server.RegisterEncryptionHealthChecker(http_server.HealthCheckerFunc(func() error {
+			if _, err := encMgr.GetActiveKey(encAlgorithm); err != nil {
+				return fmt.Errorf("active encryption key unavailable: %w", err)
+			}
+			return nil
+		}))
+		logger.Info("Encryption health checker registered")
+	}
+
+	// Register STT job API endpoints when the async processor is running
+	if asyncSTTProcessor != nil {
+		httpServer.RegisterSTTEndpoints(http_server.NewSTTHandlers(asyncSTTProcessor, logger, appConfig.Recording.Directory))
+		logger.Info("STT job API endpoints registered")
+	}
+
+	// Register configuration API endpoints when hot-reload is active
+	if hotReloadManager != nil {
+		httpServer.RegisterConfigEndpoints(http_server.NewConfigHandlers(hotReloadManager, logger))
+		logger.Info("Configuration API endpoints registered")
+	}
+
 	var httpAuthMiddleware *http_server.AuthMiddleware
 	if appConfig.Auth.Enabled && authenticator != nil {
 		httpAuthMiddleware = http_server.NewAuthMiddleware(authenticator, logger, &http_server.AuthConfig{
@@ -1354,6 +1471,18 @@ func initialize() error {
 			},
 		})
 		httpServer.SetAuthMiddleware(httpAuthMiddleware)
+
+		// Enable RBAC enforcement when explicitly requested.
+		// Default is off for backward compatibility.
+		if rbacEnabled, _ := strconv.ParseBool(os.Getenv("AUTH_RBAC_ENABLED")); rbacEnabled {
+			rbacManager := auth.NewRBACManager(dbRepo, logger)
+			rbacMiddleware := http_server.NewRBACMiddleware(rbacManager, logger, &http_server.RBACConfig{
+				Enabled:     true,
+				ExemptPaths: http_server.DefaultRBACExemptPaths,
+			})
+			httpServer.SetRBACMiddleware(rbacMiddleware)
+			logger.Info("RBAC enforcement enabled for HTTP API endpoints")
+		}
 	}
 
 	// Configure rate limiting if enabled
@@ -2083,9 +2212,13 @@ func initializeEncryption() error {
 	}
 
 	// Initialize Redis session manager
-	_, err = session.InitializeSessionManager(logger)
+	redisSessionManager, err := session.InitializeSessionManager(logger)
 	if err != nil {
 		logger.WithError(err).Warn("Failed to initialize Redis session manager, continuing without Redis")
+	} else if redisSessionManager != nil {
+		// Register the Redis session manager with the health endpoint
+		http_server.RegisterRedisHealthChecker(redisSessionManager)
+		logger.Info("Redis session manager health checker registered")
 	}
 
 	logger.WithFields(logrus.Fields{

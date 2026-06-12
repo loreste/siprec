@@ -56,9 +56,7 @@ go.work
 /certs/*.pem
 /certs/*.crt
 /certs/*.key
-/keys/*.key
-/keys/*.keydata
-!keys/.gitkeep
+/keys
 
 # IDE files
 .idea/
@@ -145,4 +143,10 @@ siprec-enhanced-deployment.tar.gz
 !deploy-quick.sh
 
 # Go build cache
-.gocache/siprecctl
+.gocache/
+
+# Example binaries
+examples/deepgram_integration/deepgram_integration
+examples/google_integration/google_integration
+examples/nat_traversal/nat_traversal
+examples/streaming_response/streaming_response

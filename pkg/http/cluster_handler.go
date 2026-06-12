@@ -135,6 +135,7 @@ func (h *ClusterHandler) handleDrain(w http.ResponseWriter, r *http.Request) {
 		TargetNodeID string `json:"target_node_id"`
 	}
 	if r.Body != nil {
+		limitJSONBody(w, r)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.logger.WithError(err).Debug("Failed to decode drain request body")
 		}
@@ -174,8 +175,8 @@ func (h *ClusterHandler) handleDrain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":       "draining",
-		"target_node":  req.TargetNodeID,
+		"status":      "draining",
+		"target_node": req.TargetNodeID,
 	})
 }
 
@@ -204,6 +205,7 @@ func (h *ClusterHandler) handleMigrations(w http.ResponseWriter, r *http.Request
 			CallUUID     string `json:"call_uuid"`
 			TargetNodeID string `json:"target_node_id"`
 		}
+		limitJSONBody(w, r)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.writeError(w, http.StatusBadRequest, "invalid request body")
 			return

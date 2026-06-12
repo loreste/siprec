@@ -8,6 +8,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,6 +37,10 @@ type Manager struct {
 	// Stream session state
 	streamInfo map[string]*streamState
 	streamMu   sync.RWMutex
+
+	// Key backup state
+	backupMu        sync.Mutex
+	lastBackupPaths []string
 }
 
 // streamState tracks metadata required to recreate stream ciphers
@@ -195,7 +202,25 @@ func (m *Manager) RotateKeys() error {
 	return nil
 }
 
-// BackupKeys creates backups of all encryption keys
+// keyBackupRecord is the serialized form of a key inside an encrypted backup.
+// Unlike EncryptionKey, it intentionally includes the raw key material because
+// the entire record is encrypted with a key derived from the backup password
+// before it is written to disk.
+type keyBackupRecord struct {
+	ID         string    `json:"id"`
+	Algorithm  string    `json:"algorithm"`
+	KeyData    []byte    `json:"key_data"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Version    int       `json:"version"`
+	Active     bool      `json:"active"`
+	BackedUpAt time.Time `json:"backed_up_at"`
+}
+
+// BackupKeys creates encrypted backups of all encryption keys.
+// One file per key is written atomically to the configured backup directory
+// with 0600 permissions, named "<keyID>-<timestamp>.keybak". The paths of the
+// most recent backup run are recorded and available via LastBackupPaths.
 func (m *Manager) BackupKeys() error {
 	if !m.config.KeyBackupEnabled {
 		return nil
@@ -208,27 +233,193 @@ func (m *Manager) BackupKeys() error {
 		return fmt.Errorf("failed to list keys for backup: %w", err)
 	}
 
-	backupData := make(map[string]*EncryptionKey)
+	backupDir := m.backupDirectory()
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		return fmt.Errorf("failed to create backup directory %s: %w", backupDir, err)
+	}
+
+	timestamp := time.Now().UTC().Format("20060102T150405Z")
+	paths := make([]string, 0, len(keys))
+
 	for _, key := range keys {
-		backupData[key.ID] = key
+		record := &keyBackupRecord{
+			ID:         key.ID,
+			Algorithm:  key.Algorithm,
+			KeyData:    key.KeyData,
+			CreatedAt:  key.CreatedAt,
+			ExpiresAt:  key.ExpiresAt,
+			Version:    key.Version,
+			Active:     key.Active,
+			BackedUpAt: time.Now().UTC(),
+		}
+
+		recordBytes, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("failed to marshal backup record for key %s: %w", key.ID, err)
+		}
+
+		// Encrypt the backup with a key derived from the backup password
+		encryptedBackup, err := m.encryptBackup(recordBytes)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt backup for key %s: %w", key.ID, err)
+		}
+
+		backupPath := filepath.Join(backupDir, fmt.Sprintf("%s-%s.keybak", key.ID, timestamp))
+		if err := writeFileAtomic(backupPath, encryptedBackup, 0600); err != nil {
+			return fmt.Errorf("failed to write backup for key %s: %w", key.ID, err)
+		}
+
+		paths = append(paths, backupPath)
+
+		m.logger.WithFields(logrus.Fields{
+			"key_id":      key.ID,
+			"backup_file": backupPath,
+		}).Info("Created key backup")
 	}
 
-	backupFile := fmt.Sprintf("%s.backup.%d", m.config.MasterKeyPath, time.Now().Unix())
-	backupBytes, err := json.Marshal(backupData)
+	m.backupMu.Lock()
+	m.lastBackupPaths = paths
+	m.backupMu.Unlock()
+
+	m.logger.WithFields(logrus.Fields{
+		"backup_dir": backupDir,
+		"key_count":  len(paths),
+	}).Info("Key backup completed")
+
+	return nil
+}
+
+// LastBackupPaths returns the file paths written by the most recent
+// successful BackupKeys run.
+func (m *Manager) LastBackupPaths() []string {
+	m.backupMu.Lock()
+	defer m.backupMu.Unlock()
+	return append([]string(nil), m.lastBackupPaths...)
+}
+
+// RestoreKeyFromBackup reads an encrypted key backup file, decrypts it with
+// the configured backup password, validates the restored key, stores it in
+// the key store, and returns it.
+func (m *Manager) RestoreKeyFromBackup(path string) (*EncryptionKey, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return fmt.Errorf("failed to marshal backup data: %w", err)
+		return nil, fmt.Errorf("failed to read backup file: %w", err)
 	}
 
-	// Encrypt the backup with a derived key
-	encryptedBackup, err := m.encryptBackup(backupBytes)
+	recordBytes, err := m.decryptBackup(data)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt backup: %w", err)
+		return nil, fmt.Errorf("failed to decrypt backup: %w", err)
 	}
 
-	// This would write to file - simplified for this implementation
-	_ = encryptedBackup
+	var record keyBackupRecord
+	if err := json.Unmarshal(recordBytes, &record); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal backup record: %w", err)
+	}
 
-	m.logger.WithField("backup_file", backupFile).Info("Created key backup")
+	// Validate the restored key before accepting it
+	if record.ID == "" {
+		return nil, fmt.Errorf("invalid backup: missing key ID")
+	}
+	if !m.isAlgorithmSupported(record.Algorithm) {
+		return nil, fmt.Errorf("invalid backup: unsupported algorithm %q", record.Algorithm)
+	}
+	if len(record.KeyData) == 0 {
+		return nil, fmt.Errorf("invalid backup: missing key material")
+	}
+	if len(record.KeyData) != m.config.KeySize {
+		return nil, fmt.Errorf("invalid backup: key size %d does not match configured size %d", len(record.KeyData), m.config.KeySize)
+	}
+
+	key := &EncryptionKey{
+		ID:        record.ID,
+		Algorithm: record.Algorithm,
+		KeyData:   record.KeyData,
+		CreatedAt: record.CreatedAt,
+		ExpiresAt: record.ExpiresAt,
+		Version:   record.Version,
+		Active:    record.Active,
+	}
+
+	if err := m.keyStore.StoreKey(key); err != nil {
+		return nil, fmt.Errorf("failed to store restored key: %w", err)
+	}
+
+	// Cache the restored key
+	m.cacheMu.Lock()
+	m.keyCache[key.ID] = key
+	m.cacheMu.Unlock()
+
+	m.logger.WithFields(logrus.Fields{
+		"key_id":      key.ID,
+		"algorithm":   key.Algorithm,
+		"backup_file": path,
+	}).Info("Restored encryption key from backup")
+
+	return key, nil
+}
+
+// backupDirectory returns the configured backup directory, defaulting to
+// <MasterKeyPath>/backups when not set.
+func (m *Manager) backupDirectory() string {
+	if m.config.KeyBackupDir != "" {
+		return m.config.KeyBackupDir
+	}
+
+	base := m.config.MasterKeyPath
+	if base == "" {
+		base = "./keys"
+	}
+	return filepath.Join(base, "backups")
+}
+
+// writeFileAtomic writes data to path atomically: it writes to a temporary
+// file in the same directory, fsyncs it, then renames it into place.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+
+	tmpFile, err := os.CreateTemp(dir, ".keybak-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+
+	// Clean up the temporary file on any failure path
+	cleanup := func() {
+		tmpFile.Close()
+		os.Remove(tmpName)
+	}
+
+	if err := tmpFile.Chmod(perm); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to set permissions on temporary file: %w", err)
+	}
+
+	if _, err := tmpFile.Write(data); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to write temporary file: %w", err)
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to sync temporary file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("failed to rename temporary file into place: %w", err)
+	}
+
+	// Fsync the directory so the rename itself is durable (best-effort)
+	if dirFile, err := os.Open(filepath.Clean(dir)); err == nil {
+		_ = dirFile.Sync()
+		_ = dirFile.Close()
+	}
+
 	return nil
 }
 
@@ -792,8 +983,14 @@ func (m *Manager) encryptBackup(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to encrypt backup: %w", err)
 	}
 
-	// Include salt in the encrypted data
+	// Include salt and KDF parameters in the encrypted data so the backup
+	// remains restorable even if the configuration changes later
 	encData.Salt = salt
+	encData.Metadata = map[string]string{
+		"kdf":        "PBKDF2-SHA256",
+		"iterations": strconv.Itoa(m.config.PBKDF2Iterations),
+		"key_size":   strconv.Itoa(m.config.KeySize),
+	}
 
 	encBytes, err := json.Marshal(encData)
 	if err != nil {
@@ -801,4 +998,48 @@ func (m *Manager) encryptBackup(data []byte) ([]byte, error) {
 	}
 
 	return encBytes, nil
+}
+
+// decryptBackup decrypts an encrypted key backup produced by encryptBackup
+func (m *Manager) decryptBackup(encBytes []byte) ([]byte, error) {
+	password := m.config.BackupPassword
+	if password == "" {
+		return nil, fmt.Errorf("backup password not configured: set ENCRYPTION_BACKUP_PASSWORD environment variable")
+	}
+
+	var encData EncryptedData
+	if err := json.Unmarshal(encBytes, &encData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal encrypted backup: %w", err)
+	}
+
+	if len(encData.Salt) == 0 {
+		return nil, fmt.Errorf("invalid backup: missing key derivation salt")
+	}
+
+	// Recover KDF parameters from the backup metadata, falling back to the
+	// current configuration for backups without embedded parameters
+	iterations := m.config.PBKDF2Iterations
+	keySize := m.config.KeySize
+	if encData.Metadata != nil {
+		if v, err := strconv.Atoi(encData.Metadata["iterations"]); err == nil && v > 0 {
+			iterations = v
+		}
+		if v, err := strconv.Atoi(encData.Metadata["key_size"]); err == nil && v > 0 {
+			keySize = v
+		}
+	}
+
+	key := pbkdf2.Key([]byte(password), encData.Salt, iterations, keySize, sha256.New)
+
+	tempKey := &EncryptionKey{
+		Algorithm: encData.Algorithm,
+		KeyData:   key,
+	}
+
+	plaintext, err := m.decrypt(&encData, tempKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt backup: %w", err)
+	}
+
+	return plaintext, nil
 }

@@ -9,8 +9,8 @@ import (
 
 // Limiter implements a token bucket rate limiter with per-key tracking
 type Limiter struct {
-	rate       float64       // tokens per second
-	burst      int           // maximum burst size
+	rate       float64 // tokens per second
+	burst      int     // maximum burst size
 	clients    map[string]*bucket
 	mu         sync.RWMutex
 	logger     *logrus.Logger

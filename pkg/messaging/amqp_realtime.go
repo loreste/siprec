@@ -547,37 +547,3 @@ func (p *AMQPRealtimePublisher) IsStarted() bool {
 func generateRealtimeMessageID() string {
 	return fmt.Sprintf("realtime_msg_%d_%d", time.Now().UnixNano(), rand.Int63())
 }
-
-// AMQPRealtimeConfigFromMessaging creates an AMQPRealtimeConfig from MessagingConfig
-func AMQPRealtimeConfigFromMessaging(msgConfig interface{}) *AMQPRealtimeConfig {
-	// Use type assertion to extract fields (avoids import cycle)
-	config := &AMQPRealtimeConfig{
-		URL:                  "",
-		QueueName:            "siprec_realtime",
-		ExchangeName:         "",
-		RoutingKey:           "siprec.realtime",
-		BatchSize:            10,
-		BatchTimeout:         1 * time.Second,
-		QueueSize:            1000,
-		EnableBatching:       true,
-		EnableRetries:        true,
-		MaxRetries:           3,
-		RetryDelay:           2 * time.Second,
-		PublishPartial:       true,
-		PublishFinal:         true,
-		PublishSentiment:     true,
-		PublishKeywords:      true,
-		PublishSpeakerChange: true,
-		MessageTTL:           1 * time.Hour,
-		EnableCompression:    false,
-		IncludeAudioData:     false,
-	}
-
-	// Extract configuration from msgConfig using reflection-like approach
-	if msgConfig != nil {
-		// This would be populated by the caller with the actual values
-		// Implementation depends on how the config is passed from main app
-	}
-
-	return config
-}

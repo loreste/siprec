@@ -96,31 +96,6 @@ func (bp *BatchProcessor) Start() error {
 	return nil
 }
 
-// Stop stops the batch processor
-func (bp *BatchProcessor) Stop() error {
-	bp.startMutex.Lock()
-	defer bp.startMutex.Unlock()
-
-	if !bp.started {
-		return nil
-	}
-
-	// Cancel context
-	bp.cancel()
-
-	// Flush remaining items
-	bp.flushBatch()
-
-	// Stop worker pool
-	if bp.workerPool != nil {
-		_ = bp.workerPool.Stop()
-	}
-
-	bp.started = false
-	bp.logger.Debug("Batch processor stopped")
-	return nil
-}
-
 // Process adds an item to the batch for processing
 func (bp *BatchProcessor) Process(data []byte, processor func([]byte)) {
 	bp.startMutex.RLock()
@@ -290,55 +265,6 @@ func (bp *BatchProcessor) processBatch(batch []BatchItem) {
 			}()
 		}
 	}
-}
-
-// GetStats returns batch processing statistics
-func (bp *BatchProcessor) GetStats() *BatchStats {
-	bp.stats.mutex.RLock()
-	defer bp.stats.mutex.RUnlock()
-
-	statsCopy := BatchStats{}
-	statsCopy.TotalBatches = bp.stats.TotalBatches
-	statsCopy.TotalItems = bp.stats.TotalItems
-	statsCopy.AverageBatchSize = bp.stats.AverageBatchSize
-	statsCopy.ProcessingTime = bp.stats.ProcessingTime
-	statsCopy.QueueSize = bp.stats.QueueSize
-	statsCopy.DroppedItems = bp.stats.DroppedItems
-	statsCopy.LastReset = bp.stats.LastReset
-	return &statsCopy
-}
-
-// IsStarted returns whether the processor is started
-func (bp *BatchProcessor) IsStarted() bool {
-	bp.startMutex.RLock()
-	defer bp.startMutex.RUnlock()
-	return bp.started
-}
-
-// QueueSize returns the current queue size
-func (bp *BatchProcessor) QueueSize() int {
-	return len(bp.queue)
-}
-
-// SetBatchSize updates the batch size
-func (bp *BatchProcessor) SetBatchSize(size int) {
-	if size <= 0 {
-		return
-	}
-
-	bp.batchMutex.Lock()
-	defer bp.batchMutex.Unlock()
-
-	bp.batchSize = size
-}
-
-// SetTimeout updates the batch timeout
-func (bp *BatchProcessor) SetTimeout(timeout time.Duration) {
-	if timeout <= 0 {
-		return
-	}
-
-	bp.timeout = timeout
 }
 
 // generateID generates a simple ID for batch items

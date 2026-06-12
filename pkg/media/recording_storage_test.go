@@ -24,7 +24,7 @@ func (m *mockBackupStorage) Upload(localPath, backupID string) ([]string, error)
 }
 
 func (m *mockBackupStorage) Download(remotePath, localPath string) error { return nil }
-func (m *mockBackupStorage) List() ([]backup.StoredBackup, error)       { return nil, nil }
+func (m *mockBackupStorage) List() ([]backup.StoredBackup, error)        { return nil, nil }
 
 func (m *mockBackupStorage) Delete(remotePath string) error {
 	m.deletedPaths = append(m.deletedPaths, remotePath)

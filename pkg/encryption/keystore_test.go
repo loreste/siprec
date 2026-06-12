@@ -32,14 +32,14 @@ func (m *mockKMSProvider) GenerateDataKey(ctx context.Context) ([]byte, []byte, 
 	if _, err := rand.Read(dataKey); err != nil {
 		return nil, nil, err
 	}
-	
+
 	// For testing, just return the data key as both plaintext and "encrypted"
 	// In a real implementation, this would encrypt dataKey with masterKey
 	encrypted, err := encryptWithKey(m.masterKey, dataKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	return dataKey, encrypted, nil
 }
 

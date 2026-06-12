@@ -392,12 +392,12 @@ func TestManager(t *testing.T) {
 
 	// Deliver content
 	content := &InterceptedContent{
-		InterceptID:    intercept.ID,
-		WarrantID:      intercept.WarrantID,
-		CallID:         "call-123",
-		Timestamp:      time.Now(),
-		ContentType:    "audio",
-		AudioData:      []byte("test audio"),
+		InterceptID: intercept.ID,
+		WarrantID:   intercept.WarrantID,
+		CallID:      "call-123",
+		Timestamp:   time.Now(),
+		ContentType: "audio",
+		AudioData:   []byte("test audio"),
 	}
 	err = m.DeliverContent(intercept.ID, content)
 	require.NoError(t, err)

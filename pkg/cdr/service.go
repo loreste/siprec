@@ -734,9 +734,9 @@ type CDRUpdate struct {
 	AvayaConfID         *string // Avaya Conference ID
 	AvayaConversationID *string // Avaya Conversation/Interaction ID
 	AvayaStationID      *string // Avaya Station ID
-	AvayaAgentID    *string // Avaya Agent ID
-	AvayaVDN        *string // Avaya Vector Directory Number
-	AvayaSkillGroup *string // Avaya Skill Group
+	AvayaAgentID        *string // Avaya Agent ID
+	AvayaVDN            *string // Avaya Vector Directory Number
+	AvayaSkillGroup     *string // Avaya Skill Group
 	// AudioCodes-specific fields
 	AudioCodesSessionID *string // AudioCodes Session ID
 	AudioCodesCallID    *string // AudioCodes Call ID

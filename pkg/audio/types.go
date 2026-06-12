@@ -27,30 +27,6 @@ type ProcessingConfig struct {
 	BufferSize int // Buffer size for processing
 }
 
-// DefaultProcessingConfig returns default audio processing configuration
-func DefaultProcessingConfig() ProcessingConfig {
-	return ProcessingConfig{
-		// Voice Activity Detection
-		EnableVAD:    true,
-		VADThreshold: 0.02, // 2% of max energy
-		VADHoldTime:  20,   // Hold voice detection for 20 frames (400ms at 50fps)
-
-		// Noise Reduction
-		EnableNoiseReduction: true,
-		NoiseFloor:           0.01, // 1% of max signal
-		NoiseAttenuationDB:   12.0, // 12dB attenuation
-
-		// Multi-channel Support
-		ChannelCount: 1,    // Default to mono
-		MixChannels:  true, // Mix channels by default
-
-		// General Processing
-		SampleRate: 8000, // 8kHz (typical for telephony)
-		FrameSize:  160,  // 20ms at 8kHz
-		BufferSize: 1024, // Processing buffer size
-	}
-}
-
 // AudioProcessor is the interface that all audio processors must implement
 type AudioProcessor interface {
 	// Process takes raw audio data and returns processed audio

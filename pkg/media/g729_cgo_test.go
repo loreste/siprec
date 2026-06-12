@@ -517,9 +517,9 @@ func TestG729ConcurrentMixedCodecs(t *testing.T) {
 	errors := make(chan error, numGoroutines*4)
 
 	codecs := []struct {
-		name    string
-		data    []byte
-		minLen  int
+		name   string
+		data   []byte
+		minLen int
 	}{
 		{"G729", make([]byte, 20), 320},
 		{"PCMU", make([]byte, 160), 320},

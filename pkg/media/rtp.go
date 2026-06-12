@@ -544,13 +544,13 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		}
 
 		var firstPacketReceived bool
-		var ssrcMismatchLogged bool   // rate-limit the mismatch warning to one per stream
-		var ssrcMismatchCount uint64  // total stale packets dropped for this stream
-		var lastAcceptedSSRC uint32   // tracks the SSRC accepted by the previous packet
-		var lastSeq *uint16           // for PLC: insert silence when sequence gaps are detected
-		var lastTimestamp uint32      // RTP timestamp of last processed packet
-		var hasLastTimestamp bool     // whether lastTimestamp is valid
-		var lastDecodedPCMSize int    // actual PCM bytes produced by last decoded packet (for PLC)
+		var ssrcMismatchLogged bool  // rate-limit the mismatch warning to one per stream
+		var ssrcMismatchCount uint64 // total stale packets dropped for this stream
+		var lastAcceptedSSRC uint32  // tracks the SSRC accepted by the previous packet
+		var lastSeq *uint16          // for PLC: insert silence when sequence gaps are detected
+		var lastTimestamp uint32     // RTP timestamp of last processed packet
+		var hasLastTimestamp bool    // whether lastTimestamp is valid
+		var lastDecodedPCMSize int   // actual PCM bytes produced by last decoded packet (for PLC)
 
 		// SSRC correction state: handles two scenarios where the locked SSRC
 		// becomes wrong and must be switched:
@@ -1617,23 +1617,4 @@ func srtpProfileName(profile srtp.ProtectionProfile) string {
 	default:
 		return fmt.Sprintf("profile_%d", profile)
 	}
-}
-
-// AllocateRTPPort allocates a port for RTP traffic
-func AllocateRTPPort(minPort, maxPort int, logger *logrus.Logger) int {
-	// Use the port manager to get an available port
-	pm := GetPortManager()
-	port, err := pm.AllocatePort()
-	if err != nil {
-		logger.WithError(err).Error("Failed to allocate RTP port, using default port")
-		return 10000 // Default fallback port
-	}
-
-	// Update metrics
-	if metrics.IsMetricsEnabled() && metrics.PortsInUse != nil {
-		metrics.PortsInUse.Inc()
-	}
-
-	logger.WithField("port", port).Debug("Allocated RTP port")
-	return port
 }

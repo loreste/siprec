@@ -98,18 +98,18 @@ type DeepgramConfig struct {
 
 // DeepgramConnection represents a WebSocket connection to Deepgram
 type DeepgramConnection struct {
-	callUUID       string
-	conn           *websocket.Conn
-	mutex          sync.RWMutex
-	lastActivity   time.Time
-	active         bool
-	cancel         context.CancelFunc
-	audioChan      chan []byte
-	logger         *logrus.Entry
-	finalReceived  chan struct{} // Signals when final transcription is received
-	messagesDone   chan struct{} // Signals when message handler has completed
-	keepAliveDone  chan struct{} // Signals keepalive goroutine to stop
-	finalizeSent   bool          // Track if finalize message was sent
+	callUUID      string
+	conn          *websocket.Conn
+	mutex         sync.RWMutex
+	lastActivity  time.Time
+	active        bool
+	cancel        context.CancelFunc
+	audioChan     chan []byte
+	logger        *logrus.Entry
+	finalReceived chan struct{} // Signals when final transcription is received
+	messagesDone  chan struct{} // Signals when message handler has completed
+	keepAliveDone chan struct{} // Signals keepalive goroutine to stop
+	finalizeSent  bool          // Track if finalize message was sent
 }
 
 // RetryConfig holds retry configuration

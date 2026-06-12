@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,25 +14,25 @@ import (
 
 // ConfigValidator handles configuration validation
 type ConfigValidator struct {
-	logger *logrus.Logger
-	errors []ValidationError
+	logger   *logrus.Logger
+	errors   []ValidationError
 	warnings []ValidationWarning
 }
 
 // ValidationError represents a configuration validation error
 type ValidationError struct {
-	Field   string `json:"field"`
+	Field   string      `json:"field"`
 	Value   interface{} `json:"value"`
-	Rule    string `json:"rule"`
-	Message string `json:"message"`
+	Rule    string      `json:"rule"`
+	Message string      `json:"message"`
 }
 
 // ValidationWarning represents a configuration validation warning
 type ValidationWarning struct {
-	Field   string `json:"field"`
-	Value   interface{} `json:"value"`
-	Message string `json:"message"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Field      string      `json:"field"`
+	Value      interface{} `json:"value"`
+	Message    string      `json:"message"`
+	Suggestion string      `json:"suggestion,omitempty"`
 }
 
 // ValidationResult represents the result of configuration validation
@@ -47,8 +46,8 @@ type ValidationResult struct {
 // NewConfigValidator creates a new configuration validator
 func NewConfigValidator(logger *logrus.Logger) *ConfigValidator {
 	return &ConfigValidator{
-		logger: logger,
-		errors: make([]ValidationError, 0),
+		logger:   logger,
+		errors:   make([]ValidationError, 0),
 		warnings: make([]ValidationWarning, 0),
 	}
 }
@@ -121,12 +120,12 @@ func (v *ConfigValidator) validateNetworkConfig(config *Config) {
 
 	// Validate RTP port range
 	if config.Network.RTPPortMin >= config.Network.RTPPortMax {
-		v.addError("rtp_ports", map[string]int{"min": config.Network.RTPPortMin, "max": config.Network.RTPPortMax}, 
+		v.addError("rtp_ports", map[string]int{"min": config.Network.RTPPortMin, "max": config.Network.RTPPortMax},
 			"range", "RTP port minimum must be less than maximum")
 	}
 
-	if config.Network.RTPPortMax - config.Network.RTPPortMin < 100 {
-		v.addWarning("rtp_ports", config.Network.RTPPortMax - config.Network.RTPPortMin, 
+	if config.Network.RTPPortMax-config.Network.RTPPortMin < 100 {
+		v.addWarning("rtp_ports", config.Network.RTPPortMax-config.Network.RTPPortMin,
 			"Small RTP port range may limit concurrent calls", "Consider using at least 1000 ports")
 	}
 
@@ -347,12 +346,6 @@ func (v *ConfigValidator) isValidSTUNServer(server string) bool {
 
 func (v *ConfigValidator) isValidCodec(codec string, validCodecs []string) bool {
 	return v.contains(validCodecs, strings.ToUpper(codec))
-}
-
-func (v *ConfigValidator) isValidLanguageCode(code string) bool {
-	// Simple regex for language codes like "en-US", "fr-FR", etc.
-	matched, _ := regexp.MatchString(`^[a-z]{2}-[A-Z]{2}$`, code)
-	return matched
 }
 
 func (v *ConfigValidator) fileExists(path string) bool {

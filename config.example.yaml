@@ -67,10 +67,10 @@ http:
   read_timeout: 10s
   write_timeout: 30s
 
-  # CORS Configuration
-  cors_enabled: false
-  cors_allowed_origins:
-    - "*"
+  # Optional TLS for the HTTP API
+  tls_enabled: false
+  # tls_cert_file: "/etc/siprec/http-cert.pem"
+  # tls_key_file: "/etc/siprec/http-key.pem"
 
 # Recording Configuration
 recording:
@@ -86,15 +86,27 @@ recording:
   # Combine SIPREC legs into single multi-channel file
   combine_legs: true
 
-  # Audio format settings
-  audio_format: "wav"
-  sample_rate: 8000
-  bits_per_sample: 16
-  channel_count: 1
+  # Recording format: wav, mp3, opus
+  format: "wav"
 
-  # Compression (for storage)
-  compress_enabled: false
-  compress_format: "gzip"
+  # Cloud storage upload (credentials via environment variables)
+  storage:
+    enabled: false
+    keep_local: true
+    s3:
+      enabled: false
+      bucket: ""
+      region: ""
+      prefix: ""
+    gcs:
+      enabled: false
+      bucket: ""
+      prefix: ""
+    azure:
+      enabled: false
+      account: ""
+      container: ""
+      prefix: ""
 
 # Speech-to-Text Configuration
 stt:
@@ -123,8 +135,8 @@ stt:
   google:
     # credentials_file set via GOOGLE_APPLICATION_CREDENTIALS env var
     language: "en-US"
-    enable_punctuation: true
-    enable_word_timestamps: true
+    enable_automatic_punctuation: true
+    enable_word_time_offsets: true
 
   deepgram:
     # api_key set via DEEPGRAM_API_KEY env var
@@ -158,28 +170,30 @@ resources:
   max_concurrent_calls: 500
 
 # Messaging Configuration (RabbitMQ/AMQP)
+# Messaging is enabled by providing an AMQP URL and queue name.
 messaging:
-  # Enable AMQP publishing
-  enabled: false
-
   # AMQP URL (set via AMQP_URL env var for secrets)
-  # url: "amqp://user:pass@localhost:5672/"
+  # amqp_url: "amqp://user:pass@localhost:5672/"
 
   # Queue name for transcriptions
-  queue_name: "siprec.transcriptions"
+  amqp_queue_name: "siprec.transcriptions"
 
-  # Exchange configuration
-  exchange_name: "siprec"
-  exchange_type: "topic"
+  # Real-time transcript delivery
+  enable_realtime_amqp: false
+  realtime_queue_name: "siprec_realtime"
+  realtime_routing_key: "siprec.realtime"
 
   # Publishing options
-  publish_partial: true
-  publish_final: true
+  publish_partial_transcripts: true
+  publish_final_transcripts: true
+  publish_sentiment_updates: true
+  publish_keyword_detections: true
 
-  # Connection settings
-  heartbeat: 30s
-  connection_timeout: 30s
-  max_reconnect_attempts: 0  # 0 = unlimited
+  # Advanced AMQP connection settings
+  amqp:
+    heartbeat: 30s
+    connection_timeout: 30s
+    max_reconnect_attempts: 0  # 0 = unlimited
 
 # Session Redundancy
 redundancy:
@@ -204,28 +218,29 @@ cluster:
 
 # Encryption Configuration
 encryption:
-  # Encrypt recordings at rest
-  recording_encryption: false
+  # Encrypt recordings and metadata at rest
+  enable_recording_encryption: false
+  enable_metadata_encryption: false
   algorithm: "aes-256-gcm"
 
-  # Key rotation
-  key_rotation_enabled: false
+  # Key rotation and backup
   key_rotation_interval: 24h
+  key_backup_enabled: false
 
 # PII Detection and Redaction
 pii:
   enabled: false
 
   # Types of PII to detect
-  types:
+  enabled_types:
     - "ssn"
     - "credit_card"
     - "phone"
     - "email"
 
   # Redaction settings
-  redact_audio: false
-  redact_transcript: true
+  apply_to_recordings: false
+  apply_to_transcriptions: true
   redaction_char: "*"
 
 # Analytics Configuration
@@ -272,24 +287,34 @@ performance:
   cpu_limit: 80
   gc_threshold_mb: 100
   monitor_interval: 30s
-  auto_gc: true
+  enable_auto_gc: true
 
 # Rate Limiting
 rate_limit:
   enabled: false
 
   # HTTP rate limiting
-  http_requests_per_second: 100.0
-  http_request_burst: 200
+  requests_per_second: 100.0
+  burst_size: 200
 
   # SIP rate limiting
+  sip_enabled: false
   sip_requests_per_second: 100.0
   sip_request_burst: 200
 
-# Hot Reload Configuration
+# Async Speech-to-Text Job Queue (/api/stt/* endpoints)
+async_stt:
+  enabled: true
+  worker_count: 3
+  max_retries: 3
+  retry_backoff: 30s
+  job_timeout: 300s
+
+# Hot Reload Configuration (/api/config endpoints)
 hot_reload:
   enabled: true
-  watch_interval: 2s
+  debounce_time: 2s
+  backup_enabled: true
   backup_dir: "./config_backups"
 
 # Tracing Configuration (OpenTelemetry)
@@ -298,40 +323,26 @@ tracing:
   service_name: "siprec"
 
   # OTLP exporter
-  otlp_endpoint: "localhost:4317"
-  otlp_insecure: true
+  endpoint: "localhost:4317"
+  insecure: true
 
   # Sampling
-  sample_rate: 1.0
+  sample_ratio: 1.0
 
 # Authentication
 auth:
-  # API authentication
-  api_enabled: false
-  # api_key set via API_KEY env var
-
-  # JWT authentication
-  jwt_enabled: false
-  # jwt_secret set via JWT_SECRET env var
-  jwt_expiry: 24h
+  # Enable HTTP API authentication (JWT and API keys)
+  # Requires AUTH_JWT_SECRET to be set via environment variable
+  enabled: false
+  enable_api_keys: true
+  token_expiry: 24h
+  # jwt_secret set via AUTH_JWT_SECRET env var
+  # Set AUTH_RBAC_ENABLED=true (env var) to enforce role-based access control
 
 # Alerting Configuration
+# Notification channels (email/SMTP, Slack, PagerDuty, webhook) are configured
+# programmatically via the alerting subsystem. The email channel accepts
+# smtp_host, smtp_port, username, password, from, to, and tls_mode settings.
 alerting:
   enabled: false
-
-  # Email alerts
-  email:
-    enabled: false
-    smtp_host: ""
-    smtp_port: 587
-    # credentials via env vars
-
-  # Slack alerts
-  slack:
-    enabled: false
-    # webhook_url via SLACK_WEBHOOK_URL env var
-
-  # Webhook alerts
-  webhook:
-    enabled: false
-    url: ""
+  evaluation_interval: 30s

@@ -89,24 +89,24 @@ func TestSimulatedSiprecFullFlow(t *testing.T) {
 			default:
 				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 				n, _, err := conn.ReadFromUDP(buffer)
-					if err != nil {
-						// Ignore timeout errors and closed connection errors (normal shutdown)
-						if !strings.Contains(err.Error(), "timeout") && 
-						   !strings.Contains(err.Error(), "use of closed network connection") {
-							logger.WithError(err).Error("Failed to read RTP packet")
-						}
-						continue
+				if err != nil {
+					// Ignore timeout errors and closed connection errors (normal shutdown)
+					if !strings.Contains(err.Error(), "timeout") &&
+						!strings.Contains(err.Error(), "use of closed network connection") {
+						logger.WithError(err).Error("Failed to read RTP packet")
 					}
-
-					// We received data - write to the audio pipe
-					// In a real implementation, we'd parse RTP header and extract audio
-					// For testing, we'll just write the data directly
-					// Ignore errors if pipe is closed
-					_, _ = audioPW.Write(buffer[:n])
-					logger.WithField("bytes", n).Debug("Received RTP packet")
+					continue
 				}
+
+				// We received data - write to the audio pipe
+				// In a real implementation, we'd parse RTP header and extract audio
+				// For testing, we'll just write the data directly
+				// Ignore errors if pipe is closed
+				_, _ = audioPW.Write(buffer[:n])
+				logger.WithField("bytes", n).Debug("Received RTP packet")
 			}
-		}()
+		}
+	}()
 
 	// Simulate sending RTP packets (acting as the SIP client)
 	go func() {

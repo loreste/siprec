@@ -299,20 +299,6 @@ func NewInvalidInput(message string, fields ...map[string]interface{}) *Error {
 	}
 }
 
-// NewInternalError creates a new ErrInternalError with additional context
-func NewInternalError(message string, fields ...map[string]interface{}) *Error {
-	err := New(message, fields...)
-	return &Error{
-		original: ErrInternalError,
-		message:  message,
-		fields:   err.fields,
-		stackPC:  err.stackPC,
-		file:     err.file,
-		line:     err.line,
-		Code:     "INTERNAL_ERROR",
-	}
-}
-
 // NewSessionNotFound creates a new ErrSessionNotFound with additional context
 func NewSessionNotFound(sessionID string, fields ...map[string]interface{}) *Error {
 	fieldMap := make(map[string]interface{})
@@ -404,18 +390,4 @@ func GetErrorLocation(err error) string {
 		return serr.Location()
 	}
 	return ""
-}
-
-// NewNotImplemented creates a new ErrNotImplemented error with additional context
-func NewNotImplemented(message string, fields ...map[string]interface{}) *Error {
-	err := New(message, fields...)
-	return &Error{
-		original: ErrNotImplemented,
-		message:  message,
-		fields:   err.fields,
-		stackPC:  err.stackPC,
-		file:     err.file,
-		line:     err.line,
-		Code:     "NOT_IMPLEMENTED",
-	}
 }

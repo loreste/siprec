@@ -18,10 +18,9 @@ type ResourceMonitor struct {
 	checkInterval  time.Duration
 
 	// Resource tracking
-	lastMemStats runtime.MemStats
-	lastCheck    time.Time
-	lastGC       time.Time
-	gcCount      int64
+	lastCheck time.Time
+	lastGC    time.Time
+	gcCount   int64
 
 	// Thresholds
 	memoryWarningThreshold  float64
@@ -76,29 +75,6 @@ func NewResourceMonitor(maxMemoryUsage int64, logger *logrus.Logger) *ResourceMo
 	go rm.monitorLoop()
 
 	return rm
-}
-
-// Start starts the resource monitor
-func (rm *ResourceMonitor) Start() {
-	rm.runningMux.Lock()
-	defer rm.runningMux.Unlock()
-
-	if !rm.running {
-		rm.running = true
-		rm.logger.Debug("Resource monitor started")
-	}
-}
-
-// Stop stops the resource monitor
-func (rm *ResourceMonitor) Stop() {
-	rm.runningMux.Lock()
-	defer rm.runningMux.Unlock()
-
-	if rm.running {
-		rm.running = false
-		close(rm.stopChan)
-		rm.logger.Debug("Resource monitor stopped")
-	}
 }
 
 // CheckResources performs an immediate resource check
@@ -169,7 +145,6 @@ func (rm *ResourceMonitor) updateMemoryStats() {
 	rm.stats.mutex.Lock()
 	defer rm.stats.mutex.Unlock()
 
-	rm.lastMemStats = memStats
 	rm.lastCheck = time.Now()
 
 	rm.stats.CurrentMemoryUsage = int64(memStats.HeapInuse)
@@ -238,162 +213,5 @@ func (rm *ResourceMonitor) checkMemoryThresholds() {
 	// Check for automatic GC trigger
 	if currentUsage > rm.gcThreshold && time.Since(rm.lastGC) > 15*time.Second {
 		go rm.OptimizeMemory()
-	}
-}
-
-// GetStats returns current resource statistics
-func (rm *ResourceMonitor) GetStats() *ResourceStats {
-	rm.stats.mutex.RLock()
-	defer rm.stats.mutex.RUnlock()
-
-	statsCopy := &ResourceStats{
-		CurrentMemoryUsage: rm.stats.CurrentMemoryUsage,
-		MaxMemoryUsage:     rm.stats.MaxMemoryUsage,
-		MemoryLimit:        rm.stats.MemoryLimit,
-		GCCount:            rm.stats.GCCount,
-		LastGCTime:         rm.stats.LastGCTime,
-		HeapObjects:        rm.stats.HeapObjects,
-		NumGoroutines:      rm.stats.NumGoroutines,
-		CPUPercent:         rm.stats.CPUPercent,
-		MemoryPercent:      rm.stats.MemoryPercent,
-		LastCheck:          rm.stats.LastCheck,
-		WarningCount:       rm.stats.WarningCount,
-		CriticalCount:      rm.stats.CriticalCount,
-		OptimizationCount:  rm.stats.OptimizationCount,
-	}
-	return statsCopy
-}
-
-// GetMemoryUsage returns current memory usage information
-func (rm *ResourceMonitor) GetMemoryUsage() map[string]interface{} {
-	rm.stats.mutex.RLock()
-	defer rm.stats.mutex.RUnlock()
-
-	return map[string]interface{}{
-		"current_usage_bytes": rm.stats.CurrentMemoryUsage,
-		"current_usage_mb":    float64(rm.stats.CurrentMemoryUsage) / 1024 / 1024,
-		"max_usage_bytes":     rm.stats.MaxMemoryUsage,
-		"max_usage_mb":        float64(rm.stats.MaxMemoryUsage) / 1024 / 1024,
-		"limit_bytes":         rm.stats.MemoryLimit,
-		"limit_mb":            float64(rm.stats.MemoryLimit) / 1024 / 1024,
-		"usage_percent":       rm.stats.MemoryPercent,
-		"heap_objects":        rm.stats.HeapObjects,
-		"num_goroutines":      rm.stats.NumGoroutines,
-		"gc_count":            rm.stats.GCCount,
-		"last_gc":             rm.stats.LastGCTime,
-	}
-}
-
-// IsMemoryThresholdExceeded returns true if memory usage exceeds warning threshold
-func (rm *ResourceMonitor) IsMemoryThresholdExceeded() bool {
-	rm.stats.mutex.RLock()
-	defer rm.stats.mutex.RUnlock()
-
-	return rm.stats.MemoryPercent >= rm.memoryWarningThreshold*100
-}
-
-// IsCriticalMemoryUsage returns true if memory usage exceeds critical threshold
-func (rm *ResourceMonitor) IsCriticalMemoryUsage() bool {
-	rm.stats.mutex.RLock()
-	defer rm.stats.mutex.RUnlock()
-
-	return rm.stats.MemoryPercent >= rm.memoryCriticalThreshold*100
-}
-
-// SetMemoryLimit updates the memory limit
-func (rm *ResourceMonitor) SetMemoryLimit(limit int64) {
-	if limit <= 0 {
-		return
-	}
-
-	rm.maxMemoryUsage = limit
-	rm.gcThreshold = limit / 4
-
-	rm.stats.mutex.Lock()
-	rm.stats.MemoryLimit = limit
-	// Recalculate percentage with new limit
-	if limit > 0 {
-		rm.stats.MemoryPercent = float64(rm.stats.CurrentMemoryUsage) / float64(limit) * 100
-	}
-	rm.stats.mutex.Unlock()
-}
-
-// SetCheckInterval updates the monitoring interval
-func (rm *ResourceMonitor) SetCheckInterval(interval time.Duration) {
-	if interval <= 0 {
-		return
-	}
-	rm.checkInterval = interval
-}
-
-// SetThresholds updates the warning and critical thresholds
-func (rm *ResourceMonitor) SetThresholds(warning, critical float64) {
-	if warning <= 0 || warning >= 1 || critical <= 0 || critical >= 1 || warning >= critical {
-		return
-	}
-
-	rm.memoryWarningThreshold = warning
-	rm.memoryCriticalThreshold = critical
-}
-
-// ForceGC forces a garbage collection cycle
-func (rm *ResourceMonitor) ForceGC() {
-	go rm.OptimizeMemory()
-}
-
-// Reset resets the resource monitor statistics
-func (rm *ResourceMonitor) Reset() {
-	rm.stats.mutex.Lock()
-	defer rm.stats.mutex.Unlock()
-
-	rm.stats.MaxMemoryUsage = 0
-	rm.stats.GCCount = 0
-	rm.stats.WarningCount = 0
-	rm.stats.CriticalCount = 0
-	rm.stats.OptimizationCount = 0
-	rm.gcCount = 0
-
-	rm.logger.Debug("Resource monitor statistics reset")
-}
-
-// GetDetailedMemoryInfo returns detailed memory information
-func (rm *ResourceMonitor) GetDetailedMemoryInfo() map[string]interface{} {
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	return map[string]interface{}{
-		"heap_alloc_bytes":    memStats.HeapAlloc,
-		"heap_alloc_mb":       float64(memStats.HeapAlloc) / 1024 / 1024,
-		"heap_sys_bytes":      memStats.HeapSys,
-		"heap_sys_mb":         float64(memStats.HeapSys) / 1024 / 1024,
-		"heap_idle_bytes":     memStats.HeapIdle,
-		"heap_idle_mb":        float64(memStats.HeapIdle) / 1024 / 1024,
-		"heap_inuse_bytes":    memStats.HeapInuse,
-		"heap_inuse_mb":       float64(memStats.HeapInuse) / 1024 / 1024,
-		"heap_released_bytes": memStats.HeapReleased,
-		"heap_released_mb":    float64(memStats.HeapReleased) / 1024 / 1024,
-		"heap_objects":        memStats.HeapObjects,
-		"stack_inuse_bytes":   memStats.StackInuse,
-		"stack_inuse_mb":      float64(memStats.StackInuse) / 1024 / 1024,
-		"stack_sys_bytes":     memStats.StackSys,
-		"stack_sys_mb":        float64(memStats.StackSys) / 1024 / 1024,
-		"m_span_inuse_bytes":  memStats.MSpanInuse,
-		"m_span_inuse_mb":     float64(memStats.MSpanInuse) / 1024 / 1024,
-		"m_cache_inuse_bytes": memStats.MCacheInuse,
-		"m_cache_inuse_mb":    float64(memStats.MCacheInuse) / 1024 / 1024,
-		"buck_hash_sys_bytes": memStats.BuckHashSys,
-		"buck_hash_sys_mb":    float64(memStats.BuckHashSys) / 1024 / 1024,
-		"gc_sys_bytes":        memStats.GCSys,
-		"gc_sys_mb":           float64(memStats.GCSys) / 1024 / 1024,
-		"other_sys_bytes":     memStats.OtherSys,
-		"other_sys_mb":        float64(memStats.OtherSys) / 1024 / 1024,
-		"sys_bytes":           memStats.Sys,
-		"sys_mb":              float64(memStats.Sys) / 1024 / 1024,
-		"num_gc":              memStats.NumGC,
-		"num_forced_gc":       memStats.NumForcedGC,
-		"gc_cpu_fraction":     memStats.GCCPUFraction,
-		"last_gc_time":        time.Unix(0, int64(memStats.LastGC)),
-		"num_goroutines":      runtime.NumGoroutine(),
-		"num_cpu":             runtime.NumCPU(),
 	}
 }

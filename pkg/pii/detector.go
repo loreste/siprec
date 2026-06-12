@@ -10,14 +10,14 @@ import (
 
 // PIIDetector detects and redacts personally identifiable information from text
 type PIIDetector struct {
-	logger           *logrus.Logger
-	ssnRegex         *regexp.Regexp
-	creditCardRegex  *regexp.Regexp
-	phoneRegex       *regexp.Regexp
-	emailRegex       *regexp.Regexp
-	enabledTypes     map[PIIType]bool
-	redactionChar    string
-	preserveFormat   bool
+	logger          *logrus.Logger
+	ssnRegex        *regexp.Regexp
+	creditCardRegex *regexp.Regexp
+	phoneRegex      *regexp.Regexp
+	emailRegex      *regexp.Regexp
+	enabledTypes    map[PIIType]bool
+	redactionChar   string
+	preserveFormat  bool
 }
 
 // PIIType represents different types of PII that can be detected
@@ -42,11 +42,11 @@ type PIIMatch struct {
 
 // PIIDetectionResult contains the results of PII detection
 type PIIDetectionResult struct {
-	OriginalText  string     `json:"original_text"`
-	RedactedText  string     `json:"redacted_text"`
-	Matches       []PIIMatch `json:"matches"`
-	HasPII        bool       `json:"has_pii"`
-	ProcessedAt   string     `json:"processed_at"`
+	OriginalText string     `json:"original_text"`
+	RedactedText string     `json:"redacted_text"`
+	Matches      []PIIMatch `json:"matches"`
+	HasPII       bool       `json:"has_pii"`
+	ProcessedAt  string     `json:"processed_at"`
 }
 
 // Config holds configuration for PII detection
@@ -61,17 +61,17 @@ type Config struct {
 func NewPIIDetector(logger *logrus.Logger, config *Config) (*PIIDetector, error) {
 	if config == nil {
 		config = &Config{
-			EnabledTypes:  []PIIType{PIITypeSSN, PIITypeCreditCard, PIITypePhone, PIITypeEmail},
-			RedactionChar: "*",
+			EnabledTypes:   []PIIType{PIITypeSSN, PIITypeCreditCard, PIITypePhone, PIITypeEmail},
+			RedactionChar:  "*",
 			PreserveFormat: true,
 		}
 	}
 
 	detector := &PIIDetector{
-		logger:        logger,
-		redactionChar: config.RedactionChar,
+		logger:         logger,
+		redactionChar:  config.RedactionChar,
 		preserveFormat: config.PreserveFormat,
-		enabledTypes:  make(map[PIIType]bool),
+		enabledTypes:   make(map[PIIType]bool),
 	}
 
 	// Set enabled types
@@ -158,7 +158,7 @@ func (d *PIIDetector) detectSSN(result *PIIDetectionResult) {
 			indices := matchIndices[i]
 			original := match[0]
 			redacted := d.redactSSN(original)
-			
+
 			piiMatch := PIIMatch{
 				Type:     PIITypeSSN,
 				Original: original,
@@ -167,7 +167,7 @@ func (d *PIIDetector) detectSSN(result *PIIDetectionResult) {
 				End:      indices[1],
 				Context:  d.getContext(result.OriginalText, indices[0], indices[1]),
 			}
-			
+
 			result.Matches = append(result.Matches, piiMatch)
 			result.RedactedText = strings.Replace(result.RedactedText, original, redacted, 1)
 		}
@@ -184,7 +184,7 @@ func (d *PIIDetector) detectCreditCard(result *PIIDetectionResult) {
 			indices := matchIndices[i]
 			original := match[0]
 			redacted := d.redactCreditCard(original)
-			
+
 			piiMatch := PIIMatch{
 				Type:     PIITypeCreditCard,
 				Original: original,
@@ -193,7 +193,7 @@ func (d *PIIDetector) detectCreditCard(result *PIIDetectionResult) {
 				End:      indices[1],
 				Context:  d.getContext(result.OriginalText, indices[0], indices[1]),
 			}
-			
+
 			result.Matches = append(result.Matches, piiMatch)
 			result.RedactedText = strings.Replace(result.RedactedText, original, redacted, 1)
 		}
@@ -210,7 +210,7 @@ func (d *PIIDetector) detectPhone(result *PIIDetectionResult) {
 			indices := matchIndices[i]
 			original := match[0]
 			redacted := d.redactPhone(original)
-			
+
 			piiMatch := PIIMatch{
 				Type:     PIITypePhone,
 				Original: original,
@@ -219,7 +219,7 @@ func (d *PIIDetector) detectPhone(result *PIIDetectionResult) {
 				End:      indices[1],
 				Context:  d.getContext(result.OriginalText, indices[0], indices[1]),
 			}
-			
+
 			result.Matches = append(result.Matches, piiMatch)
 			result.RedactedText = strings.Replace(result.RedactedText, original, redacted, 1)
 		}
@@ -236,7 +236,7 @@ func (d *PIIDetector) detectEmail(result *PIIDetectionResult) {
 			indices := matchIndices[i]
 			original := match[0]
 			redacted := d.redactEmail(original)
-			
+
 			piiMatch := PIIMatch{
 				Type:     PIITypeEmail,
 				Original: original,
@@ -245,7 +245,7 @@ func (d *PIIDetector) detectEmail(result *PIIDetectionResult) {
 				End:      indices[1],
 				Context:  d.getContext(result.OriginalText, indices[0], indices[1]),
 			}
-			
+
 			result.Matches = append(result.Matches, piiMatch)
 			result.RedactedText = strings.Replace(result.RedactedText, original, redacted, 1)
 		}
@@ -294,7 +294,7 @@ func (d *PIIDetector) isValidSSN(ssn string) bool {
 func (d *PIIDetector) isValidCreditCard(cardNumber string) bool {
 	// Remove separators
 	digits := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(cardNumber, "-", ""), " ", ""), ".", "")
-	
+
 	// Check length
 	if len(digits) < 13 || len(digits) > 19 {
 		return false
@@ -316,21 +316,21 @@ func (d *PIIDetector) isValidCreditCard(cardNumber string) bool {
 	// Luhn algorithm
 	sum := 0
 	alternate := false
-	
+
 	for i := len(digits) - 1; i >= 0; i-- {
 		digit := int(digits[i] - '0')
-		
+
 		if alternate {
 			digit *= 2
 			if digit > 9 {
 				digit = (digit % 10) + 1
 			}
 		}
-		
+
 		sum += digit
 		alternate = !alternate
 	}
-	
+
 	return sum%10 == 0
 }
 
@@ -364,14 +364,14 @@ func (d *PIIDetector) redactCreditCard(cardNumber string) string {
 		result := ""
 		digitCount := 0
 		totalDigits := 0
-		
+
 		// Count total digits first
 		for _, char := range cardNumber {
 			if unicode.IsDigit(char) {
 				totalDigits++
 			}
 		}
-		
+
 		for _, char := range cardNumber {
 			if unicode.IsDigit(char) {
 				digitCount++
@@ -420,11 +420,11 @@ func (d *PIIDetector) redactEmail(email string) string {
 		if len(parts) == 2 {
 			localPart := parts[0]
 			domain := parts[1]
-			
+
 			if len(localPart) <= 2 {
 				return strings.Repeat(d.redactionChar, len(localPart)) + "@" + domain
 			}
-			
+
 			// Show first and last character, redact middle
 			redactedLocal := string(localPart[0]) + strings.Repeat(d.redactionChar, len(localPart)-2) + string(localPart[len(localPart)-1])
 			return redactedLocal + "@" + domain
@@ -436,17 +436,17 @@ func (d *PIIDetector) redactEmail(email string) string {
 // getContext extracts context around PII match
 func (d *PIIDetector) getContext(text string, start, end int) string {
 	contextLength := 20 // characters before and after
-	
+
 	contextStart := start - contextLength
 	if contextStart < 0 {
 		contextStart = 0
 	}
-	
+
 	contextEnd := end + contextLength
 	if contextEnd > len(text) {
 		contextEnd = len(text)
 	}
-	
+
 	return text[contextStart:contextEnd]
 }
 
@@ -457,7 +457,7 @@ func (d *PIIDetector) GetStats() map[string]interface{} {
 		"redaction_char":  d.redactionChar,
 		"preserve_format": d.preserveFormat,
 	}
-	
+
 	enabledTypes := make([]string, 0)
 	for piiType, enabled := range d.enabledTypes {
 		if enabled {
@@ -465,6 +465,6 @@ func (d *PIIDetector) GetStats() map[string]interface{} {
 		}
 	}
 	stats["enabled_types"] = enabledTypes
-	
+
 	return stats
 }

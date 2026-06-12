@@ -155,21 +155,3 @@ func InitializeDatabase(logger *logrus.Logger) (*MySQLDatabase, *Repository, err
 	logger.Info("Database initialization completed successfully")
 	return db, repo, nil
 }
-
-// Health check configuration
-type HealthConfig struct {
-	Enabled           bool
-	CheckInterval     time.Duration
-	FailureThreshold  int
-	RecoveryThreshold int
-}
-
-// LoadHealthConfig loads health check configuration
-func LoadHealthConfig() HealthConfig {
-	return HealthConfig{
-		Enabled:           getEnvBoolOrDefault("DB_HEALTH_ENABLED", true),
-		CheckInterval:     getEnvDurationOrDefault("DB_HEALTH_INTERVAL", 30*time.Second),
-		FailureThreshold:  getEnvIntOrDefault("DB_HEALTH_FAILURE_THRESHOLD", 3),
-		RecoveryThreshold: getEnvIntOrDefault("DB_HEALTH_RECOVERY_THRESHOLD", 2),
-	}
-}

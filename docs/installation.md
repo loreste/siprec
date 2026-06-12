@@ -82,8 +82,7 @@ CGO_ENABLED=1 go build -o siprec ./cmd/siprec
 go build -o siprecctl ./cmd/siprecctl
 
 # Verify build
-./siprec --version
-./siprecctl --version
+./siprecctl version
 ```
 
 ### Method 2: Docker
@@ -243,7 +242,7 @@ sudo firewall-cmd --reload
 curl http://localhost:8080/health
 
 # Expected response:
-# {"status":"healthy","version":"1.2.0",...}
+# {"status":"healthy","version":"1.2.3",...}
 
 # Using siprecctl
 siprecctl health

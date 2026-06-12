@@ -42,14 +42,14 @@ func TestConcurrentAMQPOperations(t *testing.T) {
 			for j := 0; j < operationsPerWorker; j++ {
 				// Test error recording
 				collector.RecordError("test", "concurrent test", "worker", "info")
-				
+
 				// Test custom metrics
 				metricName := fmt.Sprintf("worker_%d_metric", workerID)
 				collector.RegisterCustomMetric(metricName, "counter", map[string]string{
 					"worker": fmt.Sprintf("%d", workerID),
 				})
 				collector.UpdateCustomMetric(metricName, int64(j))
-				
+
 				// Test snapshot creation
 				snapshot := collector.GetSnapshot()
 				if snapshot == nil {
@@ -64,7 +64,7 @@ func TestConcurrentAMQPOperations(t *testing.T) {
 	// Verify final state
 	snapshot := collector.GetSnapshot()
 	if snapshot.ErrorMetrics.TotalErrors != int64(numWorkers*operationsPerWorker) {
-		t.Errorf("Expected %d total errors, got %d", 
+		t.Errorf("Expected %d total errors, got %d",
 			numWorkers*operationsPerWorker, snapshot.ErrorMetrics.TotalErrors)
 	}
 }
@@ -92,7 +92,7 @@ func TestConcurrentPausableWriter(t *testing.T) {
 		go func(writerID int) {
 			defer wg.Done()
 			data := []byte("test data")
-			
+
 			for j := 0; j < writesPerWorker; j++ {
 				n, err := pausableWriter.Write(data)
 				if err != nil {
@@ -126,7 +126,7 @@ func TestConcurrentPausableWriter(t *testing.T) {
 
 	// Ensure writer is not paused at the end
 	pausableWriter.Resume()
-	
+
 	// Final write to ensure it works
 	finalData := []byte("final test")
 	n, err := pausableWriter.Write(finalData)

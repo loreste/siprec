@@ -19,12 +19,12 @@ type PIIAudioMarker struct {
 
 // PIIMarker represents a PII detection event with timing information
 type PIIMarker struct {
-	StartTime    time.Time `json:"start_time"`
-	EndTime      time.Time `json:"end_time"`
-	PIIType      string    `json:"pii_type"`
-	Confidence   float64   `json:"confidence"`
-	Transcription string   `json:"transcription"`
-	RedactedText string    `json:"redacted_text"`
+	StartTime     time.Time `json:"start_time"`
+	EndTime       time.Time `json:"end_time"`
+	PIIType       string    `json:"pii_type"`
+	Confidence    float64   `json:"confidence"`
+	Transcription string    `json:"transcription"`
+	RedactedText  string    `json:"redacted_text"`
 }
 
 // PIIAudioMarkerMetadata contains metadata for audio redaction
@@ -60,12 +60,12 @@ func (m *PIIAudioMarker) MarkPII(piiType string, transcription string, redactedT
 	// This is a simple approach - in a real implementation, you might want to
 	// correlate with actual audio timestamps or RTP timestamps
 	currentTime := time.Now()
-	
+
 	// Estimate duration of the transcription (rough calculation)
 	// Assuming average speaking rate of ~150 words per minute
-	words := len([]rune(transcription)) / 5 // Rough word count estimation
+	words := len([]rune(transcription)) / 5                              // Rough word count estimation
 	estimatedDuration := time.Duration(float64(words)/2.5) * time.Second // ~150 WPM
-	
+
 	if estimatedDuration < 1*time.Second {
 		estimatedDuration = 2 * time.Second // Minimum duration for redaction
 	}
@@ -132,12 +132,12 @@ func (m *PIIAudioMarker) GetRedactionIntervals() []RedactionInterval {
 	defer m.mutex.RUnlock()
 
 	intervals := make([]RedactionInterval, 0, len(m.markers))
-	
+
 	for _, marker := range m.markers {
 		// Convert absolute times to relative offsets from recording start
 		startOffset := marker.StartTime.Sub(m.startTime)
 		endOffset := marker.EndTime.Sub(m.startTime)
-		
+
 		// Ensure non-negative offsets
 		if startOffset < 0 {
 			startOffset = 0
@@ -145,7 +145,7 @@ func (m *PIIAudioMarker) GetRedactionIntervals() []RedactionInterval {
 		if endOffset < startOffset {
 			endOffset = startOffset + 2*time.Second // Minimum redaction duration
 		}
-		
+
 		intervals = append(intervals, RedactionInterval{
 			StartOffset: startOffset,
 			EndOffset:   endOffset,
@@ -185,7 +185,7 @@ func MergeOverlappingIntervals(intervals []RedactionInterval) []RedactionInterva
 
 	for i := 1; i < len(intervals); i++ {
 		next := intervals[i]
-		
+
 		// Check if intervals overlap or are adjacent (within 1 second)
 		if next.StartOffset <= current.EndOffset+time.Second {
 			// Merge intervals
@@ -225,11 +225,11 @@ func (m *PIIAudioMarker) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"enabled":         m.enabled,
-		"total_markers":   len(m.markers),
-		"types_detected":  typeCount,
-		"total_duration":  totalDuration.String(),
-		"call_duration":   time.Since(m.startTime).String(),
-		"call_uuid":       m.callUUID,
+		"enabled":        m.enabled,
+		"total_markers":  len(m.markers),
+		"types_detected": typeCount,
+		"total_duration": totalDuration.String(),
+		"call_duration":  time.Since(m.startTime).String(),
+		"call_uuid":      m.callUUID,
 	}
 }

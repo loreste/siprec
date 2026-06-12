@@ -75,7 +75,7 @@ func (s *PauseResumeService) ResumeSession(sessionID string) error {
 func (s *PauseResumeService) PauseAll(pauseRecording, pauseTranscription bool) error {
 	// Get all active sessions
 	sessions := s.handler.ActiveCalls.Keys()
-	
+
 	for _, sessionID := range sessions {
 		if err := s.PauseSession(sessionID, pauseRecording, pauseTranscription); err != nil {
 			s.logger.WithError(err).WithField("session_id", sessionID).Warn("Failed to pause session")
@@ -95,7 +95,7 @@ func (s *PauseResumeService) PauseAll(pauseRecording, pauseTranscription bool) e
 func (s *PauseResumeService) ResumeAll() error {
 	// Get all active sessions
 	sessions := s.handler.ActiveCalls.Keys()
-	
+
 	for _, sessionID := range sessions {
 		if err := s.ResumeSession(sessionID); err != nil {
 			s.logger.WithError(err).WithField("session_id", sessionID).Warn("Failed to resume session")
@@ -130,7 +130,7 @@ func (s *PauseResumeService) GetPauseStatus(sessionID string) (*http.PauseStatus
 		status.TranscriptionPaused = transcriptionPaused
 		status.PausedAt = pausedAt
 		status.IsPaused = recordingPaused || transcriptionPaused
-		
+
 		// Calculate pause duration if currently paused
 		if status.IsPaused && pausedAt != nil {
 			status.PauseDuration = time.Since(*pausedAt)
@@ -176,9 +176,9 @@ func (s *PauseResumeService) MuteSession(sessionID string, muteInbound, muteOutb
 	if callData.Forwarder != nil {
 		callData.Forwarder.Mute(muteInbound, muteOutbound)
 		s.logger.WithFields(logrus.Fields{
-			"session_id":     sessionID,
-			"mute_inbound":   muteInbound,
-			"mute_outbound":  muteOutbound,
+			"session_id":    sessionID,
+			"mute_inbound":  muteInbound,
+			"mute_outbound": muteOutbound,
 		}).Info("Session muted via API")
 	}
 
@@ -202,9 +202,9 @@ func (s *PauseResumeService) UnmuteSession(sessionID string, unmuteInbound, unmu
 	if callData.Forwarder != nil {
 		callData.Forwarder.Unmute(unmuteInbound, unmuteOutbound)
 		s.logger.WithFields(logrus.Fields{
-			"session_id":       sessionID,
-			"unmute_inbound":   unmuteInbound,
-			"unmute_outbound":  unmuteOutbound,
+			"session_id":      sessionID,
+			"unmute_inbound":  unmuteInbound,
+			"unmute_outbound": unmuteOutbound,
 		}).Info("Session unmuted via API")
 	}
 

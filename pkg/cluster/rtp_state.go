@@ -19,29 +19,29 @@ const (
 
 // RTPStreamState represents the state of an RTP stream for cluster replication
 type RTPStreamState struct {
-	CallUUID        string            `json:"call_uuid"`
-	SessionID       string            `json:"session_id"`
-	NodeID          string            `json:"node_id"`
-	LocalPort       int               `json:"local_port"`
-	RTCPPort        int               `json:"rtcp_port,omitempty"`
-	RemoteAddr      string            `json:"remote_addr,omitempty"`
-	LocalSSRC       uint32            `json:"local_ssrc"`
-	RemoteSSRC      uint32            `json:"remote_ssrc"`
-	CodecName       string            `json:"codec_name"`
-	CodecPayloadType uint8            `json:"codec_payload_type"`
-	SampleRate      int               `json:"sample_rate"`
-	Channels        int               `json:"channels"`
-	RecordingPath   string            `json:"recording_path,omitempty"`
-	RecordingPaused bool              `json:"recording_paused"`
-	SRTPEnabled     bool              `json:"srtp_enabled"`
-	StartTime       time.Time         `json:"start_time"`
-	LastPacketTime  time.Time         `json:"last_packet_time"`
-	PacketsReceived int64             `json:"packets_received"`
-	BytesReceived   int64             `json:"bytes_received"`
-	PacketsLost     int64             `json:"packets_lost"`
-	Jitter          float64           `json:"jitter"`
-	Status          RTPStreamStatus   `json:"status"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	CallUUID         string            `json:"call_uuid"`
+	SessionID        string            `json:"session_id"`
+	NodeID           string            `json:"node_id"`
+	LocalPort        int               `json:"local_port"`
+	RTCPPort         int               `json:"rtcp_port,omitempty"`
+	RemoteAddr       string            `json:"remote_addr,omitempty"`
+	LocalSSRC        uint32            `json:"local_ssrc"`
+	RemoteSSRC       uint32            `json:"remote_ssrc"`
+	CodecName        string            `json:"codec_name"`
+	CodecPayloadType uint8             `json:"codec_payload_type"`
+	SampleRate       int               `json:"sample_rate"`
+	Channels         int               `json:"channels"`
+	RecordingPath    string            `json:"recording_path,omitempty"`
+	RecordingPaused  bool              `json:"recording_paused"`
+	SRTPEnabled      bool              `json:"srtp_enabled"`
+	StartTime        time.Time         `json:"start_time"`
+	LastPacketTime   time.Time         `json:"last_packet_time"`
+	PacketsReceived  int64             `json:"packets_received"`
+	BytesReceived    int64             `json:"bytes_received"`
+	PacketsLost      int64             `json:"packets_lost"`
+	Jitter           float64           `json:"jitter"`
+	Status           RTPStreamStatus   `json:"status"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 
 	// For stream migration
 	MigrationTarget  string    `json:"migration_target,omitempty"`
@@ -363,8 +363,8 @@ func (m *RTPStateManager) InitiateMigration(callUUID, targetNodeID string) error
 	m.publishUpdate(state, "migrate")
 
 	m.logger.WithFields(logrus.Fields{
-		"call_uuid":     callUUID,
-		"target_node":   targetNodeID,
+		"call_uuid":   callUUID,
+		"target_node": targetNodeID,
 	}).Info("RTP stream migration initiated")
 
 	return nil

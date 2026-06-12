@@ -272,9 +272,8 @@ AMQP_RETRY_DELAY=2s
 Failed messages are automatically routed to a dead letter queue:
 
 ```bash
-AMQP_DLQ_ENABLED=true
-AMQP_DLQ_EXCHANGE=dead_letters
-AMQP_DLQ_ROUTING_KEY=failed_transcriptions
+AMQP_DLX=dead_letters
+AMQP_DLX_ROUTING_KEY=failed_transcriptions
 ```
 
 ## PII Filtering
@@ -507,4 +506,4 @@ If connection fails, the server will continue without AMQP (graceful degradation
 | `AMQP_MAX_RETRIES` | Max retry attempts | `3` |
 | `AMQP_RETRY_DELAY` | Delay between retries | `2s` |
 | `AMQP_MESSAGE_TTL` | Message time-to-live | `24h` |
-| `AMQP_DLQ_ENABLED` | Enable dead letter queue | `false` |
+| `AMQP_DLX` | Dead letter exchange name | `siprec.dlx` |

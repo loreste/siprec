@@ -42,13 +42,13 @@ func (w *EnhancedAMQPClientWrapper) PublishToDeadLetterQueue(content, callUUID s
 		"call_uuid": callUUID,
 		"metadata":  metadata,
 	}
-	
+
 	headers := map[string]interface{}{
 		"message_type": "dead_letter",
 		"call_uuid":    callUUID,
 		"timestamp":    time.Now().Unix(),
 	}
-	
+
 	return w.EnhancedClient.PublishMessage(
 		w.EnhancedClient.config.DeadLetterExchange,
 		w.EnhancedClient.config.DeadLetterRoutingKey,

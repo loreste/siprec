@@ -70,12 +70,6 @@ func (rs *RotationService) Stop() error {
 	return nil
 }
 
-// TriggerRotation manually triggers a key rotation
-func (rs *RotationService) TriggerRotation() error {
-	rs.logger.Info("Manually triggering key rotation")
-	return rs.performRotation()
-}
-
 // rotationLoop runs the periodic key rotation
 func (rs *RotationService) rotationLoop() {
 	defer rs.wg.Done()
@@ -114,24 +108,4 @@ func (rs *RotationService) performRotation() error {
 	rs.logger.WithField("duration", duration).Info("Completed key rotation")
 
 	return nil
-}
-
-// IsRunning returns whether the rotation service is running
-func (rs *RotationService) IsRunning() bool {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	return rs.running
-}
-
-// GetNextRotationTime returns the time of the next scheduled rotation
-func (rs *RotationService) GetNextRotationTime() time.Time {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-
-	if !rs.running {
-		return time.Time{}
-	}
-
-	// Calculate next rotation based on interval
-	return time.Now().Add(rs.config.KeyRotationInterval)
 }

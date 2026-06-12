@@ -44,10 +44,10 @@ type Manager struct {
 	mu       sync.RWMutex
 
 	// Leader election state
-	isLeader         bool
-	leaderMu         sync.RWMutex
-	leaderCallbacks  []func(isLeader bool)
-	callbacksMu      sync.RWMutex
+	isLeader        bool
+	leaderMu        sync.RWMutex
+	leaderCallbacks []func(isLeader bool)
+	callbacksMu     sync.RWMutex
 }
 
 // LeadershipCallback is called when leadership status changes
@@ -89,9 +89,9 @@ func (m *Manager) Start() error {
 	}
 
 	m.logger.WithFields(logrus.Fields{
-		"node_id":           m.config.NodeID,
+		"node_id":            m.config.NodeID,
 		"heartbeat_interval": m.config.HeartbeatInterval,
-		"leader_election":   m.config.LeaderElectionEnabled,
+		"leader_election":    m.config.LeaderElectionEnabled,
 	}).Info("Starting cluster manager")
 
 	// Register immediately
@@ -426,11 +426,11 @@ func (m *Manager) GetClusterStatus(ctx context.Context) (*ClusterStatus, error) 
 	}
 
 	return &ClusterStatus{
-		NodeCount:     len(nodes),
-		Nodes:         nodes,
-		LeaderID:      leader,
-		IsThisLeader:  m.IsLeader(),
-		ThisNodeID:    m.config.NodeID,
+		NodeCount:    len(nodes),
+		Nodes:        nodes,
+		LeaderID:     leader,
+		IsThisLeader: m.IsLeader(),
+		ThisNodeID:   m.config.NodeID,
 	}, nil
 }
 

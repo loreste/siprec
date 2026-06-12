@@ -141,12 +141,6 @@ func isG729Oscillation(decoded []int16) bool {
 	return railedCount > n/2 && signChanges > n/4
 }
 
-// DecodeG729WithSSRC is a stateless convenience wrapper that decodes a G.729
-// payload using a fresh decoder.
-func DecodeG729WithSSRC(payload []byte, ssrc uint32) ([]byte, error) {
-	return decodeG729Packet(payload)
-}
-
 // decodeG729Packet decodes a G.729 payload to 16-bit PCM using bcg729 library.
 // Each 10-byte frame produces 80 samples (160 bytes of PCM).
 func decodeG729Packet(payload []byte) ([]byte, error) {

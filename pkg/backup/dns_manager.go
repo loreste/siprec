@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
@@ -25,6 +24,13 @@ type DNSConfig struct {
 	Credentials map[string]string // Provider-specific credentials
 	NameServers []string          // DNS servers for updates
 	SOARecord   SOARecord         // Start of Authority record
+
+	// Route53-specific settings (used when Provider == "route53")
+	Route53HostedZoneID string // Hosted zone ID; falls back to Credentials["hosted_zone_id"], then Zone
+
+	// GCP-specific settings (used when Provider == "gcp_dns")
+	GCPProject     string // GCP project ID; falls back to Credentials["project_id"]
+	GCPManagedZone string // Cloud DNS managed zone name; falls back to Credentials["managed_zone"]
 }
 
 // SOARecord represents DNS SOA record
@@ -80,42 +86,6 @@ func (dm *DNSManager) UpdateRecord(ctx context.Context, record DNSRecord) error 
 	}
 }
 
-// FailoverDNS performs DNS failover by updating A/AAAA records
-func (dm *DNSManager) FailoverDNS(ctx context.Context, hostname, newIP string) error {
-	dm.logger.WithFields(logrus.Fields{
-		"hostname": hostname,
-		"new_ip":   newIP,
-	}).Info("Performing DNS failover")
-
-	// Determine record type based on IP format
-	recordType := "A"
-	if strings.Contains(newIP, ":") {
-		recordType = "AAAA"
-	}
-
-	// Validate IP address
-	if net.ParseIP(newIP) == nil {
-		return fmt.Errorf("invalid IP address: %s", newIP)
-	}
-
-	// Create DNS record
-	record := DNSRecord{
-		Name:  hostname,
-		Type:  recordType,
-		Value: newIP,
-		TTL:   dm.config.TTL,
-	}
-
-	// Update the record
-	err := dm.UpdateRecord(ctx, record)
-	if err != nil {
-		return fmt.Errorf("failed to update DNS record: %w", err)
-	}
-
-	// Verify the update
-	return dm.verifyDNSUpdate(ctx, hostname, newIP, recordType)
-}
-
 // GetRecord retrieves a DNS record
 func (dm *DNSManager) GetRecord(ctx context.Context, name, recordType string) ([]DNSRecord, error) {
 	switch dm.config.Provider {
@@ -149,32 +119,39 @@ func (dm *DNSManager) getCloudflareRecord(ctx context.Context, name, recordType 
 
 // Route53 Implementation
 
-func (dm *DNSManager) updateRoute53Record(ctx context.Context, record DNSRecord) error {
-	// Create real Route53 manager
+// route53ZoneID resolves the hosted zone ID from configuration.
+func (dm *DNSManager) route53ZoneID() string {
+	if dm.config.Route53HostedZoneID != "" {
+		return dm.config.Route53HostedZoneID
+	}
+	if zoneID := dm.config.Credentials["hosted_zone_id"]; zoneID != "" {
+		return zoneID
+	}
+	return dm.config.Zone
+}
+
+// route53Manager builds a Route53 manager from the DNS configuration.
+func (dm *DNSManager) route53Manager() *RealRoute53Manager {
 	awsConfig := AWSConfig{
 		Region:          dm.config.Credentials["region"],
 		AccessKeyID:     dm.config.Credentials["access_key_id"],
 		SecretAccessKey: dm.config.Credentials["secret_access_key"],
+		SessionToken:    dm.config.Credentials["session_token"],
 	}
-	route53Manager := NewRealRoute53Manager(awsConfig, dm.config.Zone, dm.logger)
-	return route53Manager.UpdateRecord(ctx, record)
+	manager := NewRealRoute53Manager(awsConfig, dm.route53ZoneID(), dm.logger)
+	manager.WaitForSync = dm.config.Credentials["wait_for_sync"] == "true"
+	return manager
+}
+
+func (dm *DNSManager) updateRoute53Record(ctx context.Context, record DNSRecord) error {
+	if record.TTL <= 0 {
+		record.TTL = effectiveTTL(record.TTL, dm.config.TTL)
+	}
+	return dm.route53Manager().UpdateRecord(ctx, record)
 }
 
 func (dm *DNSManager) getRoute53Record(ctx context.Context, name, recordType string) ([]DNSRecord, error) {
-	return nil, fmt.Errorf("Route53 DNS integration requires AWS SDK - not implemented in this placeholder")
-}
-
-// Google Cloud DNS Implementation
-
-func (dm *DNSManager) updateGCPDNSRecord(ctx context.Context, record DNSRecord) error {
-	// GCP DNS API implementation would go here
-	// This requires GCP SDK
-	dm.logger.WithField("record", record.Name).Info("GCP DNS update (placeholder)")
-	return fmt.Errorf("GCP DNS integration requires GCP SDK - not implemented in this placeholder")
-}
-
-func (dm *DNSManager) getGCPDNSRecord(ctx context.Context, name, recordType string) ([]DNSRecord, error) {
-	return nil, fmt.Errorf("GCP DNS integration requires GCP SDK - not implemented in this placeholder")
+	return dm.route53Manager().GetRecord(ctx, name, recordType)
 }
 
 // BIND DNS Server Implementation (using DNS updates)
@@ -328,177 +305,4 @@ func (dm *DNSManager) getBindRecord(ctx context.Context, name, recordType string
 	}
 
 	return records, nil
-}
-
-// verifyDNSUpdate verifies that a DNS update has propagated
-func (dm *DNSManager) verifyDNSUpdate(ctx context.Context, hostname, expectedIP, recordType string) error {
-	dm.logger.WithFields(logrus.Fields{
-		"hostname":    hostname,
-		"expected_ip": expectedIP,
-		"record_type": recordType,
-	}).Info("Verifying DNS update propagation")
-
-	maxAttempts := 10
-	backoff := 2 * time.Second
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		records, err := dm.GetRecord(ctx, hostname, recordType)
-		if err != nil {
-			dm.logger.WithError(err).WithField("attempt", attempt).Warning("Failed to query DNS record")
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		// Check if any record matches the expected IP
-		for _, record := range records {
-			if record.Value == expectedIP {
-				dm.logger.WithFields(logrus.Fields{
-					"hostname": hostname,
-					"ip":       expectedIP,
-					"attempt":  attempt,
-				}).Info("DNS update verified")
-				return nil
-			}
-		}
-
-		dm.logger.WithFields(logrus.Fields{
-			"hostname": hostname,
-			"attempt":  attempt,
-			"records":  len(records),
-		}).Debug("DNS update not yet propagated")
-
-		if attempt < maxAttempts {
-			time.Sleep(backoff)
-			backoff *= 2
-		}
-	}
-
-	return fmt.Errorf("DNS update verification failed after %d attempts", maxAttempts)
-}
-
-// CreateHealthCheckRecord creates a health check record for monitoring
-func (dm *DNSManager) CreateHealthCheckRecord(ctx context.Context, hostname, healthCheckIP string) error {
-	healthHostname := fmt.Sprintf("health.%s", hostname)
-
-	record := DNSRecord{
-		Name:  healthHostname,
-		Type:  "A",
-		Value: healthCheckIP,
-		TTL:   60, // Short TTL for health checks
-	}
-
-	return dm.UpdateRecord(ctx, record)
-}
-
-// GetCurrentIP gets the current IP address for a hostname
-func (dm *DNSManager) GetCurrentIP(ctx context.Context, hostname string) (string, error) {
-	records, err := dm.GetRecord(ctx, hostname, "A")
-	if err != nil {
-		return "", err
-	}
-
-	if len(records) == 0 {
-		return "", fmt.Errorf("no A records found for %s", hostname)
-	}
-
-	// Return the first A record
-	return records[0].Value, nil
-}
-
-// SwapIPs swaps IP addresses between two hostnames (for blue-green deployment)
-func (dm *DNSManager) SwapIPs(ctx context.Context, hostname1, hostname2 string) error {
-	dm.logger.WithFields(logrus.Fields{
-		"hostname1": hostname1,
-		"hostname2": hostname2,
-	}).Info("Swapping DNS records for blue-green deployment")
-
-	// Get current IPs
-	ip1, err := dm.GetCurrentIP(ctx, hostname1)
-	if err != nil {
-		return fmt.Errorf("failed to get IP for %s: %w", hostname1, err)
-	}
-
-	ip2, err := dm.GetCurrentIP(ctx, hostname2)
-	if err != nil {
-		return fmt.Errorf("failed to get IP for %s: %w", hostname2, err)
-	}
-
-	// Swap the IPs
-	record1 := DNSRecord{
-		Name:  hostname1,
-		Type:  "A",
-		Value: ip2,
-		TTL:   dm.config.TTL,
-	}
-
-	record2 := DNSRecord{
-		Name:  hostname2,
-		Type:  "A",
-		Value: ip1,
-		TTL:   dm.config.TTL,
-	}
-
-	// Update both records
-	if err := dm.UpdateRecord(ctx, record1); err != nil {
-		return fmt.Errorf("failed to update %s: %w", hostname1, err)
-	}
-
-	if err := dm.UpdateRecord(ctx, record2); err != nil {
-		return fmt.Errorf("failed to update %s: %w", hostname2, err)
-	}
-
-	dm.logger.WithFields(logrus.Fields{
-		"hostname1": hostname1,
-		"hostname2": hostname2,
-		"ip1":       ip1,
-		"ip2":       ip2,
-	}).Info("DNS records swapped successfully")
-
-	return nil
-}
-
-// TestDNSConnectivity tests connectivity to DNS servers
-func (dm *DNSManager) TestDNSConnectivity(ctx context.Context) error {
-	dm.logger.Info("Testing DNS connectivity")
-
-	if len(dm.config.NameServers) == 0 {
-		return fmt.Errorf("no nameservers configured")
-	}
-
-	for _, nameserver := range dm.config.NameServers {
-		if !strings.Contains(nameserver, ":") {
-			nameserver += ":53"
-		}
-
-		// Test with a simple query
-		msg := new(dns.Msg)
-		msg.SetQuestion(dns.Fqdn(dm.config.Zone), dns.TypeSOA)
-
-		client := new(dns.Client)
-		client.Timeout = 5 * time.Second
-
-		_, _, err := client.ExchangeContext(ctx, msg, nameserver)
-		if err != nil {
-			dm.logger.WithError(err).WithField("nameserver", nameserver).Warning("DNS connectivity test failed")
-			continue
-		}
-
-		dm.logger.WithField("nameserver", nameserver).Info("DNS connectivity test passed")
-		return nil // Success on first working server
-	}
-
-	return fmt.Errorf("all DNS servers are unreachable")
-}
-
-// ListRecords lists all records for the zone
-func (dm *DNSManager) ListRecords(ctx context.Context) ([]DNSRecord, error) {
-	switch dm.config.Provider {
-	case "bind":
-		// For BIND, we can't easily list all records without zone transfer
-		// This would typically require AXFR (zone transfer) which may be restricted
-		return nil, fmt.Errorf("listing all records not implemented for BIND provider")
-	default:
-		return nil, fmt.Errorf("listing records not implemented for provider: %s", dm.config.Provider)
-	}
 }

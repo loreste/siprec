@@ -11,16 +11,16 @@ import (
 
 // IntegrationConfig holds configuration for session manager integration
 type IntegrationConfig struct {
-	RedisEnabled    bool          `yaml:"redis_enabled" env:"REDIS_ENABLED" default:"false"`
-	RedisAddress    string        `yaml:"redis_address" env:"REDIS_ADDRESS" default:"localhost:6379"`
-	RedisPassword   string        `yaml:"redis_password" env:"REDIS_PASSWORD"`
-	RedisDatabase   int           `yaml:"redis_database" env:"REDIS_DATABASE" default:"0"`
-	RedisPoolSize   int           `yaml:"redis_pool_size" env:"REDIS_POOL_SIZE" default:"10"`
-	RedisTTL        time.Duration `yaml:"redis_ttl" env:"REDIS_SESSION_TTL" default:"24h"`
-	NodeID          string        `yaml:"node_id" env:"NODE_ID" default:"siprec-1"`
-	EnableFailover  bool          `yaml:"enable_failover" env:"ENABLE_FAILOVER" default:"true"`
-	EnableBackup    bool          `yaml:"enable_backup" env:"ENABLE_BACKUP" default:"false"`
-	SessionTimeout  time.Duration `yaml:"session_timeout" env:"SESSION_TIMEOUT" default:"1h"`
+	RedisEnabled   bool          `yaml:"redis_enabled" env:"REDIS_ENABLED" default:"false"`
+	RedisAddress   string        `yaml:"redis_address" env:"REDIS_ADDRESS" default:"localhost:6379"`
+	RedisPassword  string        `yaml:"redis_password" env:"REDIS_PASSWORD"`
+	RedisDatabase  int           `yaml:"redis_database" env:"REDIS_DATABASE" default:"0"`
+	RedisPoolSize  int           `yaml:"redis_pool_size" env:"REDIS_POOL_SIZE" default:"10"`
+	RedisTTL       time.Duration `yaml:"redis_ttl" env:"REDIS_SESSION_TTL" default:"24h"`
+	NodeID         string        `yaml:"node_id" env:"NODE_ID" default:"siprec-1"`
+	EnableFailover bool          `yaml:"enable_failover" env:"ENABLE_FAILOVER" default:"true"`
+	EnableBackup   bool          `yaml:"enable_backup" env:"ENABLE_BACKUP" default:"false"`
+	SessionTimeout time.Duration `yaml:"session_timeout" env:"SESSION_TIMEOUT" default:"1h"`
 }
 
 // LoadIntegrationConfig loads configuration from environment variables
@@ -89,54 +89,6 @@ func InitializeSessionManager(logger *logrus.Logger) (*SessionManager, error) {
 	}).Info("Redis session manager initialized")
 
 	return sessionManager, nil
-}
-
-// GetSIPRECSessionFromManager converts session manager data to SIPREC format
-func GetSIPRECSessionFromManager(sessionData *SessionData) *SIPRECSession {
-	if sessionData == nil {
-		return nil
-	}
-
-	return &SIPRECSession{
-		SessionID:     sessionData.SessionID,
-		CallID:        sessionData.CallID,
-		Status:        sessionData.Status,
-		StartTime:     sessionData.StartTime,
-		LastUpdate:    sessionData.LastUpdate,
-		RecordingPath: sessionData.RecordingPath,
-		Metadata:      sessionData.Metadata,
-		NodeID:        sessionData.NodeID,
-	}
-}
-
-// CreateSessionDataFromSIPREC converts SIPREC session to session manager format
-func CreateSessionDataFromSIPREC(siprecSession *SIPRECSession) *SessionData {
-	if siprecSession == nil {
-		return nil
-	}
-
-	return &SessionData{
-		SessionID:     siprecSession.SessionID,
-		CallID:        siprecSession.CallID,
-		Status:        siprecSession.Status,
-		StartTime:     siprecSession.StartTime,
-		LastUpdate:    siprecSession.LastUpdate,
-		RecordingPath: siprecSession.RecordingPath,
-		Metadata:      siprecSession.Metadata,
-		NodeID:        siprecSession.NodeID,
-	}
-}
-
-// SIPRECSession represents a SIPREC session in legacy format
-type SIPRECSession struct {
-	SessionID     string                 `json:"session_id"`
-	CallID        string                 `json:"call_id"`
-	Status        string                 `json:"status"`
-	StartTime     time.Time              `json:"start_time"`
-	LastUpdate    time.Time              `json:"last_update"`
-	RecordingPath string                 `json:"recording_path"`
-	Metadata      map[string]interface{} `json:"metadata"`
-	NodeID        string                 `json:"node_id"`
 }
 
 // Helper functions for environment variable parsing

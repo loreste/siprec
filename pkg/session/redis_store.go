@@ -51,9 +51,9 @@ type SessionData struct {
 	AvayaConfID         string `json:"avaya_conf_id,omitempty"`         // Avaya Conference ID
 	AvayaConversationID string `json:"avaya_conversation_id,omitempty"` // Avaya Conversation/Interaction ID
 	AvayaStationID      string `json:"avaya_station_id,omitempty"`      // Avaya Station ID
-	AvayaAgentID    string `json:"avaya_agent_id,omitempty"`    // Avaya Agent ID
-	AvayaVDN        string `json:"avaya_vdn,omitempty"`         // Avaya Vector Directory Number
-	AvayaSkillGroup string `json:"avaya_skill_group,omitempty"` // Avaya Skill Group
+	AvayaAgentID        string `json:"avaya_agent_id,omitempty"`        // Avaya Agent ID
+	AvayaVDN            string `json:"avaya_vdn,omitempty"`             // Avaya Vector Directory Number
+	AvayaSkillGroup     string `json:"avaya_skill_group,omitempty"`     // Avaya Skill Group
 	// NICE-specific fields
 	NICEInteractionID string `json:"nice_interaction_id,omitempty"` // NICE Interaction ID
 	NICESessionID     string `json:"nice_session_id,omitempty"`     // NICE Session ID

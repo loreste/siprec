@@ -694,7 +694,7 @@ type OpenSourceSTTConfig struct {
 	WebSocketURL string `json:"websocket_url" env:"OPENSOURCE_WEBSOCKET_URL"`
 
 	// Multilingual support - auto-detects language switches mid-conversation
-	UseMultilingual         bool   `json:"use_multilingual" env:"OPENSOURCE_USE_MULTILINGUAL" default:"false"`
+	UseMultilingual          bool   `json:"use_multilingual" env:"OPENSOURCE_USE_MULTILINGUAL" default:"false"`
 	MultilingualWebSocketURL string `json:"multilingual_websocket_url" env:"OPENSOURCE_MULTILINGUAL_WEBSOCKET_URL"`
 
 	// API key (optional, for secured endpoints)
@@ -2760,7 +2760,6 @@ func getEnvInt(key string, defaultValue int) int {
 
 	return intValue
 }
-
 
 // getEnvFloat retrieves an environment variable and converts it to float64
 func getEnvFloat(key string, defaultValue float64) float64 {

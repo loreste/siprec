@@ -58,12 +58,12 @@ type AzureStreamingResponse struct {
 
 // AzureNBestResult represents alternative recognition results
 type AzureNBestResult struct {
-	Confidence  float64 `json:"Confidence"`
-	Lexical     string  `json:"Lexical"`
-	ITN         string  `json:"ITN"`
-	MaskedITN   string  `json:"MaskedITN"`
-	Display     string  `json:"Display"`
-	Words       []AzureWordDetail `json:"Words,omitempty"`
+	Confidence float64           `json:"Confidence"`
+	Lexical    string            `json:"Lexical"`
+	ITN        string            `json:"ITN"`
+	MaskedITN  string            `json:"MaskedITN"`
+	Display    string            `json:"Display"`
+	Words      []AzureWordDetail `json:"Words,omitempty"`
 }
 
 // AzureWordDetail provides word-level information
@@ -72,23 +72,6 @@ type AzureWordDetail struct {
 	Offset     int64   `json:"Offset"`
 	Duration   int64   `json:"Duration"`
 	Confidence float64 `json:"Confidence,omitempty"`
-}
-
-// AzureSpeechConfig holds configuration for Azure Speech Services
-type AzureSpeechConfig struct {
-	SubscriptionKey       string
-	Region                string
-	LanguageCode          string
-	EndpointURL           string
-	EnableProfanityFilter bool
-	EnableDiarization     bool
-	MaxSpeakers           int
-	PhraseListGrammar     []string
-	EnableWordTimestamps  bool
-	EnableSentiment       bool
-	EnableLanguageID      bool
-	CandidateLanguages    []string
-	TokenRefreshInterval  time.Duration
 }
 
 // AzureRecognitionResponse represents the Azure Speech API response
@@ -125,21 +108,6 @@ type AzureAuthResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
-}
-
-// DefaultAzureSpeechConfig returns default configuration for Azure Speech Services
-func DefaultAzureSpeechConfig() AzureSpeechConfig {
-	return AzureSpeechConfig{
-		Region:                "eastus",
-		LanguageCode:          "en-US",
-		EnableProfanityFilter: false,
-		EnableDiarization:     false,
-		MaxSpeakers:           10,
-		EnableWordTimestamps:  true,
-		EnableSentiment:       false,
-		EnableLanguageID:      false,
-		TokenRefreshInterval:  9 * time.Minute, // Tokens expire in 10 minutes
-	}
 }
 
 // NewAzureSpeechProvider creates a new Azure Speech Services provider with streaming support
@@ -180,11 +148,11 @@ func (p *AzureSpeechProvider) Initialize() error {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"region":               p.config.Region,
-		"language":             p.config.Language,
-		"detailed_results":     p.config.EnableDetailedResults,
-		"profanity_filter":     p.config.ProfanityFilter,
-		"output_format":        p.config.OutputFormat,
+		"region":           p.config.Region,
+		"language":         p.config.Language,
+		"detailed_results": p.config.EnableDetailedResults,
+		"profanity_filter": p.config.ProfanityFilter,
+		"output_format":    p.config.OutputFormat,
 	}).Info("Azure Speech Services provider initialized successfully")
 
 	return nil
@@ -619,8 +587,8 @@ func (p *AzureSpeechProvider) UpdateConfig(cfg *config.AzureSTTConfig) error {
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"language":        cfg.Language,
-		"region":          cfg.Region,
+		"language":         cfg.Language,
+		"region":           cfg.Region,
 		"profanity_filter": cfg.ProfanityFilter,
 	}).Info("Updated Azure Speech configuration")
 
@@ -633,7 +601,6 @@ func (p *AzureSpeechProvider) GetConfig() *config.AzureSTTConfig {
 	defer p.mutex.RUnlock()
 	return p.config
 }
-
 
 // Close gracefully closes the provider and cleans up resources
 func (p *AzureSpeechProvider) Close() error {
@@ -663,16 +630,16 @@ func (p *AzureSpeechProvider) Close() error {
 // buildWebSocketURL constructs the WebSocket URL for real-time streaming
 func (p *AzureSpeechProvider) buildWebSocketURL() (string, error) {
 	baseURL := fmt.Sprintf("wss://%s.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1", p.config.Region)
-	
+
 	params := url.Values{}
 	params.Set("language", p.config.Language)
 	params.Set("format", "detailed")
 	params.Set("profanity", p.config.ProfanityFilter)
-	
+
 	if p.config.EnableDetailedResults {
 		params.Set("wordLevelTimestamps", "true")
 	}
-	
+
 	return baseURL + "?" + params.Encode(), nil
 }
 
@@ -696,14 +663,14 @@ func (p *AzureSpeechProvider) sendAudioConfig(conn *websocket.Conn) error {
 			"profanity": p.config.ProfanityFilter,
 		},
 	}
-	
+
 	return conn.WriteJSON(config)
 }
 
 // streamAudioData streams audio data through the WebSocket connection
 func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websocket.Conn, audioStream io.Reader, callUUID string, errorChan chan error) error {
 	buffer := make([]byte, 1024)
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -724,7 +691,7 @@ func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websock
 			if err != nil {
 				return fmt.Errorf("failed to read audio data: %w", err)
 			}
-			
+
 			if n > 0 {
 				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buffer[:n]); writeErr != nil {
 					return fmt.Errorf("failed to send audio data: %w", writeErr)
@@ -782,12 +749,6 @@ func (p *AzureSpeechProvider) handleWebSocketResponses(session *AzureStreamSessi
 			}
 		}
 	}
-}
-
-// processStreamingResponse processes a streaming response and triggers callbacks
-func (p *AzureSpeechProvider) processStreamingResponse(response *AzureStreamingResponse, callUUID string) error {
-	_, err := p.processStreamingResponseWithFinal(response, callUUID)
-	return err
 }
 
 // processStreamingResponseWithFinal processes a streaming response and returns whether it was final

@@ -22,19 +22,19 @@ const (
 
 // StreamMigrationManager handles RTP stream migration between nodes
 type StreamMigrationManager struct {
-	redis         redis.UniversalClient
-	logger        *logrus.Logger
-	nodeID        string
+	redis           redis.UniversalClient
+	logger          *logrus.Logger
+	nodeID          string
 	rtpStateManager *RTPStateManager
-	stopChan      chan struct{}
-	wg            sync.WaitGroup
+	stopChan        chan struct{}
+	wg              sync.WaitGroup
 
 	// Migration handlers
 	migrationMu       sync.RWMutex
 	pendingMigrations map[string]*MigrationTask
 
 	// Callbacks
-	onMigrationRequest func(task *MigrationTask) error
+	onMigrationRequest  func(task *MigrationTask) error
 	onMigrationComplete func(task *MigrationTask)
 
 	// Pub/sub
@@ -43,16 +43,16 @@ type StreamMigrationManager struct {
 
 // MigrationTask represents a stream migration task
 type MigrationTask struct {
-	ID              string            `json:"id"`
-	CallUUID        string            `json:"call_uuid"`
-	SourceNodeID    string            `json:"source_node_id"`
-	TargetNodeID    string            `json:"target_node_id"`
-	StreamState     *RTPStreamState   `json:"stream_state"`
-	Status          MigrationStatus   `json:"status"`
-	StartedAt       time.Time         `json:"started_at"`
-	CompletedAt     time.Time         `json:"completed_at,omitempty"`
-	Error           string            `json:"error,omitempty"`
-	Retries         int               `json:"retries"`
+	ID           string          `json:"id"`
+	CallUUID     string          `json:"call_uuid"`
+	SourceNodeID string          `json:"source_node_id"`
+	TargetNodeID string          `json:"target_node_id"`
+	StreamState  *RTPStreamState `json:"stream_state"`
+	Status       MigrationStatus `json:"status"`
+	StartedAt    time.Time       `json:"started_at"`
+	CompletedAt  time.Time       `json:"completed_at,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Retries      int             `json:"retries"`
 
 	// Migration details
 	NewLocalPort    int               `json:"new_local_port,omitempty"`
@@ -251,10 +251,10 @@ func (m *StreamMigrationManager) AcceptMigration(ctx context.Context, taskID str
 	}
 
 	m.logger.WithFields(logrus.Fields{
-		"task_id":    task.ID,
-		"call_uuid":  task.CallUUID,
-		"new_port":   task.NewLocalPort,
-		"duration":   time.Since(task.StartedAt).Milliseconds(),
+		"task_id":   task.ID,
+		"call_uuid": task.CallUUID,
+		"new_port":  task.NewLocalPort,
+		"duration":  time.Since(task.StartedAt).Milliseconds(),
 	}).Info("Stream migration accepted and completed")
 
 	return nil
@@ -355,13 +355,13 @@ func (m *StreamMigrationManager) publishMigrationEvent(task *MigrationTask, acti
 	defer cancel()
 
 	event := map[string]interface{}{
-		"action":       action,
-		"task_id":      task.ID,
-		"call_uuid":    task.CallUUID,
-		"source_node":  task.SourceNodeID,
-		"target_node":  task.TargetNodeID,
-		"status":       task.Status,
-		"timestamp":    time.Now().UnixNano(),
+		"action":      action,
+		"task_id":     task.ID,
+		"call_uuid":   task.CallUUID,
+		"source_node": task.SourceNodeID,
+		"target_node": task.TargetNodeID,
+		"status":      task.Status,
+		"timestamp":   time.Now().UnixNano(),
 	}
 
 	data, _ := json.Marshal(event)
@@ -614,4 +614,3 @@ func (m *StreamMigrationManager) WaitForMigrations(ctx context.Context) error {
 		}
 	}
 }
-

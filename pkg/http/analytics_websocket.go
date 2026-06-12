@@ -128,7 +128,7 @@ func (h *AnalyticsWebSocketHandler) broadcastMessage(message *AnalyticsMessage) 
 	if message == nil {
 		return nil
 	}
-	
+
 	data, err := json.Marshal(message)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to marshal analytics message")

@@ -45,15 +45,6 @@ func (rl *RTPLimiter) Acquire() bool {
 	}
 }
 
-// TryAcquire attempts to acquire without blocking
-func (rl *RTPLimiter) TryAcquire() bool {
-	current := atomic.LoadInt64(&rl.activeCount)
-	if current >= rl.maxStreams {
-		return false
-	}
-	return atomic.CompareAndSwapInt64(&rl.activeCount, current, current+1)
-}
-
 // Release releases an RTP stream slot
 func (rl *RTPLimiter) Release() {
 	current := atomic.AddInt64(&rl.activeCount, -1)
@@ -68,11 +59,6 @@ func (rl *RTPLimiter) ActiveCount() int64 {
 	return atomic.LoadInt64(&rl.activeCount)
 }
 
-// MaxStreams returns the maximum allowed streams
-func (rl *RTPLimiter) MaxStreams() int64 {
-	return rl.maxStreams
-}
-
 // AvailableSlots returns the number of available stream slots
 func (rl *RTPLimiter) AvailableSlots() int64 {
 	available := rl.maxStreams - atomic.LoadInt64(&rl.activeCount)
@@ -80,18 +66,6 @@ func (rl *RTPLimiter) AvailableSlots() int64 {
 		return 0
 	}
 	return available
-}
-
-// UsagePercent returns current usage as a percentage
-func (rl *RTPLimiter) UsagePercent() float64 {
-	return float64(atomic.LoadInt64(&rl.activeCount)) / float64(rl.maxStreams) * 100
-}
-
-// Stats returns limiter statistics
-func (rl *RTPLimiter) Stats() (active, created, rejected int64) {
-	return atomic.LoadInt64(&rl.activeCount),
-		atomic.LoadInt64(&rl.totalCreated),
-		atomic.LoadInt64(&rl.totalRejected)
 }
 
 func (rl *RTPLimiter) handleRejection() {
@@ -114,20 +88,6 @@ func (rl *RTPLimiter) handleRejection() {
 			}).Warn("RTP stream limit reached, rejecting new streams")
 		}
 	}
-}
-
-// SetMaxStreams updates the maximum allowed streams
-func (rl *RTPLimiter) SetMaxStreams(max int) {
-	atomic.StoreInt64(&rl.maxStreams, int64(max))
-	rl.logger.WithField("max_streams", max).Info("RTP stream limit updated")
-}
-
-// Reset resets the limiter (for testing)
-func (rl *RTPLimiter) Reset() {
-	atomic.StoreInt64(&rl.activeCount, 0)
-	atomic.StoreInt64(&rl.totalCreated, 0)
-	atomic.StoreInt64(&rl.totalRejected, 0)
-	atomic.StoreInt64(&rl.rejectCount, 0)
 }
 
 // WaitForSlot waits for a slot to become available with timeout

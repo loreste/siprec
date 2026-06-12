@@ -24,9 +24,6 @@ type WorkerPool struct {
 	started    bool
 	startMutex sync.RWMutex
 
-	// Configuration
-	queueSize int
-
 	// Statistics
 	stats *PoolStats
 }
@@ -93,7 +90,6 @@ func NewWorkerPool(workerCount int, logger *logrus.Logger) *WorkerPool {
 		workers:     make([]*Worker, 0, workerCount),
 		ctx:         ctx,
 		cancel:      cancel,
-		queueSize:   queueSize,
 		stats: &PoolStats{
 			QueueCapacity: queueSize,
 			LastReset:     time.Now(),
@@ -305,189 +301,6 @@ func (w *Worker) executeTask(task Task) {
 
 	// Execute the task
 	task.Function()
-}
-
-// GetStats returns worker pool statistics
-func (wp *WorkerPool) GetStats() *PoolStats {
-	wp.stats.mutex.RLock()
-	defer wp.stats.mutex.RUnlock()
-
-	statsCopy := &PoolStats{
-		TotalTasks:      wp.stats.TotalTasks,
-		CompletedTasks:  wp.stats.CompletedTasks,
-		FailedTasks:     wp.stats.FailedTasks,
-		ActiveWorkers:   wp.stats.ActiveWorkers,
-		IdleWorkers:     wp.stats.IdleWorkers,
-		QueueSize:       wp.stats.QueueSize,
-		QueueCapacity:   wp.stats.QueueCapacity,
-		AverageWaitTime: wp.stats.AverageWaitTime,
-		AverageExecTime: wp.stats.AverageExecTime,
-		DroppedTasks:    wp.stats.DroppedTasks,
-		LastReset:       wp.stats.LastReset,
-	}
-	return statsCopy
-}
-
-// GetWorkerStats returns statistics for all workers
-func (wp *WorkerPool) GetWorkerStats() []*WorkerStats {
-	wp.startMutex.RLock()
-	defer wp.startMutex.RUnlock()
-
-	stats := make([]*WorkerStats, 0, len(wp.workers))
-	for _, worker := range wp.workers {
-		worker.stats.mutex.RLock()
-		statsCopy := &WorkerStats{
-			WorkerID:      worker.stats.WorkerID,
-			TasksExecuted: worker.stats.TasksExecuted,
-			TasksFailed:   worker.stats.TasksFailed,
-			TotalExecTime: worker.stats.TotalExecTime,
-			LastTaskTime:  worker.stats.LastTaskTime,
-			IsActive:      worker.stats.IsActive,
-		}
-		worker.stats.mutex.RUnlock()
-		stats = append(stats, statsCopy)
-	}
-
-	return stats
-}
-
-// IsStarted returns whether the pool is started
-func (wp *WorkerPool) IsStarted() bool {
-	wp.startMutex.RLock()
-	defer wp.startMutex.RUnlock()
-	return wp.started
-}
-
-// QueueSize returns the current queue size
-func (wp *WorkerPool) QueueSize() int {
-	return len(wp.taskChan)
-}
-
-// QueueCapacity returns the queue capacity
-func (wp *WorkerPool) QueueCapacity() int {
-	return wp.queueSize
-}
-
-// WorkerCount returns the number of workers
-func (wp *WorkerPool) WorkerCount() int {
-	return wp.workerCount
-}
-
-// ActiveWorkers returns the number of currently active workers
-func (wp *WorkerPool) ActiveWorkers() int {
-	wp.stats.mutex.RLock()
-	defer wp.stats.mutex.RUnlock()
-	return wp.stats.ActiveWorkers
-}
-
-// IdleWorkers returns the number of currently idle workers
-func (wp *WorkerPool) IdleWorkers() int {
-	wp.stats.mutex.RLock()
-	defer wp.stats.mutex.RUnlock()
-	return wp.stats.IdleWorkers
-}
-
-// SubmitAndWait submits a task and waits for completion
-func (wp *WorkerPool) SubmitAndWait(fn func()) {
-	done := make(chan struct{})
-
-	wp.Submit(func() {
-		defer close(done)
-		fn()
-	})
-
-	<-done
-}
-
-// SubmitWithTimeout submits a task with a timeout
-func (wp *WorkerPool) SubmitWithTimeout(fn func(), timeout time.Duration) bool {
-	done := make(chan struct{})
-
-	wp.Submit(func() {
-		defer close(done)
-		fn()
-	})
-
-	select {
-	case <-done:
-		return true // Completed
-	case <-time.After(timeout):
-		return false // Timed out
-	}
-}
-
-// Resize resizes the worker pool (experimental)
-func (wp *WorkerPool) Resize(newSize int) error {
-	if newSize <= 0 {
-		return nil
-	}
-
-	wp.startMutex.Lock()
-	defer wp.startMutex.Unlock()
-
-	if !wp.started {
-		wp.workerCount = newSize
-		return nil
-	}
-
-	currentSize := len(wp.workers)
-
-	if newSize > currentSize {
-		// Add workers
-		for i := currentSize; i < newSize; i++ {
-			worker := &Worker{
-				id:       i + 1,
-				pool:     wp,
-				taskChan: wp.taskChan,
-				quit:     make(chan struct{}),
-				stats: &WorkerStats{
-					WorkerID: i + 1,
-				},
-			}
-
-			wp.workers = append(wp.workers, worker)
-			go worker.start()
-		}
-	} else if newSize < currentSize {
-		// Remove workers
-		for i := newSize; i < currentSize; i++ {
-			close(wp.workers[i].quit)
-		}
-		wp.workers = wp.workers[:newSize]
-	}
-
-	wp.workerCount = newSize
-	wp.logger.WithFields(logrus.Fields{
-		"old_size": currentSize,
-		"new_size": newSize,
-	}).Info("Worker pool resized")
-
-	return nil
-}
-
-// Reset resets worker pool statistics
-func (wp *WorkerPool) Reset() {
-	wp.stats.mutex.Lock()
-	defer wp.stats.mutex.Unlock()
-
-	wp.stats.TotalTasks = 0
-	wp.stats.CompletedTasks = 0
-	wp.stats.FailedTasks = 0
-	wp.stats.AverageWaitTime = 0
-	wp.stats.AverageExecTime = 0
-	wp.stats.DroppedTasks = 0
-	wp.stats.LastReset = time.Now()
-
-	// Reset worker stats
-	for _, worker := range wp.workers {
-		worker.stats.mutex.Lock()
-		worker.stats.TasksExecuted = 0
-		worker.stats.TasksFailed = 0
-		worker.stats.TotalExecTime = 0
-		worker.stats.mutex.Unlock()
-	}
-
-	wp.logger.Debug("Worker pool statistics reset")
 }
 
 // generateTaskID generates a unique task ID
