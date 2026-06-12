@@ -305,7 +305,7 @@ func openaiStreamingExample(logger *logrus.Logger) {
 	wg.Add(1)
 
 	provider.SetCallback(func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
-		fmt.Printf("🤖 OpenAI [%s] FINAL: %s\n", callUUID, transcription)
+		fmt.Printf("OpenAI [%s] FINAL: %s\n", callUUID, transcription)
 
 		if language, ok := metadata["language"]; ok {
 			fmt.Printf("   🌍 Detected language: %s\n", language)
