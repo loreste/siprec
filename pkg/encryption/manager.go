@@ -385,8 +385,8 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	// Clean up the temporary file on any failure path
 	cleanup := func() {
-		tmpFile.Close()
-		os.Remove(tmpName)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
 	}
 
 	if err := tmpFile.Chmod(perm); err != nil {
@@ -405,12 +405,12 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to close temporary file: %w", err)
 	}
 
 	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to rename temporary file into place: %w", err)
 	}
 

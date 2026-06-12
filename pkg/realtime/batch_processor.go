@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ type BatchProcessor struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	started    bool
+	stopped    bool
 	startMutex sync.RWMutex
 
 	// Statistics
@@ -80,6 +82,10 @@ func (bp *BatchProcessor) Start() error {
 	bp.startMutex.Lock()
 	defer bp.startMutex.Unlock()
 
+	if bp.stopped {
+		return fmt.Errorf("batch processor has been stopped")
+	}
+
 	if bp.started {
 		return nil
 	}
@@ -94,6 +100,27 @@ func (bp *BatchProcessor) Start() error {
 
 	bp.logger.Debug("Batch processor started")
 	return nil
+}
+
+// Stop stops the batch processor, terminating the accumulator and flusher
+// goroutines and the underlying worker pool. It is safe to call multiple times.
+func (bp *BatchProcessor) Stop() {
+	bp.startMutex.Lock()
+	defer bp.startMutex.Unlock()
+
+	if bp.stopped {
+		return
+	}
+
+	bp.stopped = true
+	bp.started = false
+	bp.cancel()
+
+	if err := bp.workerPool.Stop(); err != nil {
+		bp.logger.WithError(err).Warning("Failed to stop batch processor worker pool")
+	}
+
+	bp.logger.Debug("Batch processor stopped")
 }
 
 // Process adds an item to the batch for processing

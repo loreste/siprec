@@ -196,7 +196,7 @@ func (e *EmailChannel) deliver(message []byte) error {
 
 	tlsConfig := &tls.Config{
 		ServerName:         e.smtpHost,
-		InsecureSkipVerify: e.insecureSkipVerify,
+		InsecureSkipVerify: e.insecureSkipVerify, // #nosec G402 -- verification skip is explicit per-channel operator configuration, default false
 		MinVersion:         tls.VersionTLS12,
 	}
 
@@ -215,13 +215,13 @@ func (e *EmailChannel) deliver(message []byte) error {
 
 	// Bound the whole SMTP transaction, not just the dial.
 	if err := conn.SetDeadline(time.Now().Add(e.timeout)); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("failed to set connection deadline: %w", err)
 	}
 
 	client, err := smtp.NewClient(conn, e.smtpHost)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return fmt.Errorf("failed to create SMTP client: %w", err)
 	}
 	defer client.Close()
@@ -262,7 +262,7 @@ func (e *EmailChannel) deliver(message []byte) error {
 		return fmt.Errorf("SMTP DATA failed: %w", err)
 	}
 	if _, err := writer.Write(message); err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return fmt.Errorf("failed to write email body: %w", err)
 	}
 	if err := writer.Close(); err != nil {

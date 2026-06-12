@@ -357,14 +357,18 @@ func (p *AMQPPool) ReturnChannel(ch *PooledChannel) {
 				return
 			default:
 				// Channel pool is full, close the channel
-				ch.channel.Close()
+				if err := ch.channel.Close(); err != nil {
+					p.logger.WithError(err).Debug("Failed to close surplus AMQP channel")
+				}
 				return
 			}
 		}
 	}
 
 	// Parent connection unhealthy or unknown, close the channel
-	ch.channel.Close()
+	if err := ch.channel.Close(); err != nil {
+		p.logger.WithError(err).Debug("Failed to close AMQP channel from unhealthy connection")
+	}
 }
 
 // selectRoundRobin selects a connection using round-robin algorithm

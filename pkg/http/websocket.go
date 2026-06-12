@@ -296,15 +296,18 @@ func (c *Client) writePump() {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		if err := c.conn.Close(); err != nil {
+			c.logger.WithError(err).Debug("Failed to close WebSocket connection")
+		}
 	}()
 
 	// Set read limits and timeouts
 	c.conn.SetReadLimit(maxInboundMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		c.logger.WithError(err).Debug("Failed to set WebSocket read deadline")
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
 	violations := 0
@@ -327,11 +330,13 @@ func (c *Client) readPump() {
 
 			if violations >= maxProtocolViolations {
 				c.logger.Warning("Closing WebSocket connection after repeated malformed messages")
-				c.conn.WriteControl(
+				if err := c.conn.WriteControl(
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too many malformed messages"),
 					time.Now().Add(time.Second),
-				)
+				); err != nil {
+					c.logger.WithError(err).Debug("Failed to send WebSocket close control message")
+				}
 				break
 			}
 		}

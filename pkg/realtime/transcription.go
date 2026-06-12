@@ -280,6 +280,9 @@ func (st *StreamingTranscriber) Stop() error {
 	st.cancel()
 	st.isActive = false
 
+	// Stop batch processing goroutines and their worker pool
+	st.batchProcessor.Stop()
+
 	// Close all subscriber channels
 	st.subscribersMux.Lock()
 	for id, ch := range st.subscribers {

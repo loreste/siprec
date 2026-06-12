@@ -120,7 +120,9 @@ func (rm *RBACMiddleware) Middleware(next http.Handler) http.Handler {
 func (rm *RBACMiddleware) deny(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	w.Write([]byte(`{"error":"forbidden"}`))
+	if _, err := w.Write([]byte(`{"error":"forbidden"}`)); err != nil {
+		rm.logger.WithError(err).Debug("Failed to write RBAC deny response")
+	}
 }
 
 // isPathExempt checks if a path is exempt from RBAC enforcement

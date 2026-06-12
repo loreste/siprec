@@ -96,6 +96,8 @@ jobs:
     name: Release Docker Image
     needs: release
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
     steps:
     - name: Checkout code
@@ -115,19 +117,29 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Log in to Docker Hub
+      if: ${{ env.DOCKERHUB_USERNAME != '' }}
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-      continue-on-error: true
+
+    - name: Compute image list
+      id: images
+      run: |
+        {
+          echo 'list<<EOF'
+          echo "ghcr.io/${{ github.repository }}"
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            echo "$DOCKERHUB_USERNAME/siprec-server"
+          fi
+          echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
 
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: |
-          ghcr.io/${{ github.repository }}
-          ${{ secrets.DOCKERHUB_USERNAME }}/siprec-server
+        images: ${{ steps.images.outputs.list }}
         tags: |
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}

@@ -454,7 +454,9 @@ func (h *STTHandlers) PurgeQueueHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.WithError(err).Debug("Failed to write purge queue response")
+	}
 }
 
 // validateAudioPath cleans and symlink-resolves an audio path submitted via

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"siprec-server/pkg/database"
@@ -39,6 +41,50 @@ func NewGDPRService(repo CallDataRepository, exportDir string, storage media.Rec
 		storage:   storage,
 		logger:    logger,
 	}
+}
+
+// maxExportCallIDLength caps the call ID portion of export file names.
+const maxExportCallIDLength = 128
+
+// exportFilenameDisallowed matches every character that is not allowed in the
+// call ID portion of an export file name.
+var exportFilenameDisallowed = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
+
+// sanitizeCallIDForFilename reduces a caller-supplied call ID to a safe file
+// name component: only alphanumerics, dash, underscore and dot are kept,
+// everything else is replaced with an underscore, and the result is capped at
+// maxExportCallIDLength characters.
+func sanitizeCallIDForFilename(callID string) string {
+	sanitized := exportFilenameDisallowed.ReplaceAllString(callID, "_")
+	if len(sanitized) > maxExportCallIDLength {
+		sanitized = sanitized[:maxExportCallIDLength]
+	}
+	if sanitized == "" || strings.Trim(sanitized, ".") == "" {
+		sanitized = "call"
+	}
+	return sanitized
+}
+
+// exportPathFor builds the export file path for a call ID and verifies the
+// result stays strictly within the export directory.
+func (s *GDPRService) exportPathFor(callID string) (string, error) {
+	filename := fmt.Sprintf("%s-%d.json", sanitizeCallIDForFilename(callID), time.Now().Unix())
+
+	exportRoot, err := filepath.Abs(s.exportDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve export directory: %w", err)
+	}
+
+	output, err := filepath.Abs(filepath.Join(exportRoot, filename))
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve export path: %w", err)
+	}
+
+	if !strings.HasPrefix(output, exportRoot+string(os.PathSeparator)) {
+		return "", fmt.Errorf("export path escapes export directory")
+	}
+
+	return output, nil
 }
 
 // ExportBundle represents exported call data.
@@ -98,10 +144,12 @@ func (s *GDPRService) ExportCallData(callID string) (string, error) {
 		ExportedAt:     time.Now().UTC(),
 	}
 
-	filename := fmt.Sprintf("%s-%d.json", callID, time.Now().Unix())
-	output := filepath.Join(s.exportDir, filename)
+	output, err := s.exportPathFor(callID)
+	if err != nil {
+		return "", err
+	}
 
-	file, err := os.Create(output)
+	file, err := os.Create(output) // #nosec G304 -- file name is sanitized and the path is verified to stay within exportDir above
 	if err != nil {
 		return "", fmt.Errorf("failed to create export file: %w", err)
 	}
@@ -111,7 +159,9 @@ func (s *GDPRService) ExportCallData(callID string) (string, error) {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(&bundle); err != nil {
 		// Remove partial file to avoid leaving PII data on disk
-		os.Remove(output)
+		if removeErr := os.Remove(output); removeErr != nil && !os.IsNotExist(removeErr) {
+			s.logger.WithError(removeErr).WithField("path", output).Warn("Failed to remove partial GDPR export file")
+		}
 		return "", fmt.Errorf("failed to encode export bundle: %w", err)
 	}
 

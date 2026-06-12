@@ -30,8 +30,8 @@ import (
 // STUN protocol constants (RFC 5389)
 const (
 	stunMagicCookie     uint32 = 0x2112A442
-	stunHeaderSize             = 20
-	stunTransactionSize        = 12
+	stunHeaderSize      int    = 20
+	stunTransactionSize int    = 12
 
 	stunTypeBindingRequest uint16 = 0x0001
 	stunTypeBindingSuccess uint16 = 0x0101

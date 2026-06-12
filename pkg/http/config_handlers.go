@@ -223,5 +223,7 @@ func (h *ConfigHandlers) ReloadStatusHandler(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.WithError(err).Debug("Failed to write reload status response")
+	}
 }

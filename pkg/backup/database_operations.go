@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -123,16 +124,34 @@ func (s *backupStream) Close() error {
 // encryption (.enc suffix, matching ReadBackupFile) and gzip compression
 // (detected by magic bytes rather than extension).
 func openBackupStream(backupPath string) (io.ReadCloser, error) {
-	file, err := os.Open(backupPath)
+	cleaned := filepath.Clean(backupPath)
+	if !filepath.IsAbs(cleaned) {
+		return nil, fmt.Errorf("backup path must be absolute: %s", backupPath)
+	}
+	if strings.Contains(cleaned, "..") {
+		return nil, fmt.Errorf("backup path must not contain traversal segments: %s", backupPath)
+	}
+
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat backup file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("backup path is not a regular file: %s", backupPath)
+	}
+
+	file, err := os.Open(cleaned) // #nosec G304 -- path is operator-supplied restore configuration, validated above
 	if err != nil {
 		return nil, fmt.Errorf("failed to open backup file: %w", err)
 	}
 
 	var reader io.Reader = file
-	if strings.HasSuffix(backupPath, ".enc") {
+	if strings.HasSuffix(cleaned, ".enc") {
 		decrypted, err := createDecryptionReader(file)
 		if err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				err = fmt.Errorf("%w (also failed to close backup file: %v)", err, closeErr)
+			}
 			return nil, fmt.Errorf("failed to decrypt backup file: %w", err)
 		}
 		reader = decrypted
@@ -143,7 +162,9 @@ func openBackupStream(backupPath string) (io.ReadCloser, error) {
 	if err == nil && isGzipData(header) {
 		gzipReader, err := gzip.NewReader(buffered)
 		if err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				err = fmt.Errorf("%w (also failed to close backup file: %v)", err, closeErr)
+			}
 			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		return &backupStream{Reader: gzipReader, closers: []io.Closer{gzipReader, file}}, nil

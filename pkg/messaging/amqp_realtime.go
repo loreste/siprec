@@ -1,9 +1,10 @@
 package messaging
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -545,5 +546,10 @@ func (p *AMQPRealtimePublisher) IsStarted() bool {
 
 // generateRealtimeMessageID generates a unique message ID for realtime messages
 func generateRealtimeMessageID() string {
-	return fmt.Sprintf("realtime_msg_%d_%d", time.Now().UnixNano(), rand.Int63())
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		// Fall back to a timestamp-only ID; uniqueness still comes from UnixNano
+		return fmt.Sprintf("realtime_msg_%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("realtime_msg_%d_%s", time.Now().UnixNano(), hex.EncodeToString(random))
 }
