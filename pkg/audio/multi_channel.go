@@ -632,6 +632,12 @@ func (cr *ChannelRecorder) WriteSample(data []byte, timestamp time.Time) error {
 		}
 	}
 
+	// If data is larger than the entire buffer, write directly to file
+	if len(data) > cr.bufferSize {
+		_, err := cr.file.Write(data)
+		return err
+	}
+
 	// Add data to buffer
 	copy(cr.buffer[cr.bufferIndex:], data)
 	cr.bufferIndex += len(data)

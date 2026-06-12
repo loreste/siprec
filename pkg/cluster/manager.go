@@ -331,11 +331,22 @@ func (m *Manager) tryRenewLeadership() {
 		return
 	}
 
-	// Renew the lock by extending TTL
-	err = m.redis.Expire(ctx, leaderLockKey, m.config.LeaderLockTTL).Err()
+	// Atomically check holder and extend TTL to prevent stealing another node's lock
+	renewScript := redis.NewScript(`
+		if redis.call("get", KEYS[1]) == ARGV[1] then
+			return redis.call("pexpire", KEYS[1], ARGV[2])
+		else
+			return 0
+		end
+	`)
+	result, err := renewScript.Run(ctx, m.redis, []string{leaderLockKey}, m.config.NodeID, int(m.config.LeaderLockTTL.Milliseconds())).Result()
 	if err != nil {
 		m.logger.WithError(err).Error("Failed to renew leader lock")
 		// Don't immediately give up leadership, will retry
+	} else if fmt.Sprintf("%v", result) == "0" {
+		// Someone else acquired the lock between our GET and this script
+		m.setLeaderStatus(false)
+		m.logger.Warn("Lost leadership during renewal (lock was acquired by another node)")
 	}
 }
 

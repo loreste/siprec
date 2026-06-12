@@ -2,6 +2,7 @@ package util
 
 import (
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -64,8 +65,8 @@ func (rp *ResourcePool) PutBuffer(buf []byte) {
 	size := cap(buf)
 	pool := rp.GetBufferPool(size)
 
-	// Reset buffer to ensure clean state
-	buf = buf[:0]
+	// Reset buffer length to full capacity so callers get expected len
+	buf = buf[:cap(buf)]
 	pool.Put(buf)
 }
 
@@ -173,8 +174,7 @@ func GetMemoryStats() *MemoryStats {
 
 // bufferPoolKey generates a key for buffer pools
 func bufferPoolKey(size int) string {
-	// Use a simple string conversion for key generation
-	return "buffer_" + string(rune('0'+size/1000)) + string(rune('0'+(size%1000)/100)) + string(rune('0'+(size%100)/10)) + string(rune('0'+size%10))
+	return "buffer_" + strconv.Itoa(size)
 }
 
 // Global resource pool instance

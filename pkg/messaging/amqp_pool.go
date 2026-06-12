@@ -47,6 +47,7 @@ type PooledChannel struct {
 	inUse       bool
 	lastUsed    time.Time
 	confirmMode bool
+	parentConn  *PooledConnection
 	mutex       sync.Mutex
 }
 
@@ -211,6 +212,7 @@ func (p *AMQPPool) createConnection(host string, index int) (*PooledConnection, 
 			inUse:       false,
 			lastUsed:    time.Now(),
 			confirmMode: p.config.PublishConfirm,
+			parentConn:  pooledConn,
 		}
 
 		if p.config.PublishConfirm {
@@ -313,6 +315,7 @@ func (p *AMQPPool) GetChannel() (*PooledChannel, error) {
 			inUse:       true,
 			lastUsed:    time.Now(),
 			confirmMode: p.config.PublishConfirm,
+			parentConn:  conn,
 		}
 
 		if p.config.PublishConfirm {
@@ -342,14 +345,15 @@ func (p *AMQPPool) ReturnChannel(ch *PooledChannel) {
 
 	atomic.AddInt64(&p.metrics.ActiveChannels, -1)
 
-	// Find the connection this channel belongs to
-	p.connMutex.RLock()
-	defer p.connMutex.RUnlock()
+	// Return channel to its parent connection
+	if ch.parentConn != nil {
+		ch.parentConn.mutex.RLock()
+		healthy := ch.parentConn.healthy
+		ch.parentConn.mutex.RUnlock()
 
-	for _, conn := range p.connections {
-		if conn.healthy {
+		if healthy {
 			select {
-			case conn.channels <- ch:
+			case ch.parentConn.channels <- ch:
 				return
 			default:
 				// Channel pool is full, close the channel
@@ -359,7 +363,7 @@ func (p *AMQPPool) ReturnChannel(ch *PooledChannel) {
 		}
 	}
 
-	// No healthy connection found, close the channel
+	// Parent connection unhealthy or unknown, close the channel
 	ch.channel.Close()
 }
 

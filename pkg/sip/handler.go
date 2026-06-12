@@ -777,10 +777,11 @@ func (h *Handler) CleanupActiveCalls() {
 	for i, callUUID := range activeCallUUIDs {
 		callData := activeCallData[i]
 
-		// Stop RTP forwarding
+		// Stop RTP forwarding and release resources
 		if callData.Forwarder != nil {
 			logger.WithField("call_uuid", callUUID).Debug("Stopping RTP forwarding")
 			callData.Forwarder.Stop()
+			callData.Forwarder.Cleanup()
 		}
 
 		// Update recording session state if needed
@@ -825,12 +826,18 @@ func (h *Handler) GetSession(id string) (interface{}, error) {
 	if value, exists := h.ActiveCalls.Load(id); exists {
 		callData := value.(*CallData)
 
+		// Read fields protected by callData.mu
+		callData.mu.RLock()
+		lastActivity := callData.LastActivity
+		remoteAddr := callData.RemoteAddress
+		callData.mu.RUnlock()
+
 		// Create session info response
 		sessionInfo := map[string]interface{}{
 			"id":            id,
 			"state":         "active",
-			"last_activity": callData.LastActivity,
-			"remote_addr":   callData.RemoteAddress,
+			"last_activity": lastActivity,
+			"remote_addr":   remoteAddr,
 		}
 
 		// Add recording session info if available

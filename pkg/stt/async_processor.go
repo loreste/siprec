@@ -315,15 +315,12 @@ func (p *AsyncSTTProcessor) PurgeQueue(reason, requestedBy string) (int, *QueueS
 
 // GetMetrics returns current processing metrics
 func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
-	p.metrics.mutex.RLock()
-	defer p.metrics.mutex.RUnlock()
-
-	// Get current queue size
+	// Compute live values before acquiring lock
+	var queueSize int
 	if size, err := p.queue.GetQueueSize(); err == nil {
-		p.metrics.QueueSize = size
+		queueSize = size
 	}
 
-	// Count active workers
 	activeWorkers := 0
 	for _, worker := range p.workers {
 		worker.mutex.RLock()
@@ -332,9 +329,11 @@ func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
 		}
 		worker.mutex.RUnlock()
 	}
-	p.metrics.ActiveWorkers = activeWorkers
 
-	// Return a copy of metrics
+	p.metrics.mutex.RLock()
+	defer p.metrics.mutex.RUnlock()
+
+	// Return a copy of metrics with live values
 	metricsCopy := &AsyncSTTMetrics{
 		JobsEnqueued:       p.metrics.JobsEnqueued,
 		JobsProcessed:      p.metrics.JobsProcessed,
@@ -342,8 +341,8 @@ func (p *AsyncSTTProcessor) GetMetrics() *AsyncSTTMetrics {
 		JobsRetried:        p.metrics.JobsRetried,
 		AverageProcessTime: p.metrics.AverageProcessTime,
 		TotalCost:          p.metrics.TotalCost,
-		ActiveWorkers:      p.metrics.ActiveWorkers,
-		QueueSize:          p.metrics.QueueSize,
+		ActiveWorkers:      activeWorkers,
+		QueueSize:          queueSize,
 	}
 	return metricsCopy
 }

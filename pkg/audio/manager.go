@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -193,16 +194,26 @@ func (pm *ProcessingManager) Close() error {
 	pm.pipeline.Stop()
 
 	// Close all processors
+	var errs []error
 	if pm.vad != nil {
-		pm.vad.Close()
+		if err := pm.vad.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if pm.noiseReducer != nil {
-		pm.noiseReducer.Close()
+		if err := pm.noiseReducer.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if pm.channelMixer != nil {
-		pm.channelMixer.Close()
+		if err := pm.channelMixer.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing processors: %v", errs)
+	}
 	return nil
 }
 

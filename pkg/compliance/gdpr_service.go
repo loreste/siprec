@@ -110,6 +110,8 @@ func (s *GDPRService) ExportCallData(callID string) (string, error) {
 	encoder := encodingjson.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(&bundle); err != nil {
+		// Remove partial file to avoid leaving PII data on disk
+		os.Remove(output)
 		return "", fmt.Errorf("failed to encode export bundle: %w", err)
 	}
 

@@ -3,7 +3,9 @@ package lawfulintercept
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,28 +112,15 @@ func NewDeliveryClient(cfg DeliveryConfig, logger *logrus.Logger) *DeliveryClien
 	return dc
 }
 
-// Deliver sends intercepted content to LEA
+// Deliver sends intercepted content to LEA synchronously to ensure delivery
+// errors are reported to the caller for compliance auditing.
 func (dc *DeliveryClient) Deliver(ctx context.Context, warrantID, interceptID string, payload []byte) error {
-	item := &deliveryItem{
+	return dc.sendWithRetry(ctx, &deliveryItem{
 		WarrantID:   warrantID,
 		InterceptID: interceptID,
 		Payload:     payload,
 		Timestamp:   time.Now(),
-	}
-
-	dc.batchMu.Lock()
-	dc.batch = append(dc.batch, item)
-	shouldFlush := len(dc.batch) >= dc.config.BatchSize
-	dc.batchMu.Unlock()
-
-	if shouldFlush {
-		select {
-		case dc.flushChan <- struct{}{}:
-		default:
-		}
-	}
-
-	return nil
+	})
 }
 
 // DeliverImmediate sends content immediately without batching
@@ -283,10 +272,6 @@ func (dc *DeliveryClient) Close() {
 
 // computeChecksum computes SHA-256 checksum of data
 func computeChecksum(data []byte) string {
-	// Using a simple implementation - in production use crypto/sha256
-	var sum uint64
-	for _, b := range data {
-		sum += uint64(b)
-	}
-	return fmt.Sprintf("%016x", sum)
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }

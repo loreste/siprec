@@ -301,16 +301,18 @@ func (h *HotReloadManager) performReload(triggerType string) (*ReloadEvent, erro
 	changes := h.detectChanges(h.config, newConfig)
 	event.Changes = changes
 
-	// Update configuration atomically
+	// Update configuration atomically and snapshot callbacks
 	h.mutex.Lock()
 	oldConfig := h.config
 	h.config = newConfig
 	h.lastReload = time.Now()
+	callbacks := make([]ReloadCallback, len(h.callbacks))
+	copy(callbacks, h.callbacks)
 	h.mutex.Unlock()
 
-	// Execute callbacks
+	// Execute callbacks (using snapshot to avoid holding lock)
 	var callbackErrors []error
-	for _, callback := range h.callbacks {
+	for _, callback := range callbacks {
 		if err := callback(oldConfig, newConfig); err != nil {
 			callbackErrors = append(callbackErrors, err)
 			h.logger.WithError(err).Error("Configuration reload callback failed")

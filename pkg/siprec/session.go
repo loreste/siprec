@@ -798,11 +798,12 @@ func SendRecordingIndicator(session *RecordingSession, participantID string, ind
 	// Update participant recording awareness
 	targetParticipant.RecordingAware = indicate
 
-	// Create notification metadata
+	// Create notification metadata with monotonically increasing sequence
+	session.SequenceNumber++
 	metadata := &RSMetadata{
 		SessionID: session.ID,
 		State:     session.RecordingState,
-		Sequence:  session.SequenceNumber + 1,
+		Sequence:  session.SequenceNumber,
 		Reason:    "recording-indication",
 	}
 

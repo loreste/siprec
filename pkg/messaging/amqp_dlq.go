@@ -1,6 +1,8 @@
 package messaging
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -602,7 +604,10 @@ func generateMessageID() string {
 }
 
 func generateMessageHash(message interface{}) string {
-	// Simple hash based on message content
-	messageBytes, _ := json.Marshal(message)
-	return fmt.Sprintf("hash-%x", len(messageBytes))
+	messageBytes, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Sprintf("hash-marshal-error-%d", time.Now().UnixNano())
+	}
+	h := sha256.Sum256(messageBytes)
+	return hex.EncodeToString(h[:])
 }

@@ -142,8 +142,8 @@ func (cb *CircuitBreaker) Execute(operation func() error) error {
 
 // canExecute determines if the circuit breaker allows execution
 func (cb *CircuitBreaker) canExecute() bool {
-	cb.mutex.RLock()
-	defer cb.mutex.RUnlock()
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
 
 	switch cb.state {
 	case StateClosed:

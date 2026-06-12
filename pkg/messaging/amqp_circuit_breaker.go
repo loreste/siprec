@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -27,6 +28,7 @@ type AMQPFallbackMetrics struct {
 	MessagesDropped     int64     `json:"messages_dropped"`
 	MessagesLogged      int64     `json:"messages_logged"`
 	LastFallbackTime    time.Time `json:"last_fallback_time"`
+	mu                  sync.Mutex
 }
 
 // NewAMQPCircuitBreakerWrapper creates a new AMQP circuit breaker wrapper
@@ -107,11 +109,15 @@ func (w *AMQPCircuitBreakerWrapper) PublishTranscription(transcription, callUUID
 		},
 		// Fallback function
 		func(ctx context.Context) error {
+			w.fallbackMetrics.mu.Lock()
 			w.fallbackMetrics.FallbackActivations++
 			w.fallbackMetrics.LastFallbackTime = time.Now()
-			
+			w.fallbackMetrics.mu.Unlock()
+
 			if w.enableFallbackLogging {
+				w.fallbackMetrics.mu.Lock()
 				w.fallbackMetrics.MessagesLogged++
+				w.fallbackMetrics.mu.Unlock()
 				
 				// Log the message as fallback
 				w.logger.WithFields(logrus.Fields{
@@ -124,7 +130,9 @@ func (w *AMQPCircuitBreakerWrapper) PublishTranscription(transcription, callUUID
 				
 				return nil // Don't return error for successful fallback
 			} else {
+				w.fallbackMetrics.mu.Lock()
 				w.fallbackMetrics.MessagesDropped++
+				w.fallbackMetrics.mu.Unlock()
 				
 				w.logger.WithFields(logrus.Fields{
 					"call_uuid": callUUID,

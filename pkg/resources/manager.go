@@ -158,17 +158,19 @@ func (m *Manager) logStats() {
 
 // AcquireCall attempts to acquire a call slot
 func (m *Manager) AcquireCall() bool {
-	current := atomic.LoadInt64(&m.activeCalls)
-	if int(current) >= m.config.MaxConcurrentCalls {
-		m.logger.Warn("Call limit reached")
-		if m.onResourceExhausted != nil {
-			m.onResourceExhausted("calls")
+	for {
+		current := atomic.LoadInt64(&m.activeCalls)
+		if int(current) >= m.config.MaxConcurrentCalls {
+			m.logger.Warn("Call limit reached")
+			if m.onResourceExhausted != nil {
+				m.onResourceExhausted("calls")
+			}
+			return false
 		}
-		return false
+		if atomic.CompareAndSwapInt64(&m.activeCalls, current, current+1) {
+			return true
+		}
 	}
-
-	atomic.AddInt64(&m.activeCalls, 1)
-	return true
 }
 
 // ReleaseCall releases a call slot

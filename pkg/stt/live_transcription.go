@@ -103,11 +103,9 @@ func (ltm *LiveTranscriptionManager) onTranscription(callUUID, transcription str
 		atomic.AddInt64(&ltm.liveTranscriptions, 1)
 	}
 
-	// Use pooled metadata map if none provided
-	var pooledMeta map[string]interface{}
+	// Create metadata map if none provided
 	if metadata == nil {
-		pooledMeta = ltm.metadataPool.Get().(map[string]interface{})
-		metadata = pooledMeta
+		metadata = make(map[string]interface{}, 8)
 	}
 
 	// Add live transcription metadata
@@ -117,14 +115,6 @@ func (ltm *LiveTranscriptionManager) onTranscription(callUUID, transcription str
 	// Publish to transcription service (which sends to AMQP and other listeners)
 	if ltm.transcriptionSvc != nil {
 		ltm.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
-	}
-
-	// Return pooled map if we used one (clear and return)
-	if pooledMeta != nil {
-		for k := range pooledMeta {
-			delete(pooledMeta, k)
-		}
-		ltm.metadataPool.Put(pooledMeta)
 	}
 
 	ltm.logger.WithFields(logrus.Fields{
@@ -256,11 +246,9 @@ func (w *LiveTranscriptionWrapper) onTranscription(callUUID, transcription strin
 		atomic.AddInt64(&w.liveTranscriptions, 1)
 	}
 
-	// Use pooled metadata map if none provided
-	var pooledMeta map[string]interface{}
+	// Create metadata map if none provided
 	if metadata == nil {
-		pooledMeta = w.metadataPool.Get().(map[string]interface{})
-		metadata = pooledMeta
+		metadata = make(map[string]interface{}, 8)
 	}
 
 	metadata["live"] = true
@@ -275,14 +263,6 @@ func (w *LiveTranscriptionWrapper) onTranscription(callUUID, transcription strin
 	// Call original callback if set
 	if w.originalCallback != nil {
 		w.originalCallback(callUUID, transcription, isFinal, metadata)
-	}
-
-	// Return pooled map if we used one (clear and return)
-	if pooledMeta != nil {
-		for k := range pooledMeta {
-			delete(pooledMeta, k)
-		}
-		w.metadataPool.Put(pooledMeta)
 	}
 }
 

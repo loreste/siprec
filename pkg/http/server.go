@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"siprec-server/pkg/errors"
@@ -52,6 +53,7 @@ type Server struct {
 	authMiddleware        *AuthMiddleware
 	rateLimitMiddleware   RateLimitMiddleware
 	correlationMiddleware CorrelationMiddleware
+	middlewareMu          sync.RWMutex
 }
 
 // NewServer creates a new HTTP server instance
@@ -71,6 +73,7 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 	mux := http.NewServeMux()
 	server.mux = mux
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.middlewareMu.RLock()
 		handler := http.Handler(mux)
 		// Apply auth middleware (inner layer)
 		if server.authMiddleware != nil {
@@ -84,6 +87,7 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 		if server.correlationMiddleware != nil {
 			handler = server.correlationMiddleware.Middleware(handler)
 		}
+		server.middlewareMu.RUnlock()
 		handler.ServeHTTP(w, r)
 	})
 
@@ -144,18 +148,24 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 
 // SetAuthMiddleware sets the authentication middleware for the server.
 func (s *Server) SetAuthMiddleware(middleware *AuthMiddleware) {
+	s.middlewareMu.Lock()
 	s.authMiddleware = middleware
+	s.middlewareMu.Unlock()
 }
 
 // SetRateLimitMiddleware sets the rate limiting middleware for the server.
 func (s *Server) SetRateLimitMiddleware(middleware RateLimitMiddleware) {
+	s.middlewareMu.Lock()
 	s.rateLimitMiddleware = middleware
+	s.middlewareMu.Unlock()
 	s.logger.Info("Rate limiting middleware configured")
 }
 
 // SetCorrelationMiddleware sets the correlation ID middleware for request tracking.
 func (s *Server) SetCorrelationMiddleware(middleware CorrelationMiddleware) {
+	s.middlewareMu.Lock()
 	s.correlationMiddleware = middleware
+	s.middlewareMu.Unlock()
 	s.logger.Info("Correlation ID middleware configured")
 }
 

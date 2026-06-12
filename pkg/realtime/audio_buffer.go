@@ -26,6 +26,7 @@ type AudioBuffer struct {
 	mutex         sync.RWMutex
 	readCond      *sync.Cond
 	writeCond     *sync.Cond
+	closed        bool
 	
 	// Memory optimization
 	lastGC        time.Time
@@ -118,12 +119,16 @@ func (ab *AudioBuffer) Write(data []byte) error {
 func (ab *AudioBuffer) Read() ([]byte, error) {
 	ab.mutex.Lock()
 	defer ab.mutex.Unlock()
-	
+
 	// Wait for data if buffer is empty
-	for ab.size == 0 {
+	for ab.size == 0 && !ab.closed {
 		ab.readCond.Wait()
 	}
-	
+
+	if ab.closed && ab.size == 0 {
+		return nil, fmt.Errorf("buffer closed")
+	}
+
 	// Calculate how much to read (read all available data)
 	readSize := ab.size
 	if readSize == 0 {
@@ -151,10 +156,14 @@ func (ab *AudioBuffer) Read() ([]byte, error) {
 func (ab *AudioBuffer) ReadChunk(chunkSize int) ([]byte, error) {
 	ab.mutex.Lock()
 	defer ab.mutex.Unlock()
-	
+
 	// Wait for enough data
-	for ab.size < chunkSize {
+	for ab.size < chunkSize && !ab.closed {
 		ab.readCond.Wait()
+	}
+
+	if ab.closed && ab.size < chunkSize {
+		return nil, fmt.Errorf("buffer closed")
 	}
 	
 	// Read chunk from circular buffer
@@ -334,11 +343,13 @@ func (ab *AudioBuffer) Reset() {
 func (ab *AudioBuffer) Close() {
 	ab.mutex.Lock()
 	defer ab.mutex.Unlock()
-	
+
+	ab.closed = true
+
 	// Signal all waiting goroutines to exit
 	ab.readCond.Broadcast()
 	ab.writeCond.Broadcast()
-	
+
 	// Clear buffer
 	ab.buffer = nil
 	ab.capacity = 0
