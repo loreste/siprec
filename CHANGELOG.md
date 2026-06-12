@@ -2,7 +2,7 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
-## [Unreleased]
+## [1.2.4] - 2026-06-12
 
 ### Security
 - **Removed Committed Encryption Key**: Deleted an encryption key file that had been committed to the repository
