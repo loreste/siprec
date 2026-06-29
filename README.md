@@ -774,6 +774,11 @@ Use `-t tn` instead of `-t t1` to avoid "Address already in use" errors under hi
 
 GPL v3 — see [LICENSE](LICENSE) for details.
 
+## Contributors
+
+- [Lance Oreste](https://github.com/loreste)
+- [Ma91Wa](https://github.com/Ma91Wa)
+
 ## Contributing
 
 Contributions welcome. Open an issue or pull request on GitHub.
