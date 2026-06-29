@@ -323,7 +323,7 @@ resources:
 
 ## Upgrading
 
-### From v1.1.x to v1.2.x
+### From v1.1.x to v1.2.4
 
 1. Stop the service:
    ```bash
@@ -348,7 +348,7 @@ resources:
    sudo systemctl start siprec-server
    ```
 
-No configuration changes are required for v1.2.3. New features (SSRC validation, port cooldown, per-stream G.729 decoder) are enabled automatically.
+No configuration changes are required for v1.2.4. New features (SSRC validation, port cooldown, per-stream G.729 decoder) are enabled automatically.
 
 ## Next Steps
 

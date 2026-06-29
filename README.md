@@ -1,121 +1,83 @@
-# IZI SIPREC Server (Golang)
+# IZI SIPREC Server
 
-> Open Source SIPREC Session Recording Server written in Go for VoIP and telecom call recording.
+> An open-source SIPREC recording server written in Go. Point your SBC at it, get recordings out.
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 [![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
-[![Scalability](https://img.shields.io/badge/Scale-100k%2B%20Concurrent-orange.svg)](docs/cluster-configuration.md)
+[![Scalability](https://img.shields.io/badge/Scale-Horizontally%20Scalable-orange.svg)](docs/cluster-configuration.md)
 
 ## Overview
 
-IZI SIPREC is an open-source **SIPREC Session Recording Server (SRS)** written in Golang. It receives SIPREC recording sessions from SBCs, PBXs, or SIP proxies and captures the RTP streams for storage, analysis, or compliance recording.
+IZI SIPREC is an open-source **Session Recording Server (SRS)** that implements RFC 7865/7866. It accepts SIPREC sessions from SBCs, PBXs, or SIP proxies, captures the RTP media, and writes recordings to disk or cloud storage.
 
-The project is designed for high-performance **telecom recording** environments and can scale to **100,000+ concurrent recordings** with horizontal scaling and Redis-backed session management.
+Beyond basic recording, it can also transcribe calls in real time (with your choice of seven STT providers), detect PII, track speaker changes, encrypt recordings at rest, and push analytics to Elasticsearch or message queues. All of that runs in a single Go binary—turn on what you need, ignore what you don't.
 
-This **Golang SIP server** handles RFC 7865/7866 metadata parsing, multi-vendor **AI-powered speech-to-text**, **speaker diarization**, **lawful intercept**, real-time analytics, PII detection/redaction, encryption, and multi-cloud storage—all within a single lightweight process.
+For larger deployments, multiple instances can share session state through Redis and scale horizontally behind a load balancer.
 
-**Version:** 1.2.3
+**Version:** 1.2.4
 
-## Use Cases
+## Who is this for?
 
-- **Enterprise Call Recording** – Record all inbound/outbound calls for quality assurance and training
-- **Compliance Recording** – Meet regulatory requirements for financial services, healthcare, and legal industries
-- **Lawful Intercept Recording** – Support lawful interception requirements with secure, tamper-proof recordings
-- **Contact Center Recording** – Capture customer interactions for analytics and compliance
-- **SBC Recording Server** – Deploy as the recording endpoint for any SIPREC-compliant Session Border Controller
-- **VoIP Recording Platform** – Centralized recording for distributed VoIP infrastructure
+- **Enterprise teams** that need to record calls for QA, training, or regulatory compliance
+- **Contact centers** looking for call analytics, transcription, and compliance monitoring
+- **Telecom operators** who need a recording endpoint behind their SBCs
+- **Organizations with lawful intercept obligations** that require tamper-proof recordings with secure LEA delivery
 
-## Supported Platforms
+## Tested With
 
-Works with any SIPREC-compliant source, including:
+Works with any SIPREC-compliant source. We've tested against:
 
-- **OpenSIPS SIPREC** – Full compatibility with OpenSIPS SIPREC module
-- **Kamailio SIPREC** – Native support for Kamailio's SIPREC implementation
-- **FreeSWITCH Recording** – Record calls from FreeSWITCH via SIPREC
-- **Asterisk SIPREC** – Compatible with Asterisk's SIPREC capabilities
-- **Oracle SBC** – Tested with Oracle Communications Session Border Controller
-- **Cisco CUBE** – Works with Cisco Unified Border Element
-- **Ribbon/GENBAND SBC** – Full metadata extraction support
-- **AudioCodes SBC** – Compatible with AudioCodes Mediant series
-- **Avaya SBCE** – Avaya Session Border Controller for Enterprise
+- **OpenSIPS** and **Kamailio** SIPREC modules
+- **FreeSWITCH** and **Asterisk**
+- **Oracle SBC**, **Cisco CUBE**, **Ribbon/GENBAND SBC**
+- **AudioCodes Mediant** series, **Avaya SBCE**
 
-## Core Features
+The server auto-detects which vendor sent the INVITE and extracts vendor-specific metadata (Oracle UCID, Cisco GUID, Avaya UCID, etc.) without any extra configuration.
 
-### SIP & SIPREC Protocol
-- **RFC 7865/7866 Compliance** – Full SIPREC metadata parsing and validation with enhanced interoperability
-- **Custom SIP Stack** – UDP, TCP, and TLS transports with automatic NAT traversal
-- **Large Payload Support** – 4096-byte MTU for handling extensive metadata
-- **Session Management** – In-memory or Redis-backed session persistence with automatic failover
-- **Multi-Vendor Support** – Automatic detection and metadata extraction for Oracle, Cisco, Avaya, NICE, Genesys, FreeSWITCH, Asterisk, and OpenSIPS SBCs
+## What it does
 
-### Audio & Media Processing
-- **Multi-Codec Support** – PCMU, PCMA, G.722, G.729, Opus, EVS with automatic transcoding
-- **Audio Processing Pipeline** – Voice Activity Detection (VAD), noise reduction, echo cancellation
-- **RTP/SRTP Handling** – Secure media transport with SRTP encryption support
-- **Audio Quality Metrics** – ITU-T G.107 E-model for MOS score calculation
-- **Multi-Channel Recording** – Stereo enhancement, channel separation, and mixing
-- **Jitter Buffer** – Per-leg RTP packet reordering with configurable buffer size and delay
-- **Packet Loss Concealment** – DTX-aware silence insertion for time-accurate recordings with G.729 Annex B support
-- **G.729 Per-Stream Decoder** – Isolated decoder per RTP stream eliminates cross-call state leakage
-- **G.729 Stability** – Oscillation detection prevents decoder artifacts from corrupting recordings
-- **SSRC Validation** – Locks SSRC from first RTP packet, drops mismatched packets to prevent crosstalk
-- **SSRC Auto-Correction** – Switches SSRC when locked source goes silent and alternate has sustained traffic
-- **Port Allocation Cooldown** – Avoids recently freed ports to prevent stale RTP crosstalk
-- **Start-Time Alignment** – Wall-clock synchronized multi-leg WAV combining for accurate stereo output
-- **Speaker Diarization** – Automatic speaker separation with voice feature extraction, cross-session speaker tracking, and configurable similarity thresholds
+### SIP & Recording
 
-### Speech-to-Text (STT)
-- **7 Provider Support** – Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs
-- **Circuit Breaker Protection** – Automatic failover and health monitoring for all STT providers
-- **Language-Based Routing** – Intelligent provider selection based on detected language
-- **Local & Remote Whisper CLI** – Optional on-prem transcription via the open-source [openai/whisper](https://github.com/openai/whisper) binary (run it locally or point IZI SIPREC at a remote SSH/HTTP wrapper; see [Whisper Setup Guide](docs/whisper-setup.md))
-- **Real-time Streaming** – Live transcription delivery via WebSocket and AMQP publishers (see [real-time transcription docs](docs/realtime-transcription.md) for message formats)
-- **Async Processing** – Queue-based transcription with configurable workers and retries
+The server speaks SIP over UDP, TCP, and TLS, with built-in NAT traversal via STUN. It parses RFC 7865/7866 SIPREC metadata, negotiates SDP, and records each RTP stream to disk. Sessions can be stored in memory for simple setups or in Redis when you need persistence and failover.
+
+Supported codecs include PCMU, PCMA, G.722, G.729 (via bcg729), Opus, and EVS. The audio pipeline handles jitter buffering, packet loss concealment, VAD, noise reduction, and automatic stereo merging of call legs. G.729 gets special treatment—each stream has its own decoder instance to avoid cross-call state leakage, and an oscillation detector catches synthesis filter instability after DTX gaps.
+
+SSRC is locked from the first RTP packet on each port, so stale packets from recycled ports can't corrupt a new recording. If the locked source goes silent and a different SSRC shows sustained traffic, the server switches automatically.
+
+### Transcription
+
+Pick from seven cloud STT providers (Google, Deepgram, Azure, Amazon, OpenAI, Speechmatics, ElevenLabs) or run [Whisper](https://github.com/openai/whisper) locally for on-prem transcription. A circuit breaker monitors provider health and fails over automatically. Transcripts stream out in real time over WebSocket and AMQP. See the [Whisper Setup Guide](docs/whisper-setup.md) and [real-time transcription docs](docs/realtime-transcription.md) for details.
+
+Speaker diarization runs alongside transcription—voice features are extracted per-segment, and speakers can be tracked across sessions if needed.
 
 ### Security & Compliance
-- **End-to-End Encryption** – AES-256-GCM and ChaCha20-Poly1305 for recordings and metadata
-- **Automatic Key Rotation** – Configurable key rotation intervals with secure storage
-- **PII Detection & Redaction** – SSN, credit cards, phone numbers, email addresses
-- **Encrypted Recording Pipeline** – Streams media through AES-256-GCM into `.siprec` containers with per-recording key metadata
-- **PCI DSS Compliance Mode** – Automatic security hardening and required safeguards
-- **GDPR Tools** – Data export and erasure APIs with audit trails
-- **Lawful Intercept Support** – Secure LEA delivery with mutual TLS, warrant verification, encryption, and tamper-proof audit logging
-- **TLS Support** – Secure SIP signaling with configurable certificates
-- **Authentication** – JWT tokens and API key authentication with role-based access
+
+Recordings can be encrypted at rest with AES-256-GCM or ChaCha20-Poly1305, with automatic key rotation. PII detection scans transcripts for SSNs, credit card numbers, phone numbers, and email addresses, and can redact them in real time.
+
+The server includes a lawful intercept module with warrant verification, encrypted delivery to LEAs over mutual TLS, and tamper-proof audit logging. PCI DSS and GDPR compliance modes are available, with data export and erasure APIs.
+
+SIP signaling supports TLS, and media can be secured with SRTP. Access control uses JWT tokens and API keys with role-based permissions.
 
 ### Analytics & Monitoring
-- **Real-Time Analytics** – Sentiment analysis, keyword extraction, compliance monitoring
-- **Elasticsearch Integration** – Full-text search and analytics persistence
-- **Audio Quality Tracking** – Real-time MOS scoring and packet loss detection
-- **Prometheus Metrics** – Comprehensive metrics for SIP, RTP, STT, and AMQP
-- **OpenTelemetry Tracing** – Distributed tracing for end-to-end visibility
-- **Performance Monitoring** – Memory, CPU, and goroutine leak detection with auto-tuning
+
+A built-in analytics pipeline does sentiment analysis, keyword detection, and compliance monitoring on transcripts. Results go to Elasticsearch for historical reporting, stream over WebSocket for live dashboards, and publish to AMQP queues.
+
+On the ops side: Prometheus metrics cover SIP, RTP, STT, and AMQP. OpenTelemetry tracing gives end-to-end visibility across distributed setups. MOS scores are calculated in real time using the ITU-T G.107 E-model.
 
 ### Storage & Messaging
-- **Multi-Cloud Storage** – AWS S3, Google Cloud Storage, Azure Blob Storage
-- **Recording Management** – Automatic archival with lifecycle policies
-- **AMQP/RabbitMQ** – Real-time transcription delivery with batching and retries
-- **Multi-Endpoint Fan-Out** – Publish to multiple message queues simultaneously
-- **MySQL/MariaDB** – Optional database persistence for sessions, transcriptions, and CDRs
 
-### Enterprise Scaling
-- **100k+ Concurrent Recordings** – Horizontal scaling with Redis-backed session sharing
-- **Worker Pool Management** – Configurable worker pools with automatic CPU-based sizing
-- **Memory Management** – Configurable memory limits with automatic garbage collection
-- **Node Clustering** – Multi-node deployments with unique node IDs for distributed processing
-- **RTP Stream Optimization** – Configurable RTP stream limits (typically 2-3x concurrent calls)
+Upload recordings to S3, Google Cloud Storage, or Azure Blob Storage—or all three at once. AMQP/RabbitMQ integration handles real-time transcript delivery with batching, retries, and dead letter queues. MySQL/MariaDB can store sessions, transcriptions, and CDRs if you need a relational backend.
 
-### Operational Features
-- **Pause/Resume API** – Control recording and transcription mid-call via REST API
-- **Async STT Job API** – Submit, track, and manage queued transcription jobs via `/api/stt/*`
-- **Health & Readiness** – Kubernetes-compatible health probes
-- **Graceful Shutdown** – Proper cleanup of active sessions and connections
-- **Hot-Reload Configuration** – Dynamic configuration updates without restart, managed via `/api/config` endpoints
-- **Call Detail Records** – Comprehensive CDR generation and storage
-- **Multi-Channel Alerting** – Email (SMTP), Slack, PagerDuty, and webhook notifications with delivery metrics
-- **Role-Based Access Control** – Optional RBAC enforcement for API endpoints (`AUTH_RBAC_ENABLED`)
-- **Centralized Warnings** – System-wide warning collection and deduplication
+### Scaling
+
+Multiple SIPREC nodes can share session state through Redis (standalone, Sentinel, or Cluster mode). The cluster supports RTP state replication, distributed rate limiting, split-brain detection, and live stream migration between nodes. See the [Cluster Configuration Guide](docs/cluster-configuration.md).
+
+Worker pools auto-size based on available CPUs, and you can set memory limits with automatic GC tuning.
+
+### Operations
+
+Pause and resume recording mid-call via REST API, or submit async transcription jobs through `/api/stt/*`. Health and readiness probes are Kubernetes-compatible. Configuration can be hot-reloaded without restarting via `/api/config` endpoints. Alerts go out via email (SMTP), Slack, PagerDuty, or webhooks. Optional RBAC enforcement is available for API endpoints (`AUTH_RBAC_ENABLED`). CDRs are generated automatically.
 
 ## Quick Start
 
@@ -146,7 +108,7 @@ docker run -p 5060:5060/udp -p 8080:8080 siprec
 
 ### CLI Tool (siprecctl)
 
-The `siprecctl` command-line tool provides administrative control over the SIPREC server.
+`siprecctl` gives you command-line control over a running server.
 
 ```bash
 # Build the CLI
@@ -191,16 +153,16 @@ siprecctl -s http://192.168.1.100:8080 health
 
 ## Configuration
 
-The server supports multiple configuration methods with the following priority:
+Configuration is layered, with later sources overriding earlier ones:
 
-1. **Environment variables** (highest priority - always override)
-2. **Configuration file** (YAML or JSON)
-3. **`.env` file** (development)
-4. **Default values**
+1. Built-in defaults
+2. `.env` file (handy for local dev)
+3. YAML or JSON config file
+4. Environment variables (always win)
 
-### Configuration File (Production)
+### Config file
 
-For production deployments, use a YAML or JSON configuration file:
+For production, use a YAML or JSON file:
 
 ```bash
 # Option 1: Place config.yaml in the working directory
@@ -216,17 +178,17 @@ cp config.example.yaml /etc/siprec/config.yaml
 ./siprec
 ```
 
-The server searches for config files in this order:
+The server looks for config files in this order:
 - `$CONFIG_FILE` environment variable
 - `./config.yaml` or `./config.yml` or `./config.json`
 - `/etc/siprec/config.yaml`
 - `$HOME/.siprec/config.yaml`
 
-See `config.example.yaml` for a complete configuration reference.
+See `config.example.yaml` for a complete reference.
 
-### Environment Variables
+### Environment variables
 
-Environment variables can override any config file setting. For secrets (API keys, passwords), always use environment variables:
+Env vars override anything in the config file. Use them for secrets:
 
 ```bash
 export DEEPGRAM_API_KEY=your-api-key
@@ -234,7 +196,7 @@ export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 export REDIS_PASSWORD=your-password
 ```
 
-### Essential Variables
+### Basics
 
 | Variable | Description | Default |
 | --- | --- | --- |
@@ -389,98 +351,90 @@ Notifications can be delivered through email (SMTP), Slack, PagerDuty, and gener
 | `insecure_skip_verify` | Skip TLS certificate verification (not recommended) |
 | `timeout_seconds` | SMTP dial/send timeout (default `30`) |
 
-#### Enabling Sentiment & Analytics
+#### Setting up analytics
 
-1. Turn on the dispatcher and persistence layer:
+1. Point analytics at Elasticsearch:
    ```bash
    export ANALYTICS_ENABLED=true
    export ELASTICSEARCH_ADDRESSES=https://es.example.com:9200
    export ELASTICSEARCH_INDEX=call-analytics
    ```
-   Supplying credentials/timeouts via the matching environment variables allows the server to persist every analytics snapshot (sentiment trend, compliance flags, agent metrics) to Elasticsearch.
-2. Enable realtime fan-out if you need live dashboards or queue-based consumers:
+2. If you want live dashboards, turn on AMQP fan-out:
    ```bash
    export ENABLE_REALTIME_AMQP=true
-   export PUBLISH_SENTIMENT_UPDATES=true   # already true by default
-   export PUBLISH_KEYWORD_DETECTIONS=true  # default true
+   export PUBLISH_SENTIMENT_UPDATES=true   # default
+   export PUBLISH_KEYWORD_DETECTIONS=true  # default
    ```
-3. (Optional) Expose `/ws/analytics` by keeping `ANALYTICS_ENABLED=true`; the HTTP server automatically provisions the WebSocket endpoint alongside the dispatcher.
+3. The `/ws/analytics` WebSocket endpoint comes up automatically when `ANALYTICS_ENABLED=true`.
 
-Once enabled, each transcription chunk carries a sentiment payload computed by the built-in analyzer (lexicon + context window + punctuation/intensifier heuristics, with negation handling). The analytics pipeline tracks per-speaker polarity, emits emotion/subjectivity hints, and publishes confidence scores in three places simultaneously:
-- `ws://<host>/ws/analytics` WebSocket stream
-- AMQP realtime exchange/queue when `ENABLE_REALTIME_AMQP=true`
-- Elasticsearch documents in the configured index for historical reporting
+With analytics on, every transcription chunk gets a sentiment score (lexicon-based with negation handling and intensifier support). Results are published to three places: the WebSocket stream, the AMQP queue, and Elasticsearch.
 
-## HTTP API Endpoints
+## HTTP API
 
 ### Health & Metrics
 
-- `GET /health` – Aggregate health state (200 if healthy)
-- `GET /health/live` – Liveness probe (always returns 200)
-- `GET /health/ready` – Readiness probe (fails if dependencies unavailable)
-- `GET /metrics` – Prometheus metrics
-- `GET /status` – Status with uptime and version info
+- `GET /health` — aggregate health (200 when healthy)
+- `GET /health/live` — liveness probe (always 200)
+- `GET /health/ready` — readiness probe (fails if dependencies are down)
+- `GET /metrics` — Prometheus metrics
+- `GET /status` — uptime and version info
 
-### Real-Time Transcription
+### Real-time transcription
 
-- `GET /ws/transcriptions` – WebSocket endpoint for live transcription streaming
-- `GET /ws/analytics` – WebSocket endpoint for real-time analytics
+- `GET /ws/transcriptions` — WebSocket for live transcription streaming
+- `GET /ws/analytics` — WebSocket for real-time analytics
 
-#### Failure Handling
+**What happens when STT fails?** Recording continues normally—audio always goes to disk regardless of what the transcription pipeline is doing. If a provider crashes, you'll see `STT provider exited early; transcription will be disabled` in the logs, and the recording finishes without transcripts. Nothing is lost.
 
-- Recording to disk is fully independent from the STT pipeline. If a provider crashes or is misconfigured, the server logs `STT provider exited early; transcription will be disabled`, keeps writing audio to the `.wav/.siprec` file, and tears down analytics as soon as the BYE is processed.
-- After a provider failure, no further transcription events are published for that call (analytics snapshot and call cleanup still complete), so dashboards will show a recording with missing transcripts instead of an empty file.
+#### Recording format
 
-#### Recording Format
+Each SIPREC stream is saved as `<Call-ID>_<stream-label>.wav`—so a two-leg call produces two files (e.g., `B2B.123_leg0.wav` and `B2B.123_leg1.wav`).
 
-- Every SIPREC stream is persisted as `<Call-ID>_<stream-label>.wav`, so multi-stream calls produce one file per stream (e.g., `B2B.123_leg0.wav` for the caller and `B2B.123_leg1.wav` for the callee).
-- When your SBC or PBX mixes both legs into a single multi-channel RTP stream (e.g., `rtpmap:96 opus/48000/2`), the recorder preserves that layout: channel 0 stays the caller, channel 1 stays the callee, and you get a single stereo WAV with intact separation.
-- No extra flags are required—channel counts are learned from the SDP offer—just ensure the upstream recorder advertises the desired `/2` channel count so the SIPREC server keeps both legs in one file.
-- If the SRC sends **separate** audio streams (most SIPREC implementations), enable `RECORDING_COMBINE_LEGS=true` (default) to automatically merge all legs into `<Call-ID>.wav` with each leg occupying its own channel. Individual leg files remain on disk for debugging.
+If your SBC mixes both legs into a single multi-channel RTP stream, the server preserves that layout as a stereo WAV. Channel counts come from the SDP offer, so no extra flags are needed.
 
-### Pause/Resume & Mute Control
+Most SIPREC implementations send separate streams per leg. With `RECORDING_COMBINE_LEGS=true` (the default), the server merges them into `<Call-ID>.wav` with each leg in its own channel. The individual leg files stick around for debugging.
 
-- `POST /api/sessions/{id}/pause` – Pause recording/transcription for a session
-- `POST /api/sessions/{id}/resume` – Resume recording/transcription
-- `GET /api/sessions/{id}/pause-status` – Get pause status for a session
-- `POST /api/sessions/pause-all` – Pause all active sessions
-- `POST /api/sessions/resume-all` – Resume all paused sessions
-- `GET /api/sessions/pause-status` – Get pause status for all sessions
-- `POST /api/sessions/{id}/mute` / `POST /api/sessions/{id}/unmute` – Mute or unmute a session
-- `GET /api/sessions/{id}/mute-status` – Get mute status
+### Pause/Resume & Mute
 
-### Session Management
+- `POST /api/sessions/{id}/pause` / `POST /api/sessions/{id}/resume` — pause or resume a session
+- `GET /api/sessions/{id}/pause-status` — check pause state
+- `POST /api/sessions/pause-all` / `POST /api/sessions/resume-all` — bulk control
+- `POST /api/sessions/{id}/mute` / `POST /api/sessions/{id}/unmute` — mute or unmute
+- `GET /api/sessions/{id}/mute-status` — check mute state
 
-- `GET /api/sessions` – List all active sessions (use `?id=<session-id>` for a single session)
-- `GET /api/sessions/stats` – Session statistics
+### Sessions
 
-### Async STT Job API
+- `GET /api/sessions` — list active sessions (use `?id=<session-id>` for a single session)
+- `GET /api/sessions/stats` — session statistics
+- `DELETE /api/sessions/:id` — terminate a session
 
-Available when the async STT processor is enabled (`STT_ASYNC_ENABLED=true`, the default):
+### Async STT Jobs
 
-- `POST /api/stt/submit` – Submit an audio file for asynchronous transcription
-- `GET /api/stt/jobs` – List transcription jobs
-- `GET /api/stt/jobs/{id}` – Get job status and result
-- `GET /api/stt/stats` – Queue and worker statistics
-- `GET /api/stt/metrics` – Job processing metrics
-- `POST /api/stt/queue/purge` – Purge queued jobs
+Available when `STT_ASYNC_ENABLED=true` (the default):
 
-### Configuration API
+- `POST /api/stt/submit` — submit audio for async transcription
+- `GET /api/stt/jobs` — list jobs
+- `GET /api/stt/jobs/{id}` — job status and result
+- `GET /api/stt/stats` — queue and worker stats
+- `GET /api/stt/metrics` — processing metrics
+- `POST /api/stt/queue/purge` — purge queued jobs
 
-Available when configuration hot-reload is active (`hot_reload.enabled`, the default):
+### Configuration
 
-- `GET /api/config` – View the running configuration (enable authentication before exposing this endpoint)
-- `POST /api/config/validate` – Validate a candidate configuration
-- `POST /api/config/reload` – Trigger a configuration reload
-- `GET /api/config/reload/status` – Hot-reload status and history
+Available when hot-reload is active (`hot_reload.enabled`, the default):
 
-### GDPR Compliance
+- `GET /api/config` — view running config (enable auth before exposing)
+- `POST /api/config/validate` — validate a candidate config
+- `POST /api/config/reload` — trigger reload
+- `GET /api/config/reload/status` — reload history
 
-- `GET /api/compliance/status` – Compliance feature status
-- `POST /api/compliance/gdpr/export` – Export user data
-- `DELETE /api/compliance/gdpr/erase` – Erase user data (removes local `.wav/.siprec` artifacts and every uploaded copy recorded in the `.locations` manifest)
+### GDPR & Compliance
 
-Every recording that is uploaded to remote storage now has a sidecar `<recording>.locations` file listing the exact URLs that were written (e.g., `s3://bucket/prefix/file.siprec`). The GDPR erase workflow reads that manifest, issues deletes against each backend, and then removes both the manifest and the encrypted object so that nothing remains online.
+- `GET /api/compliance/status` — compliance feature status
+- `POST /api/compliance/gdpr/export` — export user data
+- `DELETE /api/compliance/gdpr/erase` — erase user data
+
+When recordings are uploaded to cloud storage, a sidecar `<recording>.locations` file tracks where each copy lives (e.g., `s3://bucket/prefix/file.siprec`). The erase workflow reads that manifest, deletes from every backend, and removes the manifest itself—nothing lingers.
 
 ## Architecture
 
@@ -507,7 +461,7 @@ Every recording that is uploaded to remote storage now has a sidecar `<recording
 
 ### Requirements
 
-- Go 1.25 or newer
+- Go 1.25+
 - Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
 
 ### G.729 Codec Support
@@ -767,87 +721,64 @@ This was caused by excessive PLC silence insertion during DTX periods. Version 1
 
 ## Performance
 
-### Load Test Results
+### Load test results
 
-The server has been extensively load tested with the following results:
+We test with SIPp, running multi-vendor SIPREC scenarios against Oracle SBC, Avaya SM, and Cisco CUBE profiles:
 
-| Concurrent Calls | Duration | Transport | Success Rate | Peak Memory | Peak CPU |
-|-----------------|----------|-----------|--------------|-------------|----------|
-| 100 | 30s | UDP | 100% | 46 MB | ~1% |
-| 1,000 | 30s | UDP | 100% | 70 MB | ~2% |
-| 5,000 | 30s | UDP | 100% | 356 MB | ~7% |
-| 6,000 | 5 min | TCP | 100% | 1,006 MB | ~5% |
-| 10,000 | 30s | UDP | 100% | 548 MB | ~11% |
-| 20,000 | 30s | UDP | 100% | 1,554 MB | ~17% |
+| Concurrent Calls | Duration | Transport | Success Rate | Peak Memory | Notes |
+|-----------------|----------|-----------|--------------|-------------|-------|
+| 15 | 2 min | TCP | 80% (12/15) | ~15 MB | Genesys scenario error |
+| 100 | 2 min | TCP | 90% (90/100) | ~70 MB | 100% for Oracle/Avaya/Cisco |
+| 450 | 2 min | TCP | 100% (450/450) | ~195 MB | 1,350 recording files created |
 
-**Key Performance Metrics:**
-- **Concurrent Calls**: Tested up to 20,000 simultaneous sessions (single node)
-- **Call Duration**: Validated with 5-minute sustained calls at 6,000 concurrent
-- **Memory Efficiency**: ~55 KB per concurrent call (signaling only)
-- **CPU Efficiency**: Linear scaling, ~0.001% per concurrent call
-- **Latency**: Sub-50ms for SIP signaling, <100ms for STT streaming
-- **Throughput**: 10,000+ RTP packets/sec per core
+At 450 concurrent calls the server used about 433 KB per call, 3.6% CPU, and had zero TCP errors across all runs. Memory and CPU scale linearly, so there's plenty of headroom on modern hardware.
 
-### Enterprise Scale (100k+ Concurrent)
+### Scaling out
 
-For deployments requiring 100,000+ concurrent recordings:
+For deployments that need more than a single node can handle, turn on Redis-backed session sharing:
 
 ```bash
-# Enable horizontal scaling with Redis session sharing
 HORIZONTAL_SCALING=true
 REDIS_ADDRESS=cluster:6379
 NODE_ID=node-1
 
-# Resource configuration per node
-MAX_CONCURRENT_CALLS=25000
-MAX_RTP_STREAMS=75000
-WORKER_POOL_SIZE=64
-MAX_MEMORY_MB=16384
+MAX_CONCURRENT_CALLS=500
+MAX_RTP_STREAMS=1500
+WORKER_POOL_SIZE=0  # auto-detect based on CPU
 ```
 
-**Recommended Infrastructure:**
-- **4-5 nodes** with 32+ CPU cores and 32GB RAM each
-- **Redis Cluster** for session state sharing
-- **Load balancer** (HAProxy, NGINX, or cloud LB) for SIP distribution
-- **Shared storage** (NFS, S3, or GCS) for recordings
+Put a load balancer (HAProxy, NGINX, or a cloud LB) in front for SIP distribution, and point recordings at shared storage (NFS, S3, or GCS).
 
-### SIPp Load Testing
+### Running your own load tests
 
-For load testing with SIPp, use TCP with `tn` mode (one socket per call) for best reliability:
+We use SIPp with TCP in `tn` mode (one socket per call):
 
 Ready-made SIPp scenarios are available in [`test/sipp/`](test/sipp/).
 
 ```bash
-# 6000 concurrent calls, 5-minute duration, 100 calls/sec ramp-up
-sipp <server>:5060 -t tn -sf test/sipp/siprec_load_test.xml -l 6000 -m 6000 -r 100 -timeout 600
+# 500 concurrent calls, 2-minute duration, 5 calls/sec ramp-up
+sipp <server>:5060 -t tn -sf test/sipp/siprec_load_test.xml -l 500 -m 500 -r 5 -timeout 300
 ```
 
-**Note:** On macOS, the standard TCP mode (`-t t1`) may fail with "Address already in use" errors. Use `-t tn` instead for reliable TCP testing.
+Use `-t tn` instead of `-t t1` to avoid "Address already in use" errors under high concurrency.
 
 ## Compliance & Security
 
 - RFC 7865/7866 (SIPREC) compliant
-- PCI DSS Level 1 compatible (with encryption and PII redaction)
-- GDPR compliant with data export and erasure tools
-- TLS 1.2+ for SIP signaling
-- SRTP for media encryption
-- AES-256-GCM for recording encryption
+- PCI DSS compatible (with encryption and PII redaction enabled)
+- GDPR data export and erasure APIs
+- TLS 1.2+ for SIP signaling, SRTP for media
+- AES-256-GCM recording encryption with key rotation
 
 ## License
 
-GPL v3 – see [LICENSE](LICENSE) for details.
+GPL v3 — see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on GitHub.
+Contributions welcome. Open an issue or pull request on GitHub.
 
 ## Support
 
 - Issues: https://github.com/loreste/siprec/issues
-- Documentation: https://github.com/loreste/siprec/tree/main/docs
-
----
-
-### Keywords
-
-SIPREC, Session Recording Server, SRS, VoIP recording, SIP recording, telecom recording, call recording, Golang SIP server, Go SIP, OpenSIPS SIPREC, Kamailio SIPREC, FreeSWITCH recording, Asterisk SIPREC, SBC recording server, lawful intercept recording, compliance recording, contact center recording, RTP capture, speech-to-text, real-time transcription, PCI DSS recording, GDPR compliant recording, encrypted call recording, Oracle SBC SIPREC, Cisco CUBE recording, AudioCodes SIPREC, Ribbon SBC recording, enterprise call recording, VoIP compliance, AI transcription, speaker diarization, speaker separation, 100k concurrent recordings, horizontal scaling, enterprise scale recording, LEA delivery, CALEA compliant, voice analytics, sentiment analysis
+- Docs: https://github.com/loreste/siprec/tree/main/docs
