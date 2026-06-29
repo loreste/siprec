@@ -399,7 +399,7 @@ func (s *S3Storage) Upload(localPath, backupID string) ([]string, error) {
 		Key:    aws.String(key),
 		Body:   file,
 		Metadata: map[string]*string{
-			"backup-id": aws.String(backupID),
+			"backup_id": aws.String(backupID),
 			"uploaded":  aws.String(time.Now().Format(time.RFC3339)),
 		},
 	})
@@ -462,8 +462,8 @@ func (s *S3Storage) List() ([]StoredBackup, error) {
 			if headResult, err := s.client.HeadObject(&s3.HeadObjectInput{
 				Bucket: aws.String(s.bucket),
 				Key:    obj.Key,
-			}); err == nil && headResult.Metadata["backup-id"] != nil {
-				backup.ID = *headResult.Metadata["backup-id"]
+			}); err == nil && headResult.Metadata["backup_id"] != nil {
+				backup.ID = *headResult.Metadata["backup_id"]
 			}
 
 			backups = append(backups, backup)
@@ -552,7 +552,7 @@ func (g *GCSStorage) Upload(localPath, backupID string) ([]string, error) {
 
 	writer := obj.NewWriter(ctx)
 	writer.Metadata = map[string]string{
-		"backup-id": backupID,
+		"backup_id": backupID,
 		"uploaded":  time.Now().Format(time.RFC3339),
 	}
 
@@ -623,8 +623,8 @@ func (g *GCSStorage) List() ([]StoredBackup, error) {
 			StorageType: "gcs",
 		}
 
-		if attrs.Metadata["backup-id"] != "" {
-			backup.ID = attrs.Metadata["backup-id"]
+		if attrs.Metadata["backup_id"] != "" {
+			backup.ID = attrs.Metadata["backup_id"]
 		}
 
 		backups = append(backups, backup)
@@ -703,7 +703,7 @@ func (a *AzureStorage) Upload(localPath, backupID string) ([]string, error) {
 		BlockSize:   4 * 1024 * 1024,
 		Parallelism: 16,
 		Metadata: azblob.Metadata{
-			"backup-id": backupID,
+			"backup_id": backupID,
 			"uploaded":  time.Now().Format(time.RFC3339),
 		},
 	})
@@ -773,8 +773,8 @@ func (a *AzureStorage) List() ([]StoredBackup, error) {
 				StorageType: "azure",
 			}
 
-			if blobInfo.Metadata["backup-id"] != "" {
-				backup.ID = blobInfo.Metadata["backup-id"]
+			if blobInfo.Metadata["backup_id"] != "" {
+				backup.ID = blobInfo.Metadata["backup_id"]
 			}
 
 			backups = append(backups, backup)
