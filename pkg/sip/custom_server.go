@@ -1947,10 +1947,11 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
 
-	// If we have a recording session, generate proper SIPREC response with metadata.
-	// PLAIN_SDP_RESPONSE=true sends only application/sdp (debug/compat mode for jambonz).
-	plainSDPMode := os.Getenv("PLAIN_SDP_RESPONSE") == "true"
-	if recordingSession != nil && !plainSDPMode {
+	// RFC 7866: The SRS 200 OK response contains only application/sdp by default.
+	// MULTIPART_RESPONSE=true opts into sending multipart/mixed (SDP + rs-metadata)
+	// for SRC implementations that specifically handle it.
+	multipartMode := os.Getenv("MULTIPART_RESPONSE") == "true"
+	if recordingSession != nil && multipartMode {
 		contentType, multipartBody, err := s.generateSiprecResponse(responseSDP, recordingSession, logger)
 		if err != nil {
 			inviteErr = err
@@ -1989,10 +1990,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			"transport": transport,
 		})
 	} else {
-		// Plain SDP response – either non-SIPREC call or PLAIN_SDP_RESPONSE=true debug mode.
-		if plainSDPMode && recordingSession != nil {
-			logger.Warn("PLAIN_SDP_RESPONSE mode: sending application/sdp only (no rs-metadata) for SIPREC session")
-		}
+		// RFC 7866 compliant: SRS 200 OK with application/sdp only
 		responseHeaders["Content-Type"] = "application/sdp"
 		callState.State = "awaiting_ack"
 		callState.PendingAckCSeq = callState.RemoteCSeq
@@ -2437,8 +2435,10 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 		responseSDP = s.generateSiprecSDP(mediaIP, 0) // 0 means allocate port dynamically
 	}
 
-	// Generate SIPREC response if we have a recording session
-	if callState.RecordingSession != nil {
+	// Generate response for re-INVITE. Default is RFC 7866 compliant plain SDP;
+	// multipart/mixed only when MULTIPART_RESPONSE=true.
+	multipartMode := os.Getenv("MULTIPART_RESPONSE") == "true"
+	if callState.RecordingSession != nil && multipartMode {
 		contentType, multipartBody, err := s.generateSiprecResponse(responseSDP, callState.RecordingSession, logger)
 		if err != nil {
 			reinviteSpan.RecordError(err)
