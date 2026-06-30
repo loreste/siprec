@@ -3129,13 +3129,26 @@ func (s *CustomSIPServer) handleUpdateMessage(message *SIPMessage) {
 	if len(message.Body) > 0 && strings.Contains(strings.ToLower(contentType), "application/sdp") {
 		// Generate response SDP based on current state
 		mediaIP := s.resolveMediaIPAddress(message)
-		if callState.RTPForwarder != nil {
-			responseSDP = s.generateSiprecSDP(mediaIP, callState.RTPForwarder.LocalPort)
+		forwarders := callState.RTPForwarders
+		if len(forwarders) == 0 && callState.RTPForwarder != nil {
+			forwarders = []*media.RTPForwarder{callState.RTPForwarder}
+		}
+		if len(forwarders) > 0 {
+			parsedSDP, sdpErr := ParseSDPTolerant(message.Body, s.logger)
+			if sdpErr == nil && parsedSDP != nil {
+				sdpResponse := s.handler.generateSDPResponseForForwarders(parsedSDP, mediaIP, forwarders)
+				responseSDP, _ = sdpResponse.Marshal()
+			} else {
+				responseSDP = s.generateSiprecSDP(mediaIP, forwarders[0].LocalPort)
+			}
 		}
 	}
 
 	responseHeaders := map[string]string{
 		"Contact": s.buildContactHeader(message),
+	}
+	if len(responseSDP) > 0 {
+		responseHeaders["Content-Type"] = "application/sdp"
 	}
 	s.sendResponse(message, 200, "OK", responseHeaders, responseSDP)
 	logger.WithField("call_id", message.CallID).Info("Successfully responded to UPDATE")
