@@ -548,7 +548,8 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	assoc := rsMetadata.SessionRecordingAssoc
 	if (assoc == RSAssociation{}) {
-		result.addError("missing session recording association element")
+		// Cognigy VGW (jambonz) does not send <sessionrecordingassoc> – downgraded to warning
+		result.addWarning("missing session recording association element (non-RFC-compliant SRC – continuing)")
 	} else {
 		assocSessionID := normalizedAssocSessionID(assoc)
 		if assocSessionID == "" {

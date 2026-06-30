@@ -23,6 +23,7 @@ type RecordingSession struct {
 	StateReasonRef    string
 	StateExpires      time.Time
 	MediaStreamTypes  []string
+	SDPStreamLabels   []string // Actual a=label values from the SDP offer, used for RS-metadata response
 	SessionGroups     []SessionGroupAssociation
 	PolicyUpdates     []PolicyUpdate
 	SessionGroupRoles map[string]string

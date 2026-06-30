@@ -104,6 +104,12 @@ type RTPForwarder struct {
 	rtcpStopChan chan struct{}
 	remoteMutex  sync.Mutex
 
+	// doneChan is closed when the StartRTPForwarding goroutine has fully exited.
+	// Callers that need to ensure the goroutine is done before calling Cleanup()
+	// can select/wait on this channel (see WaitDone).
+	doneChan chan struct{}
+	doneOnce sync.Once
+
 	// Start-time alignment for WAV combining (Fix G)
 	FirstRTPTimestamp uint32    // RTP timestamp of the first packet
 	FirstRTPWallClock time.Time // Wall-clock time when first RTP packet arrived
@@ -230,7 +236,19 @@ func NewRTPForwarder(timeout time.Duration, recordingSession *siprec.RecordingSe
 		LocalSSRC:         generateRandomSSRC(),
 		RTPStats:          newRTPStreamStats(),
 		rtcpStopChan:      make(chan struct{}, 1),
+		doneChan:          make(chan struct{}),
 	}, nil
+}
+
+// WaitDone blocks until the StartRTPForwarding goroutine has fully exited or
+// the timeout elapses. Returns true if the goroutine exited, false on timeout.
+func (f *RTPForwarder) WaitDone(timeout time.Duration) bool {
+	select {
+	case <-f.doneChan:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // SetCodecInfo configures payload format information used for recording.
