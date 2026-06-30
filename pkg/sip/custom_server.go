@@ -2500,6 +2500,11 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 // updateRecordingSession updates an existing recording session with new metadata
 func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSession, metadata *siprec.RSMetadata, logger *logrus.Entry) error {
+	// Ensure ExtendedMetadata is initialized to prevent nil map panics
+	if session.ExtendedMetadata == nil {
+		session.ExtendedMetadata = make(map[string]string)
+	}
+
 	// Update sequence number if explicitly provided; otherwise leave untouched
 	if metadata.Sequence > 0 {
 		session.SequenceNumber = metadata.Sequence
@@ -2595,20 +2600,22 @@ func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSessio
 		"participant_count": len(session.Participants),
 	}).Info("Recording session updated successfully")
 
-	if svc := s.handler.CDRService(); svc != nil {
-		update := cdr.CDRUpdate{}
-		hasUpdates := false
-		if pc := len(session.Participants); pc > 0 {
-			update.ParticipantCount = &pc
-			hasUpdates = true
-		}
-		if sc := len(session.MediaStreamTypes); sc > 0 {
-			update.StreamCount = &sc
-			hasUpdates = true
-		}
-		if hasUpdates {
-			if err := svc.UpdateSession(session.ID, update); err != nil {
-				logger.WithError(err).Warn("Failed to update CDR session after metadata refresh")
+	if s.handler != nil {
+		if svc := s.handler.CDRService(); svc != nil {
+			update := cdr.CDRUpdate{}
+			hasUpdates := false
+			if pc := len(session.Participants); pc > 0 {
+				update.ParticipantCount = &pc
+				hasUpdates = true
+			}
+			if sc := len(session.MediaStreamTypes); sc > 0 {
+				update.StreamCount = &sc
+				hasUpdates = true
+			}
+			if hasUpdates {
+				if err := svc.UpdateSession(session.ID, update); err != nil {
+					logger.WithError(err).Warn("Failed to update CDR session after metadata refresh")
+				}
 			}
 		}
 	}
@@ -2764,7 +2771,10 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 			callState.RecordingSession.RecordingState = "terminated"
 			callState.RecordingSession.EndTime = time.Now()
 			callState.RecordingSession.UpdatedAt = time.Now()
-			callState.RecordingSession.ExtendedMetadata["termination_reason"] = "bye_received"
+			if callState.RecordingSession.ExtendedMetadata == nil {
+					callState.RecordingSession.ExtendedMetadata = make(map[string]string)
+				}
+				callState.RecordingSession.ExtendedMetadata["termination_reason"] = "bye_received"
 
 			logger.WithFields(logrus.Fields{
 				"session_id":      callState.RecordingSession.ID,
@@ -3606,7 +3616,7 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 	s.unregisterRTPStreamsInCluster(callID, callState)
 
 	// End distributed cluster trace if active
-	if callState.ClusterTrace != nil {
+	if callState.ClusterTrace != nil && s.handler != nil {
 		if orch := s.handler.GetClusterOrchestrator(); orch != nil {
 			if traceCtx, ok := callState.ClusterTrace.(*cluster.TraceContext); ok {
 				orch.EndTrace(traceCtx, nil)
@@ -3795,28 +3805,30 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 		}
 	}
 
-	if svc := s.handler.CDRService(); svc != nil && callState.RecordingSession != nil {
-		status := "completed"
-		recordingState := strings.ToLower(callState.RecordingSession.RecordingState)
-		switch recordingState {
-		case "cancelled":
-			status = "partial"
-		case "failed", "error":
-			status = "failed"
-		}
-		reasonLower := strings.ToLower(reason)
-		switch reasonLower {
-		case "cancelled":
-			status = "partial"
-		case "failed", "error":
-			status = "failed"
-		}
-		var errMsg *string
-		if status == "failed" && reason != "" {
-			errMsg = &reason
-		}
-		if err := svc.EndSession(callState.RecordingSession.ID, status, errMsg); err != nil {
-			s.logger.WithError(err).WithField("session_id", callState.RecordingSession.ID).Warn("Failed to record CDR for terminated session")
+	if s.handler != nil {
+		if svc := s.handler.CDRService(); svc != nil && callState.RecordingSession != nil {
+			status := "completed"
+			recordingState := strings.ToLower(callState.RecordingSession.RecordingState)
+			switch recordingState {
+			case "cancelled":
+				status = "partial"
+			case "failed", "error":
+				status = "failed"
+			}
+			reasonLower := strings.ToLower(reason)
+			switch reasonLower {
+			case "cancelled":
+				status = "partial"
+			case "failed", "error":
+				status = "failed"
+			}
+			var errMsg *string
+			if status == "failed" && reason != "" {
+				errMsg = &reason
+			}
+			if err := svc.EndSession(callState.RecordingSession.ID, status, errMsg); err != nil {
+				s.logger.WithError(err).WithField("session_id", callState.RecordingSession.ID).Warn("Failed to record CDR for terminated session")
+			}
 		}
 	}
 

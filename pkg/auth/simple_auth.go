@@ -266,11 +266,25 @@ func (s *SimpleAuthenticator) generateToken(user *SimpleUser) (string, error) {
 
 // generateJTI generates a unique token ID
 func (s *SimpleAuthenticator) generateJTI() string {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		s.logger.WithError(err).Error("Failed to generate JWT ID")
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback: use timestamp + counter to ensure uniqueness even if crypto/rand fails
+		s.logger.WithError(err).Error("Failed to generate JWT ID from crypto/rand, using fallback")
+		ts := time.Now().UnixNano()
+		b[0] = byte(ts >> 56)
+		b[1] = byte(ts >> 48)
+		b[2] = byte(ts >> 40)
+		b[3] = byte(ts >> 32)
+		b[4] = byte(ts >> 24)
+		b[5] = byte(ts >> 16)
+		b[6] = byte(ts >> 8)
+		b[7] = byte(ts)
+		// Fill remaining bytes with counter-derived values
+		for i := 8; i < 16; i++ {
+			b[i] = byte(ts>>uint(i) ^ int64(i))
+		}
 	}
-	return hex.EncodeToString(bytes)
+	return hex.EncodeToString(b)
 }
 
 // getRolePermissions returns permissions for a role

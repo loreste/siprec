@@ -112,6 +112,9 @@ func (s *GDPRService) ExportCallData(callID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if session == nil {
+		return "", fmt.Errorf("no session found for call ID %s", callID)
+	}
 
 	participants, err := s.repo.GetParticipantsBySession(session.ID)
 	if err != nil {

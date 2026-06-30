@@ -15,6 +15,7 @@ type Limiter struct {
 	mu         sync.RWMutex
 	logger     *logrus.Logger
 	cleanupTTL time.Duration // how long to keep inactive clients
+	stopCh     chan struct{} // signals cleanup goroutine to exit
 }
 
 // bucket represents a token bucket for a single client
@@ -82,6 +83,7 @@ func NewLimiter(rate float64, burst int, logger *logrus.Logger) *Limiter {
 		clients:    make(map[string]*bucket),
 		logger:     logger,
 		cleanupTTL: 10 * time.Minute,
+		stopCh:     make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -247,15 +249,25 @@ func (l *Limiter) cleanup() {
 	ticker := time.NewTicker(l.cleanupTTL / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		l.mu.Lock()
-		now := time.Now()
-		for key, b := range l.clients {
-			// Remove clients that haven't been seen and aren't blocked
-			if now.Sub(b.lastUpdate) > l.cleanupTTL && (!b.blocked || now.After(b.blockUntil)) {
-				delete(l.clients, key)
+	for {
+		select {
+		case <-l.stopCh:
+			return
+		case <-ticker.C:
+			l.mu.Lock()
+			now := time.Now()
+			for key, b := range l.clients {
+				// Remove clients that haven't been seen and aren't blocked
+				if now.Sub(b.lastUpdate) > l.cleanupTTL && (!b.blocked || now.After(b.blockUntil)) {
+					delete(l.clients, key)
+				}
 			}
+			l.mu.Unlock()
 		}
-		l.mu.Unlock()
 	}
+}
+
+// Close stops the cleanup goroutine and releases resources
+func (l *Limiter) Close() {
+	close(l.stopCh)
 }

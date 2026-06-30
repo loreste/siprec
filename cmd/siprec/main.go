@@ -369,6 +369,13 @@ func main() {
 			}
 		}
 
+		// Stop CDR service auto-export goroutine before closing database
+		if cdrService != nil {
+			logger.Debug("Stopping CDR service...")
+			cdrService.Close()
+			logger.Info("CDR service stopped")
+		}
+
 		if dbConnLocal != nil {
 			logger.Debug("Closing database connection...")
 			if err := dbConnLocal.Close(); err != nil {

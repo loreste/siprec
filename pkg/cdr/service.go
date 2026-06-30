@@ -27,6 +27,7 @@ type CDRService struct {
 	batchSize    int
 	piiDetector  *pii.PIIDetector
 	piiRedactCDR bool
+	stopCh       chan struct{} // signals auto-export goroutine to exit
 }
 
 // CDRConfig holds CDR service configuration
@@ -52,6 +53,7 @@ func NewCDRService(repo *database.Repository, config CDRConfig, logger *logrus.L
 		batchSize:    config.BatchSize,
 		piiDetector:  config.PIIDetector,
 		piiRedactCDR: config.PIIRedactCDR,
+		stopCh:       make(chan struct{}),
 	}
 
 	// Start auto-export if enabled
@@ -533,9 +535,19 @@ func (c *CDRService) startAutoExport(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.performAutoExport()
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-ticker.C:
+			c.performAutoExport()
+		}
 	}
+}
+
+// Close stops the auto-export goroutine and releases resources
+func (c *CDRService) Close() {
+	close(c.stopCh)
 }
 
 func (c *CDRService) performAutoExport() {
