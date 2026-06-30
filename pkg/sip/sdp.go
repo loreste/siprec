@@ -282,7 +282,8 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 				foundDirectionAttr = true
 				continue
 			case "recvonly":
-				directionAttr = sdp.Attribute{Key: "recvonly"}
+				// Offer says recvonly → they receive, we must send (reversed SIPREC)
+				directionAttr = sdp.Attribute{Key: "sendonly"}
 				foundDirectionAttr = true
 				continue
 			case "rtcp":
@@ -414,16 +415,18 @@ func (h *Handler) generateSDPAdvanced(receivedSDP *sdp.SessionDescription, optio
 	}
 
 	// Create the complete session description
+	// Use our own origin (not mirroring the SRC's origin) to avoid loop detection
+	// on Cognigy/jambonz media stacks that compare session IDs.
 	sessionDesc := &sdp.SessionDescription{
 		Origin: sdp.Origin{
-			Username:       receivedSDP.Origin.Username,
-			SessionID:      receivedSDP.Origin.SessionID,
-			SessionVersion: receivedSDP.Origin.SessionVersion,
+			Username:       "siprec-srs",
+			SessionID:      uint64(time.Now().UnixMicro()),
+			SessionVersion: 1,
 			NetworkType:    "IN",
 			AddressType:    "IP4",
-			UnicastAddress: connectionAddr, // Use NAT-aware address
+			UnicastAddress: connectionAddr,
 		},
-		SessionName: receivedSDP.SessionName,
+		SessionName: sdp.SessionName("SRS Recording Session"),
 		ConnectionInformation: &sdp.ConnectionInformation{
 			NetworkType: "IN",
 			AddressType: "IP4",

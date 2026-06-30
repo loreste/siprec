@@ -2,6 +2,7 @@ package media
 
 import (
 	"encoding/base64"
+	"net"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,51 @@ func ConfigureForwarderForMediaDescription(forwarder *RTPForwarder, sdpDesc *sdp
 
 	applySessionAttributes(forwarder, sdpDesc, logger)
 	applyMediaAttributes(forwarder, md, logger)
+	setRemoteAddressHints(forwarder, sdpDesc, md, logger)
+}
+
+// setRemoteAddressHints pre-populates the forwarder's remote addresses from the SDP offer.
+// This enables the initial RTP probe for symmetric-RTP / RTP-latching implementations.
+func setRemoteAddressHints(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, md *sdp.MediaDescription, logger *logrus.Logger) {
+	connAddr := ""
+	if md.ConnectionInformation != nil && md.ConnectionInformation.Address != nil {
+		connAddr = md.ConnectionInformation.Address.Address
+	} else if sdpDesc.ConnectionInformation != nil && sdpDesc.ConnectionInformation.Address != nil {
+		connAddr = sdpDesc.ConnectionInformation.Address.Address
+	}
+	if connAddr == "" {
+		return
+	}
+	ip := net.ParseIP(connAddr)
+	if ip == nil {
+		return
+	}
+
+	rtpPort := md.MediaName.Port.Value
+	rtcpPort := rtpPort + 1
+	for _, attr := range md.Attributes {
+		if attr.Key == "rtcp" {
+			fields := strings.Fields(attr.Value)
+			if len(fields) > 0 {
+				if p, err := strconv.Atoi(fields[0]); err == nil {
+					rtcpPort = p
+				}
+			}
+			break
+		}
+	}
+
+	forwarder.remoteMutex.Lock()
+	forwarder.RemoteRTPAddr = &net.UDPAddr{IP: ip, Port: rtpPort}
+	forwarder.RemoteRTCPAddr = &net.UDPAddr{IP: ip, Port: rtcpPort}
+	forwarder.remoteMutex.Unlock()
+
+	if logger != nil {
+		logger.WithFields(logrus.Fields{
+			"remote_rtp":  net.JoinHostPort(connAddr, strconv.Itoa(rtpPort)),
+			"remote_rtcp": net.JoinHostPort(connAddr, strconv.Itoa(rtcpPort)),
+		}).Info("Pre-set remote RTP/RTCP address from SDP offer (symmetric-RTP probe target)")
+	}
 }
 
 func applySessionAttributes(forwarder *RTPForwarder, sdpDesc *sdp.SessionDescription, logger *logrus.Logger) {

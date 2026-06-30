@@ -11,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1659,6 +1660,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		s.sendResponse(message, 488, "Not Acceptable Here", nil, nil)
 		return
 	}
+	logger.WithField("sdp_offer", string(sdpData)).Info("Received SDP offer from SRC")
 
 	// Create RTP forwarders for this SIPREC call
 	var responseSDP []byte
@@ -1841,6 +1843,17 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 		}
 
+		// Store the actual SDP stream labels so the RS-metadata response uses matching labels
+		if recordingSession != nil {
+			for idx := range forwarders {
+				label := audioStreams[idx].label
+				if label == "" {
+					label = fmt.Sprintf("%d", idx+1)
+				}
+				recordingSession.SDPStreamLabels = append(recordingSession.SDPStreamLabels, label)
+			}
+		}
+
 		for idx, forwarder := range forwarders {
 			streamID := audioStreams[idx].label
 			if streamID == "" {
@@ -1876,6 +1889,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			}
 			responseSDP = responseSDPBytes
 			logger.WithField("response_sdp_size", len(responseSDP)).Debug("Generated multi-stream SDP response")
+			logger.WithField("sdp_answer", string(responseSDP)).Info("SDP answer sent to SRC")
 		} else {
 			logger.Warn("Using single-stream SDP response (receivedSDP is nil)")
 			sdpResponse := s.handler.generateSDPResponseWithPort(nil, mediaIP, forwarders[0].LocalPort, forwarders[0])
@@ -1933,8 +1947,10 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 		"Accept":    "application/sdp, application/rs-metadata+xml, multipart/mixed",
 	}
 
-	// If we have a recording session, generate proper SIPREC response with metadata
-	if recordingSession != nil {
+	// If we have a recording session, generate proper SIPREC response with metadata.
+	// PLAIN_SDP_RESPONSE=true sends only application/sdp (debug/compat mode for jambonz).
+	plainSDPMode := os.Getenv("PLAIN_SDP_RESPONSE") == "true"
+	if recordingSession != nil && !plainSDPMode {
 		contentType, multipartBody, err := s.generateSiprecResponse(responseSDP, recordingSession, logger)
 		if err != nil {
 			inviteErr = err
@@ -1973,7 +1989,11 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			"transport": transport,
 		})
 	} else {
-		// Regular response without SIPREC metadata
+		// Plain SDP response – either non-SIPREC call or PLAIN_SDP_RESPONSE=true debug mode.
+		if plainSDPMode && recordingSession != nil {
+			logger.Warn("PLAIN_SDP_RESPONSE mode: sending application/sdp only (no rs-metadata) for SIPREC session")
+		}
+		responseHeaders["Content-Type"] = "application/sdp"
 		callState.State = "awaiting_ack"
 		callState.PendingAckCSeq = callState.RemoteCSeq
 		callState.LastActivity = time.Now()
@@ -2319,6 +2339,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 					continue
 				}
 				extra.Stop()
+				extra.WaitDone(100 * time.Millisecond)
 				extra.Cleanup()
 			}
 			forwarders = forwarders[:len(audioStreams)]
@@ -3639,6 +3660,18 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 		"single_forwarder":  callState.RTPForwarder != nil,
 	}).Debug("Starting forwarder cleanup in finalizeCall")
 
+	// stopAndCleanup signals a forwarder to stop, waits up to 100 ms for its
+	// goroutine to exit (so the WAV file is no longer being written), then
+	// runs Cleanup. The wait prevents the "file already closed" race where
+	// Cleanup closes the WAV file while the goroutine is still in a Write call.
+	stopAndCleanup := func(forwarder *media.RTPForwarder) {
+		forwarder.Stop()
+		if !forwarder.WaitDone(100 * time.Millisecond) {
+			s.logger.WithField("call_id", callID).Warn("RTP goroutine did not exit within timeout; proceeding with cleanup")
+		}
+		forwarder.Cleanup()
+	}
+
 	// Collect recording legs with timing info for proper alignment (Fix G)
 	recordingLegs := make([]media.LegTiming, 0, len(callState.RTPForwarders))
 	if len(callState.RTPForwarders) > 0 {
@@ -3661,8 +3694,7 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 				}
 				recordingLegs = append(recordingLegs, leg)
 			}
-			forwarder.Stop()
-			forwarder.Cleanup()
+			stopAndCleanup(forwarder)
 		}
 		callState.RTPForwarders = nil
 	} else if callState.RTPForwarder != nil {
@@ -3681,8 +3713,7 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 			}
 			recordingLegs = append(recordingLegs, leg)
 		}
-		callState.RTPForwarder.Stop()
-		callState.RTPForwarder.Cleanup()
+		stopAndCleanup(callState.RTPForwarder)
 	}
 
 	callState.RTPForwarder = nil
@@ -3724,8 +3755,7 @@ func (s *CustomSIPServer) doFinalizeCall(callID string, callState *CallState, re
 					recordingLegs = append(recordingLegs, leg)
 				}
 			}
-			forwarder.Stop()
-			forwarder.Cleanup()
+			stopAndCleanup(forwarder)
 			s.logger.WithFields(logrus.Fields{
 				"call_id":   callID,
 				"stream_id": streamID,
@@ -4163,6 +4193,7 @@ func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType str
 
 	validation := siprec.ValidateSiprecMessage(&metadata)
 	if len(validation.Errors) > 0 {
+		s.logger.WithField("raw_metadata", string(rsMetadata)).Error("SIPREC metadata validation failed – raw XML body")
 		return nil, fmt.Errorf("critical SIPREC metadata validation failure: %v", validation.Errors)
 	}
 
@@ -4785,13 +4816,25 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 		CallID:    session.SIPID,
 	}
 
-	// Add stream information if available
-	for i, streamType := range session.MediaStreamTypes {
+	// Add stream elements using the actual SDP a=label values so jambonz/SRC can correlate.
+	// SDPStreamLabels is populated from the SDP offer's a=label attributes.
+	// Fall back to MediaStreamTypes for backward compat with non-Cognigy SRCs.
+	sdpLabels := session.SDPStreamLabels
+	if len(sdpLabels) == 0 {
+		for i := range session.MediaStreamTypes {
+			sdpLabels = append(sdpLabels, fmt.Sprintf("%d", i+1))
+		}
+	}
+	for i, label := range sdpLabels {
+		streamType := ""
+		if i < len(session.MediaStreamTypes) {
+			streamType = session.MediaStreamTypes[i]
+		}
 		stream := siprec.Stream{
-			Label:    fmt.Sprintf("stream_%d", i),
-			StreamID: fmt.Sprintf("stream_%d_%s", i, streamType),
+			Label:    label,
+			StreamID: fmt.Sprintf("stream-%d", i+1),
 			Type:     streamType,
-			Mode:     "separate", // Default to separate streams
+			Mode:     "separate",
 		}
 		responseMetadata.Streams = append(responseMetadata.Streams, stream)
 	}
@@ -4821,6 +4864,7 @@ func (s *CustomSIPServer) generateSiprecResponse(sdp []byte, session *siprec.Rec
 		"participant_count": len(responseMetadata.Participants),
 		"stream_count":      len(responseMetadata.Streams),
 	}).Info("Generated SIPREC multipart response")
+	logger.WithField("multipart_200ok_body", multipartBody).Info("Full 200 OK multipart body sent to SRC")
 
 	return contentType, multipartBody, nil
 }
@@ -4904,6 +4948,7 @@ func (s *CustomSIPServer) Shutdown(ctx context.Context) error {
 			}).Debug("Cleaning up RTP forwarder during shutdown")
 
 			forwarder.Stop()
+			forwarder.WaitDone(100 * time.Millisecond)
 			forwarder.Cleanup()
 		}
 

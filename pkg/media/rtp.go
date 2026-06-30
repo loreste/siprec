@@ -196,11 +196,19 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		defer rtpSpan.End()
 		// Use original ctx for cancellation - don't overwrite with tracing context!
 
-		// Log when goroutine exits (before cleanup)
+		// Defer execution order (LIFO – last declared runs first):
+		//   4th (runs last):  log "exited"
+		//   3rd:              recover + Cleanup  (no-op if stopAndCleanup already ran it)
+		//   2nd:              close(doneChan)    ← unblocks WaitDone in BYE handler
+		//   1st (runs first): WAV Finalize       ← goroutine stopped writing, header safe to write
+
+		// Log when goroutine exits (declared 1st → runs last)
 		defer func() {
 			forwarder.Logger.WithField("call_uuid", callUUID).Info("Main RTP goroutine exited (defer)")
 		}()
 
+		// Goroutine-owned cleanup; will be a no-op if BYE handler already called Cleanup().
+		// recover() here catches any panic from the WAV Finalize or doneChan defers above.
 		defer func() {
 			if r := recover(); r != nil {
 				forwarder.Logger.WithFields(logrus.Fields{
@@ -213,8 +221,13 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			forwarder.Cleanup()
 		}()
 
-		// Finalize WAV before Cleanup so the header is updated.
-		// Ensures recordings are playable if the goroutine exits for any reason.
+		// Signal WaitDone() after WAV Finalize but before Cleanup/Azure-upload.
+		// The BYE handler waits here before calling its own Cleanup(). By the time
+		// this fires the goroutine has stopped writing, so no file-closed race.
+		defer forwarder.doneOnce.Do(func() { close(forwarder.doneChan) })
+
+		// Finalize WAV before everything else so the header is always written.
+		// Declared last → runs first in LIFO order.
 		defer func() {
 			if forwarder.WAVWriter != nil {
 				if err := forwarder.WAVWriter.Finalize(); err != nil && forwarder.Logger != nil {
@@ -262,6 +275,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		atomic.StoreInt64(&forwarder.lastRTPNano, time.Now().UnixNano())
 
 		SetUDPSocketBuffers(udpConn, forwarder.Logger)
+
+		// Send an initial probe to trigger symmetric-RTP / RTP-latching on the SRC.
+		// The SRC (e.g. Cognigy/jambonz) may not start sending until it sees the
+		// first UDP datagram arriving from our advertised RTP endpoint.
+		forwarder.remoteMutex.Lock()
+		probeRTPAddr := forwarder.RemoteRTPAddr
+		forwarder.remoteMutex.Unlock()
+		if probeRTPAddr != nil {
+			sendRTPProbe(udpConn, probeRTPAddr, forwarder.LocalSSRC, forwarder.Logger)
+		}
 
 		var rtcpConn *net.UDPConn
 		if !forwarder.UseRTCPMux && forwarder.RTCPPort > 0 {
@@ -1537,6 +1560,41 @@ func sendRTCPPackets(forwarder *RTPForwarder, packets ...rtcp.Packet) error {
 
 	_, err = conn.WriteToUDP(raw, remote)
 	return err
+}
+
+// sendRTPProbe sends a single minimal RTP packet from the local socket to the
+// remote RTP address. This is used to "unlatch" symmetric-RTP implementations
+// that wait for the first packet before starting to send.
+func sendRTPProbe(conn *net.UDPConn, remoteAddr *net.UDPAddr, localSSRC uint32, logger *logrus.Logger) {
+	if conn == nil || remoteAddr == nil {
+		return
+	}
+	pkt := &rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			PayloadType:    13, // CN (Comfort Noise) – safe probe payload type
+			SequenceNumber: 0,
+			Timestamp:      0,
+			SSRC:           localSSRC,
+		},
+		Payload: []byte{0}, // 1-byte minimal payload
+	}
+	raw, err := pkt.Marshal()
+	if err != nil {
+		return
+	}
+	if _, err = conn.WriteTo(raw, remoteAddr); err != nil {
+		if logger != nil {
+			logger.WithError(err).Debug("RTP probe send failed")
+		}
+		return
+	}
+	if logger != nil {
+		logger.WithFields(logrus.Fields{
+			"remote": remoteAddr.String(),
+			"ssrc":   localSSRC,
+		}).Info("Sent initial RTP probe (symmetric-RTP trigger)")
+	}
 }
 
 func sendRTCPBye(forwarder *RTPForwarder) {
