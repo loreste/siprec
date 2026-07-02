@@ -385,6 +385,74 @@ X-Recording-Max-Duration: 30m
 Content-Type: multipart/mixed;boundary=boundary1
 ```
 
+## Recording Storage
+
+Recordings can be uploaded to cloud object storage (S3, GCS, or Azure Blob) after each call.
+Enable uploads with `RECORDING_STORAGE_ENABLED=true` and configure one or more backends. Set
+`RECORDING_STORAGE_KEEP_LOCAL=false` to delete the local copy once the upload succeeds.
+
+```bash
+RECORDING_STORAGE_ENABLED=true
+RECORDING_STORAGE_KEEP_LOCAL=false
+RECORDING_STORAGE_AZURE_ENABLED=true
+RECORDING_STORAGE_AZURE_ACCOUNT=mystorageaccount
+RECORDING_STORAGE_AZURE_CONTAINER=recordings
+RECORDING_STORAGE_AZURE_PREFIX=poc            # optional path prefix inside the container
+RECORDING_STORAGE_AZURE_SAS_TOKEN=...         # recommended (see below)
+```
+
+### Azure Blob Storage Authentication
+
+Exactly **one** authentication method must be configured when Azure storage is enabled. The
+server picks the first one that is set, in this order:
+
+1. **SAS token** (`RECORDING_STORAGE_AZURE_SAS_TOKEN`) — **recommended**
+2. **Account key** (`RECORDING_STORAGE_AZURE_ACCESS_KEY`) — discouraged
+
+#### Why a SAS token instead of the account key
+
+The storage **account key** grants full read/write/delete access to the *entire* storage
+account — every container, every blob. Leaking it compromises all data in the account, and it
+cannot be scoped or given an expiry (only rotated).
+
+A **service SAS token** can be restricted to a single container, limited to just the
+permissions the recorder needs (create + write, no read/delete), and given an expiry date.
+This follows the principle of least privilege: even if the token leaks, the blast radius is one
+container until it expires.
+
+#### Recommended: generate a container-scoped SAS token
+
+Create a SAS for exactly the target container with create/write permissions and a sensible
+expiry (adjust account, container, and expiry to your needs):
+
+```bash
+az storage container generate-sas \
+  --account-name mystorageaccount \
+  --name recordings \
+  --permissions cw \          # c = create, w = write (no read/delete)
+  --expiry 2027-01-01T00:00:00Z \
+  --https-only \
+  --auth-mode key \
+  --account-key "<account-key-used-only-to-mint-the-sas>" \
+  --output tsv
+```
+
+Put the resulting token (the query string, with or without a leading `?`) into
+`RECORDING_STORAGE_AZURE_SAS_TOKEN`. The account key is only needed once to mint the SAS and
+does not have to live on the recording server.
+
+> The server never logs the SAS token, and blob location URLs it emits are built from the
+> account/container/blob names only — the SAS query string is never included.
+
+#### Account key (not recommended)
+
+If you must use the account key, set `RECORDING_STORAGE_AZURE_ACCESS_KEY`. The server logs a
+warning at startup recommending a SAS token. When using an account key, at minimum:
+
+- **Rotate** the key regularly.
+- Restrict the storage account with **network firewall rules** (allowed IP ranges / VNet) so
+  the key is only usable from the recorder's network.
+
 ## Session Persistence
 
 To persist session data across restarts, initialise a session manager store (e.g. Redis) and pass it to the SIP handler through code:

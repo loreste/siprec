@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
-	"github.com/Azure/azure-storage-blob-go/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -66,11 +65,16 @@ type GCSConfig struct {
 	Prefix            string
 }
 
-// AzureConfig for Azure Blob Storage
+// AzureConfig for Azure Blob Storage.
+//
+// Authentication precedence (first match wins):
+//  1. SASToken  – shared access signature scoped to a container (recommended, least privilege)
+//  2. AccessKey – storage account key (full account access; discouraged)
 type AzureConfig struct {
 	Enabled   bool
 	Account   string
 	Container string
+	SASToken  string
 	AccessKey string
 	Prefix    string
 }
@@ -658,28 +662,77 @@ func (g *GCSStorage) GetLocation() string {
 // Azure Blob Storage Implementation
 
 type AzureStorage struct {
-	serviceURL azblob.ServiceURL
-	container  string
-	prefix     string
-	logger     *logrus.Logger
+	client    *azblob.Client
+	account   string
+	container string
+	prefix    string
+	logger    *logrus.Logger
 }
 
+// NewAzureStorage builds an Azure Blob client using the modern
+// github.com/Azure/azure-sdk-for-go/sdk/storage/azblob SDK.
+//
+// Auth precedence (first match wins): SAS token, then account key. At least one
+// must be configured. Using the account key logs a warning because it grants
+// full access to the whole storage account; a container-scoped SAS token is
+// preferred (least privilege).
 func NewAzureStorage(config AzureConfig, logger *logrus.Logger) (*AzureStorage, error) {
-	credential, err := azblob.NewSharedKeyCredential(config.Account, config.AccessKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure credentials: %w", err)
+	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", config.Account)
+
+	var client *azblob.Client
+	var err error
+
+	switch {
+	case config.SASToken != "":
+		// SAS token is appended to the service URL. Accept it with or without a
+		// leading '?' so operators can paste either form.
+		sas := strings.TrimPrefix(config.SASToken, "?")
+		client, err = azblob.NewClientWithNoCredential(serviceURL+"?"+sas, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure client with SAS token: %w", err)
+		}
+	case config.AccessKey != "":
+		if logger != nil {
+			logger.Warn("Azure Blob Storage nutzt Account Key Auth – SAS-Token wird empfohlen (least privilege).")
+		}
+		cred, credErr := azblob.NewSharedKeyCredential(config.Account, config.AccessKey)
+		if credErr != nil {
+			return nil, fmt.Errorf("failed to create Azure shared key credential: %w", credErr)
+		}
+		client, err = azblob.NewClientWithSharedKeyCredential(serviceURL, cred, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure client with shared key: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("azure storage requires an auth method: set SASToken or AccessKey")
 	}
 
-	p := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-	URL, _ := url.Parse(fmt.Sprintf("https://%s.blob.core.windows.net", config.Account))
-	serviceURL := azblob.NewServiceURL(*URL, p)
-
 	return &AzureStorage{
-		serviceURL: serviceURL,
-		container:  config.Container,
-		prefix:     config.Prefix,
-		logger:     logger,
+		client:    client,
+		account:   config.Account,
+		container: config.Container,
+		prefix:    config.Prefix,
+		logger:    logger,
 	}, nil
+}
+
+// blobLocation builds a credential-free azure:// location string from stored
+// values. It intentionally never derives from client.URL(), which would embed
+// the SAS token when SAS auth is used.
+func (a *AzureStorage) blobLocation(blobName string) string {
+	return fmt.Sprintf("azure://%s.blob.core.windows.net/%s/%s", a.account, a.container, blobName)
+}
+
+// blobNameFromLocation extracts the blob name (including any prefix path) from a
+// remote location produced by blobLocation.
+func (a *AzureStorage) blobNameFromLocation(remotePath string) string {
+	marker := fmt.Sprintf("/%s/", a.container)
+	if idx := strings.Index(remotePath, marker); idx >= 0 {
+		return remotePath[idx+len(marker):]
+	}
+	// Fall back to the trailing path segment for legacy/unknown formats.
+	parts := strings.Split(remotePath, "/")
+	return parts[len(parts)-1]
 }
 
 func (a *AzureStorage) Upload(localPath, backupID string) ([]string, error) {
@@ -690,46 +743,34 @@ func (a *AzureStorage) Upload(localPath, backupID string) ([]string, error) {
 	defer file.Close()
 
 	fileName := filepath.Base(localPath)
-	blobName := fmt.Sprintf("%s/%s", a.prefix, fileName)
-	if a.prefix == "" {
-		blobName = fileName
+	blobName := fileName
+	if a.prefix != "" {
+		blobName = fmt.Sprintf("%s/%s", a.prefix, fileName)
 	}
 
+	uploaded := time.Now().Format(time.RFC3339)
 	ctx := context.Background()
-	containerURL := a.serviceURL.NewContainerURL(a.container)
-	blobURL := containerURL.NewBlockBlobURL(blobName)
-
-	_, err = azblob.UploadFileToBlockBlob(ctx, file, blobURL, azblob.UploadToBlockBlobOptions{
-		BlockSize:   4 * 1024 * 1024,
-		Parallelism: 16,
-		Metadata: azblob.Metadata{
-			"backup_id": backupID,
-			"uploaded":  time.Now().Format(time.RFC3339),
+	_, err = a.client.UploadFile(ctx, a.container, blobName, file, &azblob.UploadFileOptions{
+		BlockSize: 4 * 1024 * 1024,
+		// Metadata keys must not contain hyphens; Azure rejects them with HTTP 400.
+		// Keep "backup_id" (underscore). See docs/upstream-patches.md Fix 1.
+		Metadata: map[string]*string{
+			"backup_id": &backupID,
+			"uploaded":  &uploaded,
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to upload to Azure: %w", err)
 	}
 
-	location := fmt.Sprintf("azure://%s/%s/%s", a.serviceURL.String(), a.container, blobName)
-	return []string{location}, nil
+	return []string{a.blobLocation(blobName)}, nil
 }
 
 func (a *AzureStorage) Download(remotePath, localPath string) error {
-	// Parse Azure path and extract blob name
-	// This is a simplified implementation
-	ctx := context.Background()
-	containerURL := a.serviceURL.NewContainerURL(a.container)
-
-	// Extract blob name from remote path
-	// Format: azure://account.blob.core.windows.net/container/blobname
-	parts := strings.Split(remotePath, "/")
-	if len(parts) < 2 {
+	blobName := a.blobNameFromLocation(remotePath)
+	if blobName == "" {
 		return fmt.Errorf("invalid Azure path: %s", remotePath)
 	}
-	blobName := strings.Join(parts[len(parts)-1:], "/")
-
-	blobURL := containerURL.NewBlockBlobURL(blobName)
 
 	outFile, err := os.Create(localPath)
 	if err != nil {
@@ -737,8 +778,8 @@ func (a *AzureStorage) Download(remotePath, localPath string) error {
 	}
 	defer outFile.Close()
 
-	err = azblob.DownloadBlobToFile(ctx, blobURL.BlobURL, 0, azblob.CountToEnd, outFile, azblob.DownloadFromBlobOptions{})
-	if err != nil {
+	ctx := context.Background()
+	if _, err := a.client.DownloadFile(ctx, a.container, blobName, outFile, nil); err != nil {
 		return fmt.Errorf("failed to download from Azure: %w", err)
 	}
 
@@ -749,32 +790,46 @@ func (a *AzureStorage) List() ([]StoredBackup, error) {
 	ctx := context.Background()
 	var backups []StoredBackup
 
-	containerURL := a.serviceURL.NewContainerURL(a.container)
+	var prefix *string
+	if a.prefix != "" {
+		prefix = &a.prefix
+	}
 
-	for marker := (azblob.Marker{}); marker.NotDone(); {
-		listBlob, err := containerURL.ListBlobsFlatSegment(ctx, marker, azblob.ListBlobsSegmentOptions{
-			Prefix: a.prefix,
-		})
+	pager := a.client.NewListBlobsFlatPager(a.container, &azblob.ListBlobsFlatOptions{
+		Prefix:  prefix,
+		Include: azblob.ListBlobsInclude{Metadata: true},
+	})
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list Azure blobs: %w", err)
 		}
+		if page.Segment == nil {
+			continue
+		}
 
-		marker = listBlob.NextMarker
-
-		for _, blobInfo := range listBlob.Segment.BlobItems {
-			creationTime := time.Time{}
-			if blobInfo.Properties.CreationTime != nil {
-				creationTime = *blobInfo.Properties.CreationTime
+		for _, blobInfo := range page.Segment.BlobItems {
+			if blobInfo == nil || blobInfo.Name == nil {
+				continue
 			}
+
 			backup := StoredBackup{
-				Path:        fmt.Sprintf("azure://%s/%s/%s", a.serviceURL.String(), a.container, blobInfo.Name),
-				Size:        *blobInfo.Properties.ContentLength,
-				CreatedAt:   creationTime,
+				Path:        a.blobLocation(*blobInfo.Name),
 				StorageType: "azure",
 			}
 
-			if blobInfo.Metadata["backup_id"] != "" {
-				backup.ID = blobInfo.Metadata["backup_id"]
+			if props := blobInfo.Properties; props != nil {
+				if props.ContentLength != nil {
+					backup.Size = *props.ContentLength
+				}
+				if props.CreationTime != nil {
+					backup.CreatedAt = *props.CreationTime
+				}
+			}
+
+			if id := blobInfo.Metadata["backup_id"]; id != nil && *id != "" {
+				backup.ID = *id
 			}
 
 			backups = append(backups, backup)
@@ -785,19 +840,13 @@ func (a *AzureStorage) List() ([]StoredBackup, error) {
 }
 
 func (a *AzureStorage) Delete(remotePath string) error {
-	// Extract blob name from remote path
-	parts := strings.Split(remotePath, "/")
-	if len(parts) < 2 {
+	blobName := a.blobNameFromLocation(remotePath)
+	if blobName == "" {
 		return fmt.Errorf("invalid Azure path: %s", remotePath)
 	}
-	blobName := strings.Join(parts[len(parts)-1:], "/")
 
 	ctx := context.Background()
-	containerURL := a.serviceURL.NewContainerURL(a.container)
-	blobURL := containerURL.NewBlockBlobURL(blobName)
-
-	_, err := blobURL.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
-	if err != nil {
+	if _, err := a.client.DeleteBlob(ctx, a.container, blobName, nil); err != nil {
 		return fmt.Errorf("failed to delete from Azure: %w", err)
 	}
 
@@ -805,7 +854,7 @@ func (a *AzureStorage) Delete(remotePath string) error {
 }
 
 func (a *AzureStorage) GetLocation() string {
-	return fmt.Sprintf("azure://%s", a.container)
+	return fmt.Sprintf("azure://%s.blob.core.windows.net/%s", a.account, a.container)
 }
 
 // Utility function to copy files

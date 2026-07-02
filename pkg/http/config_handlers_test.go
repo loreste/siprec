@@ -25,6 +25,10 @@ func newRedactionTestConfig() *config.Config {
 	cfg.Recording.Storage.S3.AccessKey = "s3-access"
 	cfg.Recording.Storage.S3.Bucket = "my-bucket"
 	cfg.Recording.Storage.GCS.ServiceAccountKey = "gcs-sa-key"
+	cfg.Recording.Storage.Azure.Account = "myaccount"
+	cfg.Recording.Storage.Azure.Container = "recordings"
+	cfg.Recording.Storage.Azure.SASToken = "azure-sas-secret"
+	cfg.Recording.Storage.Azure.AccessKey = "azure-account-key"
 	cfg.PauseResume.APIKey = "pause-key"
 	cfg.Network.ExternalIP = "203.0.113.10"
 	return cfg
@@ -47,6 +51,8 @@ func TestRedactConfigSecrets(t *testing.T) {
 		"Recording.Storage.S3.SecretKey":          redacted.Recording.Storage.S3.SecretKey,
 		"Recording.Storage.S3.AccessKey":          redacted.Recording.Storage.S3.AccessKey,
 		"Recording.Storage.GCS.ServiceAccountKey": redacted.Recording.Storage.GCS.ServiceAccountKey,
+		"Recording.Storage.Azure.SASToken":        redacted.Recording.Storage.Azure.SASToken,
+		"Recording.Storage.Azure.AccessKey":       redacted.Recording.Storage.Azure.AccessKey,
 		"PauseResume.APIKey":                      redacted.PauseResume.APIKey,
 	}
 	for field, value := range secretChecks {
@@ -115,6 +121,8 @@ func TestGetConfigHandlerRedactsSecrets(t *testing.T) {
 		"s3-secret",
 		"s3-access",
 		"gcs-sa-key",
+		"azure-sas-secret",
+		"azure-account-key",
 		"pause-key",
 	} {
 		if strings.Contains(body, secret) {

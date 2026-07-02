@@ -2,6 +2,26 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.3.0] - 2026-07-02
+
+### Added
+- **Azure SAS-Token Authentication**: Azure Blob recording storage can now authenticate with a
+  container-scoped SAS token via `RECORDING_STORAGE_AZURE_SAS_TOKEN`. This is the recommended,
+  least-privilege method — a SAS token can be limited to a single container with create/write
+  permissions and an expiry, unlike an account key which grants full access to the entire
+  storage account. See `docs/configuration.md` → "Azure Blob Storage Authentication".
+- **Azure Auth Validation**: Startup validation ensures exactly one Azure auth method is
+  configured when Azure storage is enabled, and logs a warning when the account key is used.
+
+### Changed
+- **Azure SDK Migration**: Replaced the deprecated `github.com/Azure/azure-storage-blob-go`
+  (v0.15.0, end-of-life) with the modern `github.com/Azure/azure-sdk-for-go/sdk/storage/azblob`.
+  Blob operations now use the client-based API. Existing deployments using
+  `RECORDING_STORAGE_AZURE_ACCESS_KEY` continue to work unchanged.
+
+### Removed
+- Dependencies `github.com/Azure/azure-storage-blob-go` and `github.com/Azure/azure-pipeline-go`.
+
 ## [1.2.4] - 2026-06-12
 
 ### Security

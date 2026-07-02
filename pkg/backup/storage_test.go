@@ -2,12 +2,117 @@ package backup
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// A recognizable secret embedded in a fake SAS token so leak tests can assert
+// it never surfaces in location strings.
+const fakeSASSecret = "SECRETSIGNATUREVALUE"
+
+func TestNewAzureStorage_SASToken(t *testing.T) {
+	az, err := NewAzureStorage(AzureConfig{
+		Enabled:   true,
+		Account:   "acct",
+		Container: "recordings",
+		SASToken:  "sv=2022-11-02&ss=b&srt=o&sp=cw&sig=" + fakeSASSecret,
+	}, logrus.New())
+
+	require.NoError(t, err)
+	require.NotNil(t, az.client)
+	assert.Equal(t, "acct", az.account)
+	assert.Equal(t, "recordings", az.container)
+}
+
+func TestNewAzureStorage_SASTokenWithLeadingQuestionMark(t *testing.T) {
+	az, err := NewAzureStorage(AzureConfig{
+		Enabled:   true,
+		Account:   "acct",
+		Container: "recordings",
+		SASToken:  "?sv=2022-11-02&sig=" + fakeSASSecret,
+	}, logrus.New())
+
+	require.NoError(t, err)
+	require.NotNil(t, az.client)
+}
+
+func TestNewAzureStorage_AccountKey(t *testing.T) {
+	// NewSharedKeyCredential requires a base64-decodable key.
+	az, err := NewAzureStorage(AzureConfig{
+		Enabled:   true,
+		Account:   "acct",
+		Container: "recordings",
+		AccessKey: "dGVzdGFjY291bnRrZXk=", // base64("testaccountkey")
+	}, logrus.New())
+
+	require.NoError(t, err)
+	require.NotNil(t, az.client)
+}
+
+func TestNewAzureStorage_NoAuthMethod(t *testing.T) {
+	_, err := NewAzureStorage(AzureConfig{
+		Enabled:   true,
+		Account:   "acct",
+		Container: "recordings",
+	}, logrus.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auth method")
+}
+
+func TestAzureStorage_LocationNeverLeaksSASToken(t *testing.T) {
+	az, err := NewAzureStorage(AzureConfig{
+		Enabled:   true,
+		Account:   "acct",
+		Container: "recordings",
+		Prefix:    "poc",
+		SASToken:  "sv=2022-11-02&sig=" + fakeSASSecret,
+	}, logrus.New())
+	require.NoError(t, err)
+
+	// GetLocation and per-blob locations must be built from stored values, never
+	// from client.URL() which would embed the SAS token.
+	loc := az.GetLocation()
+	blobLoc := az.blobLocation("poc/call-123.mp3")
+
+	for _, s := range []string{loc, blobLoc} {
+		assert.NotContains(t, s, fakeSASSecret, "location must not contain SAS signature")
+		assert.NotContains(t, s, "sig=", "location must not contain SAS query params")
+		assert.NotContains(t, s, "?", "location must not carry a query string")
+	}
+
+	assert.Equal(t, "azure://acct.blob.core.windows.net/recordings", loc)
+	assert.Equal(t, "azure://acct.blob.core.windows.net/recordings/poc/call-123.mp3", blobLoc)
+}
+
+func TestAzureStorage_BlobNameFromLocation(t *testing.T) {
+	az := &AzureStorage{account: "acct", container: "recordings"}
+
+	tests := []struct {
+		name     string
+		location string
+		expected string
+	}{
+		{"with prefix", "azure://acct.blob.core.windows.net/recordings/poc/call-1.mp3", "poc/call-1.mp3"},
+		{"no prefix", "azure://acct.blob.core.windows.net/recordings/call-2.mp3", "call-2.mp3"},
+		{"legacy trailing segment", "azure://recordings/call-3.mp3", "call-3.mp3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := az.blobNameFromLocation(tt.location)
+			assert.Equal(t, tt.expected, got)
+			// Round-trips with blobLocation for the canonical form.
+			if !strings.HasPrefix(tt.location, "azure://recordings/") {
+				assert.Equal(t, tt.location, az.blobLocation(got))
+			}
+		})
+	}
+}
 
 type dummyStorage struct {
 	location    string
