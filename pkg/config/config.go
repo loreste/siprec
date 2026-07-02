@@ -307,6 +307,9 @@ type RecordingAzureConfig struct {
 	Enabled   bool   `json:"enabled" env:"RECORDING_STORAGE_AZURE_ENABLED" default:"false"`
 	Account   string `json:"account" env:"RECORDING_STORAGE_AZURE_ACCOUNT"`
 	Container string `json:"container" env:"RECORDING_STORAGE_AZURE_CONTAINER"`
+	// SASToken is the preferred, least-privilege auth method (container-scoped, expiring).
+	SASToken string `json:"sas_token" env:"RECORDING_STORAGE_AZURE_SAS_TOKEN"`
+	// AccessKey grants full account access and is discouraged; kept for backwards compatibility.
 	AccessKey string `json:"access_key" env:"RECORDING_STORAGE_AZURE_ACCESS_KEY"`
 	Prefix    string `json:"prefix" env:"RECORDING_STORAGE_AZURE_PREFIX"`
 }
@@ -1711,6 +1714,7 @@ func loadRecordingConfig(logger *logrus.Logger, config *RecordingConfig) error {
 	config.Storage.Azure.Enabled = getEnvBool("RECORDING_STORAGE_AZURE_ENABLED", false)
 	config.Storage.Azure.Account = getEnv("RECORDING_STORAGE_AZURE_ACCOUNT", "")
 	config.Storage.Azure.Container = getEnv("RECORDING_STORAGE_AZURE_CONTAINER", "")
+	config.Storage.Azure.SASToken = getEnv("RECORDING_STORAGE_AZURE_SAS_TOKEN", "")
 	config.Storage.Azure.AccessKey = getEnv("RECORDING_STORAGE_AZURE_ACCESS_KEY", "")
 	config.Storage.Azure.Prefix = getEnv("RECORDING_STORAGE_AZURE_PREFIX", "")
 

@@ -263,8 +263,17 @@ export REDIS_PASSWORD=your-password
 | `RECORDING_STORAGE_GCS_ENABLED` | Enable GCS upload | `false` |
 | `RECORDING_STORAGE_GCS_BUCKET` | GCS bucket name | - |
 | `RECORDING_STORAGE_AZURE_ENABLED` | Enable Azure Blob upload | `false` |
-| `RECORDING_STORAGE_AZURE_ACCOUNT` | Azure storage account | - |
+| `RECORDING_STORAGE_AZURE_ACCOUNT` | Azure storage account name | - |
 | `RECORDING_STORAGE_AZURE_CONTAINER` | Azure blob container | - |
+| `RECORDING_STORAGE_AZURE_PREFIX` | Optional path prefix within the container | - |
+| `RECORDING_STORAGE_AZURE_SAS_TOKEN` | SAS token for auth (recommended, least privilege) | - |
+| `RECORDING_STORAGE_AZURE_ACCESS_KEY` | Account key for auth (discouraged — grants full account access) | - |
+
+Exactly one Azure auth method must be set when Azure storage is enabled: either a
+container-scoped SAS token (`RECORDING_STORAGE_AZURE_SAS_TOKEN`, preferred) or the storage
+account key (`RECORDING_STORAGE_AZURE_ACCESS_KEY`). See
+[docs/configuration.md](docs/configuration.md#azure-blob-storage-authentication) for how to
+generate a least-privilege SAS token.
 
 ### Messaging
 

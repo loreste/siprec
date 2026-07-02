@@ -178,6 +178,7 @@ func createRecordingStorage(logger *logrus.Logger, recCfg *config.RecordingConfi
 			Enabled:   true,
 			Account:   recCfg.Storage.Azure.Account,
 			Container: recCfg.Storage.Azure.Container,
+			SASToken:  recCfg.Storage.Azure.SASToken,
 			AccessKey: recCfg.Storage.Azure.AccessKey,
 			Prefix:    recCfg.Storage.Azure.Prefix,
 		}

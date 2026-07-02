@@ -276,6 +276,41 @@ func (v *ConfigValidator) validateStorageConfig(config *Config) {
 	if config.Recording.MaxDuration > 24*time.Hour {
 		v.addWarning("recording_max_duration", config.Recording.MaxDuration, "Very long max duration", "Consider shorter durations to prevent large files")
 	}
+
+	v.validateAzureStorageConfig(config)
+}
+
+// validateAzureStorageConfig validates the Azure Blob Storage backend for recordings.
+// Exactly one authentication method (SAS token or account key) must be configured
+// when Azure is enabled. Account-key auth is allowed but discouraged.
+func (v *ConfigValidator) validateAzureStorageConfig(config *Config) {
+	azure := config.Recording.Storage.Azure
+	if !azure.Enabled {
+		return
+	}
+
+	if azure.Account == "" {
+		v.addError("recording_azure_account", azure.Account, "required", "Azure storage account name is required when Azure storage is enabled")
+	}
+	if azure.Container == "" {
+		v.addError("recording_azure_container", azure.Container, "required", "Azure blob container is required when Azure storage is enabled")
+	}
+
+	hasSAS := azure.SASToken != ""
+	hasKey := azure.AccessKey != ""
+
+	switch {
+	case !hasSAS && !hasKey:
+		v.addError("recording_azure_auth", "", "required",
+			"Azure storage is enabled but no auth method is configured; set RECORDING_STORAGE_AZURE_SAS_TOKEN or RECORDING_STORAGE_AZURE_ACCESS_KEY")
+	case hasSAS && hasKey:
+		v.addError("recording_azure_auth", "", "conflict",
+			"Azure storage has both SAS token and account key configured; provide exactly one auth method")
+	case hasKey:
+		v.addWarning("recording_azure_access_key", "[set]",
+			"Azure storage uses account key auth, which grants full access to the entire storage account",
+			"Use a container-scoped SAS token (RECORDING_STORAGE_AZURE_SAS_TOKEN) for least privilege")
+	}
 }
 
 // validatePerformanceConfig validates performance-related configuration

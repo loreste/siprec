@@ -21,6 +21,7 @@ var secretFieldPatterns = []string{
 	"api_key",
 	"apikey",
 	"token",
+	"sas",
 	"credential",
 	"access_key",
 	"accesskey",
