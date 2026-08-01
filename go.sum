@@ -184,8 +184,8 @@ github.com/pidato/audio v0.0.0-20220728122954-3b00aadd47bd h1:7bWocbJ9GiVvv1CwQx
 github.com/pidato/audio v0.0.0-20220728122954-3b00aadd47bd/go.mod h1:9y4xaCZO243K9Y74KdugZ9NQ7WZV478N231Ei12f73M=
 github.com/pidato/unsafe v0.1.1 h1:1NpTIH/DwkUoyIIaDtZlPfPSGd75ziSykJgk4Ndl0P4=
 github.com/pidato/unsafe v0.1.1/go.mod h1:sRY67WUrdFnHJUhd2t7SH8dvqy47nVe00lbncNOEGkA=
-github.com/pion/dtls/v3 v3.0.11 h1:zqn8YhoAU7d9whsWLhNiQlbB8QdpJj8XQVSc5ImUons=
-github.com/pion/dtls/v3 v3.0.11/go.mod h1:YEmmBYIoBsY3jmG56dsziTv/Lca9y4Om83370CXfqJ8=
+github.com/pion/dtls/v3 v3.1.4 h1:QhvtMflMfu9Kf0RcDC5BJBle4caPskByrKQR6uuYqpY=
+github.com/pion/dtls/v3 v3.1.4/go.mod h1:cr/qotLISUw/9C1m83ZPNZtj9WnXkYLpfCptPqbkInc=
 github.com/pion/logging v0.2.2/go.mod h1:k0/tDVsRCX2Mb2ZEmTqNa7CWsQPc+YYCB7Q+5pahoms=
 github.com/pion/logging v0.2.4 h1:tTew+7cmQ+Mc1pTBLKH2puKsOvhm32dROumOZ655zB8=
 github.com/pion/logging v0.2.4/go.mod h1:DffhXTKYdNZU+KtJ5pyQDjvOAh/GsNSyv1lbkFbe3so=
