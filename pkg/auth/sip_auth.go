@@ -222,9 +222,14 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 	}
 }
 
-// generateChallenge creates a new authentication challenge
+// generateChallenge creates a new authentication challenge.
+// Returns empty string if nonce generation fails (fail closed).
 func (s *SIPAuthenticator) generateChallenge(clientIP string) string {
-	nonce := s.generateNonce(clientIP)
+	nonce, err := s.generateNonce(clientIP)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to generate auth challenge — refusing to issue weak nonce")
+		return ""
+	}
 
 	challenge := fmt.Sprintf(`Digest realm="%s", nonce="%s", algorithm=MD5, qop="auth"`,
 		s.realm, nonce)
@@ -233,12 +238,11 @@ func (s *SIPAuthenticator) generateChallenge(clientIP string) string {
 }
 
 // generateNonce creates a new nonce value using cryptographically strong randomness.
-func (s *SIPAuthenticator) generateNonce(clientIP string) string {
-	// Generate 32 bytes of cryptographic randomness — no predictable components
+// Returns an error if crypto/rand fails — callers must refuse to issue a challenge.
+func (s *SIPAuthenticator) generateNonce(clientIP string) (string, error) {
 	randomBytes := make([]byte, 32)
 	if _, err := rand.Read(randomBytes); err != nil {
-		// crypto/rand failure is a fatal system issue; fall back but log loudly
-		s.logger.WithError(err).Error("crypto/rand failed during nonce generation")
+		return "", fmt.Errorf("crypto/rand failed: %w", err)
 	}
 	hash := sha256.Sum256(randomBytes)
 	nonce := hex.EncodeToString(hash[:])
@@ -253,7 +257,7 @@ func (s *SIPAuthenticator) generateNonce(clientIP string) string {
 	}
 	s.mutex.Unlock()
 
-	return nonce
+	return nonce, nil
 }
 
 // validateNonce checks if a nonce is valid, not expired, and enforces nonce-count ordering.

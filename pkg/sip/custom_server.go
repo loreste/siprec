@@ -1154,19 +1154,23 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	}
 	mediaIP := s.resolveMediaIPAddress(message)
 
-	// Store call state with capacity guard to prevent unbounded map growth
-	const maxConcurrentCalls = 10000
+	// Store call state with capacity guard using the configured limit.
+	// Falls back to 10000 if not configured, to prevent unbounded map growth.
+	maxCalls := 10000
+	if s.handler != nil && s.handler.Config.MaxConcurrentCalls > 0 {
+		maxCalls = s.handler.Config.MaxConcurrentCalls
+	}
 	stored := func() bool {
 		s.callMutex.Lock()
 		defer s.callMutex.Unlock()
-		if len(s.callStates) >= maxConcurrentCalls {
+		if len(s.callStates) >= maxCalls {
 			return false
 		}
 		s.callStates[message.CallID] = callState
 		return true
 	}()
 	if !stored {
-		s.logger.Error("Max concurrent call limit reached, rejecting INVITE")
+		s.logger.WithField("limit", maxCalls).Error("Max concurrent call limit reached, rejecting INVITE")
 		s.sendResponse(message, 503, "Service Unavailable", nil, nil)
 		return
 	}

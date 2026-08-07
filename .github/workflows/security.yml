@@ -31,10 +31,19 @@ jobs:
       run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
     - name: Run govulncheck
-      # GO-2026-4479 in pion/dtls has no fix available yet (Fixed in: N/A)
-      # Using continue-on-error until upstream fix is released
-      continue-on-error: true
-      run: govulncheck ./...
+      run: |
+        # Run govulncheck and filter out known unfixed upstream advisories.
+        # GO-2026-4479 (pion/dtls) has no fix available yet.
+        # Stdlib vulns require Go runtime upgrade, not code changes.
+        govulncheck ./... 2>&1 | tee govulncheck.out || true
+        # Fail only on non-stdlib, non-suppressed vulnerabilities
+        if grep -q "^Vulnerability" govulncheck.out; then
+          # Check for module (non-stdlib) vulns that aren't the known dtls issue
+          if grep -A2 "^Vulnerability" govulncheck.out | grep "Module:" | grep -v "Standard library" | grep -v "GO-2026-4479"; then
+            echo "::error::Unfixed module vulnerability detected"
+            exit 1
+          fi
+        fi
 
   codeql:
     name: CodeQL Analysis
@@ -103,11 +112,17 @@ jobs:
     - name: Install gosec
       run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-    - name: Run gosec
+    - name: Run gosec (blocking — high/medium severity)
+      run: |
+        gosec -exclude=G115 -severity=medium -confidence=medium -fmt=text ./...
+
+    - name: Run gosec (SARIF upload — informational)
+      if: always()
       run: |
         gosec -no-fail -exclude=G115 -fmt sarif -out gosec-results.sarif ./...
 
     - name: Fix SARIF format
+      if: always()
       run: |
         # Fix invalid null relationships in SARIF output
         jq 'walk(if type == "object" and has("relationships") then
@@ -116,6 +131,7 @@ jobs:
         mv gosec-results-fixed.sarif gosec-results.sarif
 
     - name: Upload SARIF file
+      if: always()
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: gosec-results.sarif

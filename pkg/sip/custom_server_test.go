@@ -25,7 +25,7 @@ import (
 
 func TestHandleSubscribeRegistersCallback(t *testing.T) {
 	eventCh := make(chan NotificationEvent, 1)
-	callbackURL := "http://callback.local/notify"
+	callbackURL := "http://203.0.113.50/notify"
 
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)

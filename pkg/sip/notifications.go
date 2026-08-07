@@ -21,7 +21,8 @@ import (
 // maxEndpointsPerCall limits callback registrations to prevent resource exhaustion.
 const maxEndpointsPerCall = 32
 
-// validateCallbackURL rejects SSRF-prone callback URLs (private IPs, non-HTTP schemes).
+// validateCallbackURL rejects SSRF-prone callback URLs (private IPs, non-HTTP schemes,
+// DNS names that resolve to private addresses, and redirect-prone patterns).
 func validateCallbackURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -30,15 +31,52 @@ func validateCallbackURL(rawURL string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("unsupported callback scheme: %s", u.Scheme)
 	}
+
+	// Reject credentials in URL (prevents header injection via user:pass@host)
+	if u.User != nil {
+		return fmt.Errorf("credentials in callback URL not allowed")
+	}
+
 	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("empty hostname in callback URL")
+	}
+
+	// Block well-known internal hostnames
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") ||
+		strings.HasSuffix(lower, ".internal") || lower == "metadata.google.internal" {
+		return fmt.Errorf("callback to internal hostname blocked: %s", host)
+	}
+
+	// Resolve hostname and check all resulting IPs
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("callback to private/loopback IP blocked: %s", host)
+		if err := checkBlockedIP(ip); err != nil {
+			return err
 		}
-		// Block cloud metadata endpoint (169.254.169.254)
-		if ip.Equal(net.ParseIP("169.254.169.254")) {
-			return fmt.Errorf("callback to metadata endpoint blocked")
+	} else {
+		// DNS resolution — blocks DNS rebinding / redirect SSRF via hostname
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return fmt.Errorf("callback hostname DNS lookup failed: %w", err)
 		}
+		for _, ip := range ips {
+			if err := checkBlockedIP(ip); err != nil {
+				return fmt.Errorf("callback hostname %s resolves to blocked IP: %w", host, err)
+			}
+		}
+	}
+	return nil
+}
+
+// checkBlockedIP returns an error if the IP is private, loopback, link-local, or a cloud metadata address.
+func checkBlockedIP(ip net.IP) error {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return fmt.Errorf("callback to private/loopback IP blocked: %s", ip)
+	}
+	// Block cloud metadata endpoints
+	if ip.Equal(net.ParseIP("169.254.169.254")) || ip.Equal(net.ParseIP("fd00:ec2::254")) {
+		return fmt.Errorf("callback to metadata endpoint blocked")
 	}
 	return nil
 }
@@ -84,6 +122,10 @@ func NewMetadataNotifier(logger *logrus.Logger, endpoints []string, timeout time
 			DialContext: (&net.Dialer{
 				Timeout: 2 * time.Second,
 			}).DialContext,
+		},
+		// Disable redirects to prevent redirect-based SSRF
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
 

@@ -41,7 +41,7 @@ The server auto-detects which vendor sent the INVITE and extracts vendor-specifi
 
 The server speaks SIP over UDP, TCP, and TLS, with built-in NAT traversal via STUN. It parses RFC 7865/7866 SIPREC metadata, negotiates SDP, and records each RTP stream to disk. Sessions can be stored in memory for simple setups or in Redis when you need persistence and failover.
 
-Supported codecs include PCMU, PCMA, G.722, G.729 (via bcg729), Opus, and EVS. The audio pipeline handles jitter buffering, packet loss concealment, VAD, noise reduction, and automatic stereo merging of call legs. G.729 gets special treatment—each stream has its own decoder instance to avoid cross-call state leakage, and an oscillation detector catches synthesis filter instability after DTX gaps.
+Supported codecs include PCMU, PCMA, G.722, G.729 (via bcg729), and Opus. EVS frames are accepted but decoded with a simplified estimator — not a standards-compliant 3GPP decoder. The audio pipeline handles jitter buffering, packet loss concealment, VAD, noise reduction, and automatic stereo merging of call legs. G.729 gets special treatment—each stream has its own decoder instance to avoid cross-call state leakage, and an oscillation detector catches synthesis filter instability after DTX gaps.
 
 SSRC is locked from the first RTP packet on each port, so stale packets from recycled ports can't corrupt a new recording. If the locked source goes silent and a different SSRC shows sustained traffic, the server switches automatically.
 

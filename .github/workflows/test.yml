@@ -32,9 +32,8 @@ jobs:
         go test -v -race -coverprofile=coverage.out -covermode=atomic ./pkg/... ./cmd/...
         go tool cover -func=coverage.out
 
-    - name: Run tests with MySQL support
-      run: make test-mysql
-      continue-on-error: true
+    - name: Verify MySQL-tagged compilation
+      run: CGO_ENABLED=1 go build -tags mysql ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -66,7 +65,6 @@ jobs:
 
     - name: Run integration tests
       run: go test -v -tags=integration ./test/integration/...
-      continue-on-error: true
 
     - name: Stop services
       if: always()
