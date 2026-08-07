@@ -2,7 +2,28 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
-## [1.3.0] - 2026-07-02
+## [1.3.0] - 2026-08-07
+
+### Security
+- **XXE Protection**: SIPREC XML metadata parsing now uses a restricted decoder that rejects
+  entity expansion, preventing XML External Entity attacks.
+- **Dialog Hijacking Prevention**: BYE handler validates To-tag against the stored dialog tag
+  per RFC 3261 §12.2, blocking forged teardown attempts.
+- **SSRF Protection**: Callback URLs registered via SUBSCRIBE or SIPREC metadata are validated
+  against private IP ranges, loopback addresses, link-local addresses, and the cloud metadata
+  endpoint (169.254.169.254). Non-HTTP schemes are rejected.
+- **Timing Attack Mitigation**: SIP digest authentication response comparison replaced with
+  `crypto/subtle.ConstantTimeCompare`.
+- **Stronger Nonce Generation**: Auth nonces now use SHA-256 over 32 bytes of `crypto/rand`
+  instead of MD5 over a predictable timestamp-and-IP combination.
+- **Nonce Replay Prevention**: The nonce-count (`nc`) field is now validated as strictly
+  increasing, preventing replay of captured authentication exchanges.
+- **HTTP Security Headers**: All HTTP responses include `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'none'`, and
+  `Cache-Control: no-store`.
+- **Dependency Upgrades**: Updated `sipgo` v1.4.0 → v1.4.3, `grpc` v1.79.3 → v1.82.1
+  (xDS RBAC and HTTP/2 CVEs), `x/text` v0.38.0 → v0.39.0 (infinite loop on invalid input),
+  `pion/stun` v3.1.1 → v3.1.5 (remote DoS via malformed XOR-MAPPED-ADDRESS).
 
 ### Added
 - **Azure SAS-Token Authentication**: Azure Blob recording storage can now authenticate with a
@@ -12,12 +33,20 @@ All notable changes to IZI SIPREC will be documented in this file.
   storage account. See `docs/configuration.md` → "Azure Blob Storage Authentication".
 - **Azure Auth Validation**: Startup validation ensures exactly one Azure auth method is
   configured when Azure storage is enabled, and logs a warning when the account key is used.
+- **Resource Exhaustion Guards**:
+  - Concurrent call states capped at 10,000 (returns 503 when full).
+  - Callback endpoints capped at 32 per call.
+  - SIPREC session participants capped at 100.
+  - Multipart body parts read through `io.LimitReader` before size validation.
+  - Metadata notification dispatch bounded to 4 concurrent goroutines per event.
+  - HTTP notification transport configured with connection pooling limits and 2-second dial timeout.
 
 ### Changed
 - **Azure SDK Migration**: Replaced the deprecated `github.com/Azure/azure-storage-blob-go`
   (v0.15.0, end-of-life) with the modern `github.com/Azure/azure-sdk-for-go/sdk/storage/azblob`.
   Blob operations now use the client-based API. Existing deployments using
   `RECORDING_STORAGE_AZURE_ACCESS_KEY` continue to work unchanged.
+- **Go Version**: Minimum Go version bumped from 1.25 to 1.26.
 
 ### Removed
 - Dependencies `github.com/Azure/azure-storage-blob-go` and `github.com/Azure/azure-pipeline-go`.

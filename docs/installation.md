@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers installing IZI SIPREC v1.2.4 on various platforms.
+This guide covers installing IZI SIPREC v1.3.0 on various platforms.
 
 ## System Requirements
 
@@ -242,7 +242,7 @@ sudo firewall-cmd --reload
 curl http://localhost:8080/health
 
 # Expected response:
-# {"status":"healthy","version":"1.2.4",...}
+# {"status":"healthy","version":"1.3.0",...}
 
 # Using siprecctl
 siprecctl health
@@ -323,19 +323,21 @@ resources:
 
 ## Upgrading
 
-### From v1.1.x to v1.2.4
+### From v1.2.x to v1.3.0
 
-1. Stop the service:
+1. **Upgrade Go to 1.26+** (required — minimum version bumped from 1.25).
+
+2. Stop the service:
    ```bash
    sudo systemctl stop siprec-server
    ```
 
-2. Backup configuration:
+3. Backup configuration:
    ```bash
    cp /etc/siprec/config.yaml /etc/siprec/config.yaml.bak
    ```
 
-3. Build and install new version:
+4. Build and install new version:
    ```bash
    cd siprec
    git pull
@@ -343,12 +345,15 @@ resources:
    sudo cp siprec /usr/local/bin/
    ```
 
-4. Start the service:
+5. Start the service:
    ```bash
    sudo systemctl start siprec-server
    ```
 
-No configuration changes are required for v1.2.4. New features (SSRC validation, port cooldown, per-stream G.729 decoder) are enabled automatically.
+No configuration changes are required. Security hardening (XXE protection, dialog tag
+validation, SSRF blocking, auth improvements, resource limits) is applied automatically.
+Callback URLs pointing to private/loopback IPs will now be rejected — if you rely on
+localhost callbacks in development, use the actual host IP instead.
 
 ## Next Steps
 
