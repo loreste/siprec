@@ -105,10 +105,14 @@ func NewServer(logger *logrus.Logger, config *Config, metricsProvider MetricsPro
 		handler.ServeHTTP(w, r)
 	})
 
-	// Wrap handlers with middleware that adds Server header
+	// Wrap handlers with middleware that adds Server and security headers
 	addServerHeader := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Server", version.ServerHeader())
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Content-Security-Policy", "default-src 'none'")
+			w.Header().Set("Cache-Control", "no-store")
 			next(w, r)
 		}
 	}

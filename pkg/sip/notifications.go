@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +17,31 @@ import (
 
 	"github.com/sirupsen/logrus"
 )
+
+// maxEndpointsPerCall limits callback registrations to prevent resource exhaustion.
+const maxEndpointsPerCall = 32
+
+// validateCallbackURL rejects SSRF-prone callback URLs (private IPs, non-HTTP schemes).
+func validateCallbackURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid callback URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported callback scheme: %s", u.Scheme)
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("callback to private/loopback IP blocked: %s", host)
+		}
+		// Block cloud metadata endpoint (169.254.169.254)
+		if ip.Equal(net.ParseIP("169.254.169.254")) {
+			return fmt.Errorf("callback to metadata endpoint blocked")
+		}
+	}
+	return nil
+}
 
 // LeaderChecker is a function that returns true if this node is the cluster leader
 type LeaderChecker func() bool
@@ -49,6 +77,14 @@ func NewMetadataNotifier(logger *logrus.Logger, endpoints []string, timeout time
 
 	client := &http.Client{
 		Timeout: timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 2,
+			IdleConnTimeout:     90 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout: 2 * time.Second,
+			}).DialContext,
+		},
 	}
 
 	cleaned := make([]string, 0, len(endpoints))
@@ -78,8 +114,18 @@ func (n *MetadataNotifier) RegisterCallEndpoint(callID, endpoint string) {
 		return
 	}
 
+	if err := validateCallbackURL(trimmed); err != nil {
+		n.logger.WithError(err).WithField("endpoint", trimmed).Warn("Rejected callback URL")
+		return
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	if len(n.perCall[callID]) >= maxEndpointsPerCall {
+		n.logger.WithField("call_id", callID).Warn("Max callback endpoints per call reached")
+		return
+	}
 
 	n.perCall[callID] = append(n.perCall[callID], trimmed)
 }
@@ -175,10 +221,15 @@ func (n *MetadataNotifier) Notify(ctx context.Context, session *siprec.Recording
 		return
 	}
 
+	// Bounded concurrency to prevent goroutine bomb from many endpoints
+	sem := make(chan struct{}, 4)
 	for _, endpoint := range endpoints {
-		url := endpoint
-		// #nosec G118 -- goroutine receives parent context
-		go n.send(ctx, url, body)
+		ep := endpoint
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			n.send(ctx, ep, body)
+		}()
 	}
 }
 
