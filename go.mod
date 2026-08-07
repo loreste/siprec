@@ -87,7 +87,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pidato/unsafe v0.1.1 // indirect
-	github.com/pion/dtls/v3 v3.0.11 // indirect
+	github.com/pion/dtls/v3 v3.1.4 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/transport/v2 v2.2.4 // indirect
