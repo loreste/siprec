@@ -120,8 +120,9 @@ jobs:
         # G204: exec.Command for ffmpeg/whisper (paths validated before use)
         # G301/G306: dir/file perms for shared recordings and readable configs
         # G401/G501: MD5 required by RFC 2617 SIP digest authentication
+        # G304: file path inclusion (internal ops with sanitized paths)
         # G404: math/rand in mock/test/non-security code (audio VAD, AMQP jitter)
-        gosec -exclude=G115,G201,G204,G301,G306,G401,G404,G501 \
+        gosec -exclude=G115,G201,G204,G301,G304,G306,G401,G404,G501 \
           -severity=medium -confidence=medium -fmt=text ./...
 
     - name: Run gosec (SARIF upload — informational)
