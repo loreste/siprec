@@ -2,6 +2,11 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [1.3.1] - 2026-08-07
+
+### Fixed
+- **Dockerfile**: Updated base image from Go 1.25 to Go 1.26 to match the go.mod requirement.
+
 ## [1.3.0] - 2026-08-07
 
 ### Security
