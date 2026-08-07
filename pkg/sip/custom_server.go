@@ -1154,12 +1154,22 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 	}
 	mediaIP := s.resolveMediaIPAddress(message)
 
-	// Store call state
-	func() {
+	// Store call state with capacity guard to prevent unbounded map growth
+	const maxConcurrentCalls = 10000
+	stored := func() bool {
 		s.callMutex.Lock()
 		defer s.callMutex.Unlock()
+		if len(s.callStates) >= maxConcurrentCalls {
+			return false
+		}
 		s.callStates[message.CallID] = callState
+		return true
 	}()
+	if !stored {
+		s.logger.Error("Max concurrent call limit reached, rejecting INVITE")
+		s.sendResponse(message, 503, "Service Unavailable", nil, nil)
+		return
+	}
 
 	// Send 180 Ringing to establish dialog-state per RFC 3261
 	contactHeader := s.buildContactHeader(message)
@@ -2672,6 +2682,17 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 		return
 	}
 
+	// RFC 3261 §12.2: validate dialog tags to prevent hijacking
+	if callState.LocalTag != "" && message.ToTag != "" && message.ToTag != callState.LocalTag {
+		logger.WithFields(logrus.Fields{
+			"call_id":      message.CallID,
+			"expected_tag": callState.LocalTag,
+			"received_tag": message.ToTag,
+		}).Warn("BYE To-tag mismatch — possible dialog hijacking attempt")
+		s.sendResponse(message, 481, "Call/Transaction Does Not Exist", nil, nil)
+		return
+	}
+
 	if callState != nil {
 		logger.WithFields(logrus.Fields{
 			"call_state":  callState.State,
@@ -2956,12 +2977,21 @@ func (s *CustomSIPServer) handleSubscribeMessage(message *SIPMessage) {
 		return
 	}
 
+	// Validate callback URL to prevent SSRF
+	if err := validateCallbackURL(callbackURL); err != nil {
+		logger.WithError(err).Warn("SUBSCRIBE callback URL rejected")
+		s.sendResponse(message, 400, "Bad Request - Invalid Callback-URL", nil, nil)
+		return
+	}
+
 	if s.handler != nil && s.handler.Notifier != nil {
 		s.handler.Notifier.RegisterCallEndpoint(message.CallID, callbackURL)
 	}
 
 	if callState.RecordingSession != nil {
-		callState.RecordingSession.Callbacks = append(callState.RecordingSession.Callbacks, callbackURL)
+		if len(callState.RecordingSession.Callbacks) < maxEndpointsPerCall {
+			callState.RecordingSession.Callbacks = append(callState.RecordingSession.Callbacks, callbackURL)
+		}
 	}
 
 	callState.LastActivity = time.Now()
@@ -4176,8 +4206,9 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 		partType, _, _ := mime.ParseMediaType(ct)
 		partType = strings.ToLower(partType)
 
+		// Limit per-part reads to prevent unbounded allocation before size check
 		buf := bytes.NewBuffer(nil)
-		if _, err := io.Copy(buf, part); err != nil {
+		if _, err := io.Copy(buf, io.LimitReader(part, int64(security.MaxMetadataSize)+1)); err != nil {
 			s.logger.WithError(err).Warn("Failed to read multipart section")
 			continue
 		}
@@ -4210,9 +4241,12 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 
 // parseSiprecMetadata parses raw SIPREC metadata bytes into RSMetadata structure
 func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType string) (*siprec.RSMetadata, error) {
-	// Parse the XML metadata
+	// Parse the XML metadata using a decoder that rejects entity expansion (XXE protection)
 	var metadata siprec.RSMetadata
-	if err := xml.Unmarshal(rsMetadata, &metadata); err != nil {
+	decoder := xml.NewDecoder(bytes.NewReader(rsMetadata))
+	decoder.Strict = true
+	decoder.Entity = map[string]string{} // empty map disables entity expansion
+	if err := decoder.Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal SIPREC metadata XML: %w", err)
 	}
 
@@ -4324,8 +4358,13 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 		}
 	}
 
-	// Convert participants from metadata
+	// Convert participants from metadata (capped to prevent resource exhaustion)
+	const maxParticipants = 100
 	for _, rsParticipant := range metadata.Participants {
+		if len(session.Participants) >= maxParticipants {
+			s.logger.Warn("Max participants per session reached, skipping remainder")
+			break
+		}
 		participantID := strings.TrimSpace(rsParticipant.ID)
 		if participantID == "" {
 			participantID = strings.TrimSpace(rsParticipant.LegacyID)

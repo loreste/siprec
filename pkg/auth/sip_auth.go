@@ -3,8 +3,12 @@ package auth
 import (
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -170,7 +174,7 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 	}
 
 	// Validate nonce
-	if !s.validateNonce(creds.Nonce, clientIP) {
+	if !s.validateNonce(creds.Nonce, clientIP, creds.NC) {
 		s.logger.WithFields(logrus.Fields{
 			"username":  creds.Username,
 			"client_ip": clientIP,
@@ -188,8 +192,8 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 	// Calculate expected response
 	expectedResponse := s.calculateResponse(user.Password, method, uri, creds)
 
-	// Verify response
-	if creds.Response != expectedResponse {
+	// Verify response using constant-time comparison to prevent timing attacks
+	if subtle.ConstantTimeCompare([]byte(creds.Response), []byte(expectedResponse)) != 1 {
 		s.logger.WithFields(logrus.Fields{
 			"username":  creds.Username,
 			"client_ip": clientIP,
@@ -228,17 +232,16 @@ func (s *SIPAuthenticator) generateChallenge(clientIP string) string {
 	return challenge
 }
 
-// generateNonce creates a new nonce value
+// generateNonce creates a new nonce value using cryptographically strong randomness.
 func (s *SIPAuthenticator) generateNonce(clientIP string) string {
-	// Generate random bytes
-	randomBytes := make([]byte, 16)
-	_, _ = rand.Read(randomBytes)
-
-	// Create nonce with timestamp and random data
-	timestamp := time.Now().Unix()
-	data := fmt.Sprintf("%d:%s:%x", timestamp, clientIP, randomBytes)
-	hash := md5.Sum([]byte(data))
-	nonce := fmt.Sprintf("%x", hash)
+	// Generate 32 bytes of cryptographic randomness — no predictable components
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// crypto/rand failure is a fatal system issue; fall back but log loudly
+		s.logger.WithError(err).Error("crypto/rand failed during nonce generation")
+	}
+	hash := sha256.Sum256(randomBytes)
+	nonce := hex.EncodeToString(hash[:])
 
 	// Store nonce info
 	s.mutex.Lock()
@@ -253,8 +256,8 @@ func (s *SIPAuthenticator) generateNonce(clientIP string) string {
 	return nonce
 }
 
-// validateNonce checks if a nonce is valid and not expired
-func (s *SIPAuthenticator) validateNonce(nonce, clientIP string) bool {
+// validateNonce checks if a nonce is valid, not expired, and enforces nonce-count ordering.
+func (s *SIPAuthenticator) validateNonce(nonce, clientIP, nc string) bool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -274,8 +277,16 @@ func (s *SIPAuthenticator) validateNonce(nonce, clientIP string) bool {
 		return false
 	}
 
-	// Increment usage count
-	nonceInfo.Count++
+	// Enforce strictly increasing nonce-count to prevent replay attacks
+	if nc != "" {
+		ncVal, err := strconv.ParseInt(nc, 16, 64)
+		if err != nil || ncVal <= int64(nonceInfo.Count) {
+			return false
+		}
+		nonceInfo.Count = int(ncVal)
+	} else {
+		nonceInfo.Count++
+	}
 
 	return true
 }
