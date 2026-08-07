@@ -2,7 +2,7 @@
 
 > An open-source SIPREC recording server written in Go. Point your SBC at it, get recordings out.
 
-[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 [![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
 [![Scalability](https://img.shields.io/badge/Scale-Horizontally%20Scalable-orange.svg)](docs/cluster-configuration.md)
@@ -15,7 +15,7 @@ Beyond basic recording, it can also transcribe calls in real time (with your cho
 
 For larger deployments, multiple instances can share session state through Redis and scale horizontally behind a load balancer.
 
-**Version:** 1.2.4
+**Version:** 1.3.0
 
 ## Who is this for?
 
@@ -470,7 +470,7 @@ When recordings are uploaded to cloud storage, a sidecar `<recording>.locations`
 
 ### Requirements
 
-- Go 1.25+
+- Go 1.26+
 - Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
 
 ### G.729 Codec Support
@@ -778,6 +778,10 @@ Use `-t tn` instead of `-t t1` to avoid "Address already in use" errors under hi
 - GDPR data export and erasure APIs
 - TLS 1.2+ for SIP signaling, SRTP for media
 - AES-256-GCM recording encryption with key rotation
+- SIP digest auth hardened with constant-time comparison, SHA-256 nonces, and nonce-count replay prevention
+- XXE protection on all XML parsing, SSRF validation on callback URLs
+- HTTP security headers (CSP, X-Frame-Options, X-Content-Type-Options)
+- Resource exhaustion guards on concurrent calls, callbacks, and notification dispatch
 
 ## License
 
