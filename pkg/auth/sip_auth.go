@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 — required by RFC 2617 SIP digest authentication
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -284,10 +284,10 @@ func (s *SIPAuthenticator) validateNonce(nonce, clientIP, nc string) bool {
 	// Enforce strictly increasing nonce-count to prevent replay attacks
 	if nc != "" {
 		ncVal, err := strconv.ParseInt(nc, 16, 64)
-		if err != nil || ncVal <= int64(nonceInfo.Count) {
+		if err != nil || ncVal <= int64(nonceInfo.Count) || ncVal > 1<<31-1 {
 			return false
 		}
-		nonceInfo.Count = int(ncVal)
+		nonceInfo.Count = int(ncVal) // safe: bounded above by 1<<31-1
 	} else {
 		nonceInfo.Count++
 	}
