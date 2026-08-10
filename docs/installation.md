@@ -77,6 +77,7 @@ brew list bcg729
 git clone https://github.com/loreste/siprec.git
 cd siprec
 
+# Install libopus-dev (and pkg-config) in addition to bcg729 for Opus RTP decoding.
 # Build the server and CLI
 CGO_ENABLED=1 go build -o siprec ./cmd/siprec
 go build -o siprecctl ./cmd/siprecctl

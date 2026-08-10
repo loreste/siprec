@@ -71,6 +71,7 @@ func CombineWAVRecordingsAligned(outputPath string, legs []LegTiming) error {
 		return err
 	}
 
+	// #nosec G304 -- outputPath is an explicit caller-selected export destination.
 	outFile, err := os.Create(outputPath)
 	if err != nil {
 		return err

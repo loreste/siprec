@@ -544,7 +544,7 @@ func (w *WebhookChannel) Send(alert *ActiveAlert) error {
 		return fmt.Errorf("failed to marshal webhook payload: %w", err)
 	}
 
-	req, err := http.NewRequest(w.method, w.url, bytes.NewBuffer(jsonPayload))
+	req, err := http.NewRequest(w.method, w.url, bytes.NewBuffer(jsonPayload)) // #nosec G107 -- URL is the configured alert webhook endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create webhook request: %w", err)
 	}

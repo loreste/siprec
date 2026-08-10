@@ -368,6 +368,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 			}).Info("Encrypted recording session started")
 		} else {
 			filePath := filepath.Join(config.RecordingDir, fmt.Sprintf("%s.wav", sanitizedUUID))
+			// #nosec G304 -- sanitizedUUID is generated from the call identifier and contains no path separators.
 			forwarder.RecordingFile, err = os.Create(filePath)
 			if err != nil {
 				forwarder.Logger.WithError(err).WithField("call_uuid", callUUID).Error("Failed to create recording file")
@@ -534,9 +535,15 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 		// Per-stream G.729 decoder — scoped to this goroutine so there is no
 		// cross-call state leakage or data-race on the decoder internals.
 		var g729StreamDec *G729StreamDecoder
+		// Opus also carries predictor/overlap state and must not be recreated
+		// for every RTP packet. libopus supplies the actual decoder, FEC, and PLC.
+		var opusStreamDec *OpusStreamDecoder
 		defer func() {
 			if g729StreamDec != nil {
 				g729StreamDec.Close()
+			}
+			if opusStreamDec != nil {
+				opusStreamDec.Close()
 			}
 		}()
 
@@ -890,6 +897,7 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 				codecName = "PCMU"
 			}
 			isG729 := codecName == "G729" || codecName == "G.729" || codecName == "G729A"
+			isOpus := codecName == "OPUS" || codecName == "OPUS_MONO"
 
 			// ── PLC / gap handling ──────────────────────────────────────────
 			// Runs BEFORE decode so that the G.729 decoder's internal state is
@@ -942,6 +950,16 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 										} else if metrics.IsMetricsEnabled() {
 											metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
 										}
+									}
+								} else if opusStreamDec != nil && isOpus {
+									concealSamples := lost * int(expectedDelta)
+									concealPCM, concealErr := opusStreamDec.Conceal(concealSamples)
+									if concealErr != nil {
+										forwarder.Logger.WithError(concealErr).WithField("call_uuid", callUUID).Debug("Opus PLC failed")
+									} else if _, writeErr := recordingWriter.Write(concealPCM); writeErr != nil {
+										forwarder.Logger.WithError(writeErr).WithField("call_uuid", callUUID).Debug("Opus PLC write failed")
+									} else if metrics.IsMetricsEnabled() {
+										metrics.RecordRTPDroppedPackets("plc_concealed", float64(lost))
 									}
 								} else {
 									bytesPerPacket := lastDecodedPCMSize
@@ -1005,6 +1023,20 @@ func StartRTPForwarding(ctx context.Context, forwarder *RTPForwarder, callUUID s
 					g729StreamDec = NewG729StreamDecoder()
 				}
 				pcm, err = g729StreamDec.Decode(payload, rtpPacket.SSRC)
+			} else if isOpus {
+				if opusStreamDec == nil {
+					channels := currentChannels
+					if channels <= 0 {
+						channels = 2
+						if codecName == "OPUS_MONO" {
+							channels = 1
+						}
+					}
+					opusStreamDec, err = NewOpusStreamDecoder(sampleRate, channels)
+				}
+				if err == nil {
+					pcm, err = opusStreamDec.Decode(payload)
+				}
 			} else {
 				pcm, err = DecodeAudioPayload(payload, codecName)
 			}

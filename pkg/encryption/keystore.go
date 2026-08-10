@@ -270,6 +270,7 @@ func (fs *FileKeyStore) loadKey(keyID string) error {
 	keyDataFile := filepath.Join(fs.basePath, fmt.Sprintf("%s.keydata", keyID))
 
 	// Load key metadata
+	// #nosec G304 -- keyID comes from a directory entry under the configured keystore base path.
 	keyData, err := os.ReadFile(keyFile)
 	if err != nil {
 		return fmt.Errorf("failed to read key file: %w", err)
@@ -349,6 +350,7 @@ func (fs *FileKeyStore) storeKeyData(filename string, keyData []byte) error {
 }
 
 func (fs *FileKeyStore) loadKeyData(filename string) ([]byte, error) {
+	// #nosec G304 -- filename is an internal keystore path derived from the configured base path.
 	encryptedData, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key data file: %w", err)
@@ -400,6 +402,7 @@ func (fs *FileKeyStore) initializeDataKey() error {
 	dataKeyPath := filepath.Join(fs.basePath, ".data.key")
 
 	// Try to load existing encrypted data key
+	// #nosec G304 -- dataKeyPath is the fixed .data.key file below the configured keystore base path.
 	if encData, err := os.ReadFile(dataKeyPath); err == nil && len(encData) > 0 {
 		// Decrypt the data key using KMS
 		dataKey, err := fs.kmsProvider.DecryptDataKey(ctx, encData)

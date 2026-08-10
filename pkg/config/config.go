@@ -2790,7 +2790,7 @@ func getExternalIP(logger *logrus.Logger) string {
 	}
 
 	for _, service := range services {
-		resp, err := http.Get(service)
+		resp, err := http.Get(service) // #nosec G107 -- service is selected from a fixed allowlist of public IP lookup providers.
 		if err != nil {
 			continue
 		}

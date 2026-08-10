@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"context"
 	"io"
 	"net"
 	"testing"
@@ -90,6 +91,39 @@ func TestCallbackAllowsPublicIPs(t *testing.T) {
 		if err := validateCallbackURL(u); err != nil {
 			t.Errorf("expected %s to be allowed, got: %v", u, err)
 		}
+	}
+}
+
+func TestCallbackDialPinsValidatedAddress(t *testing.T) {
+	var dialedAddress string
+	resolver := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.7")}, nil
+	}
+	pipeA, pipeB := net.Pipe()
+	defer pipeA.Close()
+	defer pipeB.Close()
+
+	conn, err := dialCallbackContextWithResolverAndDialer(
+		context.Background(),
+		"tcp",
+		"example.test:443",
+		resolver,
+		func(_ context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" {
+				t.Errorf("expected tcp network, got %s", network)
+			}
+			dialedAddress = address
+			return pipeA, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("dialCallbackContextWithResolverAndDialer: %v", err)
+	}
+	if conn != pipeA {
+		t.Fatal("dialer returned a different connection")
+	}
+	if dialedAddress != "203.0.113.7:443" {
+		t.Fatalf("expected dial to approved IP, got %s", dialedAddress)
 	}
 }
 

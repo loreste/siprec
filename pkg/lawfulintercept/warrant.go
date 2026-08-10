@@ -141,7 +141,7 @@ func (wv *WarrantVerifier) verifyRemote(ctx context.Context, warrantID, targetID
 		return false, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, wv.endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, wv.endpoint, bytes.NewReader(body)) // #nosec G107 -- endpoint is the configured warrant-verification service.
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to create request: %w", err)
 	}

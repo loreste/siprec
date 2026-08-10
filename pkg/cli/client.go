@@ -53,7 +53,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		bodyReader = bytes.NewReader(jsonBody)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader) // #nosec G107 -- URL is the explicitly configured CLI server endpoint.
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}

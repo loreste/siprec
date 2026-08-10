@@ -1,19 +1,19 @@
 # SIPREC Cluster Configuration Guide
 
-This guide covers the high-availability and clustering features of SIPREC Server, enabling production deployments with redundancy, failover, and horizontal scaling.
+This guide covers the Redis-backed coordination and clustering features of SIPREC Server. Redis failover can preserve replicated session metadata, but an existing RTP flow cannot move seamlessly between nodes without SBC/signaling cooperation, load-balancer behavior, or an external media anchor.
 
 ## Overview
 
-SIPREC Server supports full clustering with the following capabilities:
+SIPREC Server exposes the following Redis-backed clustering capabilities; RTP continuity and migration remain experimental:
 
 | Feature | Description |
 |---------|-------------|
 | Redis Sentinel/Cluster | High-availability Redis with automatic failover |
-| RTP State Replication | Real-time sync of media stream state across nodes |
+| RTP State Replication | Experimental sync of media stream metadata across nodes |
 | Distributed Rate Limiting | Cluster-wide rate limits to prevent overload |
 | Split-Brain Detection | Network partition detection and fencing |
 | Distributed Tracing | Cross-node call flow tracing |
-| Stream Migration | Seamless RTP stream handoff between nodes |
+| Stream Migration | Experimental migration coordination hooks; not seamless RTP handoff |
 
 ## Redis Deployment Modes
 
@@ -88,7 +88,7 @@ cluster:
 2. Sentinels vote to confirm failure (quorum)
 3. Sentinel promotes replica to master
 4. SIPREC clients automatically reconnect
-5. Call sessions continue without interruption
+5. Replicated session metadata remains available; existing RTP continuity is not guaranteed
 
 **When to use**:
 - Production environments with 2+ SIPREC nodes
@@ -163,7 +163,7 @@ cluster:
 **What it does**:
 - Stores active stream metadata in Redis (codec, ports, SSRC, stats)
 - Enables any node to see all active calls
-- Supports stream migration during failover
+- Publishes metadata used by experimental migration coordination
 - Updates every 30 seconds + on significant events
 
 **Stored state**:
@@ -295,9 +295,9 @@ X-Parent-ID: 87654321
 
 ---
 
-### Stream Migration
+### Experimental Stream Migration
 
-Enables seamless handoff of RTP streams between nodes.
+Provides migration coordination hooks and state transfer. It does not itself move an existing RTP flow or guarantee seamless failover; the SBC, signaling path, load balancer, or an external media anchor must participate.
 
 ```yaml
 cluster:
@@ -343,11 +343,12 @@ cluster:
 # On node being retired:
 curl -X POST http://localhost:8080/admin/drain
 
-# SIPREC will:
+# SIPREC will attempt to coordinate migration state, but cannot move the
+# already-established RTP flow without external SBC/media-path cooperation:
 # 1. Stop accepting new calls
-# 2. Migrate all active streams to other nodes
-# 3. Wait for migrations to complete
-# 4. Shutdown cleanly
+# 2. Publish migration state and request a target node
+# 3. Wait for external SBC/signaling coordination before changing the media path
+# 4. Shutdown cleanly after the old stream is no longer active
 ```
 
 ---

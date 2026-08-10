@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -87,6 +89,11 @@ func TestMalformedNonceCount(t *testing.T) {
 	if auth.validateNonce(nonce, "10.0.0.1", "-1") {
 		t.Fatal("negative nc should be rejected")
 	}
+
+	// Values that would not fit the supported 32-bit deployment bound should fail.
+	if auth.validateNonce(nonce, "10.0.0.1", "80000000") {
+		t.Fatal("nonce count above 1<<31-1 should be rejected")
+	}
 }
 
 func TestNonceGenerationFailClosed(t *testing.T) {
@@ -101,10 +108,73 @@ func TestNonceGenerationFailClosed(t *testing.T) {
 		t.Fatal("nonce should not be empty")
 	}
 
-	// generateChallenge returns empty string on nonce failure (tested via interface)
+	// Force the entropy source to fail. Challenge generation must fail closed
+	// instead of issuing a predictable or empty nonce.
+	auth.randomReader = failingReader{}
 	challenge := auth.generateChallenge("10.0.0.1")
-	if challenge == "" {
-		t.Fatal("challenge should not be empty under normal conditions")
+	if challenge != "" {
+		t.Fatal("challenge should be empty when secure randomness fails")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy unavailable")
+}
+
+func TestFailedDigestDoesNotConsumeNonceCount(t *testing.T) {
+	auth := newTestAuthenticator()
+	uri := "sip:test@example.com"
+	nonce, err := auth.generateNonce("10.0.0.1")
+	if err != nil {
+		t.Fatalf("generateNonce failed: %v", err)
+	}
+
+	creds := &DigestCredentials{
+		Username:  "alice",
+		Realm:     "test",
+		Nonce:     nonce,
+		URI:       uri,
+		Algorithm: "MD5",
+		QOP:       "auth",
+		NC:        "00000001",
+		CNonce:    "client-nonce",
+	}
+	validResponse := auth.calculateResponse("secret123", "REGISTER", uri, creds)
+	header := `Digest username="alice", realm="test", nonce="` + nonce + `", uri="` + uri + `", response="bad", algorithm=MD5, qop=auth, nc=00000001, cnonce="client-nonce"`
+	if result := auth.Authenticate(header, "REGISTER", uri, "10.0.0.1"); result.Success {
+		t.Fatal("invalid digest response should fail")
+	}
+
+	header = `Digest username="alice", realm="test", nonce="` + nonce + `", uri="` + uri + `", response="` + validResponse + `", algorithm=MD5, qop=auth, nc=00000001, cnonce="client-nonce"`
+	if result := auth.Authenticate(header, "REGISTER", uri, "10.0.0.1"); !result.Success {
+		t.Fatalf("valid response should still be accepted after failed attempt: %s", result.Reason)
+	}
+}
+
+func TestDigestParserEnforcesRequestBinding(t *testing.T) {
+	auth := newTestAuthenticator()
+	uri := "sip:test@example.com"
+	base := `Digest username="alice", realm="test", nonce="nonce", uri="` + uri + `", response="response", algorithm=MD5, qop=auth, nc=00000001, cnonce="cnonce"`
+
+	if _, err := auth.parseDigestAuth(base, "sip:other@example.com"); err == nil {
+		t.Fatal("digest URI mismatch should be rejected")
+	}
+	if _, err := auth.parseDigestAuth(strings.Replace(base, "algorithm=MD5", "algorithm=SHA-256", 1), uri); err == nil {
+		t.Fatal("unsupported algorithm should be rejected")
+	}
+	if _, err := auth.parseDigestAuth(strings.Replace(base, "qop=auth", "qop=auth-int", 1), uri); err == nil {
+		t.Fatal("unsupported qop should be rejected")
+	}
+	if _, err := auth.parseDigestAuth(strings.Replace(base, "nc=00000001", "nc=1", 1), uri); err == nil {
+		t.Fatal("nonce count with fewer than eight digits should be rejected")
+	}
+	if _, err := auth.parseDigestAuth(strings.Replace(base, ", cnonce=\"cnonce\"", "", 1), uri); err == nil {
+		t.Fatal("missing cnonce should be rejected")
+	}
+	if _, err := auth.parseDigestAuth(strings.Replace(base, "realm=\"test\"", "realm=\"other\"", 1), uri); err == nil {
+		t.Fatal("realm mismatch should be rejected")
 	}
 }
 

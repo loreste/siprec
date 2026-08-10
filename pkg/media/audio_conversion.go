@@ -3,7 +3,6 @@ package media
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
 )
 
 var (
@@ -422,9 +421,10 @@ func (d *G722Decoder) qmfSynthesis(rlow, rhigh int) (int, int) {
 	return xout1 >> 11, xout2 >> 11
 }
 
-// =============================================================================
-// Opus Decoder - RFC 6716 compliant
-// =============================================================================
+/*
+// Opus decoding is implemented in opus_decoder_cgo.go using libopus. The
+// previous in-file approximation was removed because it did not implement
+// RFC 6716 and could turn malformed or arbitrary bytes into plausible PCM.
 
 // OpusFrameDecoder handles Opus frame decoding
 type OpusFrameDecoder struct {
@@ -914,6 +914,7 @@ func (br *bitReader) readBits(n int) int {
 	br.bitsAvail -= bitsRead
 	return result
 }
+*/
 
 // =============================================================================
 // Helper functions

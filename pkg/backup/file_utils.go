@@ -12,6 +12,7 @@ import (
 
 // ReadBackupFile reads a backup file, handling compression and encryption
 func ReadBackupFile(filePath string) ([]byte, error) {
+	// #nosec G304 -- filePath is an operator-selected backup file path handled by backup restore tooling.
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
@@ -116,6 +117,7 @@ func ValidateBackupFile(filePath string) error {
 	}
 
 	// Check if file is readable
+	// #nosec G304 -- filePath was just stat-checked and is an operator-selected backup file.
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("backup file is not readable: %w", err)

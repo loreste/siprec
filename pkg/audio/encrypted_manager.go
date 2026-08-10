@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"siprec-server/pkg/encryption"
 
@@ -79,13 +81,15 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 
 	// Create file paths
 	timestamp := time.Now().Format("20060102_150405")
-	fileName := fmt.Sprintf("%s_%s.siprec", sessionID, timestamp)
-	metadataFileName := fmt.Sprintf("%s_%s.metadata", sessionID, timestamp)
+	fileComponent := safeFileComponent(sessionID)
+	fileName := fmt.Sprintf("%s_%s.siprec", fileComponent, timestamp)
+	metadataFileName := fmt.Sprintf("%s_%s.metadata", fileComponent, timestamp)
 
 	filePath := filepath.Join(erm.recordingDir, fileName)
 	metadataPath := filepath.Join(erm.recordingDir, metadataFileName)
 
 	// Create recording file
+	// #nosec G304 -- filePath is joined below the configured recording directory and fileComponent cannot contain path separators or dot-only components.
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create recording file: %w", err)
@@ -149,6 +153,24 @@ func (erm *EncryptedRecordingManager) StartRecording(sessionID string, metadata 
 	}).Info("Started encrypted recording session")
 
 	return session, nil
+}
+
+func safeFileComponent(value string) string {
+	value = filepath.Base(strings.ReplaceAll(value, "\\", "/"))
+
+	var builder strings.Builder
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteByte('_')
+		}
+	}
+	component := strings.Trim(builder.String(), ".")
+	if component == "" {
+		return "session"
+	}
+	return component
 }
 
 // WriteAudio writes audio data to the encrypted recording
@@ -281,6 +303,7 @@ func (erm *EncryptedRecordingManager) storeMetadata(session *EncryptedRecordingS
 		metadataBytes = encryptedBytes
 	}
 
+	// #nosec G304 -- MetadataPath is created from the same sanitized session file component under the configured recording directory.
 	if err := os.WriteFile(session.MetadataPath, metadataBytes, 0600); err != nil {
 		return fmt.Errorf("failed to write metadata file: %w", err)
 	}

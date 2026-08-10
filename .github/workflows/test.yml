@@ -59,9 +59,8 @@ jobs:
 
     - name: Start services
       run: |
-        docker compose -f docker-compose.test.yml up -d
-        sleep 10
-      continue-on-error: true
+        docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 60
+        docker compose -f docker-compose.test.yml ps
 
     - name: Run integration tests
       run: go test -v -tags=integration ./test/integration/...
@@ -69,7 +68,6 @@ jobs:
     - name: Stop services
       if: always()
       run: docker compose -f docker-compose.test.yml down
-      continue-on-error: true
 
   e2e:
     name: E2E Tests

@@ -155,7 +155,7 @@ type DeepgramResponse struct {
 
 // StreamToText streams audio data to Deepgram
 func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	req, err := http.NewRequestWithContext(ctx, "POST", p.config.APIURL+"/v1/listen", audioStream)
+	req, err := http.NewRequestWithContext(ctx, "POST", p.config.APIURL+"/v1/listen", audioStream) // #nosec G107 -- URL is the configured Deepgram API endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

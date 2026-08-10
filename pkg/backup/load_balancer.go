@@ -157,7 +157,7 @@ func (lbm *LoadBalancerManager) haproxyServerAction(ctx context.Context, statsUR
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", statsURL, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", statsURL, bytes.NewBuffer(jsonData)) // #nosec G107 -- URL is the operator-configured HAProxy endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -216,7 +216,7 @@ func (lbm *LoadBalancerManager) haproxyFailover(ctx context.Context, serviceName
 func (lbm *LoadBalancerManager) getHAProxyStatus(ctx context.Context, serviceName string) ([]Backend, error) {
 	statsURL := fmt.Sprintf("%s/stats;csv", lbm.config.Endpoint)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", statsURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", statsURL, nil) // #nosec G107 -- URL is the operator-configured HAProxy endpoint.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -407,7 +407,7 @@ type NginxServer struct {
 func (lbm *LoadBalancerManager) getNginxUpstreamServers(ctx context.Context, serviceName string) ([]NginxServer, error) {
 	url := fmt.Sprintf("%s/api/6/http/upstreams/%s/servers", lbm.config.Endpoint, serviceName)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil) // #nosec G107 -- URL is the operator-configured NGINX endpoint.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -441,7 +441,7 @@ func (lbm *LoadBalancerManager) nginxAPIRequest(ctx context.Context, method, url
 		body = bytes.NewBuffer(jsonData)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, url, body) // #nosec G107 -- URL is the operator-configured load-balancer endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

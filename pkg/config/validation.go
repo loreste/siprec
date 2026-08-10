@@ -406,6 +406,7 @@ func (v *ConfigValidator) isWritableDirectory(path string) bool {
 
 	// Try to create a temporary file to test writability
 	testFile := filepath.Join(path, ".write_test")
+	// #nosec G304 -- path is the configured recording directory being validated.
 	file, err := os.Create(testFile)
 	if err != nil {
 		return false

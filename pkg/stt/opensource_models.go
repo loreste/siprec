@@ -213,7 +213,7 @@ func (p *OpenSourceModelProvider) testConnection() error {
 		healthURL = strings.TrimSuffix(healthURL, "/") + "/health"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil) // #nosec G107 -- URL is the configured local model health endpoint.
 	if err != nil {
 		return err
 	}
@@ -358,7 +358,7 @@ func (p *OpenSourceModelProvider) buildGenericRequest(ctx context.Context, audio
 		endpoint = "/" + endpoint
 	}
 	url := strings.TrimSuffix(p.config.BaseURL, "/") + endpoint
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf) // #nosec G107 -- URL is the configured local model endpoint.
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (p *OpenSourceModelProvider) buildOpenAICompatibleRequest(ctx context.Conte
 	}
 
 	url := strings.TrimSuffix(p.config.BaseURL, "/") + "/v1/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf) // #nosec G107 -- URL is the configured local model endpoint.
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (p *OpenSourceModelProvider) buildTritonRequest(ctx context.Context, audioD
 	}
 
 	url := fmt.Sprintf("%s/v2/models/%s/infer", strings.TrimSuffix(p.config.BaseURL, "/"), p.config.ModelName)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData)) // #nosec G107 -- URL is the configured local model endpoint.
 	if err != nil {
 		return nil, err
 	}

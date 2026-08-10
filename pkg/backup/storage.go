@@ -386,6 +386,7 @@ func NewS3Storage(config S3Config, logger *logrus.Logger) (*S3Storage, error) {
 }
 
 func (s *S3Storage) Upload(localPath, backupID string) ([]string, error) {
+	// #nosec G304 -- localPath is an operator-selected backup artifact uploaded to configured S3 storage.
 	file, err := os.Open(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local file: %w", err)
@@ -433,6 +434,7 @@ func (s *S3Storage) Download(remotePath, localPath string) error {
 	}
 	defer result.Body.Close()
 
+	// #nosec G304 -- localPath is the operator-selected restore destination for the downloaded S3 object.
 	outFile, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
@@ -539,6 +541,7 @@ func NewGCSStorage(config GCSConfig, logger *logrus.Logger) (*GCSStorage, error)
 
 func (g *GCSStorage) Upload(localPath, backupID string) ([]string, error) {
 	ctx := context.Background()
+	// #nosec G304 -- localPath is an operator-selected backup artifact uploaded to configured GCS storage.
 	file, err := os.Open(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local file: %w", err)
@@ -589,6 +592,7 @@ func (g *GCSStorage) Download(remotePath, localPath string) error {
 	}
 	defer reader.Close()
 
+	// #nosec G304 -- localPath is the operator-selected restore destination for the downloaded GCS object.
 	outFile, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
@@ -736,6 +740,7 @@ func (a *AzureStorage) blobNameFromLocation(remotePath string) string {
 }
 
 func (a *AzureStorage) Upload(localPath, backupID string) ([]string, error) {
+	// #nosec G304 -- localPath is an operator-selected backup artifact uploaded to configured Azure Blob storage.
 	file, err := os.Open(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open local file: %w", err)
@@ -772,6 +777,7 @@ func (a *AzureStorage) Download(remotePath, localPath string) error {
 		return fmt.Errorf("invalid Azure path: %s", remotePath)
 	}
 
+	// #nosec G304 -- localPath is the operator-selected restore destination for the downloaded Azure blob.
 	outFile, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("failed to create local file: %w", err)
@@ -859,12 +865,14 @@ func (a *AzureStorage) GetLocation() string {
 
 // Utility function to copy files
 func copyFile(src, dst string) error {
+	// #nosec G304 -- src is an operator-selected local backup path copied by the local storage backend.
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
+	// #nosec G304 -- dst is the paired operator-selected restore destination for the local storage backend.
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err

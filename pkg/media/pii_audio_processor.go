@@ -87,6 +87,7 @@ func (p *PIIAudioProcessor) ProcessRecording(inputPath, outputPath string, inter
 	}).Info("Processing audio for PII redaction")
 
 	// Open input file
+	// #nosec G304 -- inputPath and outputPath are explicit recording paths supplied to this offline processing API.
 	inputFile, err := os.Open(inputPath)
 	if err != nil {
 		return fmt.Errorf("failed to open input file: %w", err)
@@ -102,6 +103,7 @@ func (p *PIIAudioProcessor) ProcessRecording(inputPath, outputPath string, inter
 	totalDuration := p.bytesToDuration(totalBytes)
 
 	// Create output file
+	// #nosec G304 -- outputPath is an explicit recording destination supplied to this offline processing API.
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
@@ -311,12 +313,14 @@ func minDuration(a, b time.Duration) time.Duration {
 }
 
 func copyFile(src, dst string) error {
+	// #nosec G304 -- this internal helper copies caller-selected recording paths and does not consume network-controlled names.
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
+	// #nosec G304 -- dst is the explicit destination paired with src by the caller.
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err

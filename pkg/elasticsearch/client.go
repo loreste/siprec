@@ -94,7 +94,7 @@ func (c *Client) IndexDocument(ctx context.Context, index string, id string, bod
 	addr := c.nextAddress()
 	endpoint := fmt.Sprintf("%s/%s/_doc/%s", addr, strings.TrimPrefix(index, "/"), id)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(payload)) // #nosec G107 -- endpoint is built from validated Elasticsearch configuration.
 	if err != nil {
 		return fmt.Errorf("elasticsearch: failed to create request: %w", err)
 	}

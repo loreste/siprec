@@ -121,7 +121,7 @@ func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader
 		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, pr)
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, pr) // #nosec G107 -- URL is the configured OpenAI-compatible API endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create OpenAI request: %w", err)
 	}

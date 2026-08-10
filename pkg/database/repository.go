@@ -683,6 +683,7 @@ func (r *Repository) FullTextSearch(query string, entityTypes []string, limit, o
 	fullQuery += " ORDER BY relevance DESC"
 
 	// Get total count
+	// #nosec G201 -- fullQuery is assembled only from the static UNION fragments above; user input is always passed as SQL arguments.
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM (%s) as search_results", fullQuery)
 	var total int
 	err := r.db.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)

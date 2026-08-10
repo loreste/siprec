@@ -21,6 +21,7 @@ type WAVReader struct {
 
 // NewWAVReader opens a WAV file for streaming reads.
 func NewWAVReader(path string) (*WAVReader, error) {
+	// #nosec G304 -- callers explicitly provide the recording path to be opened; this helper does not derive paths from request data.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
