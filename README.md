@@ -6,6 +6,9 @@
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 [![SIPREC](https://img.shields.io/badge/SIPREC-RFC%207865%2F7866-green.svg)](https://datatracker.ietf.org/doc/html/rfc7865)
 [![Scalability](https://img.shields.io/badge/Scale-Horizontally%20Scalable-orange.svg)](docs/cluster-configuration.md)
+[![Tests](https://github.com/loreste/siprec/actions/workflows/test.yml/badge.svg)](https://github.com/loreste/siprec/actions/workflows/test.yml)
+[![Security](https://github.com/loreste/siprec/actions/workflows/security.yml/badge.svg)](https://github.com/loreste/siprec/actions/workflows/security.yml)
+[![Docker Build](https://github.com/loreste/siprec/actions/workflows/docker.yml/badge.svg)](https://github.com/loreste/siprec/actions/workflows/docker.yml)
 
 ## Overview
 
@@ -86,6 +89,13 @@ Pause and resume recording mid-call via REST API, or submit async transcription 
 ```bash
 git clone https://github.com/loreste/siprec.git
 cd siprec
+
+# Native codec dependencies are required for CGO builds.
+# Ubuntu/Debian:
+sudo apt-get install libopus-dev pkg-config libbcg729-dev
+
+# macOS:
+brew install opus pkg-config bcg729
 
 # Run with default configuration (SIP on 0.0.0.0:5060, HTTP on :8080)
 go run ./cmd/siprec
@@ -471,6 +481,8 @@ When recordings are uploaded to cloud storage, a sidecar `<recording>.locations`
 ### Requirements
 
 - Go 1.26+
+- libopus development headers and `pkg-config` for Opus RTP decoding
+- Optional: bcg729 development headers for G.729 decoding
 - Optional: Docker, RabbitMQ, Redis, MySQL, Elasticsearch
 
 ### G.729 Codec Support
