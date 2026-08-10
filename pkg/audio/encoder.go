@@ -111,6 +111,7 @@ func (e *AudioEncoder) EncodeStream(output io.WriteCloser) (io.WriteCloser, erro
 
 // isFFmpegAvailable checks if FFmpeg is available
 func (e *AudioEncoder) isFFmpegAvailable() bool {
+	// #nosec G204 -- FFmpegPath is an operator-configured executable and exec.Command does not invoke a shell.
 	cmd := exec.Command(e.config.FFmpegPath, "-version")
 	return cmd.Run() == nil
 }
@@ -161,6 +162,7 @@ func (e *AudioEncoder) encodeWithFFmpeg(inputPath, outputPath string) error {
 
 	args = append(args, outputPath)
 
+	// #nosec G204 -- FFmpegPath and the argument list are constructed from validated encoder configuration and file paths; no shell is used.
 	cmd := exec.Command(e.config.FFmpegPath, args...)
 
 	output, err := cmd.CombinedOutput()
@@ -218,6 +220,7 @@ func (e *AudioEncoder) createStreamEncoder(output io.WriteCloser) (io.WriteClose
 
 	args = append(args, "pipe:1") // Write to stdout
 
+	// #nosec G204 -- FFmpegPath and the argument list are constructed from validated encoder configuration; no shell is used.
 	cmd := exec.Command(e.config.FFmpegPath, args...)
 
 	stdin, err := cmd.StdinPipe()
@@ -336,12 +339,14 @@ func copyFile(src, dst string) error {
 		return nil
 	}
 
+	// #nosec G304 -- src is an explicit local audio file selected by the caller; this helper does not derive paths from request data.
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
+	// #nosec G304 -- dst is the paired caller-selected destination for the local audio copy.
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err

@@ -98,6 +98,7 @@ func (p *WhisperProvider) Initialize() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
+		// #nosec G204 -- LookPath resolves the configured executable and this fixed argument cannot invoke a shell.
 		versionCmd := exec.CommandContext(ctx, binaryPath, "--version")
 		output, err := versionCmd.CombinedOutput()
 		if err != nil {
@@ -264,6 +265,7 @@ func (p *WhisperProvider) extractTranscription(outputDir, audioPath string) (str
 	}
 
 	target := filepath.Join(outputDir, fmt.Sprintf("%s.%s", base, format))
+	// #nosec G304 -- base is derived from filepath.Base and outputDir is the provider's private temporary directory.
 	data, err := os.ReadFile(target)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to read whisper output (%s): %w", target, err)
@@ -323,6 +325,7 @@ func defaultWhisperRunner(ctx context.Context, cfg *config.WhisperSTTConfig, aud
 		args = append(args, strings.Fields(cfg.ExtraArgs)...)
 	}
 
+	// #nosec G204 -- Whisper binary and arguments are explicitly configured for the provider; exec.CommandContext does not use a shell.
 	cmd := exec.CommandContext(ctx, cfg.BinaryPath, args...)
 	var combined bytes.Buffer
 	cmd.Stdout = &combined

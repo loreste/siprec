@@ -490,7 +490,7 @@ func (p *DeepgramProviderEnhanced) streamWithHTTPRetry(ctx context.Context, audi
 
 // streamWithHTTP handles HTTP-based streaming (fallback)
 func (p *DeepgramProviderEnhanced) streamWithHTTP(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	req, err := http.NewRequestWithContext(ctx, "POST", p.apiURL, audioStream)
+	req, err := http.NewRequestWithContext(ctx, "POST", p.apiURL, audioStream) // #nosec G107 -- URL is the configured Deepgram API endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

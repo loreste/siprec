@@ -11,7 +11,9 @@ RUN apk add --no-cache \
     gcc \
     g++ \
     musl-dev \
-    cmake
+    cmake \
+    pkgconf \
+    opus-dev
 
 # Build bcg729 from source for G.729 codec support
 # Try GitHub mirror first (more reliable), fall back to upstream GitLab
@@ -78,7 +80,8 @@ RUN apk add --no-cache \
     curl \
     jq \
     libstdc++ \
-    libgcc
+    libgcc \
+    opus
 
 # Copy bcg729 shared library from builder
 COPY --from=builder /usr/lib/libbcg729.so* /usr/lib/

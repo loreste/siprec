@@ -148,7 +148,7 @@ func (p *ElevenLabsProvider) StreamToText(ctx context.Context, audioStream io.Re
 		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, pr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, pr) // #nosec G107 -- URL is the configured ElevenLabs API endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create ElevenLabs request: %w", err)
 	}

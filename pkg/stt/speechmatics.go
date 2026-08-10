@@ -146,7 +146,7 @@ func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.
 		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jobURL, pr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jobURL, pr) // #nosec G107 -- vendor API URL is derived from configured Speechmatics endpoint.
 	if err != nil {
 		return fmt.Errorf("failed to create Speechmatics request: %w", err)
 	}
@@ -230,7 +230,7 @@ func (p *SpeechmaticsProvider) SetCallback(callback TranscriptionCallback) {
 func (p *SpeechmaticsProvider) fetchTranscript(ctx context.Context, baseURL, jobID string) (string, error) {
 	transcriptURL := strings.TrimRight(baseURL, "/") + path.Clean("/jobs/"+jobID+"/transcript?format=txt")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, transcriptURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, transcriptURL, nil) // #nosec G107 -- vendor API URL is derived from configured Speechmatics endpoint.
 	if err != nil {
 		return "", fmt.Errorf("failed to create Speechmatics transcript request: %w", err)
 	}

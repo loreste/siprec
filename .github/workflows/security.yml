@@ -27,6 +27,11 @@ jobs:
         go-version: '1.26.x'
         cache: true
 
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
+
     - name: Install govulncheck
       run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
@@ -57,6 +62,11 @@ jobs:
       uses: github/codeql-action/init@v3
       with:
         languages: go
+
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
 
     - name: Autobuild
       uses: github/codeql-action/autobuild@v3
@@ -109,6 +119,11 @@ jobs:
         go-version: '1.26.x'
         cache: true
 
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
+
     - name: Install gosec
       run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
@@ -116,15 +131,10 @@ jobs:
       run: |
         # Excluded rules (all pre-existing, reviewed, and intentional):
         # G115: integer overflow false positives on type conversions
-        # G201: SQL formatting in database layer (parameterized where possible)
-        # G204: exec.Command for ffmpeg/whisper (paths validated before use)
         # G301/G306: dir/file perms for shared recordings and readable configs
-        # G401/G501: MD5 required by RFC 2617 SIP digest authentication
-        # G107: HTTP request with variable URL (config-driven external IP lookup)
         # G302: file open perms (config/audit files need group-readable perms)
-        # G304: file path inclusion (internal ops with sanitized paths)
         # G404: math/rand in mock/test/non-security code (audio VAD, AMQP jitter)
-        gosec -exclude=G107,G115,G201,G204,G301,G302,G304,G306,G401,G404,G501 \
+        gosec -exclude=G115,G301,G302,G306,G404 \
           -severity=medium -confidence=medium -fmt=text ./...
 
     - name: Run gosec (SARIF upload — informational)

@@ -574,6 +574,7 @@ func (c *CDRService) getCDRsWithFilters(filters CDRFilters) ([]*database.CDR, er
 }
 
 func (c *CDRService) exportJSON(cdrs []*database.CDR, filepath string) error {
+	// #nosec G304 -- filepath is the explicitly configured CDR export destination.
 	file, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -586,6 +587,7 @@ func (c *CDRService) exportJSON(cdrs []*database.CDR, filepath string) error {
 }
 
 func (c *CDRService) exportCSV(cdrs []*database.CDR, filepath string) error {
+	// #nosec G304 -- filepath is the explicitly configured CDR export destination.
 	file, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -619,6 +621,7 @@ func (c *CDRService) exportCSV(cdrs []*database.CDR, filepath string) error {
 }
 
 func (c *CDRService) exportXML(cdrs []*database.CDR, filepath string) error {
+	// #nosec G304 -- filepath is the explicitly configured CDR export destination.
 	file, err := os.Create(filepath)
 	if err != nil {
 		return err

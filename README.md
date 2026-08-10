@@ -41,7 +41,7 @@ The server auto-detects which vendor sent the INVITE and extracts vendor-specifi
 
 The server speaks SIP over UDP, TCP, and TLS, with built-in NAT traversal via STUN. It parses RFC 7865/7866 SIPREC metadata, negotiates SDP, and records each RTP stream to disk. Sessions can be stored in memory for simple setups or in Redis when you need persistence and failover.
 
-Supported codecs include PCMU, PCMA, G.722, G.729 (via bcg729), and Opus. EVS frames are accepted but decoded with a simplified estimator — not a standards-compliant 3GPP decoder. The audio pipeline handles jitter buffering, packet loss concealment, VAD, noise reduction, and automatic stereo merging of call legs. G.729 gets special treatment—each stream has its own decoder instance to avoid cross-call state leakage, and an oscillation detector catches synthesis filter instability after DTX gaps.
+Supported production codecs include PCMU, PCMA, G.729 (via bcg729), and Opus via the reference libopus decoder. G.722 currently uses an in-tree decoder that still requires ITU-T reference-vector validation and should be treated as experimental. EVS frames are accepted but decoded with a simplified estimator — not a standards-compliant 3GPP decoder — and are not suitable for production recording. The audio pipeline handles jitter buffering, packet loss concealment, VAD, noise reduction, and automatic stereo merging of call legs. G.729 and Opus each use a per-stream decoder instance to avoid cross-call state leakage.
 
 SSRC is locked from the first RTP packet on each port, so stale packets from recycled ports can't corrupt a new recording. If the locked source goes silent and a different SSRC shows sustained traffic, the server switches automatically.
 
@@ -71,7 +71,7 @@ Upload recordings to S3, Google Cloud Storage, or Azure Blob Storage—or all th
 
 ### Scaling
 
-Multiple SIPREC nodes can share session state through Redis (standalone, Sentinel, or Cluster mode). The cluster supports RTP state replication, distributed rate limiting, split-brain detection, and live stream migration between nodes. See the [Cluster Configuration Guide](docs/cluster-configuration.md).
+Multiple SIPREC nodes can share session state through Redis (standalone, Sentinel, or Cluster mode). The cluster provides Redis-backed state replication, distributed rate limiting, and split-brain controls. RTP state replication and stream migration are experimental coordination hooks; they do not provide seamless live RTP failover without SBC/signaling or an external media anchor. See the [Cluster Configuration Guide](docs/cluster-configuration.md).
 
 Worker pools auto-size based on available CPUs, and you can set memory limits with automatic GC tuning.
 
@@ -517,6 +517,14 @@ github.com/pidato/audio/g729: build constraints exclude all Go files
 ```
 
 **Cross-compilation note:** When cross-compiling (e.g., Linux binary on macOS), you need bcg729 compiled for the target platform. The easiest approach is to build directly on the target Linux server.
+
+### Opus Codec Support
+
+Opus RTP decoding uses libopus through a stateful CGO wrapper. Native builds require libopus development headers and `pkg-config`; CGO-disabled builds return an explicit error instead of using an approximate decoder.
+
+**Ubuntu/Debian:** `sudo apt-get install libopus-dev pkg-config`
+
+**macOS:** `brew install opus pkg-config`
 
 ### Build Tags
 

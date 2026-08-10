@@ -24,6 +24,11 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache: true
 
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
+
     - name: Download dependencies
       run: go mod download
 
@@ -57,11 +62,15 @@ jobs:
         go-version: '1.26.x'
         cache: true
 
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
+
     - name: Start services
       run: |
-        docker compose -f docker-compose.test.yml up -d
-        sleep 10
-      continue-on-error: true
+        docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 60
+        docker compose -f docker-compose.test.yml ps
 
     - name: Run integration tests
       run: go test -v -tags=integration ./test/integration/...
@@ -69,7 +78,6 @@ jobs:
     - name: Stop services
       if: always()
       run: docker compose -f docker-compose.test.yml down
-      continue-on-error: true
 
   e2e:
     name: E2E Tests
@@ -88,7 +96,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake build-essential
+        sudo apt-get install -y cmake build-essential libopus-dev pkg-config
 
     - name: Build application
       run: make build
@@ -153,6 +161,11 @@ jobs:
         go-version: '1.26.x'
         cache: true
 
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
+
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:
@@ -173,6 +186,11 @@ jobs:
       with:
         go-version: '1.26.x'
         cache: true
+
+    - name: Install native codec dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopus-dev pkg-config
 
     - name: Run benchmarks
       run: go test -bench=. -benchmem ./pkg/...

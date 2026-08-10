@@ -233,8 +233,15 @@ func (cp *CredentialProvider) getFromKubernetesSecret(name string) (string, erro
 		return "", fmt.Errorf("not running in Kubernetes environment")
 	}
 
+	// Secret names are single path components. This prevents a caller-controlled
+	// name from escaping the mounted credential directory.
+	if name == "" || filepath.Base(name) != name || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid Kubernetes secret name")
+	}
+
 	// Look for mounted secret files
-	secretPath := fmt.Sprintf("/var/run/secrets/siprec/%s", name)
+	secretPath := filepath.Join("/var/run/secrets/siprec", name)
+	// #nosec G304 -- name is restricted to one path component under the fixed Kubernetes mount above.
 	if data, err := os.ReadFile(secretPath); err == nil {
 		return strings.TrimSpace(string(data)), nil
 	}

@@ -1,12 +1,13 @@
 package auth
 
 import (
-	"crypto/md5" // #nosec G501 — required by RFC 2617 SIP digest authentication
+	"crypto/md5" // #nosec G401 G501 -- required by RFC 2617 SIP digest authentication
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ type SIPAuthenticator struct {
 	logger       *logrus.Logger
 	realm        string
 	nonceTimeout time.Duration
+	randomReader io.Reader
 }
 
 // SIPUser represents a SIP user with credentials
@@ -38,7 +40,7 @@ type SIPUser struct {
 type NonceInfo struct {
 	Value     string
 	Timestamp time.Time
-	Count     int
+	Count     uint32
 	ClientIP  string
 }
 
@@ -72,6 +74,7 @@ func NewSIPAuthenticator(realm string, logger *logrus.Logger) *SIPAuthenticator 
 		logger:       logger,
 		realm:        realm,
 		nonceTimeout: 300 * time.Second, // 5 minutes default
+		randomReader: rand.Reader,
 	}
 
 	// Start nonce cleanup routine
@@ -143,7 +146,7 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 	}
 
 	// Parse digest credentials
-	creds, err := s.parseDigestAuth(authHeader)
+	creds, err := s.parseDigestAuth(authHeader, uri)
 	if err != nil {
 		s.logger.WithError(err).WithField("client_ip", clientIP).Warning("Failed to parse digest authentication")
 		challenge := s.generateChallenge(clientIP)
@@ -156,7 +159,11 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 
 	// Validate user
 	s.mutex.RLock()
-	user, exists := s.users[creds.Username]
+	storedUser, exists := s.users[creds.Username]
+	var user SIPUser
+	if exists && storedUser != nil {
+		user = *storedUser
+	}
 	s.mutex.RUnlock()
 
 	if !exists || !user.Enabled {
@@ -173,8 +180,10 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 		}
 	}
 
-	// Validate nonce
-	if !s.validateNonce(creds.Nonce, clientIP, creds.NC) {
+	// Inspect the nonce without changing replay state. The counter is committed
+	// only after the password response has been verified below.
+	_, expectedCount, nextCount, err := s.inspectNonce(creds.Nonce, clientIP, creds.NC)
+	if err != nil {
 		s.logger.WithFields(logrus.Fields{
 			"username":  creds.Username,
 			"client_ip": clientIP,
@@ -203,6 +212,21 @@ func (s *SIPAuthenticator) Authenticate(authHeader, method, uri, clientIP string
 			Success:   false,
 			Username:  creds.Username,
 			Reason:    "Invalid credentials",
+			Challenge: challenge,
+		}
+	}
+
+	if !s.commitNonceCount(creds.Nonce, expectedCount, nextCount) {
+		s.logger.WithFields(logrus.Fields{
+			"username":  creds.Username,
+			"client_ip": clientIP,
+			"nonce":     creds.Nonce,
+		}).Warning("Authentication failed: nonce was replayed concurrently")
+		challenge := s.generateChallenge(clientIP)
+		return &AuthResult{
+			Success:   false,
+			Username:  creds.Username,
+			Reason:    "Nonce replay detected",
 			Challenge: challenge,
 		}
 	}
@@ -241,7 +265,11 @@ func (s *SIPAuthenticator) generateChallenge(clientIP string) string {
 // Returns an error if crypto/rand fails — callers must refuse to issue a challenge.
 func (s *SIPAuthenticator) generateNonce(clientIP string) (string, error) {
 	randomBytes := make([]byte, 32)
-	if _, err := rand.Read(randomBytes); err != nil {
+	randomReader := s.randomReader
+	if randomReader == nil {
+		randomReader = rand.Reader
+	}
+	if _, err := io.ReadFull(randomReader, randomBytes); err != nil {
 		return "", fmt.Errorf("crypto/rand failed: %w", err)
 	}
 	hash := sha256.Sum256(randomBytes)
@@ -260,43 +288,94 @@ func (s *SIPAuthenticator) generateNonce(clientIP string) (string, error) {
 	return nonce, nil
 }
 
-// validateNonce checks if a nonce is valid, not expired, and enforces nonce-count ordering.
-func (s *SIPAuthenticator) validateNonce(nonce, clientIP, nc string) bool {
+// inspectNonce validates a nonce and returns its current count and the count
+// that the caller may commit after digest verification succeeds.
+func (s *SIPAuthenticator) inspectNonce(nonce, clientIP, nc string) (*NonceInfo, uint32, uint32, error) {
+	ncVal, err := parseNonceCount(nc)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	s.mutex.RLock()
+	nonceInfo, exists := s.nonces[nonce]
+	if !exists {
+		s.mutex.RUnlock()
+		return nil, 0, 0, fmt.Errorf("unknown nonce")
+	}
+	info := *nonceInfo
+	s.mutex.RUnlock()
+
+	if time.Since(info.Timestamp) > s.nonceTimeout {
+		s.mutex.Lock()
+		if current, ok := s.nonces[nonce]; ok && time.Since(current.Timestamp) > s.nonceTimeout {
+			delete(s.nonces, nonce)
+		}
+		s.mutex.Unlock()
+		return nil, 0, 0, fmt.Errorf("expired nonce")
+	}
+	if info.ClientIP != clientIP {
+		return nil, 0, 0, fmt.Errorf("nonce client IP mismatch")
+	}
+	if ncVal <= info.Count {
+		return nil, 0, 0, fmt.Errorf("nonce count is not increasing")
+	}
+
+	return &info, info.Count, ncVal, nil
+}
+
+// commitNonceCount atomically applies a previously inspected nonce count.
+// Compare-and-update prevents two valid requests from consuming the same
+// nonce count while keeping failed digest responses side-effect free.
+func (s *SIPAuthenticator) commitNonceCount(nonce string, expected, next uint32) bool {
+	if next <= expected {
+		return false
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	nonceInfo, exists := s.nonces[nonce]
-	if !exists {
-		return false
-	}
-
-	// Check if nonce is expired
-	if time.Since(nonceInfo.Timestamp) > s.nonceTimeout {
-		delete(s.nonces, nonce)
-		return false
-	}
-
-	// Check if client IP matches (optional security measure)
-	if nonceInfo.ClientIP != clientIP {
-		return false
-	}
-
-	// Enforce strictly increasing nonce-count to prevent replay attacks
-	if nc != "" {
-		ncVal, err := strconv.ParseInt(nc, 16, 64)
-		if err != nil || ncVal <= int64(nonceInfo.Count) || ncVal > 1<<31-1 {
-			return false
+	if !exists || nonceInfo.Count != expected || time.Since(nonceInfo.Timestamp) > s.nonceTimeout {
+		if exists && time.Since(nonceInfo.Timestamp) > s.nonceTimeout {
+			delete(s.nonces, nonce)
 		}
-		nonceInfo.Count = int(ncVal) // safe: bounded above by 1<<31-1
-	} else {
-		nonceInfo.Count++
+		return false
 	}
-
+	nonceInfo.Count = next
 	return true
 }
 
+// validateNonce is retained for callers that only need the legacy inspection
+// and commit operation. Authentication uses inspectNonce and commitNonceCount
+// separately so invalid responses cannot advance replay state.
+func (s *SIPAuthenticator) validateNonce(nonce, clientIP, nc string) bool {
+	_, expected, next, err := s.inspectNonce(nonce, clientIP, nc)
+	return err == nil && s.commitNonceCount(nonce, expected, next)
+}
+
+func parseNonceCount(nc string) (uint32, error) {
+	if len(nc) != 8 {
+		return 0, fmt.Errorf("nonce count must contain exactly eight hexadecimal digits")
+	}
+	for _, char := range nc {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return 0, fmt.Errorf("nonce count contains a non-hexadecimal digit")
+		}
+	}
+	value, err := strconv.ParseUint(nc, 16, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid nonce count: %w", err)
+	}
+	// Keep the historical protocol bound even though the stored counter is
+	// uint32. This also preserves interoperability with 32-bit deployments.
+	if value > 1<<31-1 {
+		return 0, fmt.Errorf("nonce count exceeds supported maximum")
+	}
+	return uint32(value), nil
+}
+
 // parseDigestAuth parses digest authentication header
-func (s *SIPAuthenticator) parseDigestAuth(authHeader string) (*DigestCredentials, error) {
+func (s *SIPAuthenticator) parseDigestAuth(authHeader, requestURI string) (*DigestCredentials, error) {
 	// Remove "Digest " prefix
 	if !strings.HasPrefix(authHeader, "Digest ") {
 		return nil, fmt.Errorf("not a digest authentication header")
@@ -347,6 +426,24 @@ func (s *SIPAuthenticator) parseDigestAuth(authHeader string) (*DigestCredential
 		creds.URI == "" || creds.Response == "" {
 		return nil, fmt.Errorf("missing required digest authentication fields")
 	}
+	if creds.Realm != s.realm {
+		return nil, fmt.Errorf("digest realm does not match configured realm")
+	}
+	if creds.URI != requestURI {
+		return nil, fmt.Errorf("digest URI does not match authenticated request URI")
+	}
+	if !strings.EqualFold(creds.Algorithm, "MD5") {
+		return nil, fmt.Errorf("unsupported digest algorithm")
+	}
+	if creds.QOP != "auth" {
+		return nil, fmt.Errorf("unsupported or missing digest qop")
+	}
+	if creds.CNonce == "" {
+		return nil, fmt.Errorf("missing digest cnonce")
+	}
+	if _, err := parseNonceCount(creds.NC); err != nil {
+		return nil, err
+	}
 
 	return creds, nil
 }
@@ -355,11 +452,13 @@ func (s *SIPAuthenticator) parseDigestAuth(authHeader string) (*DigestCredential
 func (s *SIPAuthenticator) calculateResponse(password, method, uri string, creds *DigestCredentials) string {
 	// HA1 = MD5(username:realm:password)
 	ha1Data := fmt.Sprintf("%s:%s:%s", creds.Username, creds.Realm, password)
+	// #nosec G401 -- SIP digest authentication requires MD5 for RFC 2617 compatibility.
 	ha1Hash := md5.Sum([]byte(ha1Data))
 	ha1 := fmt.Sprintf("%x", ha1Hash)
 
 	// HA2 = MD5(method:digestURI)
 	ha2Data := fmt.Sprintf("%s:%s", method, uri)
+	// #nosec G401 -- SIP digest authentication requires MD5 for RFC 2617 compatibility.
 	ha2Hash := md5.Sum([]byte(ha2Data))
 	ha2 := fmt.Sprintf("%x", ha2Hash)
 
@@ -374,6 +473,7 @@ func (s *SIPAuthenticator) calculateResponse(password, method, uri string, creds
 		responseData = fmt.Sprintf("%s:%s:%s", ha1, creds.Nonce, ha2)
 	}
 
+	// #nosec G401 -- SIP digest authentication requires MD5 for RFC 2617 compatibility.
 	responseHash := md5.Sum([]byte(responseData))
 	return fmt.Sprintf("%x", responseHash)
 }

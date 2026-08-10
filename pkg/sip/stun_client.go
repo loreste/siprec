@@ -184,7 +184,7 @@ func (hc *HTTPFallbackClient) GetExternalIP(ctx context.Context) (string, error)
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) // #nosec G107 -- URL is selected from the configured external-IP service list.
 		if err != nil {
 			hc.logger.WithError(err).WithField("service", service).Debug("Failed to construct HTTP fallback request")
 			lastErr = err

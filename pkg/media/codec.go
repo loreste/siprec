@@ -63,7 +63,8 @@ func PCMBytesPerPacket(codecName string, sampleRate int) int {
 	return samples * 2
 }
 
-// EVSDecoder handles EVS decoding
+// EVSDecoder handles the experimental EVS estimator. It is not a standards-
+// compliant 3GPP EVS decoder and must not be used for production recording.
 type EVSDecoder struct {
 	sampleRate  int
 	channels    int
@@ -92,7 +93,7 @@ func NewEVSDecoder(sampleRate, channels int) *EVSDecoder {
 	}
 }
 
-// processEVSPacket handles EVS codec packets with full decoding
+// processEVSPacket handles EVS packets with the experimental estimator.
 func processEVSPacket(payload []byte, codecInfo CodecInfo) ([]byte, error) {
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("empty EVS payload")

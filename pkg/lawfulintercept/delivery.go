@@ -220,7 +220,7 @@ func (dc *DeliveryClient) send(ctx context.Context, item *deliveryItem) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, dc.config.Endpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, dc.config.Endpoint, bytes.NewReader(body)) // #nosec G107 -- endpoint is the configured mTLS delivery service.
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

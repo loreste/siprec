@@ -162,7 +162,7 @@ func (p *AzureSpeechProvider) Initialize() error {
 func (p *AzureSpeechProvider) refreshAccessToken() error {
 	authURL := fmt.Sprintf("https://%s.api.cognitive.microsoft.com/sts/v1.0/issueToken", p.config.Region)
 
-	req, err := http.NewRequest("POST", authURL, nil)
+	req, err := http.NewRequest("POST", authURL, nil) // #nosec G107 -- URL is constructed from the configured Azure region.
 	if err != nil {
 		return fmt.Errorf("failed to create auth request: %w", err)
 	}
@@ -397,7 +397,7 @@ func (p *AzureSpeechProvider) streamWithHTTP(ctx context.Context, audioStream io
 	requestURL := p.buildRequestURL()
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", requestURL, bytes.NewReader(audioData))
+	req, err := http.NewRequestWithContext(ctx, "POST", requestURL, bytes.NewReader(audioData)) // #nosec G107 -- URL is constructed from the configured Azure endpoint.
 	if err != nil {
 		logger.WithError(err).Error("Failed to create HTTP request")
 		return fmt.Errorf("failed to create request: %w", err)

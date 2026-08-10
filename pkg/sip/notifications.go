@@ -21,6 +21,9 @@ import (
 // maxEndpointsPerCall limits callback registrations to prevent resource exhaustion.
 const maxEndpointsPerCall = 32
 
+type callbackIPResolver func(context.Context, string) ([]net.IP, error)
+type callbackDialer func(context.Context, string, string) (net.Conn, error)
+
 // validateCallbackURL rejects SSRF-prone callback URLs (private IPs, non-HTTP schemes,
 // DNS names that resolve to private addresses, and redirect-prone patterns).
 func validateCallbackURL(rawURL string) error {
@@ -49,24 +52,75 @@ func validateCallbackURL(rawURL string) error {
 		return fmt.Errorf("callback to internal hostname blocked: %s", host)
 	}
 
-	// Resolve hostname and check all resulting IPs
-	if ip := net.ParseIP(host); ip != nil {
-		if err := checkBlockedIP(ip); err != nil {
-			return err
-		}
-	} else {
-		// DNS resolution — blocks DNS rebinding / redirect SSRF via hostname
-		ips, err := net.LookupIP(host)
-		if err != nil {
-			return fmt.Errorf("callback hostname DNS lookup failed: %w", err)
-		}
-		for _, ip := range ips {
-			if err := checkBlockedIP(ip); err != nil {
-				return fmt.Errorf("callback hostname %s resolves to blocked IP: %w", host, err)
-			}
-		}
+	// Resolve and validate the host. The transport repeats this operation in
+	// its DialContext and connects to the approved IP from that same lookup,
+	// eliminating the validation/connection DNS rebinding gap.
+	if _, err := resolveAndValidateCallbackHost(context.Background(), host, lookupCallbackIPs); err != nil {
+		return err
 	}
 	return nil
+}
+
+func lookupCallbackIPs(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("callback hostname DNS lookup failed: %w", err)
+	}
+	return ips, nil
+}
+
+func resolveAndValidateCallbackHost(ctx context.Context, host string, resolver callbackIPResolver) ([]net.IP, error) {
+	ips, err := resolver(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("callback hostname %s has no addresses", host)
+	}
+	for _, ip := range ips {
+		if err := checkBlockedIP(ip); err != nil {
+			return nil, fmt.Errorf("callback hostname %s resolves to blocked IP: %w", host, err)
+		}
+	}
+	return ips, nil
+}
+
+// dialCallbackContext resolves and validates the callback host immediately
+// before connecting, then dials the exact approved address. The request URL
+// is left unchanged, so net/http still uses the original hostname for TLS SNI
+// and the HTTP Host header.
+func dialCallbackContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return dialCallbackContextWithResolver(ctx, network, address, lookupCallbackIPs)
+}
+
+func dialCallbackContextWithResolver(ctx context.Context, network, address string, resolver callbackIPResolver) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	return dialCallbackContextWithResolverAndDialer(ctx, network, address, resolver, dialer.DialContext)
+}
+
+func dialCallbackContextWithResolverAndDialer(ctx context.Context, network, address string, resolver callbackIPResolver, dialer callbackDialer) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid callback address %q: %w", address, err)
+	}
+	ips, err := resolveAndValidateCallbackHost(ctx, host, resolver)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("callback connection failed: %w", lastErr)
 }
 
 // checkBlockedIP returns an error if the IP is private, loopback, link-local, or a cloud metadata address.
@@ -119,9 +173,7 @@ func NewMetadataNotifier(logger *logrus.Logger, endpoints []string, timeout time
 			MaxIdleConns:        20,
 			MaxIdleConnsPerHost: 2,
 			IdleConnTimeout:     90 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout: 2 * time.Second,
-			}).DialContext,
+			DialContext:         dialCallbackContext,
 		},
 		// Disable redirects to prevent redirect-based SSRF
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -132,6 +184,10 @@ func NewMetadataNotifier(logger *logrus.Logger, endpoints []string, timeout time
 	cleaned := make([]string, 0, len(endpoints))
 	for _, ep := range endpoints {
 		if trimmed := strings.TrimSpace(ep); trimmed != "" {
+			if err := validateCallbackURL(trimmed); err != nil {
+				logger.WithError(err).WithField("endpoint", trimmed).Warn("Rejected configured callback URL")
+				continue
+			}
 			cleaned = append(cleaned, trimmed)
 		}
 	}
@@ -285,6 +341,8 @@ func (n *MetadataNotifier) send(parentCtx context.Context, endpoint string, body
 	reqCtx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
 
+	// #nosec G107 -- endpoint is validated at registration and the transport resolves,
+	// validates, and dials the same approved IP immediately before use.
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		n.logger.WithError(err).WithField("endpoint", endpoint).Warn("Failed to create notification request")

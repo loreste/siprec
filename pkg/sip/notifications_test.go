@@ -21,7 +21,7 @@ func TestMetadataNotifierDeliversEvent(t *testing.T) {
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
 
-	callbackURL := "http://callback.local/notify"
+	callbackURL := "http://203.0.113.50/notify"
 	notifier := NewMetadataNotifier(logger, []string{callbackURL}, time.Second)
 	notifier.client = &http.Client{
 		Timeout: time.Second,

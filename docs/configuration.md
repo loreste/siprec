@@ -479,7 +479,7 @@ Redis connection parameters can be set via:
 
 ## High Availability & Redundancy
 
-The server supports session redundancy to handle failovers without losing call state. This allows a backup instance to take over if the primary fails.
+The server supports experimental session-state redundancy for failover coordination. Redis replication can preserve call metadata, but it does not by itself transfer an established RTP flow or guarantee seamless live-call failover.
 
 | Variable | Description | Default |
 | --- | --- | --- |
