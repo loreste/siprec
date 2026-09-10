@@ -248,8 +248,40 @@ The analytics dispatcher (sentiment, keywords, compliance, agent metrics) runs a
    PUBLISH_SENTIMENT_UPDATES=true   # default true
    ```
 
-What you receive:
-- **Real-time sentiment** with polarity, magnitude, confidence, and emotion/subjectivity hints that account for lexicon hits, intensifiers, punctuation, and negations.
+#### Sentiment modes
+
+Sentiment analysis runs in one of three modes, controlled by `SENTIMENT_MODE`:
+
+| Mode | What it does | When to use |
+|------|-------------|-------------|
+| `lexicon` | Rule-based scoring using word polarity lexicons, negation, intensifiers, and punctuation patterns. No external dependencies. | Default. Good enough for keyword-level flags and basic positive/negative/neutral classification. |
+| `ml` | Sends each transcript chunk to an external HTTP inference endpoint and uses the model's scores directly. | When you need real NLU — sarcasm, negation nuance, context-dependent sentiment. Requires a running model server. |
+| `auto` | Tries the ML endpoint first. If it's unreachable, times out, or returns an error, falls back to lexicon transparently. | Production deployments where you want ML accuracy but can't afford to lose sentiment data if the model server goes down. |
+
+**ML endpoint protocol:**
+
+The server sends a POST request with a JSON body:
+```json
+{"text": "transcript chunk here", "model": "optional-model-name"}
+```
+
+It expects a JSON response:
+```json
+{"label": "positive", "score": 0.92, "magnitude": 0.8, "subjectivity": 0.6}
+```
+
+`label` must be `positive`, `negative`, or `neutral`. `score` is 0.0–1.0. `magnitude` and `subjectivity` are optional (0.0–1.0). This protocol works out of the box with HuggingFace Inference API, TorchServe, Triton Inference Server, vLLM, and most model-serving frameworks — you may just need a thin adapter.
+
+**Configuration:**
+```bash
+SENTIMENT_MODE=auto                              # lexicon | ml | auto
+SENTIMENT_ENDPOINT=http://ml-server:8080/predict # required for ml/auto
+SENTIMENT_MODEL=distilbert-sentiment             # optional model hint
+SENTIMENT_TIMEOUT=2s                             # inference timeout
+```
+
+What you receive regardless of mode:
+- **Real-time sentiment** with polarity, magnitude, confidence, and subjectivity.
 - **Per-speaker tracking** so caller vs. callee sentiment stays separate (sliding 5-message context window).
 - **Delivery fan-out** to WebSocket (`/ws/analytics`), AMQP realtime publishers, and Elasticsearch (`call-analytics` index by default) without additional code.
 

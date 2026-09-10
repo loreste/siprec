@@ -18,7 +18,7 @@ Beyond basic recording, it can also transcribe calls in real time (with your cho
 
 For larger deployments, multiple instances can share session state through Redis and scale horizontally behind a load balancer.
 
-**Version:** 1.3.1
+**Version:** 1.3.3
 
 ## Who is this for?
 
@@ -64,7 +64,7 @@ SIP signaling supports TLS, and media can be secured with SRTP. Access control u
 
 ### Analytics & Monitoring
 
-A built-in analytics pipeline does sentiment analysis, keyword detection, and compliance monitoring on transcripts. Results go to Elasticsearch for historical reporting, stream over WebSocket for live dashboards, and publish to AMQP queues.
+A built-in analytics pipeline does sentiment analysis, keyword detection, and compliance monitoring on transcripts. Sentiment runs in one of three modes: **lexicon** (rule-based, zero dependencies — the default), **ml** (calls an external HTTP inference endpoint for real NLU), or **auto** (tries the ML endpoint first, falls back to lexicon if it's down or slow). Results go to Elasticsearch for historical reporting, stream over WebSocket for live dashboards, and publish to AMQP queues.
 
 On the ops side: Prometheus metrics cover SIP, RTP, STT, and AMQP. OpenTelemetry tracing gives end-to-end visibility across distributed setups. MOS scores are calculated in real time using the ITU-T G.107 E-model.
 
@@ -349,6 +349,10 @@ generate a least-privilege SAS token.
 | `ANALYTICS_ENABLED` | Enable analytics pipeline | `false` |
 | `ELASTICSEARCH_ADDRESSES` | Elasticsearch endpoints | - |
 | `ELASTICSEARCH_INDEX` | Index for analytics | `call-analytics` |
+| `SENTIMENT_MODE` | Sentiment backend: `lexicon`, `ml`, or `auto` | `lexicon` |
+| `SENTIMENT_ENDPOINT` | ML inference URL (required for `ml`/`auto`) | - |
+| `SENTIMENT_MODEL` | Model name hint sent to the inference endpoint | - |
+| `SENTIMENT_TIMEOUT` | ML inference request timeout | `2s` |
 
 ### Alerting
 
@@ -386,7 +390,7 @@ Notifications can be delivered through email (SMTP), Slack, PagerDuty, and gener
    ```
 3. The `/ws/analytics` WebSocket endpoint comes up automatically when `ANALYTICS_ENABLED=true`.
 
-With analytics on, every transcription chunk gets a sentiment score (lexicon-based with negation handling and intensifier support). Results are published to three places: the WebSocket stream, the AMQP queue, and Elasticsearch.
+With analytics on, every transcription chunk gets a sentiment score. By default, sentiment runs in **lexicon** mode (rule-based with negation handling and intensifier support). For real NLU, set `SENTIMENT_MODE=ml` and point `SENTIMENT_ENDPOINT` at any model server that speaks JSON (HuggingFace Inference API, TorchServe, Triton, vLLM, etc.). Use `SENTIMENT_MODE=auto` to try ML first and fall back to lexicon when the endpoint is unreachable. Results are published to three places: the WebSocket stream, the AMQP queue, and Elasticsearch.
 
 ## HTTP API
 

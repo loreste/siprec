@@ -65,6 +65,12 @@ type TranscriptionEventData struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
+// SentimentProvider is the interface for sentiment analysis backends.
+// The lexicon-based analyzer and the ML-based analyzer both implement this.
+type SentimentProvider interface {
+	AnalyzeText(text string) Sentiment
+}
+
 // Sentiment represents sentiment analysis results
 type Sentiment struct {
 	Label        string  `json:"label"`                  // positive, negative, neutral
@@ -103,7 +109,7 @@ type StreamingTranscriber struct {
 
 	// Feature processors
 	diarizer        *SpeakerDiarizer
-	sentimentEngine *SentimentAnalyzer
+	sentimentEngine SentimentProvider
 	keywordDetector *KeywordDetector
 
 	// AMQP publisher for real-time events
@@ -140,13 +146,19 @@ type StreamingConfig struct {
 	ProfanityFilter bool   `json:"profanity_filter" default:"false"`
 
 	// Feature settings
-	EnableDiarization bool `json:"enable_diarization" default:"true"`
-	EnableSentiment   bool `json:"enable_sentiment" default:"true"`
-	EnableKeywords    bool `json:"enable_keywords" default:"true"`
-	MaxSpeakers       int  `json:"max_speakers" default:"8"`
+	EnableDiarization bool   `json:"enable_diarization" default:"true"`
+	EnableSentiment   bool   `json:"enable_sentiment" default:"true"`
+	EnableKeywords    bool   `json:"enable_keywords" default:"true"`
+	MaxSpeakers       int    `json:"max_speakers" default:"8"`
+	SentimentMode     string `json:"sentiment_mode" default:"lexicon"` // "lexicon", "ml", or "auto" (ML with lexicon fallback)
+
+	// ML sentiment settings (used when SentimentMode is "ml" or "auto")
+	SentimentEndpoint string        `json:"sentiment_endpoint,omitempty"` // HTTP inference URL
+	SentimentModel    string        `json:"sentiment_model,omitempty"`    // model name hint
+	SentimentTimeout  time.Duration `json:"sentiment_timeout" default:"2s"`
 
 	// Performance settings
-	BatchSize         int           `json:"batch_size" default:"10"`
+	BatchSize int `json:"batch_size" default:"10"`
 	ProcessingTimeout time.Duration `json:"processing_timeout" default:"5s"`
 	MaxBufferSize     int           `json:"max_buffer_size" default:"1048576"` // 1MB
 
@@ -169,6 +181,8 @@ func DefaultStreamingConfig() *StreamingConfig {
 		EnableSentiment:   true,
 		EnableKeywords:    true,
 		MaxSpeakers:       8,
+		SentimentMode:     "lexicon",
+		SentimentTimeout:  2 * time.Second,
 		BatchSize:         10,
 		ProcessingTimeout: 5 * time.Second,
 		MaxBufferSize:     1024 * 1024, // 1MB
@@ -210,7 +224,7 @@ func NewStreamingTranscriberWithAMQP(sessionID, callID string, config *Streaming
 	}
 
 	if config.EnableSentiment {
-		transcriber.sentimentEngine = NewSentimentAnalyzer(logger)
+		transcriber.sentimentEngine = newSentimentProvider(config, logger)
 	}
 
 	if config.EnableKeywords {
@@ -563,8 +577,8 @@ func (st *StreamingTranscriber) cleanup() {
 		st.diarizer.Cleanup()
 	}
 
-	if st.sentimentEngine != nil {
-		st.sentimentEngine.Cleanup()
+	if sa, ok := st.sentimentEngine.(*SentimentAnalyzer); ok && sa != nil {
+		sa.Cleanup()
 	}
 
 	if st.keywordDetector != nil {
