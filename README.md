@@ -25,7 +25,7 @@ For larger deployments, multiple instances can share session state through Redis
 - **Enterprise teams** that need to record calls for QA, training, or regulatory compliance
 - **Contact centers** looking for call analytics, transcription, and compliance monitoring
 - **Telecom operators** who need a recording endpoint behind their SBCs
-- **Organizations with lawful intercept obligations** that require tamper-proof recordings with secure LEA delivery
+- **Developers and integrators** building call recording into SIP-based products
 
 ## Tested With
 
@@ -58,7 +58,7 @@ Speaker diarization runs alongside transcription—voice features are extracted 
 
 Recordings can be encrypted at rest with AES-256-GCM or ChaCha20-Poly1305, with automatic key rotation. PII detection scans transcripts for SSNs, credit card numbers, phone numbers, and email addresses, and can redact them in real time.
 
-The server includes a lawful intercept module with warrant verification, encrypted delivery to LEAs over mutual TLS, and tamper-proof audit logging. PCI DSS and GDPR compliance modes are available, with data export and erasure APIs.
+PCI DSS and GDPR compliance modes are available, with data export and erasure APIs.
 
 SIP signaling supports TLS, and media can be secured with SRTP. Access control uses JWT tokens and API keys with role-based permissions.
 
@@ -137,11 +137,6 @@ siprecctl resume <call-id>
 # View resource usage
 siprecctl resources
 
-# Lawful intercept management
-siprecctl li list
-siprecctl li register --warrant W123 --target +15551234567
-siprecctl li stats
-
 # Generate example config
 siprecctl config generate -f yaml -o config.yaml
 
@@ -159,7 +154,6 @@ siprecctl -s http://192.168.1.100:8080 health
 | `pause-all/resume-all` | Control all recordings |
 | `resources` | Show resource utilization |
 | `config validate/generate/show` | Configuration management |
-| `li list/register/revoke/stats/audit` | Lawful intercept operations |
 
 ## Configuration
 
@@ -327,20 +321,6 @@ generate a least-privilege SAS token.
 | `DIARIZATION_VOICE_FEATURES` | Enable voice feature extraction | `true` |
 | `DIARIZATION_CROSS_SESSION` | Enable cross-session speaker tracking | `false` |
 | `DIARIZATION_PROFILE_RETENTION` | Speaker profile retention in days | `30` |
-
-### Lawful Intercept
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `LI_ENABLED` | Enable lawful intercept support | `false` |
-| `LI_DELIVERY_ENDPOINT` | Secure LEA delivery endpoint (HTTPS) | - |
-| `LI_ENCRYPTION_KEY_PATH` | Path to encryption key for intercepts | - |
-| `LI_WARRANT_ENDPOINT` | External warrant verification endpoint | - |
-| `LI_AUDIT_LOG_PATH` | Audit log path for intercept operations | `/var/log/siprec/li_audit.log` |
-| `LI_MUTUAL_TLS` | Require mutual TLS for LEA delivery | `true` |
-| `LI_CLIENT_CERT_PATH` | Client certificate for LEA mTLS | - |
-| `LI_CLIENT_KEY_PATH` | Client key for LEA mTLS | - |
-| `LI_RETENTION_DAYS` | Intercept data retention in days | `365` |
 
 ### Analytics
 
@@ -588,7 +568,6 @@ siprec/
 │   ├── encryption/      # End-to-end encryption
 │   ├── errors/          # Error handling utilities
 │   ├── http/            # HTTP server and API handlers
-│   ├── lawfulintercept/ # Lawful intercept with LEA delivery
 │   ├── media/           # RTP/SRTP and audio processing
 │   ├── messaging/       # AMQP/RabbitMQ client
 │   ├── metrics/         # Prometheus metrics
@@ -596,7 +575,6 @@ siprec/
 │   ├── pii/             # PII detection and redaction
 │   ├── ratelimit/       # HTTP and SIP rate limiting
 │   ├── realtime/        # Real-time analytics pipeline
-│   ├── resources/       # Resource management and limits
 │   ├── security/        # Security and audit logging
 │   ├── session/         # Session management and Redis
 │   ├── sip/             # SIP server and handler
