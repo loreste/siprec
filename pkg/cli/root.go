@@ -52,7 +52,6 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(resourcesCmd)
-	rootCmd.AddCommand(liCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 

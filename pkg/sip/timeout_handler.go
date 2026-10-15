@@ -1,7 +1,6 @@
 package sip
 
 import (
-	"context"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -63,59 +62,6 @@ func NewTimeoutHandler(config *TimeoutConfig, logger *logrus.Logger) *TimeoutHan
 	}
 }
 
-// GetMethodTimeout returns the appropriate timeout for a SIP method
-func (th *TimeoutHandler) GetMethodTimeout(method string) time.Duration {
-	switch method {
-	case "INVITE":
-		return th.config.InviteTimeout
-	case "BYE":
-		return th.config.ByeTimeout
-	case "OPTIONS":
-		return th.config.OptionsTimeout
-	default:
-		return th.config.DefaultTimeout
-	}
-}
-
-// WithTimeout executes a function with a timeout based on the SIP method
-func (th *TimeoutHandler) WithTimeout(ctx context.Context, method string, fn func(context.Context) error) error {
-	timeout := th.GetMethodTimeout(method)
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Channel for result
-	done := make(chan error, 1)
-
-	// Execute function in goroutine
-	go func() {
-		// Panic recovery
-		defer func() {
-			if r := recover(); r != nil {
-				th.logger.WithFields(logrus.Fields{
-					"panic":  r,
-					"method": method,
-				}).Error("Panic in timeout handler")
-				done <- &TimeoutPanicError{Method: method, Panic: r}
-			}
-		}()
-
-		done <- fn(timeoutCtx)
-	}()
-
-	// Wait for completion or timeout
-	select {
-	case err := <-done:
-		return err
-	case <-timeoutCtx.Done():
-		th.logger.WithFields(logrus.Fields{
-			"method":  method,
-			"timeout": timeout,
-		}).Warn("Operation timed out")
-		return &TimeoutError{Method: method, Timeout: timeout}
-	}
-}
-
 // ValidateSessionAge checks if a session has exceeded maximum duration
 func (th *TimeoutHandler) ValidateSessionAge(createdAt time.Time) bool {
 	return time.Since(createdAt) <= th.config.MaxSessionDuration
@@ -124,24 +70,4 @@ func (th *TimeoutHandler) ValidateSessionAge(createdAt time.Time) bool {
 // IsSessionIdle checks if a session is idle
 func (th *TimeoutHandler) IsSessionIdle(lastActivity time.Time) bool {
 	return time.Since(lastActivity) > th.config.SessionIdleTimeout
-}
-
-// TimeoutError represents a timeout error
-type TimeoutError struct {
-	Method  string
-	Timeout time.Duration
-}
-
-func (e *TimeoutError) Error() string {
-	return "timeout for " + e.Method + " after " + e.Timeout.String()
-}
-
-// TimeoutPanicError represents a panic during timeout handling
-type TimeoutPanicError struct {
-	Method string
-	Panic  interface{}
-}
-
-func (e *TimeoutPanicError) Error() string {
-	return "panic during " + e.Method + " operation"
 }

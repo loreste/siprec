@@ -15,7 +15,7 @@ var pauseCmd = &cobra.Command{
 	Long: `Pause the recording and transcription for a specific call.
 The call continues but audio is not recorded until resumed.`,
 	Args: cobra.ExactArgs(1),
-	Run:  runPause,
+	Run:  func(cmd *cobra.Command, args []string) { runToggle(args[0], "pause") },
 }
 
 var resumeCmd = &cobra.Command{
@@ -23,7 +23,7 @@ var resumeCmd = &cobra.Command{
 	Short: "Resume recording for a call",
 	Long:  `Resume recording and transcription for a previously paused call.`,
 	Args:  cobra.ExactArgs(1),
-	Run:   runResume,
+	Run:   func(cmd *cobra.Command, args []string) { runToggle(args[0], "resume") },
 }
 
 var statusCmd = &cobra.Command{
@@ -36,13 +36,13 @@ var statusCmd = &cobra.Command{
 var pauseAllCmd = &cobra.Command{
 	Use:   "pause-all",
 	Short: "Pause all active recordings",
-	Run:   runPauseAll,
+	Run:   func(cmd *cobra.Command, args []string) { runToggleAll("pause") },
 }
 
 var resumeAllCmd = &cobra.Command{
 	Use:   "resume-all",
 	Short: "Resume all paused recordings",
-	Run:   runResumeAll,
+	Run:   func(cmd *cobra.Command, args []string) { runToggleAll("resume") },
 }
 
 func init() {
@@ -50,12 +50,11 @@ func init() {
 	rootCmd.AddCommand(resumeAllCmd)
 }
 
-func runPause(cmd *cobra.Command, args []string) {
-	callID := args[0]
+func runToggle(callID, action string) {
 	client := NewClient(serverURL)
 	ctx := context.Background()
 
-	body, status, err := client.Post(ctx, "/api/pause/"+callID, nil)
+	body, status, err := client.Post(ctx, "/api/"+action+"/"+callID, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -71,31 +70,7 @@ func runPause(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Printf("Recording paused for call %s\n", callID)
-}
-
-func runResume(cmd *cobra.Command, args []string) {
-	callID := args[0]
-	client := NewClient(serverURL)
-	ctx := context.Background()
-
-	body, status, err := client.Post(ctx, "/api/resume/"+callID, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if status != 200 {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", ParseError(body))
-		os.Exit(1)
-	}
-
-	if outputJSON {
-		fmt.Println(string(body))
-		return
-	}
-
-	fmt.Printf("Recording resumed for call %s\n", callID)
+	fmt.Printf("Recording %sd for call %s\n", action, callID)
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
@@ -147,11 +122,11 @@ func runStatus(cmd *cobra.Command, args []string) {
 	}
 }
 
-func runPauseAll(cmd *cobra.Command, args []string) {
+func runToggleAll(action string) {
 	client := NewClient(serverURL)
 	ctx := context.Background()
 
-	body, status, err := client.Post(ctx, "/api/pause/all", nil)
+	body, status, err := client.Post(ctx, "/api/"+action+"/all", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -169,40 +144,17 @@ func runPauseAll(cmd *cobra.Command, args []string) {
 
 	var resp map[string]interface{}
 	if err := json.Unmarshal(body, &resp); err == nil {
-		if count, ok := resp["paused_count"]; ok {
-			fmt.Printf("Paused %v recordings\n", count)
+		if count, ok := resp[action+"d_count"]; ok {
+			fmt.Printf("%sd %v recordings\n", capitalize(action), count)
 			return
 		}
 	}
-	fmt.Println("All recordings paused")
+	fmt.Printf("All recordings %sd\n", action)
 }
 
-func runResumeAll(cmd *cobra.Command, args []string) {
-	client := NewClient(serverURL)
-	ctx := context.Background()
-
-	body, status, err := client.Post(ctx, "/api/resume/all", nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+func capitalize(s string) string {
+	if s == "" {
+		return s
 	}
-
-	if status != 200 {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", ParseError(body))
-		os.Exit(1)
-	}
-
-	if outputJSON {
-		fmt.Println(string(body))
-		return
-	}
-
-	var resp map[string]interface{}
-	if err := json.Unmarshal(body, &resp); err == nil {
-		if count, ok := resp["resumed_count"]; ok {
-			fmt.Printf("Resumed %v recordings\n", count)
-			return
-		}
-	}
-	fmt.Println("All recordings resumed")
+	return string(s[0]-32) + s[1:]
 }
