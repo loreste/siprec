@@ -18,7 +18,7 @@ Beyond basic recording, it can also transcribe calls in real time (with your cho
 
 For larger deployments, multiple instances can share session state through Redis and scale horizontally behind a load balancer.
 
-**Version:** 1.3.3
+**Version:** 1.3.1
 
 ## Who is this for?
 
