@@ -33,3 +33,8 @@ issues:
     - path: mysql_stub\.go
       linters:
         - staticcheck
+    # aws-sdk-go v1 deprecation in backup package (migrate to v2 separately)
+    - path: pkg/backup/
+      text: "SA1019.*aws-sdk-go"
+      linters:
+        - staticcheck
