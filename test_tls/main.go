@@ -65,7 +65,7 @@ func runServer() {
 
 func runClient() {
 	config := &tls.Config{
-		InsecureSkipVerify: true, // Skip certificate validation for test
+		InsecureSkipVerify: true, // #nosec G402 -- test client connecting to local self-signed cert
 	}
 
 	conn, err := tls.Dial("tcp", "127.0.0.1:5063", config)
