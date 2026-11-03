@@ -381,3 +381,13 @@ PUBLISH_KEYWORD_DETECTIONS=true
 ```
 
 See [Real-time Transcription](realtime-transcription.md) for complete AMQP configuration.
+
+## Call completion and timeouts
+
+Streaming providers receive the call context for the lifetime of the audio stream. The STT circuit breaker's short request timeout does not limit the duration of a live call. Caller cancellation is not counted as a dependency failure; provider failures and the circuit breaker's own request timeout still count.
+
+The enhanced Google provider closes the sending side after all audio has been sent, including final bytes returned together with EOF. Its `RequestTimeout` bounds the wait for final recognition results after audio ends, rather than the live call. Transport and audio-read errors are returned to the caller, and cleanup cancels the transport and workers.
+
+Whisper CLI and the open-source model provider's HTTP and CLI backends buffer audio before inference. They produce final transcripts after the audio stream ends, not live partial transcripts. Once audio is captured, inference uses a separate, bounded context so normal call teardown does not cancel it. Empty input does not start inference. Whisper uses `stt.whisper.timeout` / `WHISPER_TIMEOUT` (default `10m`); the open-source model provider uses its `Timeout` setting (default `60s`).
+
+For Whisper HTTP wrappers, see [Whisper setup](whisper-setup.md#live-calls-and-http-wrappers). A wrapper must write the expected output file; sending audio to an HTTP endpoint alone is not sufficient. For live partial transcripts, choose a streaming backend.

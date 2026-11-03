@@ -2,6 +2,19 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Fix Whisper call-end transcription and canceled-context failures (#47), with bounded inference timeouts and empty-input handling.
+- Preserve buffered audio across call teardown in open-source HTTP and CLI transcription backends.
+- Keep live STT streams independent of short circuit-breaker request timeouts; caller cancellation no longer counts as a dependency failure.
+- Fix enhanced Google stream completion, final audio delivery, error propagation, and transport cleanup.
+- Avoid Deepgram HTTP fallback after caller cancellation and handle missing Whisper configuration without panicking.
+- Remove local assistant configuration, TokenSave state, and a generated binary from version control; expand ignore rules.
+
+
+
 ## [1.3.1] - 2026-08-07
 
 ### Fixed

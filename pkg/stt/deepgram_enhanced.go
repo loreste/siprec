@@ -3,6 +3,7 @@ package stt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -396,6 +397,9 @@ func (p *DeepgramProviderEnhanced) StreamToText(ctx context.Context, audioStream
 	// Try WebSocket streaming first, fallback to HTTP if needed
 	err = p.streamWithWebSocket(ctx, audioStream, callUUID)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return err
+		}
 		p.logger.WithError(err).Warn("WebSocket streaming failed, falling back to HTTP")
 
 		// Update circuit breaker

@@ -150,3 +150,24 @@ examples/deepgram_integration/deepgram_integration
 examples/google_integration/google_integration
 examples/nat_traversal/nat_traversal
 examples/streaming_response/streaming_response
+
+# Local assistant instructions and TokenSave artifacts
+[Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
+*[Tt][Oo][Kk][Ee][Nn][Ss][Aa][Vv][Ee]*
+
+# Local assistant configuration and generated binaries
+.claude/
+.codex/
+.agents/
+.mcp.json
+/streaming_response
+# Local credentials and infrastructure state
+.aws/
+.ssh/
+*.p12
+*.pfx
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+!*.tfvars.example

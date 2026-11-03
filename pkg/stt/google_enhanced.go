@@ -2,6 +2,7 @@ package stt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,6 +104,9 @@ type GoogleConnection struct {
 	logger       *logrus.Entry
 	config       *GoogleConfig
 	resultsChan  chan *speechpb.StreamingRecognizeResponse
+	resultsDone  chan error // first terminal result from either stream direction
+	audioSent    chan struct{}
+	ctx          context.Context
 }
 
 // GoogleMetrics tracks performance metrics for Google Speech-to-Text
@@ -309,6 +313,9 @@ func (p *GoogleProviderEnhanced) StreamToText(ctx context.Context, audioStream i
 	// Create streaming connection with retry logic
 	err := p.streamWithRetry(ctx, audioStream, callUUID)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return err
+		}
 		p.circuitBreaker.recordFailure()
 		p.updateMetrics(func(m *GoogleMetrics) {
 			m.FailedRequests++
@@ -398,7 +405,7 @@ func (p *GoogleProviderEnhanced) streamWithConnection(ctx context.Context, audio
 
 	// Start message handlers
 	go conn.handleResults(p.callback)
-	go conn.handleAudioStream(ctx, audioStream)
+	go conn.handleAudioStream(conn.ctx, audioStream)
 
 	// Wait for completion
 	return conn.waitForCompletion(ctx)
@@ -406,15 +413,13 @@ func (p *GoogleProviderEnhanced) streamWithConnection(ctx context.Context, audio
 
 // createStreamingConnection creates a new streaming connection to Google Speech-to-Text
 func (p *GoogleProviderEnhanced) createStreamingConnection(ctx context.Context, callUUID string) (*GoogleConnection, error) {
-	// Create streaming recognize request
-	stream, err := p.client.StreamingRecognize(ctx)
+	// Bind transport and workers to the same cleanup context.
+	connCtx, cancel := context.WithCancel(ctx)
+	stream, err := p.client.StreamingRecognize(connCtx)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to start streaming recognize: %w", err)
 	}
-
-	// Create context with cancel
-	connCtx, cancel := context.WithCancel(ctx)
-	_ = connCtx // Used for potential future context operations
 
 	// Create connection wrapper
 	conn := &GoogleConnection{
@@ -427,6 +432,9 @@ func (p *GoogleProviderEnhanced) createStreamingConnection(ctx context.Context, 
 		logger:       p.logger.WithField("call_uuid", callUUID),
 		config:       p.config,
 		resultsChan:  make(chan *speechpb.StreamingRecognizeResponse, 10),
+		resultsDone:  make(chan error, 1),
+		audioSent:    make(chan struct{}),
+		ctx:          connCtx,
 	}
 
 	// Send initial configuration
@@ -609,84 +617,74 @@ func (c *GoogleConnection) sendInitialConfig() error {
 }
 
 // handleAudioStream processes the incoming audio stream
+func (c *GoogleConnection) finish(err error) {
+	select {
+	case c.resultsDone <- err:
+	default:
+	}
+}
+
 func (c *GoogleConnection) handleAudioStream(ctx context.Context, audioStream io.Reader) {
 	defer close(c.audioChan)
-
 	buffer := make([]byte, c.config.BufferSize)
-	ticker := time.NewTicker(c.config.FlushInterval)
-	defer ticker.Stop()
-
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
-			n, err := audioStream.Read(buffer)
-			if err == io.EOF {
-				c.logger.Debug("Audio stream ended")
+		}
+		n, err := audioStream.Read(buffer)
+		if n > 0 {
+			data := append([]byte(nil), buffer[:n]...)
+			select {
+			case c.audioChan <- data:
+			case <-ctx.Done():
 				return
 			}
-			if err != nil {
-				c.logger.WithError(err).Error("Audio stream read error")
-				return
+		}
+		if err != nil {
+			if err != io.EOF {
+				c.finish(fmt.Errorf("read Google audio: %w", err))
 			}
-
-			if n > 0 {
-				audioData := make([]byte, n)
-				copy(audioData, buffer[:n])
-
-				select {
-				case c.audioChan <- audioData:
-					c.lastActivity = time.Now()
-				case <-ctx.Done():
-					return
-				}
-			}
+			return
 		}
 	}
 }
 
-// handleResults processes the streaming recognition results
 func (c *GoogleConnection) handleResults(callback func(string, string, bool, map[string]interface{})) {
-	defer c.stream.CloseSend()
-
-	// Start goroutine to send audio data
+	defer c.cancel()
 	go func() {
 		for {
 			select {
+			case <-c.ctx.Done():
+				return
 			case audioData, ok := <-c.audioChan:
 				if !ok {
+					if err := c.stream.CloseSend(); err != nil {
+						c.finish(err)
+					}
+					close(c.audioSent)
 					return
 				}
-
-				request := &speechpb.StreamingRecognizeRequest{
-					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
-						AudioContent: audioData,
-					},
-				}
-
+				request := &speechpb.StreamingRecognizeRequest{StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{AudioContent: audioData}}
 				if err := c.stream.Send(request); err != nil {
-					c.logger.WithError(err).Error("Failed to send audio data")
+					c.finish(err)
+					c.cancel()
 					return
 				}
 			}
 		}
 	}()
-
-	// Process results
 	for {
 		resp, err := c.stream.Recv()
-		if err == io.EOF {
-			c.logger.Debug("Recognition stream ended")
-			break
-		}
 		if err != nil {
-			c.logger.WithError(err).Error("Error receiving recognition response")
-			break
+			if err == io.EOF {
+				err = nil
+			}
+			c.finish(err)
+			return
 		}
-
+		c.mutex.Lock()
 		c.lastActivity = time.Now()
-
+		c.mutex.Unlock()
 		// Process each result
 		for _, result := range resp.Results {
 			for _, alternative := range result.Alternatives {
@@ -757,20 +755,28 @@ func (c *GoogleConnection) buildResultMetadata(result *speechpb.StreamingRecogni
 	return metadata
 }
 
-// waitForCompletion waits for the connection to complete or timeout
+// waitForCompletion bounds only the final response drain, not live audio.
 func (c *GoogleConnection) waitForCompletion(ctx context.Context) error {
-	// Create timeout context
-	timeoutCtx, cancel := context.WithTimeout(ctx, c.config.RequestTimeout)
-	defer cancel()
-
 	select {
-	case <-timeoutCtx.Done():
-		if timeoutCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("request timeout after %v", c.config.RequestTimeout)
-		}
-		return timeoutCtx.Err()
+	case err := <-c.resultsDone:
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-c.audioSent:
+	}
+	timeout := c.config.RequestTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-c.resultsDone:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("Google final response timeout after %v: %w", timeout, context.DeadlineExceeded)
 	}
 }
 
@@ -782,9 +788,6 @@ func (c *GoogleConnection) close() {
 	if c.active {
 		c.active = false
 		c.cancel()
-		if c.stream != nil {
-			c.stream.CloseSend()
-		}
 		c.logger.Info("Google Speech streaming connection closed")
 	}
 }

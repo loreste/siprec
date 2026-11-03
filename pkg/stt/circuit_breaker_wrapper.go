@@ -57,13 +57,21 @@ func (w *CircuitBreakerWrapper) Name() string {
 	return w.provider.Name()
 }
 
-// StreamToText streams audio data with circuit breaker protection
+// StreamToText streams audio data with circuit breaker protection.
+// The call-scoped context is preserved for the actual streaming operation
+// because the circuit breaker's RequestTimeout is designed for short
+// request/response calls, not long-running streams that last the entire
+// SIP session.
 func (w *CircuitBreakerWrapper) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	callCtx := ctx
+
 	return w.circuitBreaker.ExecuteWithFallback(ctx,
-		// Primary function
-		func(ctx context.Context) error {
+		// Primary function — use callCtx so the circuit breaker's
+		// RequestTimeout does not kill a stream that runs for the
+		// duration of the call.
+		func(_ context.Context) error {
 			start := time.Now()
-			err := w.provider.StreamToText(ctx, audioStream, callUUID)
+			err := w.provider.StreamToText(callCtx, audioStream, callUUID)
 			duration := time.Since(start)
 
 			if err != nil {

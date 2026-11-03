@@ -2,6 +2,7 @@ package circuitbreaker
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -137,6 +138,10 @@ func NewCircuitBreaker(name string, config *Config, logger *logrus.Logger) *Circ
 
 // Execute runs the given function with circuit breaker protection
 func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(ctx context.Context) error) error {
+	parentCtx := ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Check if circuit allows execution
 	if !cb.allowRequest() {
 		cb.recordRejection()
@@ -155,6 +160,10 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(ctx context.Conte
 
 	// Record the result
 	if err != nil {
+		// Caller cancellation is not evidence of an unhealthy dependency.
+		if parentCtx.Err() != nil && errors.Is(err, parentCtx.Err()) {
+			return err
+		}
 		cb.recordFailure(err)
 		return err
 	}

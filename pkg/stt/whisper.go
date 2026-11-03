@@ -39,7 +39,10 @@ type WhisperProvider struct {
 func NewWhisperProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.WhisperSTTConfig) *WhisperProvider {
 	// Determine the concurrency limit
 	var semaphore chan struct{}
-	maxConcurrent := cfg.MaxConcurrentCalls
+	maxConcurrent := 0
+	if cfg != nil {
+		maxConcurrent = cfg.MaxConcurrentCalls
+	}
 
 	if maxConcurrent == -1 {
 		// Auto mode: use number of CPU cores
@@ -121,8 +124,15 @@ func (p *WhisperProvider) Initialize() error {
 
 // StreamToText buffers the PCM stream to a temporary WAV file and invokes the Whisper CLI.
 func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	if p.config == nil {
+		return fmt.Errorf("whisper configuration is required")
+	}
 	if !p.config.Enabled {
 		return fmt.Errorf("whisper provider is disabled")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Acquire semaphore slot if rate limiting is enabled
@@ -139,11 +149,9 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 	if err != nil {
 		return fmt.Errorf("failed to create temporary audio file: %w", err)
 	}
+	var trackedSize int64
 	defer func() {
-		// Track aggregate disk usage: decrement on removal
-		if info, err := os.Stat(audioFile.Name()); err == nil {
-			metrics.SubWhisperTempFileUsage(info.Size())
-		}
+		metrics.SubWhisperTempFileUsage(trackedSize)
 		os.Remove(audioFile.Name())
 	}()
 
@@ -153,10 +161,24 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 		return fmt.Errorf("failed to initialize WAV writer: %w", err)
 	}
 
-	if err := p.bufferPCM(ctx, wavWriter, audioStream); err != nil {
+	audioBytes, bufferErr := p.bufferPCM(ctx, wavWriter, audioStream)
+	if bufferErr != nil && !errors.Is(bufferErr, context.Canceled) && !errors.Is(bufferErr, context.DeadlineExceeded) {
 		audioFile.Close()
-		return err
+		return bufferErr
 	}
+	if audioBytes == 0 {
+		audioFile.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if bufferErr != nil {
+			return bufferErr
+		}
+		return nil
+	}
+
+	// Context cancellation during buffering is normal at call end.
+	// Proceed with whatever audio was captured.
 
 	if err := wavWriter.Finalize(); err != nil {
 		audioFile.Close()
@@ -169,7 +191,8 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 
 	// Track aggregate disk usage: increment after file is written
 	if info, err := os.Stat(audioFile.Name()); err == nil {
-		metrics.AddWhisperTempFileUsage(info.Size())
+		trackedSize = info.Size()
+		metrics.AddWhisperTempFileUsage(trackedSize)
 	}
 
 	outputDir, err := os.MkdirTemp("", "whisper-output-*")
@@ -178,11 +201,16 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 	}
 	defer os.RemoveAll(outputDir)
 
-	runCtx := ctx
-	cancel := func() {}
-	if p.config.Timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, p.config.Timeout)
+	// Buffering is complete. Inference has its own lifetime so call teardown
+	// cannot cancel it, including cancellation arriving just after EOF.
+	// Preserve context values for tracing while bounding execution below.
+	runBase := context.WithoutCancel(ctx)
+	timeout := p.config.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
 	}
+	runCtx, cancel := context.WithTimeout(runBase, timeout)
+	defer cancel()
 
 	// Start metrics timer
 	recordDuration := metrics.ObserveWhisperCLIDuration(p.config.Model)
@@ -233,17 +261,19 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 	return nil
 }
 
-func (p *WhisperProvider) bufferPCM(ctx context.Context, wavWriter *media.WAVWriter, audioStream io.Reader) error {
+func (p *WhisperProvider) bufferPCM(ctx context.Context, wavWriter *media.WAVWriter, audioStream io.Reader) (int64, error) {
+	var total int64
 	buffer := make([]byte, 32*1024)
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return total, err
 		}
 
 		n, err := audioStream.Read(buffer)
 		if n > 0 {
+			total += int64(n)
 			if _, writeErr := wavWriter.Write(buffer[:n]); writeErr != nil {
-				return fmt.Errorf("failed to buffer audio for whisper: %w", writeErr)
+				return total, fmt.Errorf("failed to buffer audio for whisper: %w", writeErr)
 			}
 		}
 
@@ -251,10 +281,10 @@ func (p *WhisperProvider) bufferPCM(ctx context.Context, wavWriter *media.WAVWri
 			if err == io.EOF {
 				break
 			}
-			return fmt.Errorf("failed to read PCM audio: %w", err)
+			return total, fmt.Errorf("failed to read PCM audio: %w", err)
 		}
 	}
-	return nil
+	return total, nil
 }
 
 func (p *WhisperProvider) extractTranscription(outputDir, audioPath string) (string, map[string]interface{}, error) {
@@ -331,6 +361,9 @@ func defaultWhisperRunner(ctx context.Context, cfg *config.WhisperSTTConfig, aud
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("whisper command failed: %w", ctx.Err())
+		}
 		return fmt.Errorf("whisper command failed: %w: %s", err, combined.String())
 	}
 	return nil

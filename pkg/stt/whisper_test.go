@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -691,4 +692,84 @@ func TestDefaultWhisperRunner_CommandConstruction(t *testing.T) {
 			tc.verify(t, tc.cfg)
 		})
 	}
+}
+
+// cancellationReader models a call ending while its last PCM bytes are read.
+type whisperCancellationReader struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (r whisperCancellationReader) Read(b []byte) (int, error) {
+	r.cancel()
+	return copy(b, []byte{0, 1, 2, 3}), r.err
+}
+
+func TestWhisperProvider_TranscribesAudioAtCallEnd(t *testing.T) {
+	for _, readErr := range []error{nil, io.EOF, context.Canceled} {
+		t.Run(fmt.Sprint(readErr), func(t *testing.T) {
+			logger := logrus.New()
+			logger.SetOutput(io.Discard)
+			cfg := &config.WhisperSTTConfig{Enabled: true, SampleRate: 8000, Channels: 1, OutputFormat: "json"}
+			provider := NewWhisperProvider(logger, nil, cfg)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			invoked := false
+			provider.runner = func(runCtx context.Context, _ *config.WhisperSTTConfig, audioPath, outputDir string) error {
+				invoked = true
+				require.NoError(t, runCtx.Err())
+				_, bounded := runCtx.Deadline()
+				require.True(t, bounded)
+				data, err := os.ReadFile(audioPath)
+				require.NoError(t, err)
+				require.Equal(t, []byte{0, 1, 2, 3}, data[len(data)-4:])
+				base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
+				return os.WriteFile(filepath.Join(outputDir, base+".json"), []byte(`{"text":"call finished"}`), 0o600)
+			}
+			published := false
+			provider.SetCallback(func(id, text string, final bool, metadata map[string]interface{}) {
+				published = true
+				require.Equal(t, "call-end", id)
+				require.Equal(t, "call finished", text)
+				require.True(t, final)
+			})
+			require.NoError(t, provider.StreamToText(ctx, whisperCancellationReader{cancel, readErr}, "call-end"))
+			require.True(t, invoked)
+			require.True(t, published)
+		})
+	}
+}
+
+func TestWhisperProvider_EmptyAudioSkipsCLI(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	provider := NewWhisperProvider(logger, nil, &config.WhisperSTTConfig{Enabled: true, SampleRate: 8000, Channels: 1})
+	provider.runner = func(context.Context, *config.WhisperSTTConfig, string, string) error {
+		t.Fatal("CLI must not run for empty audio")
+		return nil
+	}
+	require.NoError(t, provider.StreamToText(context.Background(), bytes.NewReader(nil), "empty"))
+}
+
+func TestWhisperProvider_CallEndsAfterEOF(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	provider := NewWhisperProvider(logger, nil, &config.WhisperSTTConfig{Enabled: true, SampleRate: 8000, Channels: 1, Timeout: time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider.runner = func(runCtx context.Context, _ *config.WhisperSTTConfig, audioPath, outputDir string) error {
+		cancel()
+		require.NoError(t, runCtx.Err())
+		base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
+		return os.WriteFile(filepath.Join(outputDir, base+".json"), []byte(`{"text":"completed"}`), 0o600)
+	}
+	require.NoError(t, provider.StreamToText(ctx, bytes.NewReader([]byte{0, 1}), "late-cancel"))
+}
+
+func TestWhisperProvider_NilConfigConstructor(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	p := NewWhisperProvider(logger, nil, nil)
+	require.Error(t, p.Initialize())
+	require.Error(t, p.StreamToText(context.Background(), bytes.NewReader(nil), "nil-config"))
 }

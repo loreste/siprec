@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -263,14 +264,22 @@ func (p *OpenSourceModelProvider) StreamToText(ctx context.Context, audioStream 
 
 // transcribeHTTP handles HTTP-based transcription
 func (p *OpenSourceModelProvider) transcribeHTTP(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	logger := p.logger.WithField("call_uuid", callUUID)
 
 	// Read audio data
 	audioData, err := io.ReadAll(audioStream)
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("failed to read audio: %w", err)
 	}
 
+	if len(audioData) == 0 {
+		return err
+	}
+	ctx, cancel := p.inferenceContext(ctx)
+	defer cancel()
 	// Build request based on backend type
 	var req *http.Request
 	switch p.config.Backend {
@@ -791,6 +800,9 @@ func (p *OpenSourceModelProvider) extractLanguageMetadata(callUUID string, respo
 
 // transcribeCLI handles CLI-based transcription (local models)
 func (p *OpenSourceModelProvider) transcribeCLI(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	logger := p.logger.WithField("call_uuid", callUUID)
 	_ = logger // Suppress unused warning for now, will be used for detailed logging
 
@@ -802,14 +814,20 @@ func (p *OpenSourceModelProvider) transcribeCLI(ctx context.Context, audioStream
 	defer os.Remove(tmpFile.Name())
 
 	// Write audio to temp file
-	if _, err := io.Copy(tmpFile, audioStream); err != nil {
+	n, copyErr := io.Copy(tmpFile, audioStream)
+	if copyErr != nil && !errors.Is(copyErr, context.Canceled) && !errors.Is(copyErr, context.DeadlineExceeded) {
 		_ = tmpFile.Close()
-		return fmt.Errorf("failed to write audio: %w", err)
+		return fmt.Errorf("failed to write audio: %w", copyErr)
 	}
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
+	if n == 0 {
+		return copyErr
+	}
+	ctx, cancel := p.inferenceContext(ctx)
+	defer cancel()
 	// Build command based on model type
 	var cmd *exec.Cmd
 	switch p.config.ModelType {
@@ -826,6 +844,9 @@ func (p *OpenSourceModelProvider) transcribeCLI(ctx context.Context, audioStream
 	// Execute command
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("command execution failed: %w", ctx.Err())
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("command failed: %s", string(exitErr.Stderr))
 		}
@@ -1068,4 +1089,13 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// inferenceContext gives buffered audio a bounded lifetime independent of call teardown.
+func (p *OpenSourceModelProvider) inferenceContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := p.config.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
 }

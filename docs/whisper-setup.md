@@ -167,3 +167,11 @@ INFO  Whisper rate limiting enabled max_concurrent=8
 - **Upgrades**: Whisper is a Python project; use virtualenvs or containers to keep it isolated from the SIPREC Go binary.
 
 With these steps completed, SIPREC will stream PCM audio to Whisper, ingest the generated transcripts, and forward results through the normal WebSocket/AMQP listeners alongside the other STT providers.
+
+## Live calls and HTTP wrappers
+
+The Whisper CLI provider buffers each call leg into a temporary WAV file. It invokes the configured executable after the audio stream ends, then publishes a final transcript. It does not produce partial transcripts during a live call. An HTTP wrapper follows the same lifecycle; no inference request is expected while audio is still arriving.
+
+At call end, captured audio is finalized even if the call context has been canceled. CLI processing then uses its own bounded timeout (`stt.whisper.timeout`, or `WHISPER_TIMEOUT`, default `10m`). The timeout applies to inference, not the duration of the call. Empty streams do not invoke the CLI.
+
+A wrapper receives the WAV path as its first argument and must honor `--output_dir` and `--output_format`. For JSON output, write `<WAV-basename>.json` in that directory with a nonempty `text` field. Configure the sample rate and channels to match the PCM supplied to the provider. Use a streaming STT provider when live partial transcripts are required.
