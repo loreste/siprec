@@ -157,17 +157,23 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 
 	wavWriter, err := media.NewWAVWriter(audioFile, p.config.SampleRate, p.config.Channels)
 	if err != nil {
-		audioFile.Close()
+		if closeErr := audioFile.Close(); closeErr != nil {
+			p.logger.WithError(closeErr).Warn("Failed to close Whisper audio file")
+		}
 		return fmt.Errorf("failed to initialize WAV writer: %w", err)
 	}
 
 	audioBytes, bufferErr := p.bufferPCM(ctx, wavWriter, audioStream)
 	if bufferErr != nil && !errors.Is(bufferErr, context.Canceled) && !errors.Is(bufferErr, context.DeadlineExceeded) {
-		audioFile.Close()
+		if closeErr := audioFile.Close(); closeErr != nil {
+			p.logger.WithError(closeErr).Warn("Failed to close Whisper audio file")
+		}
 		return bufferErr
 	}
 	if audioBytes == 0 {
-		audioFile.Close()
+		if closeErr := audioFile.Close(); closeErr != nil {
+			p.logger.WithError(closeErr).Warn("Failed to close Whisper audio file")
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -181,7 +187,9 @@ func (p *WhisperProvider) StreamToText(ctx context.Context, audioStream io.Reade
 	// Proceed with whatever audio was captured.
 
 	if err := wavWriter.Finalize(); err != nil {
-		audioFile.Close()
+		if closeErr := audioFile.Close(); closeErr != nil {
+			p.logger.WithError(closeErr).Warn("Failed to close Whisper audio file")
+		}
 		return fmt.Errorf("failed to finalize WAV file: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"math"
@@ -27,7 +28,7 @@ func main() {
 			return
 		}
 	}
-	
+
 	// Default - client just sends direct RTP packets
 	fmt.Println("Sending direct RTP packets to port 15000 (no SIP signaling)")
 	sendTestRTPPackets(15000)
@@ -63,9 +64,24 @@ func runServer() {
 	}
 }
 
+// clientTLSConfig trusts the local test certificate without disabling peer validation.
+// The certificate must include the target IP (127.0.0.1) in its subject alternative names.
+func clientTLSConfig(caPEM []byte) (*tls.Config, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("local TLS trust file contains no certificates")
+	}
+	return &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, nil
+}
+
 func runClient() {
-	config := &tls.Config{
-		InsecureSkipVerify: true, // #nosec G402 -- test client connecting to local self-signed cert
+	caPEM, err := os.ReadFile("../certs/cert.pem")
+	if err != nil {
+		log.Fatalf("Failed to read local TLS trust certificate: %v", err)
+	}
+	config, err := clientTLSConfig(caPEM)
+	if err != nil {
+		log.Fatalf("Failed to configure TLS trust: %v", err)
 	}
 
 	conn, err := tls.Dial("tcp", "127.0.0.1:5063", config)
