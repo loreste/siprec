@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -45,6 +46,7 @@ import (
 	"siprec-server/pkg/sip"
 	"siprec-server/pkg/stt"
 	"siprec-server/pkg/telemetry/tracing"
+	"siprec-server/pkg/version"
 	"siprec-server/pkg/warnings"
 )
 
@@ -218,6 +220,14 @@ func safeInt32(v int) int32 {
 }
 
 func main() {
+	// Report artifact identity without starting listeners or loading credentials.
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		if err := json.NewEncoder(os.Stdout).Encode(version.Info()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Set up logger with basic configuration (will be updated after config is loaded)
 	logger.SetFormatter(&logrus.JSONFormatter{
 		TimestampFormat: time.RFC3339Nano,

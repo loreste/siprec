@@ -4,6 +4,12 @@ All notable changes to IZI SIPREC will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Prepare and verify every release asset before publishing an immutable release; Helm upload failures now block publication.
+- Inject version, commit, and build time into actual runtime metadata, expose `--version` JSON, and verify portable and Docker artifacts before publication.
+- Document that portable binary archives lack Opus/G.729 decoding and include build notes in the archives.
+
 ### Added
 
 - Opt-in SIPREC metadata completion, adapted from hopefulGiupplo/siprec, with validated fallback participant addresses, an independent participant-free recording option, preserved update identity, and provenance without assumed consent.

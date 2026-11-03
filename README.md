@@ -82,6 +82,10 @@ Worker pools auto-size based on available CPUs, and you can set memory limits wi
 
 Pause and resume recording mid-call via REST API, or submit async transcription jobs through `/api/stt/*`. Health and readiness probes are Kubernetes-compatible. Configuration can be hot-reloaded without restarting via `/api/config` endpoints. Alerts go out via email (SMTP), Slack, PagerDuty, or webhooks. Optional RBAC enforcement is available for API endpoints (`AUTH_RBAC_ENABLED`). CDRs are generated automatically.
 
+## Release artifacts
+
+Standalone release binaries are portable builds without Opus or G.729 decoding. Use Docker or a native CGO build for those codecs. See [artifact capabilities and version verification](docs/release-artifacts.md).
+
 ## Quick Start
 
 ### Build & Run

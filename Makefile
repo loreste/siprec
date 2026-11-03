@@ -32,7 +32,7 @@ GOFMT := gofmt
 GOVET := $(GOCMD) vet
 
 # Build flags
-LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
+LDFLAGS := -ldflags "-s -w -X siprec-server/pkg/version.Version=$(patsubst v%,%,$(VERSION)) -X siprec-server/pkg/version.Commit=$(COMMIT) -X siprec-server/pkg/version.BuildTime=$(BUILD_TIME)"
 BUILD_FLAGS := -trimpath
 GO_BUILD_TAGS ?=
 ifneq ($(strip $(GO_BUILD_TAGS)),)

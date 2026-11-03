@@ -366,3 +366,7 @@ localhost callbacks in development, use the actual host IP instead.
 ## Oracle Linux 10
 
 See the [Oracle Linux 10 deployment notes](oracle-linux-10.md) for pinned builds, native codec prerequisites, systemd, SELinux, and firewall considerations.
+
+## Downloaded binary codec limitations
+
+Standalone release archives are built without CGO and cannot decode Opus or G.729. Use the Docker image or a native CGO build when your SBC negotiates either codec. See [release artifacts and verification](release-artifacts.md) for build metadata, checksums, and publication behavior.

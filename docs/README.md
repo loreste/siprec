@@ -4,6 +4,8 @@ This directory contains the current, supported feature set for IZI SIPREC.
 
 ## Contents
 
+- [Release artifacts](release-artifacts.md) – Codec capabilities, version metadata, and immutable release publication.
+
 - `installation.md` – Complete installation guide for all platforms.
 - [Oracle Linux 10 deployment notes](oracle-linux-10.md) – Pinned builds, native codec prerequisites, systemd, SELinux, and firewall considerations.
 - `overview.md` – Feature summary and architecture snapshot.

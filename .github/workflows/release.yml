@@ -8,16 +8,36 @@ permissions:
   contents: write
   packages: write
 
+# Serialize retries of the same release; never interrupt artifact publication.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: Create Release
+    name: Prepare Draft Release
     runs-on: ubuntu-latest
-
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Validate version and release state
+      run: |
+        VERSION=${TAG_NAME#v}
+        test "$(cat VERSION)" = "$VERSION" || { echo "Tag and VERSION file disagree"; exit 1; }
+        gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases" > release-state.json
+        python3 - "$TAG_NAME" <<'PYCODE'
+        import json, sys
+        with open("release-state.json") as stream:
+            releases = [release for page in json.load(stream) for release in page]
+        if any(r["tag_name"] == sys.argv[1] and not r["draft"] for r in releases):
+            sys.exit("Published releases cannot be rebuilt; use a new tag")
+        PYCODE
 
     - name: Setup Go
       uses: actions/setup-go@v5
@@ -31,71 +51,61 @@ jobs:
         sudo apt-get install -y libopus-dev pkg-config
 
     - name: Run tests
-      run: go test -race -short ./pkg/... ./cmd/...
-
-    - name: Build binaries
       run: |
-        VERSION=${GITHUB_REF#refs/tags/}
-        COMMIT=$(git rev-parse --short HEAD)
+        python3 -B scripts/test_release_tools.py
+        go test -race -short ./pkg/... ./cmd/...
+
+    - name: Build portable binaries
+      run: |
+        VERSION=${TAG_NAME#v}
+        COMMIT=$(git rev-parse HEAD)
         BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}"
-
+        LDFLAGS="-s -w -X siprec-server/pkg/version.Version=${VERSION} -X siprec-server/pkg/version.Commit=${COMMIT} -X siprec-server/pkg/version.BuildTime=${BUILD_TIME}"
         mkdir -p dist
+        cp docs/release-artifacts.md dist/BUILD-NOTES.md
+        for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+          GOOS=${TARGET%/*}
+          GOARCH=${TARGET#*/}
+          BINARY="siprec-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = windows ]; then BINARY="${BINARY}.exe"; fi
+          GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o "dist/$BINARY" ./cmd/siprec
+          if [ "$TARGET" = linux/amd64 ]; then
+            "./dist/$BINARY" --version > dist/build-info.json
+            python3 scripts/verify-build-info.py dist/build-info.json "$VERSION" "$COMMIT" false
+            rm dist/build-info.json
+          fi
+          if [ "$GOOS" = windows ]; then
+            (cd dist && zip "siprec-${GOOS}-${GOARCH}.zip" "$BINARY" BUILD-NOTES.md)
+          else
+            tar -czf "dist/siprec-${GOOS}-${GOARCH}.tar.gz" -C dist "$BINARY" BUILD-NOTES.md
+          fi
+          rm "dist/$BINARY"
+        done
 
-        # Linux AMD64
-        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-linux-amd64 ./cmd/siprec
-        tar -czvf dist/siprec-linux-amd64.tar.gz -C dist siprec-linux-amd64
-        rm dist/siprec-linux-amd64
-
-        # Linux ARM64
-        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-linux-arm64 ./cmd/siprec
-        tar -czvf dist/siprec-linux-arm64.tar.gz -C dist siprec-linux-arm64
-        rm dist/siprec-linux-arm64
-
-        # Darwin AMD64
-        GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-darwin-amd64 ./cmd/siprec
-        tar -czvf dist/siprec-darwin-amd64.tar.gz -C dist siprec-darwin-amd64
-        rm dist/siprec-darwin-amd64
-
-        # Darwin ARM64
-        GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-darwin-arm64 ./cmd/siprec
-        tar -czvf dist/siprec-darwin-arm64.tar.gz -C dist siprec-darwin-arm64
-        rm dist/siprec-darwin-arm64
-
-        # Windows AMD64
-        GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o dist/siprec-windows-amd64.exe ./cmd/siprec
-        zip -j dist/siprec-windows-amd64.zip dist/siprec-windows-amd64.exe
-        rm dist/siprec-windows-amd64.exe
-
-        # Generate checksums
-        cd dist && sha256sum *.tar.gz *.zip > checksums.txt
-
-    - name: Generate changelog
-      id: changelog
+    - name: Package Helm chart
       run: |
-        # Get the previous tag
-        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        VERSION=${TAG_NAME#v}
+        helm lint deploy/helm/siprec-server
+        helm package deploy/helm/siprec-server --version "$VERSION" --app-version "$VERSION" -d dist/
 
-        if [ -n "$PREV_TAG" ]; then
-          echo "## Changes since ${PREV_TAG}" > CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          git log --oneline --no-merges ${PREV_TAG}..HEAD >> CHANGELOG.md
-        else
-          echo "## Initial Release" > CHANGELOG.md
-        fi
+    - name: Generate checksums and release notes
+      run: |
+        (cd dist && sha256sum *.tar.gz *.zip *.tgz BUILD-NOTES.md > checksums.txt && sha256sum -c checksums.txt)
+        python3 scripts/release-notes.py "${TAG_NAME#v}" > release-notes.md
 
-    - name: Create GitHub Release
+    - name: Upload all assets to draft release
       uses: softprops/action-gh-release@v2
       with:
-        body_path: CHANGELOG.md
+        body_path: release-notes.md
         files: |
           dist/*.tar.gz
           dist/*.zip
+          dist/*.tgz
+          dist/BUILD-NOTES.md
           dist/checksums.txt
-        draft: false
+        fail_on_unmatched_files: true
+        draft: true
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker-release:
     name: Release Docker Image
@@ -150,6 +160,10 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
 
+    - name: Set build timestamp
+      id: build-info
+      run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
     - name: Build and push
       uses: docker/build-push-action@v6
       with:
@@ -157,34 +171,40 @@ jobs:
         target: production
         platforms: linux/amd64,linux/arm64
         push: true
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          COMMIT=${{ github.sha }}
+          BUILD_TIME=${{ steps.build-info.outputs.time }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  helm-release:
-    name: Release Helm Chart
-    needs: release
-    runs-on: ubuntu-latest
+    - name: Verify published Docker image metadata
+      env:
+        IMAGE_REPO: ghcr.io/${{ github.repository }}
+        TAG_NAME: ${{ github.ref_name }}
+      run: |
+        docker run --rm --entrypoint /app/siprec "$IMAGE_REPO:${TAG_NAME#v}" --version > docker-build-info.json
+        python3 scripts/verify-build-info.py docker-build-info.json "${TAG_NAME#v}" "$GITHUB_SHA" true
 
+  publish:
+    name: Verify and Publish Release
+    needs: [release, docker-release]
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-    - name: Checkout code
+    - name: Checkout verification scripts
       uses: actions/checkout@v4
 
-    - name: Update Helm chart version
+    - name: Verify uploaded draft artifacts
       run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        sed -i "s/^version:.*/version: ${VERSION}/" deploy/helm/siprec-server/Chart.yaml
-        sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" deploy/helm/siprec-server/Chart.yaml
+        test "$(gh release view "$TAG_NAME" --json isDraft --jq .isDraft)" = true
+        gh release download "$TAG_NAME" --dir release-assets
+        python3 scripts/verify-release-assets.py release-assets "${TAG_NAME#v}"
 
-    - name: Package Helm chart
-      run: |
-        helm package deploy/helm/siprec-server -d dist/
-
-    - name: Upload Helm chart to release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: dist/*.tgz
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      continue-on-error: true
+    # Publishing is the final step: immutable releases reject later asset uploads.
+    - name: Publish immutable release
+      run: gh release edit "$TAG_NAME" --draft=false

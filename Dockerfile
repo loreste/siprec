@@ -45,9 +45,15 @@ COPY . .
 ENV CGO_LDFLAGS="-L/usr/lib -lbcg729"
 ENV CGO_CFLAGS="-I/usr/include"
 
+# Release builds supply metadata; local builds use VERSION and unknown provenance.
+ARG VERSION
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 # Build the application with optimizations (CGO enabled for bcg729 G.729 codec)
-RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags='-w -s' \
+RUN BUILD_VERSION="${VERSION:-$(cat VERSION)}" && \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-w -s -X siprec-server/pkg/version.Version=${BUILD_VERSION#v} -X siprec-server/pkg/version.Commit=${COMMIT} -X siprec-server/pkg/version.BuildTime=${BUILD_TIME}" \
     -o siprec \
     ./cmd/siprec
 

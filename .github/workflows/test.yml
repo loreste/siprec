@@ -29,6 +29,9 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libopus-dev pkg-config
 
+    - name: Test release verification tools
+      run: python3 -B scripts/test_release_tools.py
+
     - name: Download dependencies
       run: go mod download
 
