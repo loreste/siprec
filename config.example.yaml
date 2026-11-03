@@ -52,6 +52,12 @@ network:
   # SRTP Configuration
   enable_srtp: false
 
+  # Complete rs-metadata missing a session ID (from Call-ID) or participants
+  # (from the X-Calling-Participant header) instead of rejecting the INVITE
+  fill_missing_siprec_metadata: false
+  # Independently allow metadata without participants (identity remains unknown).
+  allow_missing_siprec_participants: false
+
   # NAT Configuration
   behind_nat: false
   stun_servers:

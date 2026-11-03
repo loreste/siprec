@@ -207,6 +207,12 @@ type NetworkConfig struct {
 	RequireTLSOnly bool `json:"require_tls_only" env:"SIP_REQUIRE_TLS" default:"false"`
 	RequireSRTP    bool `json:"require_srtp" env:"SIP_REQUIRE_SRTP" default:"false"`
 
+	// Complete rs-metadata missing a session ID (from the SIP Call-ID) or
+	// participants (from the X-Calling-Participant header) instead of rejecting it
+	FillMissingSIPRECMetadata bool `json:"fill_missing_siprec_metadata" yaml:"fill_missing_siprec_metadata" env:"SIPREC_FILL_MISSING_METADATA" default:"false"`
+	// Explicit compatibility option for SRCs that provide no participant identity.
+	AllowMissingSIPRECParticipants bool `json:"allow_missing_siprec_participants" yaml:"allow_missing_siprec_participants" env:"SIPREC_ALLOW_MISSING_PARTICIPANTS" default:"false"`
+
 	// STUN servers for NAT traversal
 	STUNServers []string `json:"stun_servers" env:"STUN_SERVER"`
 
@@ -1594,6 +1600,8 @@ func loadNetworkConfig(logger *logrus.Logger, config *NetworkConfig) error {
 	config.BehindNAT = getEnvBool("BEHIND_NAT", false)
 	config.RequireTLSOnly = getEnvBool("SIP_REQUIRE_TLS", false)
 	config.RequireSRTP = getEnvBool("SIP_REQUIRE_SRTP", false)
+	config.FillMissingSIPRECMetadata = getEnvBool("SIPREC_FILL_MISSING_METADATA", false)
+	config.AllowMissingSIPRECParticipants = getEnvBool("SIPREC_ALLOW_MISSING_PARTICIPANTS", false)
 
 	// If TLS is enabled, ensure certificates are provided
 	if config.EnableTLS && (config.TLSCertFile == "" || config.TLSKeyFile == "") {

@@ -1310,9 +1310,11 @@ func initialize() error {
 
 	// Create SIP handler config
 	sipConfig := &sip.Config{
-		MaxConcurrentCalls: appConfig.Resources.MaxConcurrentCalls,
-		MediaConfig:        mediaConfig,
-		SIPPorts:           appConfig.Network.Ports, // Pass SIP ports for dynamic NAT configuration
+		MaxConcurrentCalls:       appConfig.Resources.MaxConcurrentCalls,
+		MediaConfig:              mediaConfig,
+		SIPPorts:                 appConfig.Network.Ports, // Pass SIP ports for dynamic NAT configuration
+		FillMissingMetadata:      appConfig.Network.FillMissingSIPRECMetadata,
+		AllowMissingParticipants: appConfig.Network.AllowMissingSIPRECParticipants,
 	}
 
 	// Configure SIP authentication if enabled

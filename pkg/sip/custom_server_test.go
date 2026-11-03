@@ -863,3 +863,124 @@ func TestAckRaceConditionSafety(t *testing.T) {
 		sipServer.handleAckMessage(message)
 	})
 }
+
+func TestParseSiprecMetadataFillMissing(t *testing.T) {
+	metadata := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<recording xmlns="urn:ietf:params:xml:ns:recording:1" state="active" sequence="1"/>`)
+	message := &SIPMessage{
+		CallID: "fill-call-1@sbc.example.com",
+		Headers: map[string][]string{
+			"x-calling-participant": {`"Alice" <sip:alice@example.com>`},
+		},
+	}
+
+	newServer := func(fill bool) *CustomSIPServer {
+		logger := logrus.New()
+		logger.SetOutput(io.Discard)
+		handler := &Handler{Logger: logger, Config: &Config{FillMissingMetadata: fill}}
+		return NewCustomSIPServer(logger, handler)
+	}
+
+	t.Run("disabled rejects incomplete metadata", func(t *testing.T) {
+		_, err := newServer(false).parseSiprecMetadata(metadata, message, nil)
+		require.Error(t, err)
+	})
+
+	t.Run("enabled completes metadata from SIP signalling", func(t *testing.T) {
+		sipServer := newServer(true)
+		parsed, err := sipServer.parseSiprecMetadata(metadata, message, nil)
+		require.NoError(t, err)
+		require.Equal(t, message.CallID, parsed.SessionID)
+		require.Len(t, parsed.Participants, 1)
+		require.Equal(t, "sip:alice@example.com", parsed.Participants[0].Aor[0].Value)
+
+		session, err := sipServer.createRecordingSession(message.CallID, parsed, logrus.NewEntry(sipServer.logger))
+		require.NoError(t, err)
+		require.Equal(t, message.CallID, session.ID)
+		require.Equal(t, "session_id,participant", session.ExtendedMetadata["metadata_filled_fields"])
+	})
+
+	t.Run("fill alone rejects absent participants", func(t *testing.T) {
+		_, err := newServer(true).parseSiprecMetadata(metadata, &SIPMessage{CallID: "fill-call-2"}, nil)
+		require.Error(t, err)
+	})
+	t.Run("separate option permits missing participants", func(t *testing.T) {
+		server := newServer(true)
+		server.handler.Config.AllowMissingParticipants = true
+		parsed, err := server.parseSiprecMetadata(metadata, &SIPMessage{CallID: "fill-call-2"}, nil)
+		require.NoError(t, err)
+		require.Empty(t, parsed.Participants)
+	})
+}
+
+func TestMetadataFallbackUpdatesPreserveIdentityAndProvenance(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	server := NewCustomSIPServer(logger, &Handler{Logger: logger, Config: &Config{FillMissingMetadata: true}})
+	original := []byte(`<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="original-recording" state="active"><session session_id="original-recording"/><participant participant_id="original"><aor>sip:alice@example.com</aor></participant></recording>`)
+	message := &SIPMessage{CallID: "sip-dialog", Headers: map[string][]string{"x-calling-participant": {`"Bob" <sip:bob@example.com>`}}}
+	parsed, err := server.parseSiprecMetadata(original, message, nil)
+	require.NoError(t, err)
+	session, err := server.createRecordingSession(message.CallID, parsed, logrus.NewEntry(logger))
+	require.NoError(t, err)
+	for _, method := range []string{"INVITE", "UPDATE"} {
+		t.Run(method, func(t *testing.T) {
+			update := []byte(`<recording xmlns="urn:ietf:params:xml:ns:recording:1" state="active" sequence="2"/>`)
+			metadata, err := server.parseSiprecMetadata(update, message, session)
+			require.NoError(t, err)
+			require.Equal(t, "original-recording", metadata.SessionID)
+			require.NoError(t, server.updateRecordingSession(session, metadata, logrus.NewEntry(logger)))
+			require.Equal(t, "original-recording", session.ID)
+			require.Equal(t, "session_id,participant", session.ExtendedMetadata["metadata_filled_fields"])
+			require.Len(t, session.Participants, 1)
+			require.False(t, session.Participants[0].RecordingAware)
+			require.False(t, session.Participants[0].ConsentObtained)
+		})
+	}
+}
+func TestSyntheticParticipantDoesNotImplyConsent(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	server := NewCustomSIPServer(logger, &Handler{Logger: logger, Config: &Config{FillMissingMetadata: true}})
+	message := &SIPMessage{CallID: "dialog", Headers: map[string][]string{"X-Calling-Participant": {"sip:alice@example.com"}}}
+	metadata, err := server.parseSiprecMetadata([]byte(`<recording xmlns="urn:ietf:params:xml:ns:recording:1" state="active"/>`), message, nil)
+	require.NoError(t, err)
+	session, err := server.createRecordingSession(message.CallID, metadata, logrus.NewEntry(logger))
+	require.NoError(t, err)
+	require.False(t, session.Participants[0].ConsentObtained)
+	require.False(t, session.Participants[0].RecordingAware)
+}
+
+func TestMetadataFallbackRejectsDuplicateIdentityHeaders(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	server := NewCustomSIPServer(logger, &Handler{Logger: logger, Config: &Config{FillMissingMetadata: true}})
+	message := &SIPMessage{CallID: "dialog", Headers: map[string][]string{"X-Calling-Participant": {"sip:a@example.com"}, "x-calling-participant": {"sip:b@example.com"}}}
+	_, err := server.parseSiprecMetadata([]byte(`<recording xmlns="urn:ietf:params:xml:ns:recording:1"/>`), message, nil)
+	require.Error(t, err)
+}
+
+func TestMetadataCompatibilityKeepsOtherValidationStrict(t *testing.T) {
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	for _, tc := range []struct {
+		name, body             string
+		fill, allow, wantError bool
+	}{
+		{"participant-free option works independently", `<recording xmlns="urn:ietf:params:xml:ns:recording:1" session="explicit"><session session_id="explicit"/></recording>`, false, true, false},
+		{"participant-free option cannot fill session ID", `<recording xmlns="urn:ietf:params:xml:ns:recording:1"/>`, false, true, true},
+		{"compatibility still rejects malformed XML", `<recording>`, true, true, true},
+		{"compatibility still rejects wrong root", `<other xmlns="urn:ietf:params:xml:ns:recording:1"/>`, true, true, true},
+		{"compatibility still rejects invalid state", `<recording xmlns="urn:ietf:params:xml:ns:recording:1" state="invalid"/>`, true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewCustomSIPServer(logger, &Handler{Logger: logger, Config: &Config{FillMissingMetadata: tc.fill, AllowMissingParticipants: tc.allow}})
+			_, err := server.parseSiprecMetadata([]byte(tc.body), &SIPMessage{CallID: "dialog"}, nil)
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

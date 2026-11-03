@@ -5,6 +5,7 @@ This directory contains the current, supported feature set for IZI SIPREC.
 ## Contents
 
 - `installation.md` – Complete installation guide for all platforms.
+- [Oracle Linux 10 deployment notes](oracle-linux-10.md) – Pinned builds, native codec prerequisites, systemd, SELinux, and firewall considerations.
 - `overview.md` – Feature summary and architecture snapshot.
 - `audio-pipeline.md` – RTP audio processing pipeline architecture and fixes.
 - `configuration.md` – Configuration options including YAML/JSON config files and environment variables.
@@ -42,3 +43,7 @@ Place it in one of these locations (in order of priority):
 See `configuration.md` for complete configuration reference.
 
 New documents should live alongside these files and reference only functionality that exists in the codebase.
+
+## Incomplete metadata compatibility
+
+Builds after v1.3.4 include opt-in fallback for incomplete SIPREC metadata. The [configuration reference](configuration.md#incomplete-siprec-metadata) explains the separate fill-missing and allow-missing-participants settings, strict validation, and provenance. See the [vendor integration guide](vendor-integration.md#incomplete-metadata-from-an-src) before configuring SBC header manipulation.

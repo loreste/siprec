@@ -76,6 +76,11 @@ type Config struct {
 	// Timeout for delivering metadata notifications
 	MetadataNotifyTimeout time.Duration
 
+	// Complete rs-metadata missing a session ID or participants from SIP
+	// signalling instead of rejecting the request (SIPREC_FILL_MISSING_METADATA)
+	FillMissingMetadata      bool
+	AllowMissingParticipants bool
+
 	// Cluster configuration
 	Cluster cluster.Config
 

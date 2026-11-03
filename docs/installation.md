@@ -362,3 +362,7 @@ localhost callbacks in development, use the actual host IP instead.
 - [Audio Pipeline](audio-pipeline.md) - RTP processing architecture
 - [Vendor Integration](vendor-integration.md) - SBC-specific setup
 - [API Reference](api.md) - HTTP API documentation
+
+## Oracle Linux 10
+
+See the [Oracle Linux 10 deployment notes](oracle-linux-10.md) for pinned builds, native codec prerequisites, systemd, SELinux, and firewall considerations.

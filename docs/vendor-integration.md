@@ -969,3 +969,13 @@ To add support for a new vendor:
 9. Add CDR update block in custom_server.go
 
 Contact IZI Technologies for custom vendor integration support.
+
+## Incomplete metadata from an SRC
+
+Prefer fixing metadata at the recording source. If that is not possible, builds after v1.3.4 can complete selected missing fields with `network.fill_missing_siprec_metadata: true`. Both this setting and `network.allow_missing_siprec_participants` default to false; the second setting is independent and permits unknown participant identity.
+
+For a known caller, configure your trusted SBC to insert exactly one `X-Calling-Participant` header, for example `"Alice" <sip:alice@example.com>`. Strip any untrusted upstream copies before inserting it. The server does not treat SIPREC `From` or `P-Asserted-Identity` as the recorded caller: those may identify the recording device. The fallback participant is not automatically associated with an audio stream and does not establish consent.
+
+Test initial INVITE and subsequent re-INVITE/UPDATE exchanges. Check `metadata_filled_fields` in session metadata and confirm that established recording IDs remain stable. Missing or malformed headers do not infer an identity; without the separate participant-free option, missing participants still fail validation. Restart the service after changing these settings.
+
+See [Incomplete SIPREC Metadata](configuration.md#incomplete-siprec-metadata) for the full behavior and supported address forms. This implementation is adapted from [hopefulGiupplo/siprec](https://github.com/hopefulGiupplo/siprec/commit/da9748aae33d9f936b9a840cd107be2e2149b0b1).

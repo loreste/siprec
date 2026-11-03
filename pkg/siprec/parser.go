@@ -324,9 +324,22 @@ func normalizedAssocSessionID(assoc RSAssociation) string {
 	return ""
 }
 
+// ValidationOptions relaxes individual checks of ValidateSiprecMessageWithOptions.
+type ValidationOptions struct {
+	// AllowMissingParticipants reports metadata without participants as a
+	// warning instead of an error.
+	AllowMissingParticipants bool
+}
+
 // ValidateSiprecMessage performs a comprehensive validation of a SIPREC message
 // Returns a list of deficiencies found in the message
 func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
+	return ValidateSiprecMessageWithOptions(rsMetadata, ValidationOptions{})
+}
+
+// ValidateSiprecMessageWithOptions is ValidateSiprecMessage with some checks
+// relaxed according to opts.
+func ValidateSiprecMessageWithOptions(rsMetadata *RSMetadata, opts ValidationOptions) ValidationResult {
 	result := ValidationResult{}
 
 	if rsMetadata == nil {
@@ -397,7 +410,11 @@ func ValidateSiprecMessage(rsMetadata *RSMetadata) ValidationResult {
 
 	participantIDs := make(map[string]struct{}, len(rsMetadata.Participants))
 	if len(rsMetadata.Participants) == 0 {
-		result.addError("no participants provided in metadata")
+		if opts.AllowMissingParticipants {
+			result.addWarning("no participants provided in metadata (continuing without participants)")
+		} else {
+			result.addError("no participants provided in metadata")
+		}
 	}
 	for _, participant := range rsMetadata.Participants {
 		id := normalizedParticipantID(participant)

@@ -1234,7 +1234,7 @@ func (s *CustomSIPServer) handleSiprecInvite(message *SIPMessage) {
 			attribute.Int("siprec.metadata.bytes", len(rsMetadata)),
 		))
 		var err error
-		parsedMetadata, err = s.parseSiprecMetadata(rsMetadata, message.ContentType)
+		parsedMetadata, err = s.parseSiprecMetadata(rsMetadata, message, nil)
 		if err != nil {
 			metadataSpan.RecordError(err)
 			metadataSpan.End()
@@ -2075,7 +2075,7 @@ func (s *CustomSIPServer) handleSiprecReInvite(message *SIPMessage, callState *C
 
 	if rsMetadata != nil {
 		// Parse the updated metadata
-		parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message.ContentType)
+		parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message, callState.RecordingSession)
 		if err != nil {
 			reinviteSpan.RecordError(err)
 			callScope.RecordError(err)
@@ -2519,6 +2519,22 @@ func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSessio
 		session.ExtendedMetadata = make(map[string]string)
 	}
 
+	// Preserve the provenance of values synthesized during any update.
+	if len(metadata.FilledFields) > 0 {
+		fields := strings.Split(session.ExtendedMetadata["metadata_filled_fields"], ",")
+		for _, field := range metadata.FilledFields {
+			found := false
+			for _, previous := range fields {
+				if previous == field {
+					found = true
+				}
+			}
+			if !found {
+				fields = append(fields, field)
+			}
+		}
+		session.ExtendedMetadata["metadata_filled_fields"] = strings.Trim(strings.Join(fields, ","), ",")
+	}
 	// Update sequence number if explicitly provided; otherwise leave untouched
 	if metadata.Sequence > 0 {
 		session.SequenceNumber = metadata.Sequence
@@ -2566,8 +2582,8 @@ func (s *CustomSIPServer) updateRecordingSession(session *siprec.RecordingSessio
 				DisplayName:     rsParticipant.DisplayName,
 				Role:            rsParticipant.Role,
 				JoinTime:        time.Now(), // Set join time for new/updated participants
-				RecordingAware:  true,
-				ConsentObtained: true,
+				RecordingAware:  !metadata.ParticipantSynthesized(rsParticipant.ID),
+				ConsentObtained: !metadata.ParticipantSynthesized(rsParticipant.ID),
 			}
 
 			// Update communication IDs
@@ -2797,9 +2813,9 @@ func (s *CustomSIPServer) handleByeMessage(message *SIPMessage) {
 			callState.RecordingSession.EndTime = time.Now()
 			callState.RecordingSession.UpdatedAt = time.Now()
 			if callState.RecordingSession.ExtendedMetadata == nil {
-					callState.RecordingSession.ExtendedMetadata = make(map[string]string)
-				}
-				callState.RecordingSession.ExtendedMetadata["termination_reason"] = "bye_received"
+				callState.RecordingSession.ExtendedMetadata = make(map[string]string)
+			}
+			callState.RecordingSession.ExtendedMetadata["termination_reason"] = "bye_received"
 
 			logger.WithFields(logrus.Fields{
 				"session_id":      callState.RecordingSession.ID,
@@ -3039,7 +3055,7 @@ func (s *CustomSIPServer) handleUpdateMessage(message *SIPMessage) {
 			_, rsMetadata = s.extractSiprecContent(message.Body, contentType)
 		}
 		if len(rsMetadata) > 0 {
-			parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, contentType)
+			parsedMetadata, err := s.parseSiprecMetadata(rsMetadata, message, callState.RecordingSession)
 			if err != nil {
 				logger.WithError(err).Warn("Failed to parse SIPREC metadata in UPDATE")
 			} else if err := s.updateRecordingSession(callState.RecordingSession, parsedMetadata, logger); err != nil {
@@ -4243,8 +4259,10 @@ func (s *CustomSIPServer) extractSiprecContent(body []byte, contentType string) 
 	return sdpData, rsMetadata
 }
 
-// parseSiprecMetadata parses raw SIPREC metadata bytes into RSMetadata structure
-func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType string) (*siprec.RSMetadata, error) {
+// parseSiprecMetadata parses raw SIPREC metadata bytes into RSMetadata structure.
+// When FillMissingMetadata is enabled, a missing session ID or participant list
+// is completed from the SIP message before validation.
+func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, message *SIPMessage, existing *siprec.RecordingSession) (*siprec.RSMetadata, error) {
 	// Parse the XML metadata using a decoder that rejects entity expansion (XXE protection)
 	var metadata siprec.RSMetadata
 	decoder := xml.NewDecoder(bytes.NewReader(rsMetadata))
@@ -4254,7 +4272,45 @@ func (s *CustomSIPServer) parseSiprecMetadata(rsMetadata []byte, contentType str
 		return nil, fmt.Errorf("failed to unmarshal SIPREC metadata XML: %w", err)
 	}
 
-	validation := siprec.ValidateSiprecMessage(&metadata)
+	var validationOpts siprec.ValidationOptions
+	if s.handler != nil && s.handler.Config != nil {
+		validationOpts.AllowMissingParticipants = s.handler.Config.AllowMissingParticipants
+	}
+	existingID := ""
+	if existing != nil {
+		existingID = existing.ID
+	}
+	if s.handler != nil && s.handler.Config != nil && s.handler.Config.FillMissingMetadata {
+		// SIP field names are case-insensitive. Do not choose between conflicting
+		// repeated identity headers; leave participant validation to reject them.
+		callingParticipant := ""
+		headerCount := 0
+		for name, values := range message.Headers {
+			if strings.EqualFold(name, siprec.CallingParticipantHeader) {
+				headerCount += len(values)
+				if len(values) > 0 {
+					callingParticipant = values[0]
+				}
+			}
+		}
+		if headerCount != 1 {
+			callingParticipant = ""
+		}
+		siprec.FillMissing(&metadata, siprec.FillContext{
+			CallID:             message.CallID,
+			SessionID:          existingID,
+			CallingParticipant: callingParticipant,
+		})
+		if len(metadata.FilledFields) > 0 {
+			s.logger.WithFields(logrus.Fields{
+				"call_id":       message.CallID,
+				"session_id":    metadata.SessionID,
+				"filled_fields": metadata.FilledFields,
+			}).Warn("Completed incomplete SIPREC metadata from SIP signalling")
+		}
+	}
+
+	validation := siprec.ValidateSiprecMessageWithOptions(&metadata, validationOpts)
 	if len(validation.Errors) > 0 {
 		s.logger.WithField("raw_metadata", string(rsMetadata)).Error("SIPREC metadata validation failed – raw XML body")
 		return nil, fmt.Errorf("critical SIPREC metadata validation failure: %v", validation.Errors)
@@ -4341,6 +4397,10 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 		session.Callbacks = append(session.Callbacks, s.handler.Config.MetadataCallbackURLs...)
 	}
 
+	if len(metadata.FilledFields) > 0 {
+		session.ExtendedMetadata["metadata_filled_fields"] = strings.Join(metadata.FilledFields, ",")
+	}
+
 	session.StateReason = strings.TrimSpace(metadata.Reason)
 	session.StateReasonRef = strings.TrimSpace(metadata.ReasonRef)
 
@@ -4380,8 +4440,8 @@ func (s *CustomSIPServer) createRecordingSession(sipCallID string, metadata *sip
 			DisplayName:     rsParticipant.DisplayName,
 			Role:            rsParticipant.Role,
 			JoinTime:        time.Now(),
-			RecordingAware:  true, // Assume recording aware for SIPREC
-			ConsentObtained: true, // Assume consent for SIPREC
+			RecordingAware:  !metadata.ParticipantSynthesized(rsParticipant.ID), // Assume recording aware for SIPREC
+			ConsentObtained: !metadata.ParticipantSynthesized(rsParticipant.ID), // Assume consent for SIPREC
 		}
 
 		// Convert communication IDs

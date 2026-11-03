@@ -372,6 +372,20 @@ Notifications can be delivered through email (SMTP), Slack, PagerDuty, and gener
 
 With analytics on, every transcription chunk gets a sentiment score. By default, sentiment runs in **lexicon** mode (rule-based with negation handling and intensifier support). For real NLU, set `SENTIMENT_MODE=ml` and point `SENTIMENT_ENDPOINT` at any model server that speaks JSON (HuggingFace Inference API, TorchServe, Triton, vLLM, etc.). Use `SENTIMENT_MODE=auto` to try ML first and fall back to lexicon when the endpoint is unreachable. Results are published to three places: the WebSocket stream, the AMQP queue, and Elasticsearch.
 
+### Incomplete SIPREC metadata
+
+For SRCs that send incomplete metadata, builds after v1.3.4 offer two independent compatibility settings. Both are disabled by default:
+
+```yaml
+network:
+  fill_missing_siprec_metadata: false
+  allow_missing_siprec_participants: false
+```
+
+Enable `fill_missing_siprec_metadata` to fill a missing recording ID from the SIP dialog and infer a missing participant from a valid `X-Calling-Participant` header. In-dialog updates preserve the established recording ID. Enable `allow_missing_siprec_participants` separately only when you intend to accept recordings with unknown participants.
+
+These options do not bypass other metadata validation. Inferred participants are marked in the session's provenance and are not assumed to have consented to recording. Only trusted SRCs/SBCs should supply fallback identity headers. Restart after changing either setting. See the [configuration guide](docs/configuration.md#incomplete-siprec-metadata) for environment variables, accepted addresses, and limitations.
+
 ## HTTP API
 
 ### Health & Metrics
@@ -591,6 +605,7 @@ siprec/
 ## Documentation
 
 - [Installation Guide](docs/installation.md) – Complete setup instructions for all platforms
+- [Oracle Linux 10 Deployment Notes](docs/oracle-linux-10.md) – Pinned builds, codec prerequisites, systemd, SELinux, and firewall setup
 - [Configuration Guide](docs/configuration.md) – All configuration options
 - [Audio Pipeline Architecture](docs/audio-pipeline.md) – RTP processing, G.729 decoding, SSRC validation
 - [Speech-to-Text Integration](docs/stt.md)

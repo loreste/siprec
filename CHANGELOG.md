@@ -2,6 +2,13 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Opt-in SIPREC metadata completion, adapted from hopefulGiupplo/siprec, with validated fallback participant addresses, an independent participant-free recording option, preserved update identity, and provenance without assumed consent.
+- Oracle Linux 10 deployment notes covering pinned upstream builds, native codec prerequisites, systemd, SELinux, and installation-owned firewall rules.
+
 ## [1.3.4] - 2026-11-03
 
 ### Fixed

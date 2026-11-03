@@ -134,6 +134,10 @@ type RSMetadata struct {
 	SessionRecordingAssoc    RSAssociation               `xml:"sessionrecordingassoc"`
 	SessionGroupAssociations []SessionGroupAssociation   `xml:"sessiongroupassoc"`
 	PolicyUpdates            []PolicyUpdate              `xml:"policy"`
+
+	// FilledFields lists what FillMissing synthesised from SIP signalling
+	// (FilledSessionID, FilledParticipant). Never serialised.
+	FilledFields []string `xml:"-"`
 }
 
 // SessionGroupAssociation captures membership of a recording session in a session group.

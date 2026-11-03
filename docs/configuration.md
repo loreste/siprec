@@ -290,6 +290,28 @@ SIP_AUTH_REALM=secure.example.com
 SIP_AUTH_USERS=sbc-primary:$(cat /run/secrets/sbc_password)
 ```
 
+### Incomplete SIPREC Metadata
+
+By default, an INVITE whose rs-metadata has no recording session ID or no participants is rejected with `400 Bad Request - Invalid SIPREC metadata`, as RFC 7865/7866 require both. Some recording clients send incomplete metadata. For those, you can have the server complete it from SIP signalling instead.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SIPREC_FILL_MISSING_METADATA` | Fill a missing session ID or infer one participant from a valid header | `false` |
+| `SIPREC_ALLOW_MISSING_PARTICIPANTS` | Independently permit recordings with no participant identity | `false` |
+
+When enabled, values already in the metadata are never overwritten. Only missing values are filled:
+
+- **Session ID**: the SIP `Call-ID` of the dialog. It is used for the recording session ID, a `<session>` element and `<sessionrecordingassoc>`. The Call-ID does not change across digest challenges or re-INVITEs, so the ID stays stable for the whole call.
+- **Participant**: taken from the `X-Calling-Participant` header, which takes a name-addr (`"Alice" <sip:alice@example.com>`) or a bare URI (`sip:alice@example.com`, `tel:+15551234567`). It is added with `participant_id="calling-participant"` and is not linked to any stream. If the header is absent or invalid, no participant is synthesized. The normal missing-participant validation error remains unless `SIPREC_ALLOW_MISSING_PARTICIPANTS=true`.
+
+`From` and `P-Asserted-Identity` are deliberately not used for the participant. On a SIPREC INVITE they usually identify the recording client (the SBC), not a party of the recorded call. If your SBC knows the calling party, add the header with a header-manipulation rule, for example copying the original call's `P-Asserted-Identity` into `X-Calling-Participant`.
+
+Filled sessions are logged with a warning and carry `metadata_filled_fields` (e.g. `session_id,participant`) in their extended metadata, so they can be told apart downstream.
+
+```bash
+SIPREC_FILL_MISSING_METADATA=true
+```
+
 ## Recording
 
 | Variable | Description | Default |
@@ -972,3 +994,15 @@ Real-time compliance rule evaluation.
 | `ALERTING_EVALUATION_INTERVAL` | Alert rule evaluation interval | `30s` |
 
 Alert notifications can be delivered through email (SMTP), Slack, PagerDuty, and generic webhook channels. The email channel accepts `smtp_host`, `smtp_port`, `username`, `password`, `from`, `to`, and `tls_mode` (`auto`, `implicit`, `starttls`, `none`) settings and reports delivery success/failure metrics.
+
+The equivalent YAML settings are `network.fill_missing_siprec_metadata` and `network.allow_missing_siprec_participants`; both default to `false`. Environment variables override file settings.
+
+Only a single SIP/SIPS address or global `tel:+...` number is accepted as a fallback participant. Malformed addresses, control characters, wildcard addresses, URI passwords, and lists of addresses are ignored. Local telephone numbers requiring `phone-context` must be supplied in the original metadata. A synthesized participant is not proof of identity, recording awareness, or consent: its `RecordingAware` and `ConsentObtained` flags remain false. Configure header insertion only on trusted SRCs/SBCs.
+
+In-dialog re-INVITE and UPDATE metadata reuse the established recording session ID when the ID is absent; they do not replace it with the SIP dialog ID. Missing IDs in metadata containing multiple sessions are not guessed. The `metadata_filled_fields` audit trail is preserved across updates. Explicit metadata continues through the normal validation rules.
+
+This compatibility feature was adapted from [hopefulGiupplo/siprec](https://github.com/hopefulGiupplo/siprec/commit/da9748aae33d9f936b9a840cd107be2e2149b0b1), with stricter parsing and independent participant-validation controls.
+
+Restart the SIPREC service after changing either compatibility setting. Confirm the expected behavior with a test call: strict mode rejects missing metadata, fill-only mode requires a valid fallback identity when participants are absent, and participant-free mode records the identity as unknown. Telephone URI extensions and local-number contexts are not inferred from the fallback header; provide them in the original metadata instead.
+
+Compatibility mode only completes fields in an existing, parseable metadata document. It does not manufacture a missing MIME/XML body or bypass root-element, state, association, or other validation errors.
