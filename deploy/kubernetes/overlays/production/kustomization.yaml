@@ -21,4 +21,4 @@ patches:
 images:
   - name: siprec-server
     newName: your-registry.com/siprec-server
-    newTag: "1.0.0"
+    newTag: "1.3.4"

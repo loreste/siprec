@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"siprec-server/pkg/version"
 )
 
 // AMQPMetricsCollector collects comprehensive AMQP metrics
@@ -349,10 +350,10 @@ func (amc *AMQPMetricsCollector) getSystemInfo() *SystemInfo {
 	return &SystemInfo{
 		UptimeSeconds: int64(time.Since(time.Now().Add(-time.Hour)).Seconds()), // Placeholder
 		StartTime:     time.Now().Add(-time.Hour),                              // Placeholder
-		Version:       "1.0.0",                                                 // Placeholder
-		GoVersion:     "go1.21",                                                // Placeholder
-		MemoryUsage:   1024 * 1024,                                             // Placeholder
-		CPUUsage:      15.5,                                                    // Placeholder
+		Version:       version.Version,
+		GoVersion:     "go1.21",    // Placeholder
+		MemoryUsage:   1024 * 1024, // Placeholder
+		CPUUsage:      15.5,        // Placeholder
 	}
 }
 

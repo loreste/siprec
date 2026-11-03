@@ -2,9 +2,12 @@
 
 All notable changes to IZI SIPREC will be documented in this file.
 
-## [Unreleased]
+## [1.3.4] - 2026-11-03
 
 ### Fixed
+
+- Handle Whisper temporary-file close errors and enable certificate and hostname verification in the local TLS test client.
+- Align runtime, Helm, Kubernetes, and AMQP metadata with release 1.3.4.
 
 - Fix Whisper call-end transcription and canceled-context failures (#47), with bounded inference timeouts and empty-input handling.
 - Preserve buffered audio across call teardown in open-source HTTP and CLI transcription backends.

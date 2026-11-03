@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers installing IZI SIPREC v1.3.1 on various platforms.
+This guide covers installing IZI SIPREC v1.3.4 on various platforms.
 
 ## System Requirements
 
@@ -243,7 +243,7 @@ sudo firewall-cmd --reload
 curl http://localhost:8080/health
 
 # Expected response:
-# {"status":"healthy","version":"1.3.1",...}
+# {"status":"healthy","version":"1.3.4",...}
 
 # Using siprecctl
 siprecctl health
