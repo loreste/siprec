@@ -305,9 +305,6 @@ func (st *StreamingTranscriber) Stop() error {
 	}
 	st.subscribersMux.Unlock()
 
-	// Close event channel
-	close(st.eventChan)
-
 	duration := time.Since(st.startTime)
 	st.logger.WithField("duration", duration).Info("Streaming transcription session ended")
 
