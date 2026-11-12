@@ -812,6 +812,7 @@ GPL v3 — see [LICENSE](LICENSE) for details.
 
 - [Lance Oreste](https://github.com/loreste)
 - [Ma91Wa](https://github.com/Ma91Wa)
+- [rtcexpert](https://github.com/rtcexpert)
 
 ## Contributing
 
