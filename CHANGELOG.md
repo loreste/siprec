@@ -9,6 +9,12 @@ All notable changes to IZI SIPREC will be documented in this file.
 - Prepare and verify every release asset before publishing an immutable release; Helm upload failures now block publication.
 - Inject version, commit, and build time into actual runtime metadata, expose `--version` JSON, and verify portable and Docker artifacts before publication.
 - Document that portable binary archives lack Opus/G.729 decoding and include build notes in the archives.
+- Fix tel: URI parsing for sipgo v1.7+, which stores the subscriber number in `Uri.Raw()` instead of `Uri.Host`.
+
+### Changed
+
+- Upgrade sipgo from v1.6.0 to v1.7.3.
+- Update all Go module dependencies (grpc v1.85.0, pion transport v4.1.3, golang.org/x/crypto v0.59.0, and others).
 
 ### Added
 
