@@ -120,22 +120,27 @@ func parseNameAddr(value string) (display, address string) {
 	var uri sip.Uri
 	params := sip.NewParams()
 	display, err := sip.ParseAddressValue(value, &uri, &params)
-	if err != nil || (uri.Scheme != "sip" && uri.Scheme != "sips" && uri.Scheme != "tel") || uri.Wildcard || uri.Host == "" || uri.Password != "" || uri.HierarhicalSlashes {
+	if err != nil || (uri.Scheme != "sip" && uri.Scheme != "sips" && uri.Scheme != "tel") || uri.Wildcard || uri.Password != "" || uri.HierarhicalSlashes {
 		return "", ""
 	}
 	// Accept global telephone numbers; local numbers need phone-context semantics
 	// and must be supplied explicitly in the SRC metadata instead.
 	if uri.Scheme == "tel" {
+		// sipgo v1.7+ stores the tel subscriber in Raw() instead of Host.
+		telNum := uri.Raw()
+		if telNum == "" {
+			telNum = uri.Host
+		}
 		// Bare address parameters are parsed as header parameters by sipgo.
 		// Reject them rather than silently discarding telephone extensions/context.
 		if !strings.Contains(value, "<") && len(params) > 0 {
 			return "", ""
 		}
-		if !strings.HasPrefix(uri.Host, "+") || uri.User != "" || uri.Port != 0 || len(uri.UriParams) > 0 || len(uri.Headers) > 0 {
+		if !strings.HasPrefix(telNum, "+") || uri.User != "" || uri.Port != 0 || len(uri.UriParams) > 0 || len(uri.Headers) > 0 {
 			return "", ""
 		}
 		digits := 0
-		for _, ch := range uri.Host[1:] {
+		for _, ch := range telNum[1:] {
 			if ch >= '0' && ch <= '9' {
 				digits++
 				continue
@@ -148,6 +153,9 @@ func parseNameAddr(value string) (display, address string) {
 			return "", ""
 		}
 		return display, uri.String()
+	}
+	if uri.Host == "" {
+		return "", ""
 	}
 	// The parser intentionally tolerates some non-RFC host syntax; constrain it here.
 	host := strings.Trim(uri.Host, "[]")
