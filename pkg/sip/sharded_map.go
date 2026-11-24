@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -199,6 +200,6 @@ func toString(key interface{}) string {
 		return string(v)
 	default:
 		// Fallback to string representation
-		return key.(string)
+		return fmt.Sprintf("%v", key)
 	}
 }

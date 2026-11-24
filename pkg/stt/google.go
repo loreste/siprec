@@ -39,6 +39,7 @@ type GoogleStreamSession struct {
 	lastActivity  time.Time
 	mutex         sync.RWMutex
 	finalReceived chan struct{}
+	finalOnce     sync.Once
 	streamDone    chan struct{}
 }
 
@@ -266,8 +267,6 @@ func (p *GoogleProvider) StreamToText(ctx context.Context, audioStream io.Reader
 func (p *GoogleProvider) receiveResults(session *GoogleStreamSession, errChan chan error, logger *logrus.Entry) {
 	defer close(session.streamDone)
 
-	lastFinalTime := time.Now()
-
 	for {
 		select {
 		case <-session.ctx.Done():
@@ -298,7 +297,6 @@ func (p *GoogleProvider) receiveResults(session *GoogleStreamSession, errChan ch
 					}
 
 					if result.IsFinal {
-						lastFinalTime = time.Now()
 						logger.WithFields(logrus.Fields{
 							"transcription": transcription,
 							"confidence":    alt.Confidence,
@@ -340,22 +338,7 @@ func (p *GoogleProvider) receiveResults(session *GoogleStreamSession, errChan ch
 						}
 
 						// Signal final received
-						select {
-						case <-session.finalReceived:
-							// Already closed
-						default:
-							// Only close on the last final result (after some delay)
-							go func() {
-								time.Sleep(500 * time.Millisecond)
-								if time.Since(lastFinalTime) >= 400*time.Millisecond {
-									select {
-									case <-session.finalReceived:
-									default:
-										close(session.finalReceived)
-									}
-								}
-							}()
-						}
+						session.finalOnce.Do(func() { close(session.finalReceived) })
 					} else {
 						logger.WithFields(logrus.Fields{
 							"transcription": transcription,

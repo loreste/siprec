@@ -388,8 +388,9 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 
 					// Initialize transition smoothing
 					if p.transitionSmoother != nil {
-						oldLang := metadata["detected_language"].(string)
-						p.transitionSmoother.StartTransition(callUUID, oldLang, newLanguage)
+						if oldLang, ok := metadata["detected_language"].(string); ok {
+							p.transitionSmoother.StartTransition(callUUID, oldLang, newLanguage)
+						}
 					}
 
 					p.logger.WithFields(logrus.Fields{
