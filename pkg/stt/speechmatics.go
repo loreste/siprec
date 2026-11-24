@@ -117,12 +117,12 @@ func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.
 	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return fmt.Errorf("failed to connect to Speechmatics WebSocket: %w", err)
 	}
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	connCtx, cancel := context.WithCancel(ctx)
@@ -220,7 +220,7 @@ type speechmaticsConn struct {
 func (c *speechmaticsConn) waitForRecognitionStarted() error {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		c.ws.SetReadDeadline(deadline)
+		_ = c.ws.SetReadDeadline(deadline)
 		_, msg, err := c.ws.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("failed waiting for RecognitionStarted: %w", err)
@@ -235,7 +235,7 @@ func (c *speechmaticsConn) waitForRecognitionStarted() error {
 
 		switch envelope.Message {
 		case "RecognitionStarted":
-			c.ws.SetReadDeadline(time.Time{})
+			_ = c.ws.SetReadDeadline(time.Time{})
 			c.logger.Debug("RecognitionStarted received")
 			return nil
 		case "Error":
@@ -256,7 +256,7 @@ func (c *speechmaticsConn) handleMessages(callback TranscriptionCallback) {
 	defer close(c.messagesDone)
 
 	for {
-		c.ws.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = c.ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 		_, msgBytes, err := c.ws.ReadMessage()
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
@@ -349,7 +349,7 @@ func (c *speechmaticsConn) streamAudio(ctx context.Context, audioStream io.Reade
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			c.writeMu.Lock()
-			c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			wErr := c.ws.WriteMessage(websocket.BinaryMessage, chunk)
 			c.writeMu.Unlock()
 			if wErr != nil {
@@ -367,7 +367,7 @@ func (c *speechmaticsConn) streamAudio(ctx context.Context, audioStream io.Reade
 	// Send EndOfStream
 	endMsg := map[string]interface{}{"message": "EndOfStream", "last_seq_no": 0}
 	c.writeMu.Lock()
-	c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_ = c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	err := c.ws.WriteJSON(endMsg)
 	c.writeMu.Unlock()
 	if err != nil {
@@ -402,7 +402,7 @@ func (c *speechmaticsConn) keepAlive() {
 				return
 			}
 			c.writeMu.Lock()
-			c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			err := c.ws.WriteMessage(websocket.PingMessage, nil)
 			c.writeMu.Unlock()
 			if err != nil {
@@ -433,9 +433,9 @@ func (c *speechmaticsConn) close() {
 	}
 	if c.ws != nil {
 		c.writeMu.Lock()
-		c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		c.writeMu.Unlock()
-		c.ws.Close()
+		_ = c.ws.Close()
 	}
 }
 

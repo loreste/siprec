@@ -769,7 +769,7 @@ func (c *DeepgramConnection) handleMessages(callback func(string, string, bool, 
 
 	for {
 		// Set read deadline to detect stale connections
-		c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_ = c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 		_, messageBytes, err := c.conn.ReadMessage()
 		if err != nil {
@@ -968,7 +968,7 @@ func (c *DeepgramConnection) streamAudio(ctx context.Context, audioStream io.Rea
 
 			// Serialized write with timeout
 			c.writeMu.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			err := c.conn.WriteMessage(websocket.BinaryMessage, audioData)
 			c.writeMu.Unlock()
 			if err != nil {
@@ -1002,7 +1002,7 @@ func (c *DeepgramConnection) sendFinalizeMessage() {
 	}
 
 	c.writeMu.Lock()
-	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_ = c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	writeErr := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
 	c.writeMu.Unlock()
 	if writeErr != nil {
@@ -1033,7 +1033,7 @@ func (c *DeepgramConnection) keepAlive() {
 
 			// Send ping message
 			c.writeMu.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			err := c.conn.WriteMessage(websocket.PingMessage, []byte{})
 			c.writeMu.Unlock()
 			if err != nil {
@@ -1071,9 +1071,9 @@ func (c *DeepgramConnection) close() {
 		// Close WebSocket connection with proper close frame
 		if c.conn != nil {
 			c.writeMu.Lock()
-			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 			c.writeMu.Unlock()
-			c.conn.Close()
+			_ = c.conn.Close()
 		}
 
 		// Drain and close audio channel to prevent goroutine leaks

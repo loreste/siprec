@@ -360,7 +360,7 @@ func (p *AzureSpeechProvider) keepAlive(session *AzureStreamSession) {
 
 			// Send ping message
 			session.writeMu.Lock()
-			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			err := conn.WriteMessage(websocket.PingMessage, []byte{})
 			session.writeMu.Unlock()
 			if err != nil {
@@ -741,7 +741,7 @@ func (p *AzureSpeechProvider) handleWebSocketResponses(session *AzureStreamSessi
 			return
 		default:
 			// Set read deadline to detect stale connections
-			session.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			_ = session.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 			var response AzureStreamingResponse
 			if err := session.conn.ReadJSON(&response); err != nil {
