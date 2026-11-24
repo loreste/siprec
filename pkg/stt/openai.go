@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"siprec-server/pkg/config"
@@ -133,7 +134,7 @@ func (p *OpenAIProvider) StreamToText(ctx context.Context, audioStream io.Reader
 		req.Header.Set("OpenAI-Organization", p.config.OrganizationID)
 	}
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request to OpenAI Whisper API: %w", err)

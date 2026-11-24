@@ -405,7 +405,7 @@ func (p *AzureSpeechProvider) streamWithHTTP(ctx context.Context, audioStream io
 
 	// Set headers
 	req.Header.Set("Authorization", "Bearer "+p.accessToken)
-	req.Header.Set("Content-Type", "audio/wav; codecs=audio/pcm; samplerate=16000")
+	req.Header.Set("Content-Type", p.audioContentType())
 	req.Header.Set("Accept", "application/json")
 
 	// Send request
@@ -435,6 +435,19 @@ func (p *AzureSpeechProvider) streamWithHTTP(ctx context.Context, audioStream io
 
 	// Process recognition results
 	return p.processRecognitionResponse(azureResponse, callUUID, logger)
+}
+
+// audioContentType returns the Content-Type header for the configured audio format.
+func (p *AzureSpeechProvider) audioContentType() string {
+	sampleRate := p.config.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 8000
+	}
+	encoding := p.config.Encoding
+	if encoding == "" {
+		encoding = "pcm"
+	}
+	return fmt.Sprintf("audio/wav; codecs=audio/%s; samplerate=%d", encoding, sampleRate)
 }
 
 // buildRequestURL constructs the request URL with parameters

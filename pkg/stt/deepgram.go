@@ -252,7 +252,7 @@ func (p *DeepgramProvider) StreamToText(ctx context.Context, audioStream io.Read
 	}).Info("Sending request to Deepgram")
 
 	// Send the request to Deepgram
-	client := &http.Client{}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request to Deepgram: %w", err)

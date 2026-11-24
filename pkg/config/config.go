@@ -563,6 +563,12 @@ type AzureSTTConfig struct {
 	// Language
 	Language string `json:"language" env:"AZURE_STT_LANGUAGE" default:"en-US"`
 
+	// Audio sample rate in Hz
+	SampleRate int `json:"sample_rate" env:"AZURE_STT_SAMPLE_RATE" default:"8000"`
+
+	// Audio encoding (pcm, mulaw, alaw)
+	Encoding string `json:"encoding" env:"AZURE_STT_ENCODING" default:"pcm"`
+
 	// Endpoint URL (for custom endpoints)
 	EndpointURL string `json:"endpoint_url" env:"AZURE_STT_ENDPOINT"`
 
@@ -3084,6 +3090,8 @@ func loadAzureSTTConfig(logger *logrus.Logger, config *AzureSTTConfig) error {
 	config.SubscriptionKey = getEnv("AZURE_SPEECH_KEY", "")
 	config.Region = getEnv("AZURE_SPEECH_REGION", "")
 	config.Language = getEnv("AZURE_STT_LANGUAGE", "en-US")
+	config.SampleRate = getEnvInt("AZURE_STT_SAMPLE_RATE", 8000)
+	config.Encoding = getEnv("AZURE_STT_ENCODING", "pcm")
 	config.EndpointURL = getEnv("AZURE_STT_ENDPOINT", "")
 	config.EnableDetailedResults = getEnvBool("AZURE_STT_DETAILED_RESULTS", true)
 	config.ProfanityFilter = getEnv("AZURE_STT_PROFANITY_FILTER", "masked")
