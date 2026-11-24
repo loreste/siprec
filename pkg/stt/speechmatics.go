@@ -1,45 +1,39 @@
 package stt
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"path"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 
 	"siprec-server/pkg/config"
 )
 
-// SpeechmaticsProvider implements the Provider interface for Speechmatics.
+// SpeechmaticsProvider implements EnhancedStreamingProvider for Speechmatics real-time WebSocket API.
 type SpeechmaticsProvider struct {
 	logger           *logrus.Logger
 	transcriptionSvc *TranscriptionService
 	config           *config.SpeechmaticsSTTConfig
-	httpClient       *http.Client
 	callback         TranscriptionCallback
+
+	connections     map[string]*speechmaticsConn
+	connectionMutex sync.RWMutex
 }
 
 // NewSpeechmaticsProvider constructs a Speechmatics provider instance.
 func NewSpeechmaticsProvider(logger *logrus.Logger, transcriptionSvc *TranscriptionService, cfg *config.SpeechmaticsSTTConfig) *SpeechmaticsProvider {
-	timeout := 60 * time.Second
-	if cfg != nil && cfg.Timeout > 0 {
-		timeout = cfg.Timeout
-	}
-
 	return &SpeechmaticsProvider{
 		logger:           logger,
 		transcriptionSvc: transcriptionSvc,
 		config:           cfg,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		connections:      make(map[string]*speechmaticsConn),
 	}
 }
 
@@ -63,161 +57,20 @@ func (p *SpeechmaticsProvider) Initialize() error {
 		return fmt.Errorf("Speechmatics API key is required when STT is enabled")
 	}
 
-	if p.config.Timeout > 0 {
-		p.httpClient.Timeout = p.config.Timeout
+	if p.config.SampleRate <= 0 {
+		p.config.SampleRate = 8000
+	}
+	if p.config.Encoding == "" {
+		p.config.Encoding = "pcm_s16le"
 	}
 
 	p.logger.WithFields(logrus.Fields{
-		"base_url":           p.config.BaseURL,
-		"language":           p.config.Language,
-		"model":              p.config.Model,
-		"diarization":        p.config.EnableDiarization,
-		"punctuation":        p.config.EnablePunctuation,
-		"channel_separation": p.config.EnableChannelSeparation,
-		"timeout_seconds":    p.httpClient.Timeout.Seconds(),
+		"ws_url":      p.config.WSURL,
+		"language":    p.config.Language,
+		"model":       p.config.Model,
+		"sample_rate": p.config.SampleRate,
+		"encoding":    p.config.Encoding,
 	}).Info("Speechmatics provider initialized")
-
-	return nil
-}
-
-// StreamToText sends audio to Speechmatics and returns the transcription.
-func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
-	if p.config == nil || !p.config.Enabled {
-		return fmt.Errorf("Speechmatics STT provider is disabled")
-	}
-
-	baseURL := strings.TrimRight(p.config.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://asr.api.speechmatics.com/v2"
-	}
-
-	jobURL := baseURL + "/jobs"
-
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		defer pw.Close()
-
-		transcriptionConfig := map[string]interface{}{
-			"type":     "transcription",
-			"language": p.config.Language,
-			"operating_point": map[string]interface{}{
-				"model": p.config.Model,
-			},
-			"enable_partials": false,
-		}
-
-		if p.config.EnableDiarization {
-			transcriptionConfig["diarization"] = "speaker"
-		}
-		if !p.config.EnablePunctuation {
-			transcriptionConfig["punctuation"] = false
-		}
-		if p.config.EnableChannelSeparation {
-			transcriptionConfig["channel_separation"] = true
-		}
-
-		configPayload, err := json.Marshal(transcriptionConfig)
-		if err != nil {
-			_ = pw.CloseWithError(fmt.Errorf("failed to marshal Speechmatics config: %w", err))
-			return
-		}
-
-		if err := writer.WriteField("transcription_config", string(configPayload)); err != nil {
-			_ = pw.CloseWithError(fmt.Errorf("failed to write Speechmatics config field: %w", err))
-			return
-		}
-
-		fileWriter, err := writer.CreateFormFile("data_file", fmt.Sprintf("%s.wav", callUUID))
-		if err != nil {
-			_ = pw.CloseWithError(fmt.Errorf("failed to create Speechmatics audio part: %w", err))
-			return
-		}
-
-		if _, err := io.Copy(fileWriter, audioStream); err != nil {
-			_ = pw.CloseWithError(fmt.Errorf("failed to copy audio stream to Speechmatics payload: %w", err))
-			return
-		}
-
-		if err := writer.Close(); err != nil {
-			_ = pw.CloseWithError(fmt.Errorf("failed to finalize Speechmatics payload: %w", err))
-			return
-		}
-	}()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, jobURL, pr) // #nosec G107 -- vendor API URL is derived from configured Speechmatics endpoint.
-	if err != nil {
-		return fmt.Errorf("failed to create Speechmatics request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.config.APIKey))
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to call Speechmatics API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read Speechmatics response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Speechmatics STT request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
-	}
-
-	var submitResp speechmaticsJobResponse
-	if err := json.Unmarshal(bodyBytes, &submitResp); err != nil {
-		return fmt.Errorf("failed to decode Speechmatics response: %w", err)
-	}
-
-	transcript := extractSpeechmaticsTranscript(&submitResp)
-	if transcript == "" && submitResp.ID != "" {
-		// Fetch transcript text from job endpoint if not provided inline.
-		text, fetchErr := p.fetchTranscript(ctx, baseURL, submitResp.ID)
-		if fetchErr != nil {
-			return fetchErr
-		}
-		transcript = text
-	}
-
-	if transcript == "" {
-		return fmt.Errorf("Speechmatics response did not include transcription text")
-	}
-
-	metadata := map[string]interface{}{
-		"provider":           p.Name(),
-		"language":           p.config.Language,
-		"model":              p.config.Model,
-		"diarization":        p.config.EnableDiarization,
-		"punctuation":        p.config.EnablePunctuation,
-		"channel_separation": p.config.EnableChannelSeparation,
-	}
-
-	if submitResp.ID != "" {
-		metadata["job_id"] = submitResp.ID
-	}
-	if submitResp.Duration > 0 {
-		metadata["duration"] = submitResp.Duration
-	}
-
-	p.logger.WithFields(logrus.Fields{
-		"call_uuid": callUUID,
-		"language":  metadata["language"],
-		"model":     metadata["model"],
-	}).Info("Speechmatics transcription completed")
-
-	if p.callback != nil {
-		p.callback(callUUID, transcript, true, metadata)
-	}
-
-	if p.transcriptionSvc != nil {
-		p.transcriptionSvc.PublishTranscription(callUUID, transcript, true, metadata)
-	}
 
 	return nil
 }
@@ -227,73 +80,369 @@ func (p *SpeechmaticsProvider) SetCallback(callback TranscriptionCallback) {
 	p.callback = callback
 }
 
-func (p *SpeechmaticsProvider) fetchTranscript(ctx context.Context, baseURL, jobID string) (string, error) {
-	transcriptURL := strings.TrimRight(baseURL, "/") + path.Clean("/jobs/"+jobID+"/transcript?format=txt")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, transcriptURL, nil) // #nosec G107 -- vendor API URL is derived from configured Speechmatics endpoint.
-	if err != nil {
-		return "", fmt.Errorf("failed to create Speechmatics transcript request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.config.APIKey))
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch Speechmatics transcript: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
-		return "", fmt.Errorf("Speechmatics transcript request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
-	}
-
-	textBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read Speechmatics transcript body: %w", err)
-	}
-
-	return strings.TrimSpace(string(textBytes)), nil
+// GetActiveConnections returns the number of active WebSocket connections.
+func (p *SpeechmaticsProvider) GetActiveConnections() int {
+	p.connectionMutex.RLock()
+	defer p.connectionMutex.RUnlock()
+	return len(p.connections)
 }
 
-func extractSpeechmaticsTranscript(resp *speechmaticsJobResponse) string {
-	if resp == nil {
-		return ""
+// Shutdown gracefully shuts down all active connections.
+func (p *SpeechmaticsProvider) Shutdown(ctx context.Context) error {
+	p.connectionMutex.Lock()
+	for callUUID, conn := range p.connections {
+		p.logger.WithField("call_uuid", callUUID).Debug("Closing Speechmatics WebSocket connection")
+		conn.close()
+	}
+	p.connections = make(map[string]*speechmaticsConn)
+	p.connectionMutex.Unlock()
+	p.logger.Info("Speechmatics provider shutdown complete")
+	return nil
+}
+
+// StreamToText connects to Speechmatics real-time WebSocket API and streams audio.
+func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.Reader, callUUID string) error {
+	if p.config == nil || !p.config.Enabled {
+		return fmt.Errorf("Speechmatics STT provider is disabled")
 	}
 
-	// Attempt to read aggregated results
-	if len(resp.Results) > 0 {
-		var buffer bytes.Buffer
-		for _, result := range resp.Results {
-			for _, alternative := range result.Alternatives {
-				if altText := strings.TrimSpace(alternative.Text); altText != "" {
-					if buffer.Len() > 0 {
-						buffer.WriteString(" ")
-					}
-					buffer.WriteString(altText)
-				}
+	wsURL := strings.TrimRight(p.config.WSURL, "/")
+	if wsURL == "" {
+		wsURL = "wss://eu.rt.speechmatics.com/v2"
+	}
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+strings.TrimSpace(p.config.APIKey))
+
+	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, wsURL, headers)
+	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return fmt.Errorf("failed to connect to Speechmatics WebSocket: %w", err)
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	connCtx, cancel := context.WithCancel(ctx)
+	conn := &speechmaticsConn{
+		callUUID:      callUUID,
+		ws:            ws,
+		cancel:        cancel,
+		logger:        p.logger.WithField("call_uuid", callUUID),
+		endOfTranscript: make(chan struct{}),
+		messagesDone:    make(chan struct{}),
+		keepAliveDone:   make(chan struct{}),
+		active:          true,
+	}
+
+	p.connectionMutex.Lock()
+	p.connections[callUUID] = conn
+	p.connectionMutex.Unlock()
+
+	defer func() {
+		p.connectionMutex.Lock()
+		delete(p.connections, callUUID)
+		p.connectionMutex.Unlock()
+		conn.close()
+	}()
+
+	// Send StartRecognition
+	startMsg := speechmaticsStartRecognition{
+		Message: "StartRecognition",
+		AudioFormat: speechmaticsAudioFormat{
+			Type:       "raw",
+			Encoding:   p.config.Encoding,
+			SampleRate: p.config.SampleRate,
+		},
+		TranscriptionConfig: speechmaticsTranscriptionConfig{
+			Language:       p.config.Language,
+			Model:          p.config.Model,
+			EnablePartials: true,
+			Diarization:    p.diarizationValue(),
+			Punctuation: speechmaticsPunctuation{
+				Permitted: p.config.EnablePunctuation,
+			},
+		},
+	}
+	if err := ws.WriteJSON(startMsg); err != nil {
+		return fmt.Errorf("failed to send StartRecognition: %w", err)
+	}
+
+	// Wait for RecognitionStarted
+	if err := conn.waitForRecognitionStarted(); err != nil {
+		return err
+	}
+
+	liveCallback := func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
+		if p.callback != nil {
+			p.callback(callUUID, transcription, isFinal, metadata)
+		} else if p.transcriptionSvc != nil {
+			p.transcriptionSvc.PublishTranscription(callUUID, transcription, isFinal, metadata)
+		}
+	}
+
+	go conn.handleMessages(liveCallback)
+	go conn.keepAlive()
+
+	return conn.streamAudio(connCtx, audioStream)
+}
+
+func (p *SpeechmaticsProvider) diarizationValue() string {
+	if p.config.EnableDiarization {
+		return "speaker"
+	}
+	return "none"
+}
+
+// --- WebSocket connection ---
+
+type speechmaticsConn struct {
+	callUUID        string
+	ws              *websocket.Conn
+	cancel          context.CancelFunc
+	logger          *logrus.Entry
+	endOfTranscript chan struct{}
+	messagesDone    chan struct{}
+	keepAliveDone   chan struct{}
+	mu              sync.Mutex
+	active          bool
+}
+
+func (c *speechmaticsConn) waitForRecognitionStarted() error {
+	c.ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, msg, err := c.ws.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("failed to read RecognitionStarted: %w", err)
+	}
+	c.ws.SetReadDeadline(time.Time{})
+
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return fmt.Errorf("failed to parse RecognitionStarted: %w", err)
+	}
+	if envelope.Message == "Error" {
+		return fmt.Errorf("Speechmatics returned error on start: %s", string(msg))
+	}
+	if envelope.Message != "RecognitionStarted" {
+		return fmt.Errorf("unexpected first message: %s", envelope.Message)
+	}
+	c.logger.Debug("RecognitionStarted received")
+	return nil
+}
+
+func (c *speechmaticsConn) handleMessages(callback TranscriptionCallback) {
+	defer close(c.messagesDone)
+
+	for {
+		c.ws.SetReadDeadline(time.Now().Add(30 * time.Second))
+		_, msgBytes, err := c.ws.ReadMessage()
+		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				c.logger.WithError(err).Debug("WebSocket read ended")
+			}
+			return
+		}
+
+		var envelope struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(msgBytes, &envelope); err != nil {
+			c.logger.WithError(err).Error("Failed to parse Speechmatics message")
+			continue
+		}
+
+		switch envelope.Message {
+		case "AddTranscript":
+			c.processTranscript(msgBytes, true, callback)
+		case "AddPartialTranscript":
+			c.processTranscript(msgBytes, false, callback)
+		case "EndOfTranscript":
+			c.logger.Debug("EndOfTranscript received")
+			select {
+			case <-c.endOfTranscript:
+			default:
+				close(c.endOfTranscript)
+			}
+			return
+		case "AudioAdded":
+			// normal ack, ignore
+		case "Warning":
+			c.logger.WithField("raw", string(msgBytes)).Warn("Speechmatics warning")
+		case "Error":
+			c.logger.WithField("raw", string(msgBytes)).Error("Speechmatics error")
+			return
+		default:
+			c.logger.WithField("type", envelope.Message).Debug("Unhandled Speechmatics message")
+		}
+	}
+}
+
+func (c *speechmaticsConn) processTranscript(msgBytes []byte, isFinal bool, callback TranscriptionCallback) {
+	var resp speechmaticsTranscriptMsg
+	if err := json.Unmarshal(msgBytes, &resp); err != nil {
+		c.logger.WithError(err).Error("Failed to parse transcript message")
+		return
+	}
+
+	transcript := strings.TrimSpace(resp.Transcript)
+	if transcript == "" {
+		return
+	}
+
+	metadata := map[string]interface{}{
+		"provider": "speechmatics",
+	}
+	if resp.Metadata.StartTime > 0 || resp.Metadata.EndTime > 0 {
+		metadata["start_time"] = resp.Metadata.StartTime
+		metadata["end_time"] = resp.Metadata.EndTime
+	}
+
+	if callback != nil {
+		callback(c.callUUID, transcript, isFinal, metadata)
+	}
+}
+
+func (c *speechmaticsConn) streamAudio(ctx context.Context, audioStream io.Reader) error {
+	// Reuse the package-level audioBufferPool from deepgram_enhanced.go
+	buf := audioBufferPool.Get().([]byte)
+	defer audioBufferPool.Put(buf)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		n, err := audioStream.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if wErr := c.ws.WriteMessage(websocket.BinaryMessage, chunk); wErr != nil {
+				return fmt.Errorf("failed to send audio: %w", wErr)
 			}
 		}
-		if buffer.Len() > 0 {
-			return buffer.String()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("audio read error: %w", err)
 		}
 	}
 
-	return strings.TrimSpace(resp.Summary)
+	// Send EndOfStream
+	endMsg := map[string]interface{}{"message": "EndOfStream", "last_seq_no": 0}
+	c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := c.ws.WriteJSON(endMsg); err != nil {
+		c.logger.WithError(err).Debug("Failed to send EndOfStream")
+	}
+
+	// Wait for EndOfTranscript
+	select {
+	case <-c.endOfTranscript:
+	case <-c.messagesDone:
+	case <-time.After(5 * time.Second):
+		c.logger.Debug("Timeout waiting for EndOfTranscript")
+	case <-ctx.Done():
+	}
+
+	return nil
 }
 
-type speechmaticsJobResponse struct {
-	ID       string                    `json:"id"`
-	Summary  string                    `json:"summary"`
-	Duration float64                   `json:"audio_duration"`
-	Results  []speechmaticsResultChunk `json:"results"`
+func (c *speechmaticsConn) keepAlive() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.keepAliveDone:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			active := c.active
+			c.mu.Unlock()
+			if !active {
+				return
+			}
+			c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				c.logger.WithError(err).Debug("Keepalive ping failed")
+				return
+			}
+		}
+	}
 }
 
-type speechmaticsResultChunk struct {
-	Alternatives []speechmaticsAlternative `json:"alternatives"`
+func (c *speechmaticsConn) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.active {
+		return
+	}
+	c.active = false
+
+	select {
+	case <-c.keepAliveDone:
+	default:
+		close(c.keepAliveDone)
+	}
+
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.ws != nil {
+		c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		c.ws.Close()
+	}
 }
 
-type speechmaticsAlternative struct {
-	Text string `json:"text"`
+// --- Message types ---
+
+type speechmaticsStartRecognition struct {
+	Message             string                          `json:"message"`
+	AudioFormat         speechmaticsAudioFormat          `json:"audio_format"`
+	TranscriptionConfig speechmaticsTranscriptionConfig  `json:"transcription_config"`
+}
+
+type speechmaticsAudioFormat struct {
+	Type       string `json:"type"`
+	Encoding   string `json:"encoding"`
+	SampleRate int    `json:"sample_rate"`
+}
+
+type speechmaticsTranscriptionConfig struct {
+	Language       string                  `json:"language"`
+	Model          string                  `json:"model,omitempty"`
+	EnablePartials bool                    `json:"enable_partials"`
+	Diarization    string                  `json:"diarization,omitempty"`
+	Punctuation    speechmaticsPunctuation `json:"punctuation_overrides,omitempty"`
+}
+
+type speechmaticsPunctuation struct {
+	Permitted bool `json:"permitted_marks,omitempty"`
+}
+
+type speechmaticsTranscriptMsg struct {
+	Message    string `json:"message"`
+	Transcript string `json:"transcript"`
+	Metadata   struct {
+		StartTime float64 `json:"start_time"`
+		EndTime   float64 `json:"end_time"`
+	} `json:"metadata"`
+	Results []struct {
+		Type         string `json:"type"`
+		StartTime    float64 `json:"start_time"`
+		EndTime      float64 `json:"end_time"`
+		Alternatives []struct {
+			Content    string  `json:"content"`
+			Confidence float64 `json:"confidence"`
+			Speaker    string  `json:"speaker,omitempty"`
+		} `json:"alternatives"`
+	} `json:"results"`
 }

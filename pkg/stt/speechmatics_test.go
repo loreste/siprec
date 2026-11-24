@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,149 +43,150 @@ func TestSpeechmaticsProviderInitialize(t *testing.T) {
 		assert.Contains(t, err.Error(), "API key is required")
 	})
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success with defaults", func(t *testing.T) {
 		cfg := &config.SpeechmaticsSTTConfig{
 			Enabled:  true,
 			APIKey:   "token",
-			BaseURL:  "https://asr.api.speechmatics.com/v2",
-			Language: "en-US",
-			Model:    "universal",
+			Language: "en",
 			Timeout:  10 * time.Second,
 		}
 		provider := NewSpeechmaticsProvider(logger, nil, cfg)
 		err := provider.Initialize()
 		require.NoError(t, err)
 		assert.Equal(t, "speechmatics", provider.Name())
+		assert.Equal(t, 8000, cfg.SampleRate)
+		assert.Equal(t, "pcm_s16le", cfg.Encoding)
 	})
 }
 
-func TestSpeechmaticsProviderStreamToTextInline(t *testing.T) {
+func TestSpeechmaticsProviderStreamToText(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.WarnLevel)
 
-	expectedTranscript := "Hello world"
-	expectedLanguage := "en-US"
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/jobs", r.URL.Path)
-		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "Bearer token", r.Header.Get("Authorization"))
 
-		err := r.ParseMultipartForm(10 << 20)
+		ws, err := upgrader.Upgrade(w, r, nil)
 		require.NoError(t, err)
-		assert.Contains(t, r.FormValue("transcription_config"), `"language":"`+expectedLanguage+`"`)
+		defer ws.Close()
 
-		file, _, err := r.FormFile("data_file")
+		// Read StartRecognition
+		_, msgBytes, err := ws.ReadMessage()
 		require.NoError(t, err)
-		defer file.Close()
+		var startMsg speechmaticsStartRecognition
+		require.NoError(t, json.Unmarshal(msgBytes, &startMsg))
+		assert.Equal(t, "StartRecognition", startMsg.Message)
+		assert.Equal(t, "pcm_s16le", startMsg.AudioFormat.Encoding)
+		assert.Equal(t, 8000, startMsg.AudioFormat.SampleRate)
 
-		buf := make([]byte, 4)
-		n, err := file.Read(buf)
+		// Send RecognitionStarted
+		require.NoError(t, ws.WriteJSON(map[string]string{"message": "RecognitionStarted"}))
+
+		// Read audio (binary)
+		_, audioData, err := ws.ReadMessage()
 		require.NoError(t, err)
-		assert.Equal(t, "data", string(buf[:n]))
+		assert.Equal(t, []byte("audio-data"), audioData)
 
-		resp := speechmaticsJobResponse{
-			ID: "job-123",
-			Results: []speechmaticsResultChunk{
-				{Alternatives: []speechmaticsAlternative{{Text: expectedTranscript}}},
-			},
-			Duration: 1.5,
+		// Send a partial transcript
+		partial := map[string]interface{}{
+			"message":    "AddPartialTranscript",
+			"transcript": "Hello",
+			"metadata":   map[string]interface{}{"start_time": 0.0, "end_time": 0.5},
+			"results":    []interface{}{},
 		}
+		require.NoError(t, ws.WriteJSON(partial))
 
-		_ = json.NewEncoder(w).Encode(resp)
+		// Send a final transcript
+		final := map[string]interface{}{
+			"message":    "AddTranscript",
+			"transcript": "Hello world",
+			"metadata":   map[string]interface{}{"start_time": 0.0, "end_time": 1.0},
+			"results":    []interface{}{},
+		}
+		require.NoError(t, ws.WriteJSON(final))
+
+		// Read EndOfStream
+		_, msgBytes, err = ws.ReadMessage()
+		require.NoError(t, err)
+		var endMsg map[string]interface{}
+		require.NoError(t, json.Unmarshal(msgBytes, &endMsg))
+		assert.Equal(t, "EndOfStream", endMsg["message"])
+
+		// Send EndOfTranscript
+		require.NoError(t, ws.WriteJSON(map[string]string{"message": "EndOfTranscript"}))
 	}))
 	defer server.Close()
 
-	cfg := &config.SpeechmaticsSTTConfig{
-		Enabled:  true,
-		APIKey:   "token",
-		BaseURL:  server.URL,
-		Language: expectedLanguage,
-		Model:    "universal",
-	}
-
-	transcriptionSvc := NewTranscriptionService(logger)
-	provider := NewSpeechmaticsProvider(logger, transcriptionSvc, cfg)
-	provider.httpClient = server.Client()
-
-	require.NoError(t, provider.Initialize())
-
-	var callbackText string
-	var callbackMeta map[string]interface{}
-	provider.SetCallback(func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
-		callbackText = transcription
-		callbackMeta = metadata
-	})
-
-	err := provider.StreamToText(context.Background(), strings.NewReader("data"), "call-123")
-	require.NoError(t, err)
-	assert.Equal(t, expectedTranscript, callbackText)
-	require.NotNil(t, callbackMeta)
-	assert.Equal(t, expectedLanguage, callbackMeta["language"])
-	assert.Equal(t, "universal", callbackMeta["model"])
-	assert.Equal(t, "job-123", callbackMeta["job_id"])
-}
-
-func TestSpeechmaticsProviderStreamToTextFetchTranscript(t *testing.T) {
-	logger := logrus.New()
-	logger.SetLevel(logrus.WarnLevel)
-
-	transcriptText := "Fetched transcript"
-	jobID := "job-456"
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"id": jobID,
-		})
-	})
-	mux.HandleFunc("/jobs/"+jobID+"/transcript", func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "txt", r.URL.Query().Get("format"))
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(transcriptText))
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
 	cfg := &config.SpeechmaticsSTTConfig{
-		Enabled:  true,
-		APIKey:   "token",
-		BaseURL:  server.URL,
-		Language: "en-US",
+		Enabled:    true,
+		APIKey:     "token",
+		WSURL:      wsURL,
+		Language:   "en",
+		Model:      "enhanced",
+		Encoding:   "pcm_s16le",
+		SampleRate: 8000,
 	}
 
 	provider := NewSpeechmaticsProvider(logger, nil, cfg)
-	provider.httpClient = server.Client()
-
 	require.NoError(t, provider.Initialize())
 
-	err := provider.StreamToText(context.Background(), strings.NewReader("data"), "call-789")
+	var partials, finals []string
+	provider.SetCallback(func(callUUID, transcription string, isFinal bool, metadata map[string]interface{}) {
+		if isFinal {
+			finals = append(finals, transcription)
+		} else {
+			partials = append(partials, transcription)
+		}
+	})
+
+	err := provider.StreamToText(context.Background(), strings.NewReader("audio-data"), "call-123")
 	require.NoError(t, err)
+	assert.Equal(t, []string{"Hello"}, partials)
+	assert.Equal(t, []string{"Hello world"}, finals)
+	assert.Equal(t, 0, provider.GetActiveConnections())
 }
 
 func TestSpeechmaticsProviderStreamToTextError(t *testing.T) {
 	logger := logrus.New()
 	logger.SetLevel(logrus.WarnLevel)
 
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		ws, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer ws.Close()
+
+		// Read StartRecognition
+		_, _, _ = ws.ReadMessage()
+
+		// Send Error instead of RecognitionStarted
+		_ = ws.WriteJSON(map[string]interface{}{
+			"message": "Error",
+			"type":    "not_authorised",
+			"reason":  "Invalid API key",
+		})
 	}))
 	defer server.Close()
 
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 	cfg := &config.SpeechmaticsSTTConfig{
-		Enabled:  true,
-		APIKey:   "token",
-		BaseURL:  server.URL,
-		Language: "en-US",
+		Enabled:    true,
+		APIKey:     "bad-token",
+		WSURL:      wsURL,
+		Language:   "en",
+		Encoding:   "pcm_s16le",
+		SampleRate: 8000,
 	}
 
 	provider := NewSpeechmaticsProvider(logger, nil, cfg)
-	provider.httpClient = server.Client()
-
 	require.NoError(t, provider.Initialize())
 
 	err := provider.StreamToText(context.Background(), strings.NewReader("data"), "call-err")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "status 401")
+	assert.Contains(t, err.Error(), "error on start")
 }

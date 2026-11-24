@@ -524,23 +524,26 @@ type SpeechmaticsSTTConfig struct {
 	// Speechmatics auth token
 	APIKey string `json:"api_key" env:"SPEECHMATICS_API_KEY"`
 
-	// Base API URL
-	BaseURL string `json:"base_url" env:"SPEECHMATICS_API_URL" default:"https://asr.api.speechmatics.com/v2"`
+	// Real-time WebSocket URL
+	WSURL string `json:"ws_url" env:"SPEECHMATICS_WS_URL" default:"wss://eu.rt.speechmatics.com/v2"`
 
-	// Language code (e.g., en-US)
-	Language string `json:"language" env:"SPEECHMATICS_LANGUAGE" default:"en-US"`
+	// Language code (e.g., en)
+	Language string `json:"language" env:"SPEECHMATICS_LANGUAGE" default:"en"`
 
-	// Model (e.g., universal, meetings, etc.)
-	Model string `json:"model" env:"SPEECHMATICS_MODEL" default:"universal"`
+	// Model (e.g., enhanced, standard)
+	Model string `json:"model" env:"SPEECHMATICS_MODEL" default:"enhanced"`
+
+	// Audio encoding (pcm_s16le, pcm_f32le, mulaw)
+	Encoding string `json:"encoding" env:"SPEECHMATICS_ENCODING" default:"pcm_s16le"`
+
+	// Audio sample rate in Hz
+	SampleRate int `json:"sample_rate" env:"SPEECHMATICS_SAMPLE_RATE" default:"8000"`
 
 	// Enable speaker diarization
 	EnableDiarization bool `json:"enable_diarization" env:"SPEECHMATICS_ENABLE_DIARIZATION" default:"false"`
 
 	// Enable punctuation
 	EnablePunctuation bool `json:"enable_punctuation" env:"SPEECHMATICS_ENABLE_PUNCTUATION" default:"true"`
-
-	// Enable channel separation
-	EnableChannelSeparation bool `json:"enable_channel_separation" env:"SPEECHMATICS_CHANNEL_SEPARATION" default:"false"`
 
 	// Request timeout
 	Timeout time.Duration `json:"timeout" env:"SPEECHMATICS_TIMEOUT" default:"60s"`
@@ -3199,12 +3202,13 @@ func loadElevenLabsSTTConfig(logger *logrus.Logger, config *ElevenLabsSTTConfig)
 func loadSpeechmaticsSTTConfig(logger *logrus.Logger, config *SpeechmaticsSTTConfig) error {
 	config.Enabled = getEnvBool("SPEECHMATICS_STT_ENABLED", false)
 	config.APIKey = getEnv("SPEECHMATICS_API_KEY", "")
-	config.BaseURL = getEnv("SPEECHMATICS_API_URL", "https://asr.api.speechmatics.com/v2")
-	config.Language = getEnv("SPEECHMATICS_LANGUAGE", "en-US")
-	config.Model = getEnv("SPEECHMATICS_MODEL", "universal")
+	config.WSURL = getEnv("SPEECHMATICS_WS_URL", "wss://eu.rt.speechmatics.com/v2")
+	config.Language = getEnv("SPEECHMATICS_LANGUAGE", "en")
+	config.Model = getEnv("SPEECHMATICS_MODEL", "enhanced")
+	config.Encoding = getEnv("SPEECHMATICS_ENCODING", "pcm_s16le")
+	config.SampleRate = getEnvInt("SPEECHMATICS_SAMPLE_RATE", 8000)
 	config.EnableDiarization = getEnvBool("SPEECHMATICS_ENABLE_DIARIZATION", false)
 	config.EnablePunctuation = getEnvBool("SPEECHMATICS_ENABLE_PUNCTUATION", true)
-	config.EnableChannelSeparation = getEnvBool("SPEECHMATICS_CHANNEL_SEPARATION", false)
 
 	timeoutStr := getEnv("SPEECHMATICS_TIMEOUT", "60s")
 	timeout, err := time.ParseDuration(timeoutStr)
