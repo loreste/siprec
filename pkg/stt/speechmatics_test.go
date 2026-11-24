@@ -80,6 +80,14 @@ func TestSpeechmaticsProviderStreamToText(t *testing.T) {
 		assert.Equal(t, "StartRecognition", startMsg.Message)
 		assert.Equal(t, "pcm_s16le", startMsg.AudioFormat.Encoding)
 		assert.Equal(t, 8000, startMsg.AudioFormat.SampleRate)
+		assert.Nil(t, startMsg.TranscriptionConfig.Punctuation, "punctuation_overrides should be omitted when enabled")
+
+		// Send Info before RecognitionStarted (like the real Speechmatics API does)
+		require.NoError(t, ws.WriteJSON(map[string]interface{}{
+			"message": "Info",
+			"type":    "recognition_quality",
+			"quality": "broadcast",
+		}))
 
 		// Send RecognitionStarted
 		require.NoError(t, ws.WriteJSON(map[string]string{"message": "RecognitionStarted"}))
@@ -122,13 +130,14 @@ func TestSpeechmaticsProviderStreamToText(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
 	cfg := &config.SpeechmaticsSTTConfig{
-		Enabled:    true,
-		APIKey:     "token",
-		WSURL:      wsURL,
-		Language:   "en",
-		Model:      "enhanced",
-		Encoding:   "pcm_s16le",
-		SampleRate: 8000,
+		Enabled:           true,
+		APIKey:            "token",
+		WSURL:             wsURL,
+		Language:          "en",
+		Model:             "enhanced",
+		Encoding:          "pcm_s16le",
+		SampleRate:        8000,
+		EnablePunctuation: true,
 	}
 
 	provider := NewSpeechmaticsProvider(logger, nil, cfg)
@@ -189,4 +198,57 @@ func TestSpeechmaticsProviderStreamToTextError(t *testing.T) {
 	err := provider.StreamToText(context.Background(), strings.NewReader("data"), "call-err")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error on start")
+}
+
+func TestSpeechmaticsPunctuationDisabled(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer ws.Close()
+
+		_, msgBytes, err := ws.ReadMessage()
+		require.NoError(t, err)
+
+		var startMsg speechmaticsStartRecognition
+		require.NoError(t, json.Unmarshal(msgBytes, &startMsg))
+		require.NotNil(t, startMsg.TranscriptionConfig.Punctuation)
+		assert.Equal(t, []string{}, startMsg.TranscriptionConfig.Punctuation.PermittedMarks)
+
+		_ = ws.WriteJSON(map[string]string{"message": "RecognitionStarted"})
+
+		// Read audio + EndOfStream
+		for {
+			_, msg, err := ws.ReadMessage()
+			if err != nil {
+				break
+			}
+			var env struct{ Message string `json:"message"` }
+			if json.Unmarshal(msg, &env) == nil && env.Message == "EndOfStream" {
+				_ = ws.WriteJSON(map[string]string{"message": "EndOfTranscript"})
+				break
+			}
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := &config.SpeechmaticsSTTConfig{
+		Enabled:           true,
+		APIKey:            "token",
+		WSURL:             wsURL,
+		Language:          "en",
+		Encoding:          "pcm_s16le",
+		SampleRate:        8000,
+		EnablePunctuation: false,
+	}
+
+	provider := NewSpeechmaticsProvider(logger, nil, cfg)
+	require.NoError(t, provider.Initialize())
+
+	_ = provider.StreamToText(context.Background(), strings.NewReader("audio"), "call-punct")
 }

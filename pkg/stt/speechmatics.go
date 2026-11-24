@@ -149,6 +149,20 @@ func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.
 	}()
 
 	// Send StartRecognition
+	txConfig := speechmaticsTranscriptionConfig{
+		Language:       p.config.Language,
+		EnablePartials: true,
+		Diarization:    p.diarizationValue(),
+	}
+	if p.config.Model != "" {
+		txConfig.Model = p.config.Model
+	}
+	if !p.config.EnablePunctuation {
+		// Disable punctuation by sending an empty permitted_marks list
+		txConfig.Punctuation = &speechmaticsPunctuation{
+			PermittedMarks: []string{},
+		}
+	}
 	startMsg := speechmaticsStartRecognition{
 		Message: "StartRecognition",
 		AudioFormat: speechmaticsAudioFormat{
@@ -156,15 +170,7 @@ func (p *SpeechmaticsProvider) StreamToText(ctx context.Context, audioStream io.
 			Encoding:   p.config.Encoding,
 			SampleRate: p.config.SampleRate,
 		},
-		TranscriptionConfig: speechmaticsTranscriptionConfig{
-			Language:       p.config.Language,
-			Model:          p.config.Model,
-			EnablePartials: true,
-			Diarization:    p.diarizationValue(),
-			Punctuation: speechmaticsPunctuation{
-				Permitted: p.config.EnablePunctuation,
-			},
-		},
+		TranscriptionConfig: txConfig,
 	}
 	if err := ws.WriteJSON(startMsg); err != nil {
 		return fmt.Errorf("failed to send StartRecognition: %w", err)
@@ -211,27 +217,38 @@ type speechmaticsConn struct {
 }
 
 func (c *speechmaticsConn) waitForRecognitionStarted() error {
-	c.ws.SetReadDeadline(time.Now().Add(10 * time.Second))
-	_, msg, err := c.ws.ReadMessage()
-	if err != nil {
-		return fmt.Errorf("failed to read RecognitionStarted: %w", err)
-	}
-	c.ws.SetReadDeadline(time.Time{})
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		c.ws.SetReadDeadline(deadline)
+		_, msg, err := c.ws.ReadMessage()
+		if err != nil {
+			return fmt.Errorf("failed waiting for RecognitionStarted: %w", err)
+		}
 
-	var envelope struct {
-		Message string `json:"message"`
+		var envelope struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(msg, &envelope); err != nil {
+			return fmt.Errorf("failed to parse server message: %w", err)
+		}
+
+		switch envelope.Message {
+		case "RecognitionStarted":
+			c.ws.SetReadDeadline(time.Time{})
+			c.logger.Debug("RecognitionStarted received")
+			return nil
+		case "Error":
+			return fmt.Errorf("Speechmatics returned error on start: %s", string(msg))
+		case "Info", "Warning":
+			// Speechmatics sends Info (e.g. recognition_quality, concurrent_session_usage)
+			// and possibly Warning messages before RecognitionStarted — skip them.
+			c.logger.WithField("raw", string(msg)).Debug("Pre-recognition server message")
+			continue
+		default:
+			c.logger.WithField("message", envelope.Message).Debug("Skipping unexpected pre-recognition message")
+			continue
+		}
 	}
-	if err := json.Unmarshal(msg, &envelope); err != nil {
-		return fmt.Errorf("failed to parse RecognitionStarted: %w", err)
-	}
-	if envelope.Message == "Error" {
-		return fmt.Errorf("Speechmatics returned error on start: %s", string(msg))
-	}
-	if envelope.Message != "RecognitionStarted" {
-		return fmt.Errorf("unexpected first message: %s", envelope.Message)
-	}
-	c.logger.Debug("RecognitionStarted received")
-	return nil
 }
 
 func (c *speechmaticsConn) handleMessages(callback TranscriptionCallback) {
@@ -289,16 +306,24 @@ func (c *speechmaticsConn) processTranscript(msgBytes []byte, isFinal bool, call
 	}
 
 	transcript := strings.TrimSpace(resp.Transcript)
+	// Fallback: assemble from results if top-level transcript is empty
+	if transcript == "" && len(resp.Results) > 0 {
+		var sb strings.Builder
+		for _, r := range resp.Results {
+			for _, alt := range r.Alternatives {
+				sb.WriteString(alt.Content)
+			}
+		}
+		transcript = strings.TrimSpace(sb.String())
+	}
 	if transcript == "" {
 		return
 	}
 
 	metadata := map[string]interface{}{
-		"provider": "speechmatics",
-	}
-	if resp.Metadata.StartTime > 0 || resp.Metadata.EndTime > 0 {
-		metadata["start_time"] = resp.Metadata.StartTime
-		metadata["end_time"] = resp.Metadata.EndTime
+		"provider":   "speechmatics",
+		"start_time": resp.Metadata.StartTime,
+		"end_time":   resp.Metadata.EndTime,
 	}
 
 	if callback != nil {
@@ -417,15 +442,15 @@ type speechmaticsAudioFormat struct {
 }
 
 type speechmaticsTranscriptionConfig struct {
-	Language       string                  `json:"language"`
-	Model          string                  `json:"model,omitempty"`
-	EnablePartials bool                    `json:"enable_partials"`
-	Diarization    string                  `json:"diarization,omitempty"`
-	Punctuation    speechmaticsPunctuation `json:"punctuation_overrides,omitempty"`
+	Language       string                   `json:"language"`
+	Model          string                   `json:"model,omitempty"`
+	EnablePartials bool                     `json:"enable_partials"`
+	Diarization    string                   `json:"diarization,omitempty"`
+	Punctuation    *speechmaticsPunctuation `json:"punctuation_overrides,omitempty"`
 }
 
 type speechmaticsPunctuation struct {
-	Permitted bool `json:"permitted_marks,omitempty"`
+	PermittedMarks []string `json:"permitted_marks"`
 }
 
 type speechmaticsTranscriptMsg struct {
