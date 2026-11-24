@@ -39,6 +39,7 @@ type AzureStreamSession struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	mutex         sync.Mutex
+	writeMu       sync.Mutex // serializes all WebSocket writes
 	lastActivity  time.Time
 	finalReceived chan struct{}
 	streamDone    chan struct{}
@@ -311,12 +312,12 @@ func (p *AzureSpeechProvider) streamWithWebSocket(ctx context.Context, audioStre
 	go p.handleWebSocketResponses(session, nil, errorChan)
 
 	// Send audio configuration
-	if err := p.sendAudioConfig(conn); err != nil {
+	if err := p.sendAudioConfig(session); err != nil {
 		return fmt.Errorf("failed to send audio config: %w", err)
 	}
 
 	// Stream audio data
-	if err := p.streamAudioData(sessionCtx, conn, audioStream, callUUID, errorChan); err != nil {
+	if err := p.streamAudioData(sessionCtx, session, audioStream, errorChan); err != nil {
 		return err
 	}
 
@@ -358,8 +359,11 @@ func (p *AzureSpeechProvider) keepAlive(session *AzureStreamSession) {
 			}
 
 			// Send ping message
+			session.writeMu.Lock()
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+			err := conn.WriteMessage(websocket.PingMessage, []byte{})
+			session.writeMu.Unlock()
+			if err != nil {
 				p.logger.WithField("call_uuid", session.callUUID).WithError(err).Debug("Failed to send keepalive ping")
 				return
 			}
@@ -657,7 +661,7 @@ func (p *AzureSpeechProvider) buildWebSocketURL() (string, error) {
 }
 
 // sendAudioConfig sends the audio configuration to the WebSocket
-func (p *AzureSpeechProvider) sendAudioConfig(conn *websocket.Conn) error {
+func (p *AzureSpeechProvider) sendAudioConfig(session *AzureStreamSession) error {
 	config := map[string]interface{}{
 		"context": map[string]interface{}{
 			"system": map[string]interface{}{
@@ -677,12 +681,14 @@ func (p *AzureSpeechProvider) sendAudioConfig(conn *websocket.Conn) error {
 		},
 	}
 
-	return conn.WriteJSON(config)
+	session.writeMu.Lock()
+	defer session.writeMu.Unlock()
+	return session.conn.WriteJSON(config)
 }
 
 // streamAudioData streams audio data through the WebSocket connection
-func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websocket.Conn, audioStream io.Reader, callUUID string, errorChan chan error) error {
-	buffer := make([]byte, 1024)
+func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, session *AzureStreamSession, audioStream io.Reader, errorChan chan error) error {
+	buffer := make([]byte, 4096)
 
 	for {
 		select {
@@ -696,7 +702,10 @@ func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websock
 			n, err := audioStream.Read(buffer)
 			if err == io.EOF {
 				// Send end-of-stream marker
-				if writeErr := conn.WriteMessage(websocket.BinaryMessage, []byte{}); writeErr != nil {
+				session.writeMu.Lock()
+				writeErr := session.conn.WriteMessage(websocket.BinaryMessage, []byte{})
+				session.writeMu.Unlock()
+				if writeErr != nil {
 					return fmt.Errorf("failed to send end-of-stream: %w", writeErr)
 				}
 				return nil
@@ -706,7 +715,10 @@ func (p *AzureSpeechProvider) streamAudioData(ctx context.Context, conn *websock
 			}
 
 			if n > 0 {
-				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buffer[:n]); writeErr != nil {
+				session.writeMu.Lock()
+				writeErr := session.conn.WriteMessage(websocket.BinaryMessage, buffer[:n])
+				session.writeMu.Unlock()
+				if writeErr != nil {
 					return fmt.Errorf("failed to send audio data: %w", writeErr)
 				}
 			}

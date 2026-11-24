@@ -213,6 +213,7 @@ type speechmaticsConn struct {
 	messagesDone    chan struct{}
 	keepAliveDone   chan struct{}
 	mu              sync.Mutex
+	writeMu         sync.Mutex // serializes all WebSocket writes
 	active          bool
 }
 
@@ -347,8 +348,11 @@ func (c *speechmaticsConn) streamAudio(ctx context.Context, audioStream io.Reade
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
+			c.writeMu.Lock()
 			c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if wErr := c.ws.WriteMessage(websocket.BinaryMessage, chunk); wErr != nil {
+			wErr := c.ws.WriteMessage(websocket.BinaryMessage, chunk)
+			c.writeMu.Unlock()
+			if wErr != nil {
 				return fmt.Errorf("failed to send audio: %w", wErr)
 			}
 		}
@@ -362,8 +366,11 @@ func (c *speechmaticsConn) streamAudio(ctx context.Context, audioStream io.Reade
 
 	// Send EndOfStream
 	endMsg := map[string]interface{}{"message": "EndOfStream", "last_seq_no": 0}
+	c.writeMu.Lock()
 	c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := c.ws.WriteJSON(endMsg); err != nil {
+	err := c.ws.WriteJSON(endMsg)
+	c.writeMu.Unlock()
+	if err != nil {
 		c.logger.WithError(err).Debug("Failed to send EndOfStream")
 	}
 
@@ -394,8 +401,11 @@ func (c *speechmaticsConn) keepAlive() {
 			if !active {
 				return
 			}
+			c.writeMu.Lock()
 			c.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+			err := c.ws.WriteMessage(websocket.PingMessage, nil)
+			c.writeMu.Unlock()
+			if err != nil {
 				c.logger.WithError(err).Debug("Keepalive ping failed")
 				return
 			}
@@ -422,7 +432,9 @@ func (c *speechmaticsConn) close() {
 		c.cancel()
 	}
 	if c.ws != nil {
+		c.writeMu.Lock()
 		c.ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		c.writeMu.Unlock()
 		c.ws.Close()
 	}
 }

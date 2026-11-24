@@ -102,6 +102,7 @@ type DeepgramConnection struct {
 	callUUID      string
 	conn          *websocket.Conn
 	mutex         sync.RWMutex
+	writeMu       sync.Mutex // serializes all WebSocket writes
 	lastActivity  time.Time
 	active        bool
 	cancel        context.CancelFunc
@@ -955,16 +956,22 @@ func (c *DeepgramConnection) streamAudio(ctx context.Context, audioStream io.Rea
 				}
 
 				// Send close frame
-				if err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+				c.writeMu.Lock()
+				err := c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				c.writeMu.Unlock()
+				if err != nil {
 					c.logger.WithError(err).Debug("Failed to send close message")
 				}
 
 				return nil
 			}
 
-			// Thread-safe write with timeout
+			// Serialized write with timeout
+			c.writeMu.Lock()
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.conn.WriteMessage(websocket.BinaryMessage, audioData); err != nil {
+			err := c.conn.WriteMessage(websocket.BinaryMessage, audioData)
+			c.writeMu.Unlock()
+			if err != nil {
 				return fmt.Errorf("failed to send audio data: %w", err)
 			}
 
@@ -994,9 +1001,12 @@ func (c *DeepgramConnection) sendFinalizeMessage() {
 		return
 	}
 
+	c.writeMu.Lock()
 	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if err := c.conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
-		c.logger.WithError(err).Debug("Failed to send finalize message")
+	writeErr := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+	c.writeMu.Unlock()
+	if writeErr != nil {
+		c.logger.WithError(writeErr).Debug("Failed to send finalize message")
 		return
 	}
 
@@ -1022,8 +1032,11 @@ func (c *DeepgramConnection) keepAlive() {
 			}
 
 			// Send ping message
+			c.writeMu.Lock()
 			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+			err := c.conn.WriteMessage(websocket.PingMessage, []byte{})
+			c.writeMu.Unlock()
+			if err != nil {
 				c.logger.WithError(err).Debug("Failed to send keepalive ping")
 				return
 			}
@@ -1057,7 +1070,9 @@ func (c *DeepgramConnection) close() {
 
 		// Close WebSocket connection with proper close frame
 		if c.conn != nil {
+			c.writeMu.Lock()
 			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			c.writeMu.Unlock()
 			c.conn.Close()
 		}
 
