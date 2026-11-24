@@ -1849,17 +1849,22 @@ func startSIPServer(wg *sync.WaitGroup) {
 			}()
 		}
 	} else if requireTLS {
-		errChan <- fmt.Errorf("TLS-only mode enabled but TLS listener could not be started")
+		logger.Error("TLS-only mode enabled but TLS listener could not be started, aborting")
+		cancel()
 	}
 
-	// Keep server running until an error occurs or context is cancelled
-	select {
-	case err := <-errChan:
-		logger.WithError(err).Error("SIP server error, shutting down")
-		cancel()
-	case <-ctx.Done():
-		logger.Info("SIP server context cancelled, shutting down")
-	}
+	// Drain non-fatal listener errors without tearing down the whole server.
+	// A single transport failing (e.g. UDP port in TIME_WAIT) should not kill
+	// TLS or other healthy listeners.
+	go func() {
+		for err := range errChan {
+			logger.WithError(err).Warn("SIP listener error (non-fatal, other transports unaffected)")
+		}
+	}()
+
+	// Keep server running until context is cancelled (signal, parent shutdown).
+	<-ctx.Done()
+	logger.Info("SIP server context cancelled, shutting down")
 
 	// Wait for all listener goroutines to exit
 	wgListeners.Wait()
