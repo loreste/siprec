@@ -3,7 +3,7 @@ package version
 import "runtime"
 
 // Version is the current version of the SIPREC server
-var Version = "1.3.4"
+var Version = "1.3.5"
 
 // Commit and BuildTime are set by release builds using linker flags.
 var Commit = "unknown"

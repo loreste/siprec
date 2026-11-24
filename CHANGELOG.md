@@ -21,6 +21,19 @@ All notable changes to IZI SIPREC will be documented in this file.
 - Opt-in SIPREC metadata completion, adapted from hopefulGiupplo/siprec, with validated fallback participant addresses, an independent participant-free recording option, preserved update identity, and provenance without assumed consent.
 - Oracle Linux 10 deployment notes covering pinned upstream builds, native codec prerequisites, systemd, SELinux, and installation-owned firewall rules.
 
+## [1.3.5] - 2026-11-24
+
+### Fixed
+
+- Replace Speechmatics batch HTTP provider with real-time WebSocket streaming API (#48). The previous implementation sent audio to the batch `/v2/jobs` endpoint, which does not support live transcription and failed with HTTP/2 PROTOCOL_ERROR.
+- Handle Speechmatics `Info` messages (concurrent_session_usage, recognition_quality) that arrive before `RecognitionStarted`.
+- Fix `punctuation_overrides.permitted_marks` to use `[]string` per the Speechmatics API spec.
+
+### Changed
+
+- Add `sample_rate` and `encoding` configuration fields to the Speechmatics provider so the audio format is correctly communicated to the real-time API.
+- Speechmatics provider now implements `EnhancedStreamingProvider` with connection tracking, keepalive, and graceful shutdown.
+
 ## [1.3.4] - 2026-11-03
 
 ### Fixed
